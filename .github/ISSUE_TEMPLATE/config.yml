@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security issue
+    url: https://github.com/project-copacetic/copacetic/SECURITY.md
+    about: Please report security vulnerabilities using these instructions.

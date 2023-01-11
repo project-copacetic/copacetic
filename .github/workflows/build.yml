@@ -1,0 +1,107 @@
+# ------------------------------------------------------------
+# Copyright (c) Project Copacetic authors.
+# Licensed under the MIT License.
+# ------------------------------------------------------------
+
+name: Build in DevContainer
+on:
+  push:
+    branches:
+      - main
+      - release-*
+    tags:
+      - v*
+  pull_request:
+    branches:
+      - main
+      - release-*
+  workflow_dispatch:
+env:
+  DEVCON_NAME: ghcr.io/project-copacetic/copacetic/devcontainer
+  DEVCON_VERSION: latest
+
+jobs:
+  build:
+    name: Build and unit test
+    runs-on: ${{ matrix.os }}
+    permissions:
+      packages: write
+      contents: read
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build copa in dev container
+        uses: devcontainers/ci@v0.2
+        with:
+          imageName: ${{ env.DEVCON_NAME }}
+          imageTag: ${{ env.DEVCON_VERSION }}
+          runCmd: |
+            set -e
+            make build
+            make test
+            make archive
+      - name: Upload built tool
+        uses: actions/upload-artifact@v3
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+          path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
+      - name: Load test cases for patch testing
+        id: load-tests
+        run: |
+          json="$(cat .github/workflows/test-images.json)"
+          json="${json//[$'\n'$'\r']/''}"
+          echo "include=$json" >> $GITHUB_OUTPUT
+    outputs:
+      include: ${{ steps.load-tests.outputs.include }}
+
+  test-patch:
+    needs: build
+    name: Test patch ${{ matrix.image }}:${{ matrix.tag }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include: ${{ fromJson(needs.build.outputs.include) }}
+    steps:
+      - name: Check out dev container definition
+        uses: actions/checkout@v3
+      - name: Download the patch tool
+        uses: actions/download-artifact@v3
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract patch tool
+        run: tar xzf copa_edge_linux_amd64.tar.gz
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run functional test in dev container
+        uses: devcontainers/ci@v0.2
+        with:
+          imageName: ${{ env.DEVCON_NAME }}
+          imageTag: ${{ env.DEVCON_VERSION }}
+          env: |
+            BUILDKIT_PORT=30321
+          runCmd: |
+            set -e
+            echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
+            echo "[INFO]: Scanning image with trivy ..."
+            trivy image --vuln-type os --ignore-unfixed --security-checks vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}"
+            echo "[INFO]: Start buildkitd in the background ..."
+            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.10.3" --addr tcp://0.0.0.0:$BUILDKIT_PORT
+            docker stats buildkitd --no-stream
+            sudo lsof -nP -iTCP -sTCP:LISTEN
+            echo "[INFO]: Run copa on target ..."
+            ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
+            echo "[INFO]: Rescanning patched image with same vuln DB ..."
+            trivy image --vuln-type os --ignore-unfixed --skip-db-update --security-checks vuln "${{ matrix.image }}:${{ matrix.tag }}-patched"

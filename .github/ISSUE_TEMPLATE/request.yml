@@ -1,0 +1,27 @@
+name: Request
+description: Request a new feature or propose an enhancement to Project Copacetic
+title: "[REQ] <title>"
+labels: "enhancement"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search to see if an issue already exists for your request before continuing.
+  - type: dropdown
+    attributes:
+      label: What kind of request is this?
+      multiple: false
+      options:
+        - New feature
+        - Improvement of existing experience
+        - Other
+  - type: textarea
+    attributes:
+      label: What is your request or suggestion?
+      placeholder: |
+        e.g. I would like copa to add this <feature> so that I can use it in my <scenario>.
+        e.g. When using <copa command> the <current behavior> has this <limitation> and it would be better if it has this <improvement>. 
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out a request! 

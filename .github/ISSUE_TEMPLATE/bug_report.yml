@@ -1,0 +1,35 @@
+name: Bug Report
+description: Report a bug in Project Copacetic
+title: "[BUG] <title>"
+labels: "bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search to see if an issue already exists for your bug before continuing.
+        > If you need to report a security issue please see https://github.com/project-copacetic/copacetic/SECURITY.md instead.
+  - type: input
+    attributes:
+      label: Version of copa
+      placeholder: Release version (e.g. v0.0.1) or `git describe --dirty` output if built from source
+  - type: textarea
+    attributes:
+      label: Expected Behavior
+      description: Briefly describe what you expect to happen.
+  - type: textarea
+    attributes:
+      label: Actual Behavior
+      description: Briefly describe what is actually happening.
+  - type: textarea
+    attributes:
+      label: Steps To Reproduce
+      description: Detailed steps to reproduce the behavior.
+      placeholder: |
+        1. On Ubuntu 20.04 x86_64 environment...
+        2. With this config...
+        3. Run '...'
+        4. See error...
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out a bug report! 

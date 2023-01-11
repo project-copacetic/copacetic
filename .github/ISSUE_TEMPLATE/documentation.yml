@@ -1,0 +1,28 @@
+name: Documentation Improvement
+description: Suggest a correction or improvement in Project Copacetic documents
+title: "[DOC] <title>"
+labels: "documentation"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search to see if an issue already exists for your documentation improvement before continuing.
+  - type: dropdown
+    attributes:
+      label: What kind of documentation improvement is needed?
+      multiple: false
+      options:
+        - Broken link or typo
+        - Incorrect or outdated information
+        - Missing information or guidance
+        - Other
+  - type: textarea
+    attributes:
+      label: What is the change that is needed?
+      placeholder: |
+        e.g. <URL to doc> says <incorrect info/typo/link> but should be <correction>.
+        e.g. The <URL to existing doc> doesn't explain <topic> and should <suggested content>.
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a documentation improvement! 

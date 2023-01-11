@@ -1,0 +1,37 @@
+# ------------------------------------------------------------
+# Copyright (c) Project Copacetic authors.
+# Licensed under the MIT License.
+# ------------------------------------------------------------
+
+name: Run golangci-lint
+on:
+  push:
+    paths:
+      - '**.go'
+    branches:
+      - main
+      - release-*
+    tags:
+      - v*
+  pull_request:
+    paths:
+      - '**.go'
+    branches:
+      - main
+      - release-*
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v3
+        with:
+          go-version: 1.19
+      - uses: actions/checkout@v3
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
