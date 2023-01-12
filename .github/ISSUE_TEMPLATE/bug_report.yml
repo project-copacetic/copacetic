@@ -7,11 +7,11 @@ body:
     attributes:
       value: |
         Please search to see if an issue already exists for your bug before continuing.
-        > If you need to report a security issue please see https://github.com/project-copacetic/copacetic/SECURITY.md instead.
+        > If you need to report a security issue please see https://github.com/project-copacetic/copacetic/security/policy instead.
   - type: input
     attributes:
       label: Version of copa
-      placeholder: Release version (e.g. v0.0.1) or `git describe --dirty` output if built from source
+      placeholder: Release version (e.g. v0.1.0) or `git describe --dirty` output if built from source
   - type: textarea
     attributes:
       label: Expected Behavior
