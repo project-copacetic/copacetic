@@ -1,0 +1,11 @@
+coverage:
+  # Commit status https://docs.codecov.io/docs/commit-status are used
+  # to block PR based on coverage threshold.
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 0%
+    patch:
+      default:
+        informational: true

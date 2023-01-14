@@ -100,7 +100,7 @@ release: build archive
 .PHONY: test
 test:
 	$(info $(INFOMARK) Running unit tests on pkg libraries ...)
-	go test ./pkg/...
+	go test ./pkg/... $(CODECOV_OPTS)
 
 ################################################################################
 # Target: clean                                                                #

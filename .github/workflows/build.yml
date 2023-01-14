@@ -44,6 +44,8 @@ jobs:
         with:
           imageName: ${{ env.DEVCON_NAME }}
           imageTag: ${{ env.DEVCON_VERSION }}
+          env: |
+            CODECOV_OPTS=-coverprofile=coverage.txt -covermode=atomic
           runCmd: |
             set -e
             make build
@@ -54,6 +56,8 @@ jobs:
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
       - name: Load test cases for patch testing
         id: load-tests
         run: |
