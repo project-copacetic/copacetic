@@ -1,5 +1,8 @@
 # Project Copacetic: Directly patch container image vulnerabilities
 
+[![Build in DevContainer](https://github.com/project-copacetic/copacetic/actions/workflows/build.yml/badge.svg)](https://github.com/project-copacetic/copacetic/actions/workflows/build.yml)
+[![codecov](https://codecov.io/gh/project-copacetic/copacetic/branch/main/graph/badge.svg?token=PBC8EPNHRL)](https://codecov.io/gh/project-copacetic/copacetic)
+
 `copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
 
 ## Why?
