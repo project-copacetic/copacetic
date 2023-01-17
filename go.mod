@@ -11,7 +11,7 @@ replace github.com/docker/docker => github.com/docker/docker v20.10.3-0.20220414
 
 require (
 	github.com/Masterminds/semver/v3 v3.2.0
-	github.com/antchfx/xmlquery v1.3.13
+	github.com/antchfx/xmlquery v1.3.14
 	github.com/aquasecurity/trivy v0.36.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.6.15
@@ -32,7 +32,7 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
-	github.com/antchfx/xpath v1.2.1 // indirect
+	github.com/antchfx/xpath v1.2.2 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20221227141502-af78ecb7db4c // indirect
 	github.com/caarlos0/env/v6 v6.10.1 // indirect
 	github.com/containerd/continuity v0.3.0 // indirect
@@ -84,9 +84,9 @@ require (
 	golang.org/x/crypto v0.3.0 // indirect
 	golang.org/x/exp v0.0.0-20220823124025-807a23277127 // indirect
 	golang.org/x/mod v0.6.0 // indirect
-	golang.org/x/net v0.2.0 // indirect
-	golang.org/x/sys v0.3.0 // indirect
-	golang.org/x/text v0.5.0 // indirect
+	golang.org/x/net v0.5.0 // indirect
+	golang.org/x/sys v0.4.0 // indirect
+	golang.org/x/text v0.6.0 // indirect
 	golang.org/x/time v0.0.0-20220609170525-579cf78fd858 // indirect
 	golang.org/x/tools v0.2.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
