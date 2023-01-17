@@ -19,7 +19,7 @@ jobs:
       - name: Check out repo
         uses: actions/checkout@v3
       - name: Calculate new version number
-        uses: go-semantic-release/action@bc71199f07484e231fa3b845a39a01146e3a5f3e
+        uses: go-semantic-release/action@b10f9cbe8c55ae2bd41e6eaa539db48e8affee43
         id: semrel
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -56,7 +56,7 @@ jobs:
         run: |
           CLI_VERSION="${{ steps.semrel.outputs.version }}" make release
       - name: Create new semantic release
-        uses: go-semantic-release/action@bc71199f07484e231fa3b845a39a01146e3a5f3e
+        uses: go-semantic-release/action@b10f9cbe8c55ae2bd41e6eaa539db48e8affee43
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           allow-initial-development-versions: true
