@@ -13,10 +13,17 @@ import (
 
 func EnsurePath(path string, perm fs.FileMode) (bool, error) {
 	createdPath := false
-	_, err := os.Stat(path)
+	st, err := os.Stat(path)
 	if err != nil && os.IsNotExist(err) {
 		err = os.MkdirAll(path, perm)
 		createdPath = (err == nil)
+	} else {
+		if !st.IsDir() {
+			return false, fs.ErrExist
+		}
+		if st.Mode().Perm() != perm {
+			return false, fs.ErrPermission
+		}
 	}
 	return createdPath, err
 }
