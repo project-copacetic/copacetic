@@ -8,7 +8,7 @@ const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 const config = {
   title: 'Copacetic',
   url: 'https://project-copacetic.github.io',
-  baseUrl: '/copacetic/docs/',
+  baseUrl: '/copacetic/website/',
   onBrokenLinks: 'ignore',
   onBrokenMarkdownLinks: 'warn',
   favicon: 'img/favicon.ico',
