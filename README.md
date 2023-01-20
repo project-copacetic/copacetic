@@ -2,6 +2,7 @@
 
 [![Build in DevContainer](https://github.com/project-copacetic/copacetic/actions/workflows/build.yml/badge.svg)](https://github.com/project-copacetic/copacetic/actions/workflows/build.yml)
 [![codecov](https://codecov.io/gh/project-copacetic/copacetic/branch/main/graph/badge.svg?token=PBC8EPNHRL)](https://codecov.io/gh/project-copacetic/copacetic)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](code_of_conduct.md)
 
 `copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
 
@@ -41,36 +42,6 @@ This approach is motivated by the core principles of making direct container pat
 - **Copa reduces the technical expertise needed and waiting on dependencies needed to patch an image**.
   - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to be patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
 
-For more details refer to the [copa design](./docs/vulnerability-driven-patching.md) document.
+For more details refer to the [full documentation](https://salaxander.github.io/copacetic/).
 
-## Getting Started
 
-1. [Setup and build copa](./docs/tutorials/dev-setup.md).
-2. Run through the sample for [using copa with container scanning reports](./docs/tutorials/patch.md).
-
-### Features
-
-`copa` currently supports:
-
-- Parsing container scanning reports from:
-  - [trivy](https://github.com/aquasecurity/trivy)
-- Patching OS vulnerabilities through the most commonly used Linux OS package managers:
-  - dpkg/apt (Ubuntu and Debian)
-  - apk (Alpine)
-  - rpm (RHEL)
-- Patching amd64 and arm64 images.
-
-In addition, `copa` takes advantage of buildkit's layer graph to support patching images where the package tools may not be present in the target image, for example, [Google distroless images](https://github.com/GoogleContainerTools/distroless/blob/main/base/README.md).
-
-### Future possibilities
-
-As an extensible tool, `copa` is expected to continue to grow in its capabilities. Additions being considered include:
-
-- Support for more formats including:
-  - [grype](https://github.com/anchore/grype)
-  - custom `copa` json schema for manually specified fixes.
-- Support for broader range of patching functionality including:
-  - Patching more types of images without package manager tools present.
-  - Patching based on app framework package managers such as pypi, npm, and maven.
-  - Additional options for configuring custom patch sources, vulnerability types and criticality.
-- Better integration buildkit options.
