@@ -50,10 +50,6 @@ const config = {
     ({
       navbar: {
         title: 'Copacetic',
-        logo: {
-          alt: 'Copa Logo',
-          src: 'img/logo.svg',
-        },
         items: [
           {
             href: 'https://github.com/project-copacetic/copacetic',
