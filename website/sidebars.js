@@ -16,7 +16,10 @@ const sidebars = {
   sidebar: [
     'introduction',
     'installation',
-    'quick-start'
+    'quick-start',
+    'design',
+    'contributing',
+    'code-of-conduct'
   ]
 };
 

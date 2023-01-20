@@ -2,7 +2,7 @@
 title: Installation
 ---
 
-The following instructions are for **Ubuntu 22.04** with the dependency versions supported as part of the [dev container](../../.devcontainer/README.md) environment we use for builds and tests. For other distributions and OS, refer to the appropriate installation instructions for each of the components instead.
+The following instructions are for **Ubuntu 22.04** with the dependency versions supported as part of the [dev container](./contributing.md/#visual-studio-code-development-container) environment we use for builds and tests. For other distributions and OS, refer to the appropriate installation instructions for each of the components instead.
 
 1. Install [Go v1.19](https://go.dev/doc/install) or newer.
 
