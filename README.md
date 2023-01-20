@@ -42,6 +42,6 @@ This approach is motivated by the core principles of making direct container pat
 - **Copa reduces the technical expertise needed and waiting on dependencies needed to patch an image**.
   - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to be patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
 
-For more details refer to the [full documentation](https://salaxander.github.io/copacetic/).
+For more details refer to the [full documentation](https://project-copacetic.github.io/copacetic/).
 
 
