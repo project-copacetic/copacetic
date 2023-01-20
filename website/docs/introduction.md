@@ -1,9 +1,9 @@
+---
+title: Introduction
+slug: /
+---
+
 # Project Copacetic: Directly patch container image vulnerabilities
-
-[![Build in DevContainer](https://github.com/project-copacetic/copacetic/actions/workflows/build.yml/badge.svg)](https://github.com/project-copacetic/copacetic/actions/workflows/build.yml)
-[![codecov](https://codecov.io/gh/project-copacetic/copacetic/branch/main/graph/badge.svg?token=PBC8EPNHRL)](https://codecov.io/gh/project-copacetic/copacetic)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](code_of_conduct.md)
-
 `copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
 
 ## Why?
@@ -13,7 +13,7 @@ We needed the ability to patch containers quickly without going upstream for a f
 - inherited from base images several levels deep and waiting on updated releases to percolate through the supply chain is not an option
 - found in 3rd party app images you don't maintain with update cadences that don't meet your security SLAs.
 
-![direct image patching](./docs/imgs/direct-image-patching.png)
+<img title="direct image patching" src="/copacetic/website/img/direct-image-patching.png" />
 
 In addition to filling the operational gap not met by left-shift security practices and tools, the ability of `copa` to patch a container without requiring a rebuild of the container image provides other benefits:
 
@@ -30,7 +30,7 @@ The `copa` tool is an extensible engine that:
 2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt, apk, etc. New adapters can be written to support more package managers.
 3. Applies the resulting update binaries to the container image using buildkit.
 
-![report-driven vulnerability patching](./docs/imgs/vulnerability-patch.png)
+<img title="report-driven vulnerability patching" src="/copacetic/website/img/vulnerability-patch.png" />
 
 This approach is motivated by the core principles of making direct container patching broadly applicable and accessible:
 
@@ -42,6 +42,4 @@ This approach is motivated by the core principles of making direct container pat
 - **Copa reduces the technical expertise needed and waiting on dependencies needed to patch an image**.
   - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to be patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
 
-For more details refer to the [full documentation](https://project-copacetic.github.io/copacetic/).
-
-
+For more details, refer to the [copa design](./design.md) documentation.
