@@ -2,7 +2,7 @@
 title: Contributing
 ---
 
-Welcome! We are very happy to accept community contributions to the project, whether through [filing issues](#contributing-issues) or [code](#contributing-code) in the form of [Pull Requests](#pull-requests). Please note that by participating in this project, you agree to abide by the [Code of Conduct](./CODE_OF_CONDUCT.md), as well as the terms of the [Developer Certificate of Origin](#developer-certificate-of-origin-dco).
+Welcome! We are very happy to accept community contributions to the project, whether through [filing issues](#contributing-issues) or [code](#contributing-code) in the form of [Pull Requests](#pull-requests). Please note that by participating in this project, you agree to abide by the [Code of Conduct](./code-of-conduct.md), as well as the terms of the [Developer Certificate of Origin](#developer-certificate-of-origin-dco).
 
 ## Contributing Issues
 
@@ -15,22 +15,20 @@ When opening an issue, please select the most appropriate template for what you'
 * **Request:** If you have a feature request, suggestion, or a even a design proposal to review.
 * **Question:** If you would like to ask the maintainers a question about the project.
 
-> If you would like to report a security vulnerability, please follow the instructions for [reporting security issues](./SECURITY.md#reporting-security-issues) instead.
-
 ## Contributing Code
 
 ### Getting Started
 
 Follow the instructions to either:
 
-* [Setup your dev environment to build copa](./docs/tutorials/installation.md).
+* [Setup your dev environment to build copa](./installation.md).
 * [Use the copa development container](#visual-studio-code-development-container) in [Visual Studio Code](https://code.visualstudio.com/).
 
-For an overview of the project components, refer to the [copa design](./docs/vulnerability-driven-patching.md) document.
+For an overview of the project components, refer to the [copa design](./design.md) document.
 
 ### Visual Studio Code Development Container
 
-[VSCode](https://code.visualstudio.com/) supports development in a containerized environment through its [Remote - Container extension](https://code.visualstudio.com/docs/remote/containers). This folder provides a development container which encapsulates the dependencies specified in the [instructions to build and run copa](../docs/tutorials/dev-setup.md).
+[VSCode](https://code.visualstudio.com/) supports development in a containerized environment through its [Remote - Container extension](https://code.visualstudio.com/docs/remote/containers). This folder provides a development container which encapsulates the dependencies specified in the [instructions to build and run copa](./installation.md).
 
 #### Prerequisites
 
@@ -79,7 +77,7 @@ If you'd like to start contributing code to the project, you can search for [iss
 
 For any changes that may involve significant refactoring or development effort, we suggest that you file an issue to discuss the proposal with the maintainers first as it is unlikely that we will accept large PRs without prior discussion that have:
 
-* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./docs/vulnerability-driven-patching.md#design-tenets)).
+* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./design.md)).
 * Unsolicited features that significantly expand the functional scope of the tool.
 
 Pull requests should be submitted from your fork of the project with the PR template filled out. This project uses the [Angular commit message format](https://github.com/angular/angular/blob/main/CONTRIBUTING.md#-commit-message-format) for automated changelog generation, so it's helpful to be familiar with it as the maintainers will need to ensure adherence to it on accepting PRs.
@@ -154,6 +152,4 @@ git push --force-with-lease <remote-name> <branch-name>
 
 ## Code of Conduct
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+This project has adopted the [Contributor Covenant Code of Conduct](./code-of-conduct.md).
