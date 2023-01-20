@@ -7,7 +7,7 @@ const darkCodeTheme = require('prism-react-renderer/themes/dracula');
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Copacetic',
-  url: 'https://salaxander.github.io',
+  url: 'https://project-copacetic.github.io',
   baseUrl: '/copacetic/website/',
   onBrokenLinks: 'ignore',
   onBrokenMarkdownLinks: 'warn',
@@ -16,7 +16,7 @@ const config = {
 
   // GitHub pages deployment config.
   // If you aren't using GitHub pages, you don't need these.
-  organizationName: 'salaxander', // Usually your GitHub org/user name.
+  organizationName: 'project-copacetic', // Usually your GitHub org/user name.
   projectName: 'copacetic', // Usually your repo name.
   deploymentBranch: 'gh-pages',
 
