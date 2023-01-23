@@ -12,8 +12,8 @@ brew install copa
 ## GitHub
 You can download the latest and previous versions of `copa` from the [GitHub releases page](https://github.com/project-copacetic/copacetic/releases).
 
-## Build from source
-`copa` can also be built directly from source:
+## Development Setup
+The following instructions are for **Ubuntu 22.04** with the dependency versions supported as part of the [dev container](./contributing.md/#visual-studio-code-development-container) environment we use for builds and tests. For other distributions and OS, refer to the appropriate installation instructions for each of the components instead.
 
 ```bash
 git clone https://github.com/project-copacetic/copacetic
