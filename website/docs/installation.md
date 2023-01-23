@@ -3,7 +3,7 @@ title: Installation
 ---
 
 ## Homebrew
-On MacOS and Linux, `copa` can be installed via [Homebrew](https://brew.sh/):
+On macOS and Linux, `copa` can be installed via [Homebrew](https://brew.sh/):
 
 ```bash
 brew install copa
