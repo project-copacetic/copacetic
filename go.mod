@@ -14,7 +14,7 @@ require (
 	github.com/antchfx/xmlquery v1.3.14
 	github.com/aquasecurity/trivy v0.36.1
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.6.15
+	github.com/containerd/containerd v1.6.16
 	github.com/distribution/distribution v2.8.1+incompatible
 	github.com/docker/cli v20.10.23+incompatible
 	github.com/hashicorp/go-multierror v1.1.1
