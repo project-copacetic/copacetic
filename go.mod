@@ -11,7 +11,7 @@ replace github.com/docker/docker => github.com/docker/docker v20.10.3-0.20220414
 
 require (
 	github.com/Masterminds/semver/v3 v3.2.0
-	github.com/antchfx/xmlquery v1.3.14
+	github.com/antchfx/xmlquery v1.3.15
 	github.com/aquasecurity/trivy v0.36.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.6.16
@@ -32,7 +32,7 @@ require (
 
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
-	github.com/antchfx/xpath v1.2.2 // indirect
+	github.com/antchfx/xpath v1.2.3 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20221227141502-af78ecb7db4c // indirect
 	github.com/caarlos0/env/v6 v6.10.1 // indirect
 	github.com/containerd/continuity v0.3.0 // indirect
