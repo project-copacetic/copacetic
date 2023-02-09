@@ -54,7 +54,7 @@ jobs:
           go-version: 1.19
       - name: Build release
         run: |
-          CLI_VERSION="${{ steps.semrel.outputs.version }}" make release
+          CLI_VERSION="${{ steps.semrel.outputs.version }}" make release version-docs
       - name: Create new semantic release
         uses: go-semantic-release/action@1b14387401a1c3b588c807afd4ba4a921fd9cc31
         with:
