@@ -22,6 +22,7 @@ const (
 	copaPrefix     = "copa-"
 	resultsPath    = "/" + copaPrefix + "out"
 	downloadPath   = "/" + copaPrefix + "downloads"
+	unpackPath     = "/" + copaPrefix + "unpacked"
 	resultManifest = "results.manifest"
 )
 

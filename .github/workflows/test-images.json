@@ -21,7 +21,13 @@
         "image": "mcr.microsoft.com/oss/fluent/fluent-bit",
         "tag": "v1.8.4",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d, no apt"
+        "description": "Custom dpkg/status.d with base64 names, no apt"
+    },
+    {
+        "image": "mcr.microsoft.com/oss/open-policy-agent/opa",
+        "tag": "0.46.0",
+        "distro": "Google Distroless",
+        "description": "Custom dpkg/status.d with text names, no apt"
     },
     {
         "image": "mcr.microsoft.com/oss/calico/cni",

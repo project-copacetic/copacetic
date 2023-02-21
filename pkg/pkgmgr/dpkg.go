@@ -188,7 +188,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 //   - sh and apt installed on the image
 //   - valid dpkg status on the image
 //
-// Images Images with neither (i.e. Google Debian Distroless) should be patched with dpkgUnpackPackages
+// Images Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates
 //
 // TODO: Support Debian images with valid dpkg status but missing tools. No current examples exist in test set
 // i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
@@ -250,9 +250,10 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	downloaded := updated.Dir(downloadPath).Run(llb.Shlex(downloadCmd)).Root()
 
 	// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
-	const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' / \;`
-	extractCmd := fmt.Sprintf(extractTemplate, downloadPath)
+	const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' %s \;`
+	extractCmd := fmt.Sprintf(extractTemplate, downloadPath, unpackPath)
 	unpacked := downloaded.Run(llb.Shlex(extractCmd)).Root()
+	unpackedToRoot := llb.Scratch().File(llb.Copy(unpacked, unpackPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
 	// Scripted extraction of all debinfo for version checking to separate layer into local mount
 	// Note that target dirs of shell commands need to be created before use
@@ -260,6 +261,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	const writeFieldsTemplate = `find . -name '*.deb' -exec sh -c "dpkg-deb -f {} > %s" \;`
 	writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, filepath.Join(resultsPath, "{}.fields"))
 	fieldsWritten := mkFolders.Dir(downloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
+	if err := buildkit.SolveToDocker(ctx, dm.config.Client, &fieldsWritten, dm.config.ConfigData, dm.config.ImageName+"-fields"); err != nil {
+		return nil, err
+	}
 
 	// Write the name and version of the packages applied to the results.manifest file for the host
 	const outputResultsTemplate = `find . -name '*.fields' -exec sh -c 'grep "^Package:\|^Version:" {} >> %s' \;`
@@ -271,13 +275,21 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	}
 
 	// Update the status.d folder with the package info from the applied update packages
+	// Each .fields file contains the control information for the package updated in the status.d folder.
+	// The package name is used as the file name but has to deal with two possible idiosyncrasies:
+	// - Older distroless images had a bug where the file names were base64 encoded. If the base64 versions
+	//   of the names were found in the folder previously, then we use those names.
+	// - Non-base64 encoded names don't use the full package name, but instead appear to be truncated to
+	//   use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
 	const copyStatusTemplate = `find . -name '*.fields' -exec sh -c
 		"awk -v statusDir=%s -v statusdNames=\"(%s)\"
-			'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2} END
-			 {cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
+			'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2}
+			 END{cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
 			  cmd | getline b64name ;
 			  close(cmd) ;
-			  outname = b64name in b64names ? b64name : a[\"Package:\"] ;
+			  textname = a[\"Package:\"] ;
+			  gsub(\"\\\\.[^.]*$\", \"\", textname);
+			  outname = b64name in b64names ? b64name : textname;
 			  outpath = statusDir \"/\" outname ;
 			  printf \"cp \\\"%%s\\\" \\\"%%s\\\"\\\n\",FILENAME,outpath }'
 		{} | sh" \;`
@@ -285,9 +297,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
 
 	// Diff unpacked packages layers from previous and merge with target
-	patchDiff := llb.Diff(downloaded, unpacked)
 	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
-	merged := llb.Merge([]llb.State{dm.config.ImageState, patchDiff, statusDiff})
+	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
 	return &merged, nil
 }
 
