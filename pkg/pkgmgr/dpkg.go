@@ -261,9 +261,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	const writeFieldsTemplate = `find . -name '*.deb' -exec sh -c "dpkg-deb -f {} > %s" \;`
 	writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, filepath.Join(resultsPath, "{}.fields"))
 	fieldsWritten := mkFolders.Dir(downloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
-	if err := buildkit.SolveToDocker(ctx, dm.config.Client, &fieldsWritten, dm.config.ConfigData, dm.config.ImageName+"-fields"); err != nil {
-		return nil, err
-	}
 
 	// Write the name and version of the packages applied to the results.manifest file for the host
 	const outputResultsTemplate = `find . -name '*.fields' -exec sh -c 'grep "^Package:\|^Version:" {} >> %s' \;`
