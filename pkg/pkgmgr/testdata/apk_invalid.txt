@@ -1,2 +1,2 @@
-foo-0.0.0-r1
-bar-0.0.0-r3
+apk-tools-x.y
+busybox-a.b.c
