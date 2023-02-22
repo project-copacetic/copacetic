@@ -1,3 +1,8 @@
+// ------------------------------------------------------------
+// Copyright (c) Project Copacetic authors.
+// Licensed under the MIT License.
+// ------------------------------------------------------------
+
 package patch
 
 import "testing"
