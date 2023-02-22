@@ -12,8 +12,8 @@ import (
 	"reflect"
 	"testing"
 
+	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
 	"github.com/project-copacetic/copacetic/pkg/types"
-	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -181,17 +181,17 @@ func TestGetRPMDBType(t *testing.T) {
 	dir1 := t.TempDir() // empty directory
 
 	dir2 := t.TempDir() // directory with rpmBDB file
-	utils.CreateTempFileWithContent(t, dir2, rpmBDB)
+	testutils.CreateTempFileWithContent(dir2, rpmBDB)
 	defer os.Remove(dir2)
 
 	dir3 := t.TempDir() // directory with rpmNDB and rpmSQLLiteDB files
-	utils.CreateTempFileWithContent(t, dir3, rpmNDB)
-	utils.CreateTempFileWithContent(t, dir3, rpmSQLLiteDB)
+	testutils.CreateTempFileWithContent(dir3, rpmNDB)
+	testutils.CreateTempFileWithContent(dir3, rpmSQLLiteDB)
 	defer os.Remove(dir3)
 
 	dir4 := t.TempDir() // directory with rpmManifest1 and rpmManifest2 files
-	utils.CreateTempFileWithContent(t, dir4, rpmManifest1)
-	utils.CreateTempFileWithContent(t, dir4, rpmManifest2)
+	testutils.CreateTempFileWithContent(dir4, rpmManifest1)
+	testutils.CreateTempFileWithContent(dir4, rpmManifest2)
 	defer os.Remove(dir4)
 
 	// Define some test cases with expected output

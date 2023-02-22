@@ -12,8 +12,8 @@ import (
 	"reflect"
 	"testing"
 
+	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
 	"github.com/project-copacetic/copacetic/pkg/types"
-	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -131,16 +131,16 @@ func TestGetDPKGStatusType(t *testing.T) {
 	dir1 := t.TempDir() // empty directory
 
 	dir2 := t.TempDir() // directory with status files
-	utils.CreateTempFileWithContent(t, dir2, "status")
+	testutils.CreateTempFileWithContent(dir2, "status")
 	defer os.Remove(dir2)
 
 	dir3 := t.TempDir() // directory with status.d directory
-	utils.CreateTempFileWithContent(t, dir3, "status.d")
+	testutils.CreateTempFileWithContent(dir3, "status.d")
 	defer os.Remove(dir2)
 
 	dir4 := t.TempDir() // directory with status file and status.d directory
-	utils.CreateTempFileWithContent(t, dir4, "status")
-	utils.CreateTempFileWithContent(t, dir4, "status.d")
+	testutils.CreateTempFileWithContent(dir4, "status")
+	testutils.CreateTempFileWithContent(dir4, "status.d")
 	defer os.Remove(dir4)
 
 	tests := []struct {
