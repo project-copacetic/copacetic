@@ -7,6 +7,7 @@ package utils
 
 import (
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -35,4 +36,16 @@ func IsNonEmptyFile(dir, file string) bool {
 		return false
 	}
 	return !info.IsDir() && info.Size() > 0
+}
+
+func CreateTempFileWithContent(dir string, dbType string) {
+	path := filepath.Join(dir, dbType)
+	file, err := os.Create(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = file.WriteString("test")
+	if err != nil {
+		log.Fatal(err)
+	}
 }
