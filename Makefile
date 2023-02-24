@@ -12,9 +12,10 @@ INFOMARK = $(shell printf "\033[34;1m=>\033[0m")
 ROOTMARK = $(shell printf "\033[31;1m[needs root]\033[0m")
 
 # Optional Make arguments
-CGO_ENABLED ?= 0
-CLI_VERSION ?= edge
-DEBUG       ?= 0
+CGO_ENABLED  ?= 0
+CLI_VERSION  ?= edge
+DEBUG        ?= 0
+NODE_VERSION ?= 16-bullseye-slim
 
 # Go build metadata variables 
 BASE_PACKAGE_NAME := github.com/project-copacetic/copacetic
@@ -118,3 +119,16 @@ setup:
 	$(info $(INFOMARK) Installing Makefile go binary dependencies $(ROOTMARK) ...)
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install mvdan.cc/gofumpt@latest
+
+################################################################################
+# Target: version-docs                                                         #
+################################################################################
+.PHONY: version-docs
+version-docs:
+	$(info $(INFOMARK) Creating versioned docs ...)
+	docker run --rm \
+		-v $(shell pwd)/website:/website \
+		-w /website \
+		$(IDFLAGS) \
+		node:${NODE_VERSION} \
+		sh -c "yarn install --frozen lockfile && yarn run docusaurus docs:version ${CLI_VERSION}"
