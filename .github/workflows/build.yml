@@ -102,7 +102,7 @@ jobs:
             echo "[INFO]: Scanning image with trivy ..."
             trivy image --vuln-type os --ignore-unfixed --security-checks vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}"
             echo "[INFO]: Start buildkitd in the background ..."
-            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.10.3" --addr tcp://0.0.0.0:$BUILDKIT_PORT
+            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.11.0" --addr tcp://0.0.0.0:$BUILDKIT_PORT
             docker stats buildkitd --no-stream
             sudo lsof -nP -iTCP -sTCP:LISTEN
             echo "[INFO]: Run copa on target ..."
