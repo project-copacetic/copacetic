@@ -1,0 +1,30 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "alpine:3.14.0",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "OS": {
+      "Family": "alpine",
+      "Name": "3.14.0"
+    },
+    "ImageConfig": {
+      "architecture": "amd64"
+    }
+  },
+  "Results": [
+    {
+      "Target": "alpine:3.14.0 (alpine 3.14.0)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2021-36159",
+          "PkgID": "apk-tools@2.12.5-r1",
+          "PkgName": "apk-tools",
+          "InstalledVersion": "2.12.5-r1",
+          "FixedVersion": "2.12.6-r0"
+        }
+      ]
+    }
+  ]
+}
