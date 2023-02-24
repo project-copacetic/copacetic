@@ -56,6 +56,10 @@ const config = {
         title: 'Copacetic',
         items: [
           {
+            type: 'docsVersionDropdown',
+            position: 'right',
+          },
+          {
             href: 'https://github.com/project-copacetic/copacetic',
             position: 'right',
             className: 'header-github-link',
