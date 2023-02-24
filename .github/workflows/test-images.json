@@ -6,6 +6,12 @@
         "description": "Valid apk/db, apk present"
     },
     {
+        "image": "cgr.dev/chainguard/node",
+        "tag": "18.14.0",
+        "distro": "Wolfi",
+        "description": "Valid apk/db, no apk"
+    },
+    {
         "image": "mcr.microsoft.com/oss/nginx/nginx",
         "tag": "1.21.6",
         "distro": "Debian",

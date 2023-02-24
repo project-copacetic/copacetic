@@ -22,9 +22,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	alpineThree = "alpine:3"
+)
+
 type apkManager struct {
 	config        *buildkit.Config
 	workingFolder string
+	isWolfi       bool
 }
 
 // Depending on go-apk-version lib for APK version comparison rules.
@@ -130,7 +135,13 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.Update
 	}
 	log.Debugf("latest unique APKs: %v", updates)
 
-	updatedImageState, err := am.upgradePackages(ctx, updates)
+	var toolImageName string
+	if am.isWolfi {
+		toolImageName = alpineThree
+	}
+
+	var updatedImageState *llb.State
+	updatedImageState, err = am.upgradePackages(ctx, updates, toolImageName)
 	if err != nil {
 		return nil, err
 	}
@@ -144,16 +155,25 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.Update
 	return updatedImageState, nil
 }
 
-// Patch a regular alpine image with:
+// Patch a wolfi-based alpine without apk tooling and regular alpine image with:
 //   - sh and apk installed on the image
 //   - valid apk db state on the image
 //
 // TODO: support "distroless" Alpine images (e.g. APKO images)
 // Still assumes that APK exists in the target image and is pathed, which can be addressed by
 // mounting a copy of apk-tools-static into the image and invoking apk-static directly.
-func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdatePackages) (*llb.State, error) {
-	// TODO: Add support for custom APK config
-	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update")).Root()
+func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdatePackages, toolImageName string) (*llb.State, error) {
+	var apkUpdated llb.State
+	if toolImageName != "" {
+		toolingBase := llb.Image(toolImageName,
+			llb.Platform(am.config.Platform),
+			llb.ResolveModeDefault,
+		)
+		apkUpdated = toolingBase.Run(llb.Shlex("apk update")).Root()
+	} else {
+		// TODO: Add support for custom APK config
+		apkUpdated = am.config.ImageState.Run(llb.Shlex("apk update")).Root()
+	}
 
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.

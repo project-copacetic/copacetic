@@ -33,7 +33,9 @@ type PackageManager interface {
 func GetPackageManager(osType string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
 	switch osType {
 	case "alpine":
-		return &apkManager{config: config, workingFolder: workingFolder}, nil
+		return &apkManager{config: config, workingFolder: workingFolder, isWolfi: false}, nil
+	case "wolfi":
+		return &apkManager{config: config, workingFolder: workingFolder, isWolfi: true}, nil
 	case "debian":
 		fallthrough
 	case "ubuntu":
