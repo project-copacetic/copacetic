@@ -100,12 +100,12 @@ jobs:
             set -e
             echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
             echo "[INFO]: Scanning image with trivy ..."
-            trivy image --vuln-type os --ignore-unfixed --security-checks vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}"
+            trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}"
             echo "[INFO]: Start buildkitd in the background ..."
-            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.10.3" --addr tcp://0.0.0.0:$BUILDKIT_PORT
+            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.11.0" --addr tcp://0.0.0.0:$BUILDKIT_PORT
             docker stats buildkitd --no-stream
             sudo lsof -nP -iTCP -sTCP:LISTEN
             echo "[INFO]: Run copa on target ..."
             ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
             echo "[INFO]: Rescanning patched image with same vuln DB ..."
-            trivy image --vuln-type os --ignore-unfixed --skip-db-update --security-checks vuln "${{ matrix.image }}:${{ matrix.tag }}-patched"
+            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched"

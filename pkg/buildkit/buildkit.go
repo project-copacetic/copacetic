@@ -143,7 +143,8 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 		return err
 	}
 
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(os.Stderr)}
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
@@ -184,7 +185,8 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 	}
 
 	pipeR, pipeW := io.Pipe()
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(os.Stderr)}
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
