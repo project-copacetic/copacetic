@@ -40,7 +40,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build copa in dev container
-        uses: devcontainers/ci@v0.2
+        uses: devcontainers/ci@v0.3
         with:
           imageName: ${{ env.DEVCON_NAME }}
           imageTag: ${{ env.DEVCON_VERSION }}
@@ -90,7 +90,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Run functional test in dev container
-        uses: devcontainers/ci@v0.2
+        uses: devcontainers/ci@v0.3
         with:
           cacheFrom: ${{ env.DEVCON_NAME }}
           push: never
