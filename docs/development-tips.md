@@ -61,8 +61,7 @@ Instructions for installing and using the `dive` CLI tool are at https://github.
 - Filtering out unmodified files with `Ctrl+U` while in files view will effectively show you the file diff introduced by that layer.
 
 In particular, if you are adding or changing any of the patching functionality, the diff view of the files in the image can be useful to verify that the expected files have actually been written to the target image.
-
-### Extract files from the image to inspect them
+### Extract individual files from the image to inspect them
 
 `dive` won't let you read the contents of the files in the image though; to do that, you can use the `docker cp` command to copy the files out of the image to a local folder. Note that `docker cp` only works with containers and not just container images, so you will need to create a container from the image and then copy the files out of the container:
 
@@ -70,6 +69,24 @@ In particular, if you are adding or changing any of the patching functionality, 
 id=$(docker create <image name>:<tag>)
 docker cp $id:<filepath> <destination path>
 docker rm -v $id
+```
+
+### Use `crane` to manipulate the image or extract the image filesystem
+
+Sometimes it's useful to be able to manipulate the image in ways that `docker` or `dive` don't support, such as extracting the entire image filesystem to a local folder. [`crane`](https://github.com/google/go-containerregistry/tree/main/cmd/crane) can be useful for this and also provides [many other convenient utilities](https://github.com/google/go-containerregistry/blob/main/cmd/crane/doc/crane.md) for working with container images.
+
+For instance, to extract the filesystem of the image to a local folder, you can use `crane export`:
+
+```bash
+crane export <image name>:<tag> - | tar -xvf -
+```
+
+`crane` is a very flexible tool designed to work well with pipes to existing shell tools. For example, you can also use `crane` to do a full diff between two images as well:
+
+```bash
+ diff \
+    <(crane export image:tag - | tar -tvf - | sort) \
+    <(crane export image:tag-patched - | tar -tvf - | sort)
 ```
 
 ## Run scripts interactively in an image
