@@ -2,6 +2,8 @@
 
 This document provides the governance policy for the Project. Maintainers agree to this policy and to abide by all Project polices, including the [code of conduct](./CODE_OF_CONDUCT.md), [trademark policy](./TRADEMARKS.md), and [antitrust policy](./ANTITRUST.md) by adding their name to the [maintainers.md file](./MAINTAINERS.md).
 
+> For the purposes of future-proofing, Project Copacetic uses the [Minimal Viable Governance](https://github.com/github/MVG) as a baseline for governance. This policy is written with deference to the Organization's Steering Committee when the project grows beyond a single repository but for the moment, Project Copacetic only has a single repository and a single level of governance in its Maintainers.
+
 ## 1. Roles.
 
 This project may include the following roles. Additional roles may be adopted and documented by the Project.
