@@ -6,7 +6,6 @@ This document lists the Maintainers of the Project. Maintainers may be added onc
 | --- | --- |
 | Jeremy Rickard | Microsoft |
 | Sertaç Özercan | Microsoft |
-| Simon Leet | Microsoft |
 | Xander Grzywinski | Microsoft |
 
 ---
