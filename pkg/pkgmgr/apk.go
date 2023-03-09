@@ -156,7 +156,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdateP
 	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update")).Root()
 
 	// Add all requested update packages
-	// This works around where some packages (for example, tiff) require other packages in it's dependency tree to be updated
+	// This works around cases where some packages (for example, tiff) require other packages in it's dependency tree to be updated
 	const apkAddTemplate = `apk add --no-cache %s`
 	pkgStrings := []string{}
 	for _, u := range updates {
