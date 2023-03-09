@@ -6,6 +6,12 @@
         "description": "Valid apk/db, apk present"
     },
     {
+        "image": "mcr.microsoft.com/oss/grafana/grafana-image-renderer",
+        "tag": "v3.6.2",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present, tiff package with dependencies"
+    },
+    {
         "image": "mcr.microsoft.com/oss/nginx/nginx",
         "tag": "1.21.6",
         "distro": "Debian",
