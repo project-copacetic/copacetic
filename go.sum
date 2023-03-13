@@ -51,8 +51,8 @@ github.com/antchfx/xmlquery v1.3.15/go.mod h1:zMDv5tIGjOxY/JCNNinnle7V/EwthZ5IT8
 github.com/antchfx/xpath v1.2.3 h1:CCZWOzv5bAqjVv0offZ2LVgVYFbeldKQVuLNbViZdes=
 github.com/antchfx/xpath v1.2.3/go.mod h1:i54GszH55fYfBmoZXapTHN8T8tkcHfRgLyVwwqzXNcs=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
-github.com/aquasecurity/trivy v0.38.1 h1:fCfvSjT+PL5G12nFLoVKVhl7vYiZzKd+7PW8/eXukCA=
-github.com/aquasecurity/trivy v0.38.1/go.mod h1:BWhaAQ+TJBdPrD8WcZCUnmgnn141LQd4NDnGKWeIaxw=
+github.com/aquasecurity/trivy v0.38.2 h1:bUxzy5IxSARY4ZrnBWRUtnKwxVSL3gUAHg8GFadUv6w=
+github.com/aquasecurity/trivy v0.38.2/go.mod h1:vZ39EC+7jTjL7MHlLx4mYnZ/pvN/Tg9PBrsCHoEHbYg=
 github.com/aquasecurity/trivy-db v0.0.0-20230116084806-4bcdf1c414d0 h1:FI5qaSoJEH47SZVvRVtTPvOmlECG2IRN92deZ/oXHis=
 github.com/aquasecurity/trivy-db v0.0.0-20230116084806-4bcdf1c414d0/go.mod h1:l3BWhRS80Mkeb++dgXij/6BmZIxLb9IpZCSAZHeI6Zk=
 github.com/caarlos0/env/v6 v6.10.1 h1:t1mPSxNpei6M5yAeu1qtRdPAK29Nbcf/n3G7x+b3/II=
