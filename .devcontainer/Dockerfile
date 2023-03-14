@@ -11,7 +11,7 @@ ARG NODE_VERSION="none"
 ARG TRIVY_VERSION="0.37.3"
 
 # [Choice] Buildkit version: see https://github.com/moby/buildkit/releases. Must be >0.10.3.
-ARG BUILDKIT_VERSION="0.11.0"
+ARG BUILDKIT_VERSION="0.11.4"
 
 # Optionally install nodejs if specified
 RUN if [ "${NODE_VERSION}" != "none" ]; then su vscode -c "umask 0002 && . /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSION} 2>&1"; fi
