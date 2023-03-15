@@ -366,14 +366,16 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 	downloadCmd := fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
 	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd)).Root()
 
-	// Scripted enumeration and rpm install of all downloaded packages [layer to merge with target]
-	const extractTemplate = `chroot %s ./busybox find . -name '*.rpm' -exec ./busybox rpm -i '{}' / \;`
+	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
+	// `rpm -i` doesn't support installing to a target directory, so chroot into the download folder to install the packages.
+	const extractTemplate = `chroot %s ./busybox find . -name '*.rpm' -exec ./busybox rpm -i '{}' \;`
 	extractCmd := fmt.Sprintf(extractTemplate, downloadPath)
 	unpacked := downloaded.Run(llb.Shlex(extractCmd)).Root()
 
-	// Diff out the layer containing the installed rpm changes under chroot with downloadPath as root
+	// Diff out busybox and downloaded rpm packages from the installed files under the download folder as root
+	// then move the results to normal root for the layer to merge with target image.
 	patchDiff := llb.Diff(downloaded, unpacked)
-	patchedRoot := llb.Scratch().File(llb.Copy(patchDiff, filepath.Join(downloadPath, "*"), "/", &llb.CopyInfo{AllowWildcard: true}))
+	patchedRoot := llb.Scratch().File(llb.Copy(patchDiff, downloadPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
 	// Scripted extraction of all rpm manifest fields for version checking to separate layer into local mount
 	// Note that target dirs of shell commands need to be created before use
