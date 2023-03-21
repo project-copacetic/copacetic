@@ -226,8 +226,5 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 		}
 		return pipeR.Close()
 	})
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-	return nil
+	return eg.Wait()
 }

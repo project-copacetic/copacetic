@@ -19,19 +19,21 @@ on:
     branches:
       - main
       - release-*
-  workflow_dispatch:
-permissions:
-  contents: read
+
+permissions: read-all
+
 jobs:
   golangci:
     name: lint
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v3
+
       - uses: actions/setup-go@v4
         with:
-          go-version: 1.19
-      - uses: actions/checkout@v3
-      - name: golangci-lint
+          go-version: "1.20"
+
+      - name: lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: latest
+          version: v1.52.0
