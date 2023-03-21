@@ -9,7 +9,7 @@ on:
       - 'website/**'
 
 jobs:
-  deploy: 
+  deploy:
     name: Deploy docs website to GitHub Pages
     runs-on: ubuntu-latest
     permissions:

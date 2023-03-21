@@ -128,9 +128,5 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 	if err != nil {
 		return err
 	}
-	if err := buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
-		return err
-	}
-
-	return nil
+	return buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName)
 }

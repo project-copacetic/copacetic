@@ -1,75 +1,30 @@
 name: Publish release
+
 on:
-  workflow_dispatch:
+  push:
+    tags:
+      - v*
+
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      packages: write
       contents: write
     steps:
-      - name: Validate release branch name
-        run: |
-          echo "Publish release invoked on $GITHUB_REF_NAME ..."
-          set +e
-          BASE_BRANCH=$(echo "$GITHUB_REF_NAME" | grep -E '^(main|release-[0-9]+\.[0-9]+)$')
-          if [ -z "$BASE_BRANCH" ]; then echo "Release workflow must be run on \`main\` or \`release-X.Y\` branches ..."; exit 1;
-          else echo "BASE_BRANCH=$BASE_BRANCH" >> $GITHUB_ENV;
-          fi
-      - name: Check out repo
-        uses: actions/checkout@v3
-      - name: Calculate new version number
-        uses: go-semantic-release/action@1b14387401a1c3b588c807afd4ba4a921fd9cc31
-        id: semrel
+      - uses: actions/checkout@v3
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          allow-initial-development-versions: true
-          custom-arguments: '--no-ci'
-          dry: true
-      - name: Validate appropriate base branch for release
-        run: |
-          if [ -z "${{ steps.semrel.outputs.version }}" ]; then
-            echo "No relevant changes found to publish new release against"
-            exit 1
-          fi
-          RELEASE_BRANCH_VER="${{ steps.semrel.outputs.version_major }}.${{ steps.semrel.outputs.version_minor }}"
-          if [ "$BASE_BRANCH" == 'main' ]; then
-            if [ ${{ steps.semrel.outputs.version_patch }} != '0' ]; then
-              echo "Patch revisions should be published off the appropriate release branch, not main"
-              exit 1
-            fi
-            echo "Publishing new release branch ${{ steps.semrel.outputs.version }} from $BASE_BRANCH ..."
-          else
-            BASE_BRANCH_VER="$(echo "$BASE_BRANCH" | grep -Po '(?<=release-)[0-9]+\.[0-9]+$')"
-            if [ "$RELEASE_BRANCH_VER" != "$BASE_BRANCH_VER" ]; then
-              echo "New major/minor versions should be published off main, not an existing release branch"
-              exit 1
-            fi
-            echo "Publishing revision ${{ steps.semrel.outputs.version }} for $BASE_BRANCH ..."
-          fi
-          echo "RELEASE_BRANCH_VER=$RELEASE_BRANCH_VER" >> GITHUB_ENV
-      - name: Set up golang
-        uses: actions/setup-go@v4
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v4
         with:
-          go-version: 1.19
-      - name: Build release
-        run: |
-          CLI_VERSION="${{ steps.semrel.outputs.version }}" make release version-docs
-      - name: Create new semantic release
-        uses: go-semantic-release/action@1b14387401a1c3b588c807afd4ba4a921fd9cc31
+          go-version: "1.20"
+
+      - uses: anchore/sbom-action/download-syft@v0
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v4
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          allow-initial-development-versions: true
-          custom-arguments: '--no-ci'
-      - name: Upload packages
-        uses: AButler/upload-release-assets@c94805dc72e4b20745f543da0f62eaee7722df7a
-        with:
-          files: 'dist/linux_amd64/release/copa_*'
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          release-tag: 'v${{ steps.semrel.outputs.version }}'
-      - name: Create new release branch if needed (idempotent)
-        uses: peterjgrainger/action-create-branch@08259812c8ebdbf1973747f9297e332fa078d3c1
+          version: latest
+          args: release --clean --config .goreleaser.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          branch: release-${{ steps.semrel.outputs.version_major }}.${{ steps.semrel.outputs.version_minor }}
