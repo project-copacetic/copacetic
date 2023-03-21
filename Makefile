@@ -16,7 +16,7 @@ CGO_ENABLED ?= 0
 CLI_VERSION ?= edge
 DEBUG       ?= 0
 
-# Go build metadata variables 
+# Go build metadata variables
 BASE_PACKAGE_NAME := github.com/project-copacetic/copacetic
 GIT_COMMIT        := $(shell git rev-list -1 HEAD)
 GIT_VERSION       := $(shell git describe --always --tags --dirty)
@@ -36,7 +36,7 @@ endif
 # Build configuration variables
 ifeq ($(DEBUG),0)
   BUILDTYPE_DIR:=release
-  LDFLAGS:="$(DEFAULT_LDFLAGS) -s -w"
+  LDFLAGS:="$(DEFAULT_LDFLAGS) -s -w -extldflags -static"
 else
   BUILDTYPE_DIR:=debug
   LDFLAGS:="$(DEFAULT_LDFLAGS)"
@@ -66,7 +66,7 @@ $(CLI_BINARY):
 .PHONY: lint
 lint:
 	$(info $(INFOMARK) Linting go code ...)
-	golangci-lint run
+	golangci-lint run -v ./...
 
 ################################################################################
 # Target: format                                                               #
@@ -95,6 +95,13 @@ $(ARCHIVE_NAME):
 release: build archive
 
 ################################################################################
+# Target: release-manifest                                                     #
+################################################################################
+.PHONY: release-manifest
+release-manifest:
+	@sed -i -e 's/^CLI_VERSION := .*/CLI_VERSION := ${NEWVERSION}/' ./Makefile
+
+################################################################################
 # Target: test - unit testing                                                  #
 ################################################################################
 .PHONY: test
@@ -118,3 +125,16 @@ setup:
 	$(info $(INFOMARK) Installing Makefile go binary dependencies $(ROOTMARK) ...)
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install mvdan.cc/gofumpt@latest
+
+################################################################################
+# Target: version-docs                                                         #
+################################################################################
+.PHONY: version-docs
+version-docs:
+	$(info $(INFOMARK) Creating versioned docs ...)
+	docker run --rm \
+		-v $(shell pwd)/website:/website \
+		-w /website \
+		-u $(shell id -u):$(shell id -g) \
+		node:${NODE_VERSION} \
+		sh -c "yarn install --frozen lockfile && yarn run docusaurus docs:version ${NEWVERSION}"
