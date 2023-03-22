@@ -207,7 +207,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		llb.ResolveModeDefault,
 	)
 
-	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd)).Root()
+	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
@@ -324,7 +324,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates types.UpdatePa
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, err
 	}
-	installed := rm.config.ImageState.Run(llb.Shlex(installCmd)).Root()
+	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
 	const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
@@ -351,7 +351,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 	)
 
 	// Install busybox. This should reuse the layer cached from probeRPMStatus.
-	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd)).Root()
+	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
 
 	// Download all requested update packages without specifying the version. This works around:
@@ -364,7 +364,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 		pkgStrings = append(pkgStrings, u.Name)
 	}
 	downloadCmd := fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
-	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd)).Root()
+	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
 	// `rpm -i` doesn't support installing to a target directory, so chroot into the download folder to install the packages.
