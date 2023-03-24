@@ -169,7 +169,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdateP
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
-	const apkInstallTemplate = `apk upgrade --no-cache %s`
+	const apkInstallTemplate = `apk upgrade --no-cache --force-overwrite %s`
 	installCmd := fmt.Sprintf(apkInstallTemplate, strings.Join(pkgStrings, " "))
 	apkInstalled := apkAdded.Run(llb.Shlex(installCmd)).Root()
 
