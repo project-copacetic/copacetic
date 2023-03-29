@@ -147,10 +147,10 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		llb.Platform(dm.config.Platform),
 		llb.ResolveModeDefault,
 	)
-	updated := toolingBase.Run(llb.Shlex("apt update")).Root()
+	updated := toolingBase.Run(llb.Shlex("apt update"), llb.WithProxy(utils.GetProxy())).Root()
 
 	const installBusyBoxCmd = "apt install busybox-static"
-	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd)).Root()
+	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyBoxApplied := dm.config.ImageState.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
@@ -197,7 +197,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates types.UpdateP
 	// Since this takes place in the target container, it can interfere with install actions
 	// such as the installation of the updated debian-archive-keyring package, so it's probably best
 	// to separate it out to an explicit container edit command or opt-in before patching.
-	aptUpdated := dm.config.ImageState.Run(llb.Shlex("apt update")).Root()
+	aptUpdated := dm.config.ImageState.Run(llb.Shlex("apt update"), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -209,7 +209,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates types.UpdateP
 		pkgStrings = append(pkgStrings, u.Name)
 	}
 	installCmd := fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
-	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd)).Root()
+	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
 	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
@@ -236,7 +236,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	)
 
 	// Run apt update && apt download list of updates to target folder
-	updated := toolingBase.Run(llb.Shlex("apt update")).Root()
+	updated := toolingBase.Run(llb.Shlex("apt update"), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -247,7 +247,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 		pkgStrings = append(pkgStrings, u.Name)
 	}
 	downloadCmd := fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
-	downloaded := updated.Dir(downloadPath).Run(llb.Shlex(downloadCmd)).Root()
+	downloaded := updated.Dir(downloadPath).Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
 	const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' %s \;`
