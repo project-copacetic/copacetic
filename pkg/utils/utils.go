@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/moby/buildkit/client/llb"
 )
 
 func EnsurePath(path string, perm fs.FileMode) (bool, error) {
@@ -35,4 +37,23 @@ func IsNonEmptyFile(dir, file string) bool {
 		return false
 	}
 	return !info.IsDir() && info.Size() > 0
+}
+
+func getEnvAny(names ...string) string {
+	for _, n := range names {
+		if val := os.Getenv(n); val != "" {
+			return val
+		}
+	}
+	return ""
+}
+
+func GetProxy() llb.ProxyEnv {
+	proxy := llb.ProxyEnv{
+		HTTPProxy:  getEnvAny("HTTP_PROXY"),
+		HTTPSProxy: getEnvAny("HTTPS_PROXY"),
+		NoProxy:    getEnvAny("NO_PROXY"),
+		AllProxy:   getEnvAny("HTTP_PROXY"),
+	}
+	return proxy
 }
