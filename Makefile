@@ -17,7 +17,7 @@ CLI_VERSION  ?= edge
 DEBUG        ?= 0
 NODE_VERSION ?= 16-bullseye-slim
 
-# Go build metadata variables 
+# Go build metadata variables
 BASE_PACKAGE_NAME := github.com/project-copacetic/copacetic
 GIT_COMMIT        := $(shell git rev-list -1 HEAD)
 GIT_VERSION       := $(shell git describe --always --tags --dirty)
@@ -37,7 +37,7 @@ endif
 # Build configuration variables
 ifeq ($(DEBUG),0)
   BUILDTYPE_DIR:=release
-  LDFLAGS:="$(DEFAULT_LDFLAGS) -s -w"
+  LDFLAGS:="$(DEFAULT_LDFLAGS) -s -w -extldflags -static"
 else
   BUILDTYPE_DIR:=debug
   LDFLAGS:="$(DEFAULT_LDFLAGS)"
@@ -67,7 +67,7 @@ $(CLI_BINARY):
 .PHONY: lint
 lint:
 	$(info $(INFOMARK) Linting go code ...)
-	golangci-lint run
+	golangci-lint run -v ./...
 
 ################################################################################
 # Target: format                                                               #
@@ -94,6 +94,13 @@ $(ARCHIVE_NAME):
 ################################################################################
 .PHONY: release
 release: build archive
+
+################################################################################
+# Target: release-manifest                                                     #
+################################################################################
+.PHONY: release-manifest
+release-manifest:
+	@sed -i -e 's/^CLI_VERSION := .*/CLI_VERSION := ${NEWVERSION}/' ./Makefile
 
 ################################################################################
 # Target: test - unit testing                                                  #
@@ -129,6 +136,6 @@ version-docs:
 	docker run --rm \
 		-v $(shell pwd)/website:/website \
 		-w /website \
-		$(IDFLAGS) \
+		-u $(shell id -u):$(shell id -g) \
 		node:${NODE_VERSION} \
-		sh -c "yarn install --frozen lockfile && yarn run docusaurus docs:version ${CLI_VERSION}"
+		sh -c "yarn install --frozen lockfile && yarn run docusaurus docs:version ${NEWVERSION}"

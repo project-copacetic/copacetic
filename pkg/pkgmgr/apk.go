@@ -19,6 +19,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -153,7 +154,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.Update
 // mounting a copy of apk-tools-static into the image and invoking apk-static directly.
 func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdatePackages) (*llb.State, error) {
 	// TODO: Add support for custom APK config
-	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update")).Root()
+	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Add all requested update packages
 	// This works around cases where some packages (for example, tiff) require other packages in it's dependency tree to be updated
@@ -163,7 +164,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdateP
 		pkgStrings = append(pkgStrings, u.Name)
 	}
 	addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
-	apkAdded := apkUpdated.Run(llb.Shlex(addCmd)).Root()
+	apkAdded := apkUpdated.Run(llb.Shlex(addCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -171,7 +172,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdateP
 	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
 	const apkInstallTemplate = `apk upgrade --no-cache %s`
 	installCmd := fmt.Sprintf(apkInstallTemplate, strings.Join(pkgStrings, " "))
-	apkInstalled := apkAdded.Run(llb.Shlex(installCmd)).Root()
+	apkInstalled := apkAdded.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write updates-manifest to host for post-patch validation
 	const outputResultsTemplate = `sh -c 'apk info --installed -v %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: apk info --installed returned $?"; fi'`
