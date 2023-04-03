@@ -9,7 +9,7 @@ replace github.com/spdx/tools-golang => github.com/spdx/tools-golang v0.3.0
 require (
 	github.com/Masterminds/semver/v3 v3.2.0
 	github.com/antchfx/xmlquery v1.3.15
-	github.com/aquasecurity/trivy v0.38.3
+	github.com/aquasecurity/trivy v0.39.0
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.0
 	github.com/distribution/distribution v2.8.1+incompatible
@@ -21,7 +21,7 @@ require (
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
 	github.com/moby/buildkit v0.11.5
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.1.0-rc2.0.20221005185240-3a7f492d3f1b
+	github.com/opencontainers/image-spec v1.1.0-rc2.0.20221020182949-4df8887994e8
 	github.com/sirupsen/logrus v1.9.0
 	github.com/spf13/cobra v1.6.1
 	github.com/spf13/viper v1.15.0
@@ -34,7 +34,6 @@ require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/antchfx/xpath v1.2.3 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230116084806-4bcdf1c414d0 // indirect
-	github.com/caarlos0/env/v6 v6.10.1 // indirect
 	github.com/containerd/continuity v0.3.0 // indirect
 	github.com/containerd/ttrpc v1.2.1 // indirect
 	github.com/containerd/typeurl v1.0.2 // indirect
