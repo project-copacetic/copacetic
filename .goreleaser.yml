@@ -22,7 +22,7 @@ archives:
     builds:
       - copacetic
     format: tar.gz
-    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: "{{ .ProjectName }}_checksums.txt"
