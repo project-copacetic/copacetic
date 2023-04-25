@@ -1,19 +1,19 @@
 [
     {
-        "image": "mcr.microsoft.com/oss/grafana/grafana",
-        "tag": "v8.2.5",
+        "image": "docker.io/grafana/grafana",
+        "tag": "v8.2.5@sha256:1a154d1161ed65eaf87368d08149a8bbcf9962ac03dd5ff639a6b9d468a77a36",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present"
     },
     {
-        "image": "mcr.microsoft.com/oss/nginx/nginx",
-        "tag": "1.21.6",
+        "image": "docker.io/library/nginx",
+        "tag": "1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present"
     },
     {
-        "image": "mcr.microsoft.com/oss/kubernetes/kube-proxy",
-        "tag": "v1.23.4",
+        "image": "k8s.gcr.io/kube-proxy",
+        "tag": "v1.23.4@sha256:30116c7218264d95623d3918a50da703675755cae866cd4c324586611fcd50ea",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, custom network config"
     },
