@@ -16,3 +16,14 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+
+
+  - package-ecosystem: docker
+    directory: /.devcontainer
+    schedule:
+      interval: daily
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: daily
