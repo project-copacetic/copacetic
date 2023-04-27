@@ -11,11 +11,22 @@ on:
       - release-*
     tags:
       - v*
+    paths-ignore:
+      - "**.md"
+      - "website/**"
+      - "docs/**"
+      - "demo/**"
   pull_request:
     branches:
       - main
       - release-*
+    paths-ignore:
+      - "**.md"
+      - "website/**"
+      - "docs/**"
+      - "demo/**"
   workflow_dispatch:
+
 env:
   DEVCON_NAME: ghcr.io/project-copacetic/copacetic/devcontainer
   DEVCON_VERSION: latest
