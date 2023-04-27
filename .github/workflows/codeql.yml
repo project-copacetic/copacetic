@@ -21,6 +21,9 @@ on:
     - cron: '27 20 * * 5'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   analyze:
     name: Analyze
@@ -40,12 +43,17 @@ jobs:
         # Learn more about CodeQL language support at https://aka.ms/codeql-docs/language-support
 
     steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@6b3083af2869dc3314a0257a42f4af696cc79ba3 # v2.3.1
+      with:
+        egress-policy: audit
+
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@v2
+      uses: github/codeql-action/init@8662eabe0e9f338a07350b7fd050732745f93848 # v2.3.1
       with:
         languages: ${{ matrix.language }}
         # If you wish to specify custom queries, you can do so here or in a config file.
@@ -59,7 +67,7 @@ jobs:
     # Autobuild attempts to build any compiled languages  (C/C++, C#, Go, or Java).
     # If this step fails, then you should remove it and run the build manually (see below)
     - name: Autobuild
-      uses: github/codeql-action/autobuild@v2
+      uses: github/codeql-action/autobuild@8662eabe0e9f338a07350b7fd050732745f93848 # v2.3.1
 
     # ℹ️ Command-line programs to run using the OS shell.
     # 📚 See https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#jobsjob_idstepsrun
@@ -72,6 +80,6 @@ jobs:
     #     ./location_of_script_within_repo/buildscript.sh
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@v2
+      uses: github/codeql-action/analyze@8662eabe0e9f338a07350b7fd050732745f93848 # v2.3.1
       with:
         category: "/language:${{matrix.language}}"

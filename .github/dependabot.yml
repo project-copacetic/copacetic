@@ -3,15 +3,30 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
     commit-message:
       prefix: "chore"
     ignore:
       - dependency-name: "*"
         update-types:
         - "version-update:semver-major"
+
   - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "daily"
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: "docker"
+    directory: "/.devcontainer"
+    schedule:
+      interval: "daily"
+    commit-message:
+      prefix: "chore"
+      
+  - package-ecosystem: "npm"
+    directory: "/website"
     schedule:
       interval: "weekly"
     commit-message:
