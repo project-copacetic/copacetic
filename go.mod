@@ -7,7 +7,7 @@ go 1.19
 replace github.com/spdx/tools-golang => github.com/spdx/tools-golang v0.3.0
 
 require (
-	github.com/Masterminds/semver/v3 v3.2.0
+	github.com/Masterminds/semver/v3 v3.2.1
 	github.com/antchfx/xmlquery v1.3.15
 	github.com/aquasecurity/trivy v0.39.0
 	github.com/containerd/console v1.0.3
