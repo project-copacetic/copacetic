@@ -7,11 +7,11 @@ package pkgmgr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -52,7 +52,7 @@ type VersionComparer struct {
 
 func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer) (types.UpdatePackages, error) {
 	dict := make(map[string]string)
-	var allErrors *multierror.Error
+	var allErrors error
 	for _, u := range updates {
 		if cmp.IsValid(u.Version) {
 			ver, ok := dict[u.Name]
@@ -64,12 +64,12 @@ func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer) (
 		} else {
 			err := fmt.Errorf("invalid version %s found for package %s", u.Version, u.Name)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 	}
 	if allErrors != nil {
-		return nil, allErrors.ErrorOrNil()
+		return nil, allErrors
 	}
 
 	out := types.UpdatePackages{}
@@ -106,22 +106,22 @@ func GetValidatedUpdatesMap(updates types.UpdatePackages, cmp VersionComparer, r
 		return nil, nil
 	}
 
-	var allErrors *multierror.Error
+	var allErrors error
 	for _, file := range files {
 		name, err := reader.GetName(file.Name())
 		if err != nil {
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		version, err := reader.GetVersion(file.Name())
 		if err != nil {
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, name)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 
@@ -135,14 +135,14 @@ func GetValidatedUpdatesMap(updates types.UpdatePackages, cmp VersionComparer, r
 		if cmp.LessThan(version, p.Version) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", name, version, p.Version)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		p.Filename = file.Name()
 	}
 
 	if allErrors != nil {
-		return nil, allErrors.ErrorOrNil()
+		return nil, allErrors
 	}
 	return m, nil
 }

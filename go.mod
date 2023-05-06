@@ -1,6 +1,6 @@
 module github.com/project-copacetic/copacetic
 
-go 1.19
+go 1.20
 
 // v0.3.1-0.20230104082527-d6f58551be3f is taken from github.com/moby/buildkit v0.11.0
 // spdx logic write on v0.3.0 and incompatible with v0.3.1-0.20230104082527-d6f58551be3f

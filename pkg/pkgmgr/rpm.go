@@ -15,7 +15,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -275,19 +274,19 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		}
 		log.Debugf("RPM tools probe results: %v", rpmTools)
 
-		var allErrors *multierror.Error
+		var allErrors error
 		if rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
 			err = errors.New("image contains no RPM package managers needed for patching")
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 		}
 		if rpmTools["rpm"] == "" {
 			err = errors.New("image does not have the rpm tool needed for patch verification")
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 		}
 		if allErrors != nil {
-			return allErrors.ErrorOrNil()
+			return allErrors
 		}
 
 		rm.rpmTools = rpmTools
@@ -468,7 +467,7 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 	// Walk files and check update name is prefix for file name
 	// results.manifest file is expected to the `rpm -qa <packages ...>`
 	// using the resultQueryFormat with tab delimiters.
-	var allErrors *multierror.Error
+	var allErrors error
 	lineIndex := 0
 	for _, update := range updates {
 		expectedPrefix := update.Name + "\t"
@@ -485,7 +484,7 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		// Strip epoch from update.Version; report may specify it, but RPM naming scheme does not support epochs
@@ -493,11 +492,11 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 		if cmp.LessThan(version, expectedVersion) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
 	}
 
-	return allErrors.ErrorOrNil()
+	return allErrors
 }

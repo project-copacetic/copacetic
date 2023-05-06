@@ -8,12 +8,12 @@ package pkgmgr
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/hashicorp/go-multierror"
 	debVer "github.com/knqyf263/go-deb-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -354,7 +354,7 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 	}
 
 	// for each target package, validate version is mapped version is >= requested version
-	var allErrors *multierror.Error
+	var allErrors error
 	for _, update := range updates {
 		version, ok := updateMap[update.Name]
 		if !ok {
@@ -364,17 +364,17 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		if cmp.LessThan(version, update.Version) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
 	}
 
-	return allErrors.ErrorOrNil()
+	return allErrors
 }

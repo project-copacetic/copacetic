@@ -8,13 +8,13 @@ package pkgmgr
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/hashicorp/go-multierror"
 	apkVer "github.com/knqyf263/go-apk-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -87,7 +87,7 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 	//
 	// <package name>-<version>
 	// ...
-	var allErrors *multierror.Error
+	var allErrors error
 	lineIndex := 0
 	for _, update := range updates {
 		expectedPrefix := update.Name + "-"
@@ -103,19 +103,19 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		if cmp.LessThan(version, update.Version) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
 			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			allErrors = errors.Join(allErrors, err)
 			continue
 		}
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
 	}
 
-	return allErrors.ErrorOrNil()
+	return allErrors
 }
 
 func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest) (*llb.State, error) {
