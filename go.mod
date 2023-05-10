@@ -11,7 +11,7 @@ require (
 	github.com/antchfx/xmlquery v1.3.15
 	github.com/aquasecurity/trivy v0.39.0
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.7.0
+	github.com/containerd/containerd v1.7.1
 	github.com/distribution/distribution v2.8.1+incompatible
 	github.com/docker/cli v23.0.5+incompatible
 	github.com/google/go-containerregistry v0.14.0
@@ -31,13 +31,13 @@ require (
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230106234847-43070de90fa1 // indirect
-	github.com/Microsoft/go-winio v0.6.0 // indirect
+	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/antchfx/xpath v1.2.3 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230116084806-4bcdf1c414d0 // indirect
 	github.com/containerd/continuity v0.3.0 // indirect
-	github.com/containerd/ttrpc v1.2.1 // indirect
+	github.com/containerd/ttrpc v1.2.2 // indirect
 	github.com/containerd/typeurl v1.0.2 // indirect
-	github.com/containerd/typeurl/v2 v2.1.0 // indirect
+	github.com/containerd/typeurl/v2 v2.1.1 // indirect
 	github.com/cyphar/filepath-securejoin v0.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/distribution v2.8.1+incompatible // indirect
@@ -89,7 +89,7 @@ require (
 	golang.org/x/exp v0.0.0-20230224173230-c95f2b4c22f2 // indirect
 	golang.org/x/mod v0.9.0 // indirect
 	golang.org/x/net v0.8.0 // indirect
-	golang.org/x/sys v0.6.0 // indirect
+	golang.org/x/sys v0.7.0 // indirect
 	golang.org/x/text v0.8.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/tools v0.7.0 // indirect
