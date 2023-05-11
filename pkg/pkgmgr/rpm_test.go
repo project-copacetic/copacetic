@@ -6,7 +6,6 @@
 package pkgmgr
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -256,11 +255,11 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 
 	testCases := []struct {
-		name          string
-		updates       types.UpdatePackages
-		cmp           VersionComparer
-		resultsPath   string
-		expectedError error
+		name        string
+		updates     types.UpdatePackages
+		cmp         VersionComparer
+		resultsPath string
+		expectedErr error
 	}{
 		{
 			name: "successful validation",
@@ -270,6 +269,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 			},
 			cmp:         rpmComparer,
 			resultsPath: "testdata/rpm_valid.txt",
+			expectedErr: nil,
 		},
 		{
 			name: "downloaded package version lower than required",
@@ -277,27 +277,27 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 				{Name: "openssl", Version: "3.1.1k-21.cm2"},
 				{Name: "openssl-libs", Version: "3.1.1k-21.cm2"},
 			},
-			cmp:           rpmComparer,
-			resultsPath:   "testdata/rpm_valid.txt",
-			expectedError: fmt.Errorf("2 errors occurred:\n\t* downloaded package openssl version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update\n\t* downloaded package openssl-libs version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update"), // nolint:lll
+			cmp:         rpmComparer,
+			resultsPath: "testdata/rpm_valid.txt",
+			expectedErr: fmt.Errorf("downloaded package openssl version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update\ndownloaded package openssl-libs version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update"), // nolint:lll
 		},
 		{
 			name: "unexpected number of installed packages",
 			updates: types.UpdatePackages{
 				{Name: "openssl", Version: "1.1.1k-21.cm2"},
 			},
-			cmp:           rpmComparer,
-			resultsPath:   "testdata/rpm_valid.txt",
-			expectedError: fmt.Errorf("expected 1 updates, installed 2"),
+			cmp:         rpmComparer,
+			resultsPath: "testdata/rpm_valid.txt",
+			expectedErr: fmt.Errorf("expected 1 updates, installed 2"),
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath)
-			if tc.expectedError != nil {
-				if err == nil || errors.Is(err, tc.expectedError) {
-					t.Errorf("expected error %v, got %v", tc.expectedError, err)
+			if tc.expectedErr != nil {
+				if err == nil || err.Error() != tc.expectedErr.Error() {
+					t.Errorf("expected error %v, got %v", tc.expectedErr, err)
 				}
 			} else {
 				if err != nil {

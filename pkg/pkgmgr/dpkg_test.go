@@ -6,7 +6,6 @@
 package pkgmgr
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -201,9 +200,9 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 	})
 
 	t.Run("non-existing manifest file", func(t *testing.T) {
-		expectedErr := fmt.Errorf("%s could not be opened", nonExistingManifestPath)
+		expectedErr := fmt.Errorf("open %s: no such file or directory", nonExistingManifestPath)
 		_, actualErr := dpkgParseResultsManifest(nonExistingManifestPath)
-		if errors.Is(actualErr, expectedErr) {
+		if actualErr.Error() != expectedErr.Error() {
 			t.Fatalf("Expected error: %v, Actual error: %v", expectedErr, actualErr)
 		}
 	})
@@ -222,7 +221,7 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 	t.Run("invalid manifest file", func(t *testing.T) {
 		expectedErr := fmt.Errorf("unexpected results.manifest file entry: invalid")
 		_, actualErr := dpkgParseResultsManifest(invalidManifestPath)
-		if errors.Is(actualErr, expectedErr) {
+		if actualErr.Error() != expectedErr.Error() {
 			t.Fatalf("Expected error: %v, Actual error: %v", expectedErr, actualErr)
 		}
 	})

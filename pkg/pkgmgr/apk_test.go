@@ -6,7 +6,6 @@
 package pkgmgr
 
 import (
-	"errors"
 	"fmt"
 	"reflect"
 	"testing"
@@ -121,14 +120,28 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			updates:     []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
 			cmp:         apkComparer,
 			resultsPath: "testdata/apk_invalid.txt",
-			expectedErr: fmt.Errorf("2 errors occurred:\n\t* invalid version x.y found for package apk-tools\n\t* invalid version a.b.c found for package busybox"),
+			expectedErr: fmt.Errorf("invalid version x.y found for package apk-tools\ninvalid version a.b.c found for package busybox"),
 		},
 		{
-			name:        "expected 2 updates, installed 1",
+			name:        "expected 1 updates, installed 2",
 			updates:     []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}},
 			cmp:         apkComparer,
 			resultsPath: "testdata/apk_valid.txt",
-			expectedErr: fmt.Errorf("expected 2 updates, installed 1"),
+			expectedErr: fmt.Errorf("expected 1 updates, installed 2"),
+		},
+		{
+			name:        "lower version installed than required",
+			updates:     []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}, {Name: "busybox", Version: "2.0"}},
+			cmp:         apkComparer,
+			resultsPath: "testdata/apk_valid.txt",
+			expectedErr: fmt.Errorf("downloaded package busybox version 1.33.1-r8 lower than required 2.0 for update"),
+		},
+		{
+			name:        "package not installed warning",
+			updates:     []types.UpdatePackage{{Name: "curl", Version: "1.0.0-r0"}, {Name: "apk-tools", Version: "2.12.7-r0"}, {Name: "busybox", Version: "1.33.1-r8"}},
+			cmp:         apkComparer,
+			resultsPath: "testdata/apk_valid.txt",
+			expectedErr: nil,
 		},
 	}
 
@@ -138,7 +151,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			// Run the function to be tested
 			err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath)
 			if tc.expectedErr != nil {
-				if err == nil || errors.Is(err, tc.expectedErr) {
+				if err == nil || err.Error() != tc.expectedErr.Error() {
 					t.Errorf("expected error %v, got %v", tc.expectedErr, err)
 				}
 			} else {
