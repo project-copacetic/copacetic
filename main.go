@@ -18,6 +18,9 @@ import (
 // Global for Debug logging flag.
 var debug bool
 
+// Global for version string.
+var version string
+
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:   "copa",
@@ -32,6 +35,7 @@ func newRootCmd() *cobra.Command {
 			return cmd.Usage()
 		},
 		SilenceUsage: true,
+		Version:      version,
 	}
 
 	flags := rootCmd.PersistentFlags()
