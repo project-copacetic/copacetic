@@ -1,0 +1,11 @@
+name: 'Ensure SHA pinned actions'
+on: [pull_request]
+
+permissions: read-all
+
+jobs:
+  ensure-pin:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Ensure SHA pinned actions
+      uses: zgosalvez/github-actions-ensure-sha-pinned-actions@555a30da2656b4a7cf47b107800bef097723363e # v2.1.3
