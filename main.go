@@ -15,8 +15,11 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Global for Debug logging flag.
-var debug bool
+// Globals for Debug logging flag and version reporting.
+var (
+	debug   bool
+	version string
+)
 
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
@@ -32,6 +35,7 @@ func newRootCmd() *cobra.Command {
 			return cmd.Usage()
 		},
 		SilenceUsage: true,
+		Version:      version,
 	}
 
 	flags := rootCmd.PersistentFlags()
