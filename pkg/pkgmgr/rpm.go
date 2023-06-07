@@ -256,9 +256,10 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	outStatePath := filepath.Join(rm.workingFolder, resultsPath)
 	rpmDB := getRPMDBType(outStatePath)
 	log.Debugf("RPM DB Type in image is: %s", rpmDB)
-	if rpmDB == RPMDBManifests {
+	switch rpmDB {
+	case RPMDBManifests:
 		rm.isDistroless = true
-	} else if rpmDB == RPMDBNone || rpmDB == RPMDBMixed {
+	case RPMDBNone, RPMDBMixed:
 		err := fmt.Errorf("could not find determine RPM DB type of target image: %v", rpmDB)
 		log.Error(err)
 		return err

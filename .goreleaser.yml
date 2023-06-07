@@ -3,8 +3,10 @@ builds:
   - id: copacetic
     goos:
     - linux
+    - darwin
     goarch:
     - amd64
+    - arm64
     env:
       - CGO_ENABLED=0
       - GO111MODULE=on
@@ -22,7 +24,7 @@ archives:
     builds:
       - copacetic
     format: tar.gz
-    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: "{{ .ProjectName }}_checksums.txt"

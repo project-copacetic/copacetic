@@ -52,5 +52,17 @@
         "tag": "2.0.20220527",
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/dnf/microdnf/rpm"
+    },
+    {
+        "image": "docker.io/library/centos",
+        "tag": "7.6.1810",
+        "distro": "CentOS",
+        "description": "Valid rpm DB, yum present"
+    },
+    {
+        "image": "docker.io/library/amazonlinux",
+        "tag": "2.0.20210326.0",
+        "distro": "Amazon Linux",
+        "description": "Valid rpm DB, yum present"
     }
 ]
