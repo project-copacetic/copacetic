@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/hashicorp/go-multierror"
@@ -276,16 +277,26 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	// The package name is used as the file name but has to deal with two possible idiosyncrasies:
 	// - Older distroless images had a bug where the file names were base64 encoded. If the base64 versions
 	//   of the names were found in the folder previously, then we use those names.
-	const copyStatusTemplate = `find . -name '*.fields' -exec sh -c
+	copyStatusTemplate := `find . -name '*.fields' -exec sh -c
 		"awk -v statusDir=%s -v statusdNames=\"(%s)\"
-			'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2} END
-			 {cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
+			'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2}
+			 END{cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
 			  cmd | getline b64name ;
 			  close(cmd) ;
-			  outname = b64name in b64names ? b64name : a[\"Package:\"] ;
+			  textname = a[\"Package:\"] ;`
+
+	// older distroless/base digests appear to be truncated to use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
+	if checkContainsLibssl1(dm.statusdNames) {
+		copyStatusTemplate += `
+			  gsub(\"\\\\.[^.]*$\", \"\", textname);`
+	}
+
+	copyStatusTemplate += `
+			  outname = b64name in b64names ? b64name : textname;
 			  outpath = statusDir \"/\" outname ;
 			  printf \"cp \\\"%%s\\\" \\\"%%s\\\"\\\n\",FILENAME,outpath }'
 		{} | sh" \;`
+
 	copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
 	statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
 
@@ -293,6 +304,15 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
 	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
 	return &merged, nil
+}
+
+func checkContainsLibssl1(s string) bool {
+	pattern := `(^|\s)libssl1(\s|$)`
+	matched, err := regexp.MatchString(pattern, s)
+	if err != nil {
+		return false
+	}
+	return matched
 }
 
 func dpkgParseResultsManifest(path string) (map[string]string, error) {

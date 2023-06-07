@@ -278,3 +278,25 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
+
+func TestCheckContainsLibssl1(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"", false},
+		{"base libssl1", true},
+		{"base libssl1.1 tzdata ", false},
+		{"base libssl1 libssl1.1", true},
+		{"base tzdata", false},
+	}
+
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			got := checkContainsLibssl1(test.input)
+			if got != test.expected {
+				t.Errorf("checkContainsLibssl1(%q) = %v, want %v", test.input, got, test.expected)
+			}
+		})
+	}
+}

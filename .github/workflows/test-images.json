@@ -1,36 +1,42 @@
 [
     {
-        "image": "mcr.microsoft.com/oss/grafana/grafana",
-        "tag": "v8.2.5",
+        "image": "docker.io/grafana/grafana",
+        "tag": "8.2.5",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present"
     },
     {
-        "image": "mcr.microsoft.com/oss/nginx/nginx",
+        "image": "docker.io/library/nginx",
         "tag": "1.21.6",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present"
     },
     {
-        "image": "mcr.microsoft.com/oss/kubernetes/kube-proxy",
+        "image": "registry.k8s.io/kube-proxy",
         "tag": "v1.23.4",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, custom network config"
     },
     {
-        "image": "mcr.microsoft.com/oss/fluent/fluent-bit",
-        "tag": "v1.8.4",
+        "image": "registry.k8s.io/kube-proxy",
+        "tag": "v1.27.2",
+        "distro": "Custom Google Distroless",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1.1"
+    },
+    {
+        "image": "docker.io/fluent/fluent-bit",
+        "tag": "1.8.4",
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with base64 names, no apt"
     },
     {
-        "image": "mcr.microsoft.com/oss/open-policy-agent/opa",
+        "image": "docker.io/openpolicyagent/opa",
         "tag": "0.46.0",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt"
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1"
     },
     {
-        "image": "mcr.microsoft.com/oss/calico/cni",
+        "image": "quay.io/calico/cni",
         "tag": "v3.15.1",
         "distro": "Redhat",
         "description": "Valid rpm DB, microdnf & rpm present"
