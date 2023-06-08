@@ -1,7 +1,7 @@
 [
     {
         "image": "docker.io/grafana/grafana",
-        "tag": "8.2.5",
+        "tag": "8.5.0",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present"
     },
