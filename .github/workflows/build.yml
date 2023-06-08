@@ -124,4 +124,4 @@ jobs:
             echo "[INFO]: Run copa on target ..."
             ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
             echo "[INFO]: Rescanning patched image with same vuln DB ..."
-            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched"
+            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1
