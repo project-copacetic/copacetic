@@ -10,7 +10,7 @@ require (
 	github.com/containerd/containerd v1.7.1
 	github.com/distribution/distribution v2.8.2+incompatible
 	github.com/docker/cli v23.0.6+incompatible
-	github.com/google/go-containerregistry v0.15.1
+	github.com/google/go-containerregistry v0.15.2
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20230223133812-3ed183d23422
