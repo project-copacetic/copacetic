@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/hashicorp/go-multierror"
@@ -286,7 +285,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 			  textname = a[\"Package:\"] ;`
 
 	// older distroless/base digests appear to be truncated to use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
-	if checkContainsLibssl1(dm.statusdNames) {
+	if !strings.Contains(dm.statusdNames, ".") {
 		copyStatusTemplate += `
 			  gsub(\"\\\\.[^.]*$\", \"\", textname);`
 	}
@@ -304,15 +303,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
 	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
 	return &merged, nil
-}
-
-func checkContainsLibssl1(s string) bool {
-	pattern := `(^|\s)libssl1(\s|$)`
-	matched, err := regexp.MatchString(pattern, s)
-	if err != nil {
-		return false
-	}
-	return matched
 }
 
 func dpkgParseResultsManifest(path string) (map[string]string, error) {
