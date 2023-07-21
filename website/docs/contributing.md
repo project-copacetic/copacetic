@@ -4,6 +4,9 @@ title: Contributing
 
 Welcome! We are very happy to accept community contributions to the project, whether through [filing issues](#contributing-issues) or [code](#contributing-code) in the form of [Pull Requests](#pull-requests). Please note that by participating in this project, you agree to abide by the [Code of Conduct](./code-of-conduct.md), as well as the terms of the [Developer Certificate of Origin](#developer-certificate-of-origin-dco).
 
+## Bi-Weekly Community Meeting
+A great way to get started is to join our bi-weekly community meeting. The meeting is held every other Monday from 1:30pm PT - 2:15pm PT. You can find the agenda and links to join [here](https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit?usp=sharing)
+
 ## Contributing Issues
 
 Before opening any new issues, please search our [existing GitHub issues](https://github.com/project-copacetic/copacetic/issues) to check if your bug or suggestion has already been filed. If such an issue already exists, we recommend adding your comments and perspective to that existing issue instead.
