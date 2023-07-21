@@ -82,5 +82,19 @@
         "digest": "sha256:06380711d6a8ac0b6989f7e2a4419e560796791d9c7c843753a719c73552dc30",
         "distro": "Amazon Linux",
         "description": "Valid rpm DB, yum present"
+    },
+    {
+        "image": "docker.io/library/oraclelinux",
+        "tag": "7.9",
+        "digest": "sha256:ba39a0daabd2df95ed5f374d016e87513f8e579ecc5a1599d7cf94679a281a34",
+        "distro": "Oracle Linux 7.9",
+        "description": "Valid rpm DB, yum present"
+    },
+    {
+        "image": "docker.io/library/oraclelinux",
+        "tag": "8.8",
+        "digest": "sha256:3278c8126ecc10ca719a4faf61b6e0d6df7aa1adfae92928aeea69a02b098a60",
+        "distro": "Oracle Linux 8.8",
+        "description": "Valid rpm DB, yum present"
     }
 ]
