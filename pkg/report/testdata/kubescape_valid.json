@@ -1,0 +1,31 @@
+{
+    "apiVersion": "spdx.softwarecomposition.kubescape.io/v1beta1",
+    "kind": "VulnerabilityManifest",
+    "spec": {
+        "payload": {
+            "distro": {
+                "name": "debian",
+                "version": "10"
+            },
+            "matches": [
+                {
+                    "artifact": {
+                        "language": "",
+                        "name": "libsystemd0",
+                        "purl": "pkg:deb/debian/libsystemd0@241-7~deb10u9?arch=amd64\u0026upstream=systemd\u0026distro=debian-10",
+                        "type": "deb",
+                        "version": "241-7~deb10u9"
+                    },
+                    "vulnerability": {
+                        "fix": {
+                            "state": "fixed",
+                            "versions": [
+                                "241-7~deb10u10"
+                            ]
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}

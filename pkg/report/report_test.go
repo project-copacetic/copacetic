@@ -41,6 +41,21 @@ func TestTryParseScanReport(t *testing.T) {
 			manifest: nil,
 			err:      fmt.Errorf("testdata/invalid.json is not a supported scan report format"),
 		},
+		{
+			file: "testdata/kubescape_valid.json",
+			manifest: &types.UpdateManifest{
+				OSType:    "debian",
+				OSVersion: "10",
+				Arch:      "amd64",
+				Updates: []types.UpdatePackage{
+					{
+						Name:    "libsystemd0",
+						Version: "241-7~deb10u10",
+					},
+				},
+			},
+			err: nil,
+		},
 	}
 
 	// Loop over test cases and run TryParseScanReport function with each input file

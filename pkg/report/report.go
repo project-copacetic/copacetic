@@ -23,6 +23,7 @@ type ScanReportParser interface {
 
 func TryParseScanReport(file string) (*types.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
+		&KubescapeParser{},
 		&TrivyParser{},
 		&QualysParser{},
 	}
