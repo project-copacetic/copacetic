@@ -1,67 +1,85 @@
 [
     {
-        "image": "mcr.microsoft.com/oss/grafana/grafana",
-        "tag": "v8.2.5",
+        "image": "docker.io/grafana/grafana",
+        "tag": "8.5.0",
+        "digest": "sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present"
     },
     {
-        "image": "mcr.microsoft.com/oss/nginx/nginx",
+        "image": "docker.io/library/nginx",
         "tag": "1.21.6",
+        "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present"
     },
     {
-        "image": "mcr.microsoft.com/oss/kubernetes/kube-proxy",
+        "image": "registry.k8s.io/kube-proxy",
         "tag": "v1.23.4",
+        "digest": "sha256:30116c7218264d95623d3918a50da703675755cae866cd4c324586611fcd50ea",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, custom network config"
     },
     {
-        "image": "mcr.microsoft.com/oss/fluent/fluent-bit",
-        "tag": "v1.8.4",
+        "image": "registry.k8s.io/kube-proxy",
+        "tag": "v1.27.2",
+        "digest": "sha256:1e4f13f5f5c215813fb9c9c6f56da1c0354363f2a69bd12732658f79d585864f",
+        "distro": "Custom Google Distroless",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1.1"
+    },
+    {
+        "image": "docker.io/fluent/fluent-bit",
+        "tag": "1.8.4",
+        "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with base64 names, no apt"
     },
     {
-        "image": "mcr.microsoft.com/oss/open-policy-agent/opa",
+        "image": "docker.io/openpolicyagent/opa",
         "tag": "0.46.0",
+        "digest": "sha256:c4b11c9b86eaba41276ae682bb6875332316242010b7523efe30f365ad0c3cb8",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt"
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1"
     },
     {
-        "image": "mcr.microsoft.com/oss/calico/cni",
+        "image": "quay.io/calico/cni",
         "tag": "v3.15.1",
+        "digest": "sha256:a925b445c2688fc9c149b20ea04faabd40610d3304a6efda68e5dada7a41b813",
         "distro": "Redhat",
         "description": "Valid rpm DB, microdnf & rpm present"
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
         "tag": "1.0.20220218",
+        "digest": "sha256:830120b2cbfb7489c6f3270e1c74f3db0de84a4d33fecfffd427890b94d2f236",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present"
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
         "tag": "1.0.20220218-arm64",
+        "digest": "sha256:f97ccb4565f8985c28c6dbc7f13cfea0877652b70545f844eb0b83e4475954d1",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present, arm64 cross-arch"
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/distroless/base",
         "tag": "2.0.20220527",
+        "digest": "sha256:f550c5428df17b145851ad75983aca6d613ad4b51ca7983b2a83e67d0ac91a5d",
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/dnf/microdnf/rpm"
     },
     {
         "image": "docker.io/library/centos",
         "tag": "7.6.1810",
+        "digest": "sha256:62d9e1c2daa91166139b51577fe4f4f6b4cc41a3a2c7fc36bd895e2a17a3e4e6",
         "distro": "CentOS",
         "description": "Valid rpm DB, yum present"
     },
     {
         "image": "docker.io/library/amazonlinux",
         "tag": "2.0.20210326.0",
+        "digest": "sha256:06380711d6a8ac0b6989f7e2a4419e560796791d9c7c843753a719c73552dc30",
         "distro": "Amazon Linux",
         "description": "Valid rpm DB, yum present"
     }

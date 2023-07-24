@@ -105,6 +105,26 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Trivy ignore policy
+        shell: bash
+        run: |
+          cat <<EOF >>trivy_ignore.rego
+          package trivy
+
+          import data.lib.trivy
+
+          default ignore = false
+
+          ignore_vulnerability_ids := {
+            # centos 7.6.1810
+            # bind-license package version "9.11.4-26.P2.el7_9.14" does not exist
+            "CVE-2023-2828"
+          }
+
+          ignore {
+            input.VulnerabilityID == ignore_vulnerability_ids[_]
+          }
+          EOF
       - name: Run functional test in dev container
         uses: devcontainers/ci@57eaf0c9b518a76872bc429cdceefd65a912309b # v0.3.1900000329
         with:
@@ -116,12 +136,12 @@ jobs:
             set -e
             echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
             echo "[INFO]: Scanning image with trivy ..."
-            trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}"
+            trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" --exit-on-eol 1 --ignore-policy trivy_ignore.rego
             echo "[INFO]: Start buildkitd in the background ..."
             docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.11.0" --addr tcp://0.0.0.0:$BUILDKIT_PORT
             docker stats buildkitd --no-stream
             sudo lsof -nP -iTCP -sTCP:LISTEN
             echo "[INFO]: Run copa on target ..."
-            ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
+            ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
             echo "[INFO]: Rescanning patched image with same vuln DB ..."
-            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched"
+            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1 --exit-on-eol 1 --ignore-policy trivy_ignore.rego
