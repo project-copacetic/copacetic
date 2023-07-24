@@ -7,7 +7,7 @@ require (
 	github.com/antchfx/xmlquery v1.3.15
 	github.com/aquasecurity/trivy v0.32.1
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.7.1
+	github.com/containerd/containerd v1.7.2
 	github.com/distribution/distribution v2.8.2+incompatible
 	github.com/docker/cli v23.0.6+incompatible
 	github.com/google/go-containerregistry v0.15.2
@@ -31,7 +31,7 @@ require (
 	github.com/antchfx/xpath v1.2.3 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230116084806-4bcdf1c414d0 // indirect
 	github.com/caarlos0/env/v6 v6.10.1 // indirect
-	github.com/containerd/continuity v0.3.0 // indirect
+	github.com/containerd/continuity v0.4.1 // indirect
 	github.com/containerd/ttrpc v1.2.2 // indirect
 	github.com/containerd/typeurl v1.0.2 // indirect
 	github.com/containerd/typeurl/v2 v2.1.1 // indirect
