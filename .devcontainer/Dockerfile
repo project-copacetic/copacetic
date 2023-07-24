@@ -8,10 +8,10 @@ FROM mcr.microsoft.com/vscode/devcontainers/go:0-${VARIANT}
 ARG NODE_VERSION="none"
 
 # [Choice] Trivy version: see https://github.com/aquasecurity/trivy/releases. Must be >0.20.0.
-ARG TRIVY_VERSION="0.37.3"
+ARG TRIVY_VERSION="0.42.0"
 
 # [Choice] Buildkit version: see https://github.com/moby/buildkit/releases. Must be >0.10.3.
-ARG BUILDKIT_VERSION="0.11.4"
+ARG BUILDKIT_VERSION="0.11.6"
 
 # Optionally install nodejs if specified
 RUN if [ "${NODE_VERSION}" != "none" ]; then su vscode -c "umask 0002 && . /usr/local/share/nvm/nvm.sh && nvm install ${NODE_VERSION} 2>&1"; fi

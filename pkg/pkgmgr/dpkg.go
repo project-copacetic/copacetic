@@ -276,20 +276,26 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	// The package name is used as the file name but has to deal with two possible idiosyncrasies:
 	// - Older distroless images had a bug where the file names were base64 encoded. If the base64 versions
 	//   of the names were found in the folder previously, then we use those names.
-	// - Non-base64 encoded names don't use the full package name, but instead appear to be truncated to
-	//   use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
-	const copyStatusTemplate = `find . -name '*.fields' -exec sh -c
+	copyStatusTemplate := `find . -name '*.fields' -exec sh -c
 		"awk -v statusDir=%s -v statusdNames=\"(%s)\"
 			'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2}
 			 END{cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
 			  cmd | getline b64name ;
 			  close(cmd) ;
-			  textname = a[\"Package:\"] ;
-			  gsub(\"\\\\.[^.]*$\", \"\", textname);
+			  textname = a[\"Package:\"] ;`
+
+	// older distroless/base digests appear to be truncated to use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
+	if !strings.Contains(dm.statusdNames, ".") {
+		copyStatusTemplate += `
+			  gsub(\"\\\\.[^.]*$\", \"\", textname);`
+	}
+
+	copyStatusTemplate += `
 			  outname = b64name in b64names ? b64name : textname;
 			  outpath = statusDir \"/\" outname ;
 			  printf \"cp \\\"%%s\\\" \\\"%%s\\\"\\\n\",FILENAME,outpath }'
 		{} | sh" \;`
+
 	copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
 	statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
 
