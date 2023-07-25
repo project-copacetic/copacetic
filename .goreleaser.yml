@@ -14,7 +14,7 @@ builds:
       -X github.com/project-copacetic/copacetic/pkg/version.GitVersion={{.Version}}
       -X github.com/project-copacetic/copacetic/pkg/version.GitCommit={{.Commit}}
       -X github.com/project-copacetic/copacetic/pkg/version.BuildDate={{.Date}}
-      -X main.Version=$(.Version)
+      -X main.version={{.Version}}
       -extldflags "-static"
     binary: copa
     hooks: {}
