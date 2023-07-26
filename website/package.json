@@ -43,8 +43,8 @@
   "engines": {
     "node": ">=16.14"
   },
-  "resolutions": { 
-    "trim": "^0.0.3", 
-    "got": "^11.8.5" 
+  "resolutions": {
+    "trim": "^0.0.3",
+    "got": "^11.8.5"
   }
 }
