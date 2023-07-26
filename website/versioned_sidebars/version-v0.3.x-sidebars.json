@@ -1,0 +1,10 @@
+{
+  "sidebar": [
+    "introduction",
+    "installation",
+    "quick-start",
+    "design",
+    "contributing",
+    "code-of-conduct"
+  ]
+}
