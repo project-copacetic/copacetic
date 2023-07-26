@@ -132,13 +132,14 @@ jobs:
           push: never
           env: |
             BUILDKIT_PORT=30321
+            BUILDKIT_VERSION=0.12.0
           runCmd: |
             set -e
             echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
             echo "[INFO]: Scanning image with trivy ..."
             trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" --exit-on-eol 1 --ignore-policy trivy_ignore.rego
             echo "[INFO]: Start buildkitd in the background ..."
-            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.11.0" --addr tcp://0.0.0.0:$BUILDKIT_PORT
+            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr tcp://0.0.0.0:$BUILDKIT_PORT
             docker stats buildkitd --no-stream
             sudo lsof -nP -iTCP -sTCP:LISTEN
             echo "[INFO]: Run copa on target ..."
