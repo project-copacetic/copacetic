@@ -22,17 +22,16 @@ jobs:
         run: |
           TAG="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
           MAJOR_VERSION="$(echo "${TAG}" | cut -d '.' -f1)"
-          echo "MAJOR_VERSION=${MAJOR_VERSION}" >> ${GITHUB_ENV}
           MINOR_VERSION="$(echo "${TAG}" | cut -d '.' -f2)"
-          echo "MINOR_VERSION=${MINOR_VERSION}" >> ${GITHUB_ENV}
+          echo "NEWVERSION=v${MAJOR_VERSION}.${MINOR_VERSION}.x" >> ${GITHUB_ENV}
 
       - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9
         with:
           fetch-depth: 0
 
-      - name: Generate docs
+      - name: Generate versioned docs
         shell: bash
-        run: make version-docs NEWVERSION=v${MAJOR_VERSION}.${MINOR_VERSION}.x
+        run: make version-docs
 
       - name: Create release pull request
         uses: peter-evans/create-pull-request@153407881ec5c347639a548ade7d8ad1d6740e38 # v5.0.2
