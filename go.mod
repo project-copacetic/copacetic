@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/Masterminds/semver/v3 v3.2.1
-	github.com/antchfx/xmlquery v1.3.15
+	github.com/antchfx/xmlquery v1.3.17
 	github.com/aquasecurity/trivy v0.32.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.2
@@ -28,7 +28,7 @@ require (
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230106234847-43070de90fa1 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
-	github.com/antchfx/xpath v1.2.3 // indirect
+	github.com/antchfx/xpath v1.2.4 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230116084806-4bcdf1c414d0 // indirect
 	github.com/caarlos0/env/v6 v6.10.1 // indirect
 	github.com/containerd/continuity v0.4.1 // indirect
