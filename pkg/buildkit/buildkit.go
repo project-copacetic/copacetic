@@ -94,7 +94,7 @@ func resolveImageConfig(ctx context.Context, ref string, platform *ispec.Platfor
 		Hosts:   hosts,
 	})
 
-	dgst, config, err := imageutil.Config(ctx, ref, resolver, contentutil.NewBuffer(), nil, platform)
+	_, dgst, config, err := imageutil.Config(ctx, ref, resolver, contentutil.NewBuffer(), nil, platform, nil)
 	if err != nil {
 		return "", nil, err
 	}
@@ -167,7 +167,7 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 			c = cn
 		}
 		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), "", c, os.Stdout, ch)
+		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
 		return err
 	})
 	if err := eg.Wait(); err != nil {
@@ -217,7 +217,7 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 			c = cn
 		}
 		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), "", c, os.Stdout, ch)
+		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
 		return err
 	})
 	eg.Go(func() error {

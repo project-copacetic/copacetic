@@ -40,7 +40,7 @@ This sample illustrates how to [patch containers using vulnerability reports](..
     Alternatively, you can run `buildkitd` in a container, which allows copa to be run without root access to the local buildkit socket:
 
     ```bash
-    export BUILDKIT_VERSION=v0.11.4
+    export BUILDKIT_VERSION=v0.12.0
     export BUILDKIT_PORT=8888
     docker run \
         --detach \
