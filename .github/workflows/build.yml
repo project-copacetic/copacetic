@@ -43,12 +43,12 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@128a63446a954579617e875aaab7d2978154e969 # v2.3.1
+        uses: step-security/harden-runner@cba0d00b1fc9a034e1e642ea0f1103c282990604 # v2.3.1
         with:
           egress-policy: audit
 
       - name: Check out code
-        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       - name: Login to GitHub Container Registry
         uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2.2.0
         with:
@@ -92,7 +92,7 @@ jobs:
         include: ${{ fromJson(needs.build.outputs.include) }}
     steps:
       - name: Check out dev container definition
-        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab # v3.5.2
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       - name: Download the patch tool
         uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
@@ -105,6 +105,26 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Trivy ignore policy
+        shell: bash
+        run: |
+          cat <<EOF >>trivy_ignore.rego
+          package trivy
+
+          import data.lib.trivy
+
+          default ignore = false
+
+          ignore_vulnerability_ids := {
+            # centos 7.6.1810
+            # bind-license package version "9.11.4-26.P2.el7_9.14" does not exist
+            "CVE-2023-2828"
+          }
+
+          ignore {
+            input.VulnerabilityID == ignore_vulnerability_ids[_]
+          }
+          EOF
       - name: Run functional test in dev container
         uses: devcontainers/ci@57eaf0c9b518a76872bc429cdceefd65a912309b # v0.3.1900000329
         with:
@@ -112,16 +132,17 @@ jobs:
           push: never
           env: |
             BUILDKIT_PORT=30321
+            BUILDKIT_VERSION=0.12.0
           runCmd: |
             set -e
             echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
             echo "[INFO]: Scanning image with trivy ..."
-            trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}"
+            trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" --exit-on-eol 1 --ignore-policy trivy_ignore.rego
             echo "[INFO]: Start buildkitd in the background ..."
-            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v0.11.0" --addr tcp://0.0.0.0:$BUILDKIT_PORT
+            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr tcp://0.0.0.0:$BUILDKIT_PORT
             docker stats buildkitd --no-stream
             sudo lsof -nP -iTCP -sTCP:LISTEN
             echo "[INFO]: Run copa on target ..."
-            ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
+            ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
             echo "[INFO]: Rescanning patched image with same vuln DB ..."
-            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched"
+            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1 --exit-on-eol 1 --ignore-policy trivy_ignore.rego

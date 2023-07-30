@@ -20,7 +20,7 @@ p "Use Trivy to output the number of vulnerabilities in the nginx:1.21.6 contain
 pei "trivy image --vuln-type os --ignore-unfixed nginx:1.21.6 | grep Total"
 
 p "Run buildkit in a container locally, we'll need it to run copa"
-pei "docker run --detach --rm --privileged -p 127.0.0.1:8888:8888/tcp --name buildkitd --entrypoint buildkitd moby/buildkit:v0.11.4 --addr tcp://0.0.0.0:8888"
+pei "docker run --detach --rm --privileged -p 127.0.0.1:8888:8888/tcp --name buildkitd --entrypoint buildkitd moby/buildkit:v0.12.0 --addr tcp://0.0.0.0:8888"
 
 p "Confirm the buildkit container is running"
 pei "docker ps"
@@ -28,7 +28,7 @@ pei "docker ps"
 p "Use copa to patch the nginx:1.21.6 container image outputting the patched container image to nginx:1.21.6-patched"
 pei "copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched -a tcp://0.0.0.0:8888"
 
-p "Check that the nginx:1.21.6-patched container image is present locally" 
+p "Check that the nginx:1.21.6-patched container image is present locally"
 pei "docker images"
 
 p "Use Trivy to scan the nginx:1.21.6-patched container image"
@@ -37,6 +37,6 @@ pei "trivy image --vuln-type os --ignore-unfixed nginx:1.21.6-patched | grep Tot
 p "Verify that the patched container image runs"
 pei "docker run nginx:1.21.6-patched"
 
-p "Learn more about Copa at - https://github.com/project-copacetic/copacetic" 
+p "Learn more about Copa at - https://github.com/project-copacetic/copacetic"
 
 
