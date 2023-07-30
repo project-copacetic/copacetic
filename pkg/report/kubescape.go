@@ -13,7 +13,6 @@ import (
 type KubescapeParser struct{}
 
 func parseKubescapeReport(file string) (*kubescapeTypes.VulnerabilityManifest, error) {
-
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
@@ -32,7 +31,6 @@ func getArchitecture(ksr *kubescapeTypes.VulnerabilityManifest) (string, error) 
 	// Example: "purl": "pkg:deb/debian/passwd@1:4.5-1.1?arch=amd64\u0026upstream=shadow\u0026distro=debian-10",
 
 	for i := range ksr.Spec.Payload.Matches {
-
 		purl := ksr.Spec.Payload.Matches[i].Artifact.PURL
 		purlSplit := strings.Split(purl, "?")
 		purlSplit2 := strings.Split(purlSplit[1], "&")
