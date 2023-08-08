@@ -81,16 +81,13 @@ jobs:
       - name: Load test cases for patch testing
         id: load-tests
         shell: bash
-        run: |
-          json="$(cat .github/workflows/test-images.json)"
-          json="${json//[$'\n'$'\r']/''}"
-          echo "include=$json" >> $GITHUB_OUTPUT
+        run: echo "include=$(.github/workflows/generate-matrix.sh)" | tee -a "${GITHUB_OUTPUT}"
     outputs:
       include: ${{ steps.load-tests.outputs.include }}
 
   test-patch:
     needs: build
-    name: Test patch ${{ matrix.image }}:${{ matrix.tag }}
+    name: Test patch ${{matrix.mode }} ${{ matrix.image }}:${{ matrix.tag }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: read-all
@@ -103,53 +100,28 @@ jobs:
         uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           name: copa_edge_linux_amd64.tar.gz
+      - name: Check out code
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      - name: Install required tools
+        shell: bash
+        run: ./scripts/ci/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
+        with:
+          name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
         shell: bash
         run: |
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
-      - name: Install required tools
-        shell: bash
-        run: |
-          curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb -o trivy.deb \
-            && sudo dpkg -i trivy.deb \
-            && rm trivy.deb
-          curl -sfL https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.linux-amd64.tar.gz -o buildkit.tar.gz \
-            && sudo tar -zxvf buildkit.tar.gz -C /usr/local/ \
-            && rm buildkit.tar.gz
-      - name: Create Trivy ignore policy
-        shell: bash
-        run: |
-          cat <<EOF >>trivy_ignore.rego
-          package trivy
-
-          import data.lib.trivy
-
-          default ignore = false
-
-          ignore_vulnerability_ids := {
-            # centos 7.6.1810
-            # bind-license package version "9.11.4-26.P2.el7_9.14" does not exist
-            "CVE-2023-2828"
-          }
-
-          ignore {
-            input.VulnerabilityID == ignore_vulnerability_ids[_]
-          }
-          EOF
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
       - name: Run functional test
         shell: bash
         run: |
-          echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
-
-          echo "[INFO]: Scanning image with trivy ..."
-          trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" --exit-on-eol 1 --ignore-policy trivy_ignore.rego
-
-          echo "[INFO]: Start buildkitd in the background ..."
-          docker run --net=host --detach --rm --privileged -p 127.0.0.1:8888:8888/tcp --name buildkitd --entrypoint buildkitd moby/buildkit:v${{ env.BUILDKIT_VERSION }} --addr tcp://0.0.0.0:8888
-
-          echo "[INFO]: Run copa on target ..."
-          ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://127.0.0.1:8888 --timeout 10m
-
-          echo "[INFO]: Rescanning patched image with same vuln DB ..."
-          trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1 --exit-on-eol 1 --ignore-policy trivy_ignore.rego
+            echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description}}"
+            COPA="$(pwd)/copa" ./scripts/ci/run-functional-tests.sh
+        env:
+          TEST_BUILDKIT_MODE: ${{ matrix.mode }}
+          IMAGE_REF: ${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}
+        
