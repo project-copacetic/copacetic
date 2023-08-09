@@ -1,3 +1,0 @@
-👋 Welcome to the Project Copacetic dev container! 
-It includes everything needed to build `copa` and run the samples
-from the https://github.com/project-copacetic/copacetic/ repository.
