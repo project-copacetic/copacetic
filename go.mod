@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/Masterminds/semver/v3 v3.2.1
 	github.com/antchfx/xmlquery v1.3.17
-	github.com/aquasecurity/trivy v0.44.0
+	github.com/aquasecurity/trivy v0.44.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.3
 	github.com/distribution/distribution v2.8.2+incompatible
@@ -66,7 +66,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/samber/lo v1.38.1 // indirect
-	github.com/secure-systems-lab/go-securesystemslib v0.6.0 // indirect
+	github.com/secure-systems-lab/go-securesystemslib v0.7.0 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
 	github.com/spdx/tools-golang v0.5.1 // indirect
 	github.com/spf13/afero v1.9.5 // indirect
