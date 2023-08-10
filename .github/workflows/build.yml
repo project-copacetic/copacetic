@@ -3,7 +3,7 @@
 # Licensed under the MIT License.
 # ------------------------------------------------------------
 
-name: Build in DevContainer
+name: Build
 on:
   push:
     branches:
@@ -28,13 +28,33 @@ on:
   workflow_dispatch:
 
 env:
-  DEVCON_NAME: ghcr.io/project-copacetic/copacetic/devcontainer
-  DEVCON_VERSION: latest
+  TRIVY_VERSION: 0.44.0
+  BUILDKIT_VERSION: 0.12.0
 
 jobs:
+  unit-test:
+    name: Unit Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: read-all
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@cba0d00b1fc9a034e1e642ea0f1103c282990604 # v2.3.1
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      - name: Unit test
+        shell: bash
+        env:
+          CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
+        run: make test
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@eaaf4bedf32dbdc6b720b63067d99c4d77d6047d # v3.1.4
   build:
-    name: Build and unit test
+    name: Build
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
     permissions:
       packages: write
       contents: read
@@ -46,36 +66,21 @@ jobs:
         uses: step-security/harden-runner@cba0d00b1fc9a034e1e642ea0f1103c282990604 # v2.3.1
         with:
           egress-policy: audit
-
       - name: Check out code
         uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build copa in dev container
-        uses: devcontainers/ci@57eaf0c9b518a76872bc429cdceefd65a912309b # v0.3.1900000329
-        with:
-          imageName: ${{ env.DEVCON_NAME }}
-          imageTag: ${{ env.DEVCON_VERSION }}
-          env: |
-            CODECOV_OPTS=-coverprofile=coverage.txt -covermode=atomic
-          runCmd: |
-            set -e
-            make build
-            make test
-            make archive
-      - name: Upload built tool
+      - name: Build copa
+        shell: bash
+        run: |
+          make build
+          make archive
+      - name: Upload copa to build artifacts
         uses: actions/upload-artifact@0b7f8abb1508181956e8e162db84b466c27e18ce # v3.1.2
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@eaaf4bedf32dbdc6b720b63067d99c4d77d6047d # v3.1.4
       - name: Load test cases for patch testing
         id: load-tests
+        shell: bash
         run: |
           json="$(cat .github/workflows/test-images.json)"
           json="${json//[$'\n'$'\r']/''}"
@@ -87,24 +92,31 @@ jobs:
     needs: build
     name: Test patch ${{ matrix.image }}:${{ matrix.tag }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: read-all
     strategy:
+      fail-fast: false
       matrix:
         include: ${{ fromJson(needs.build.outputs.include) }}
     steps:
-      - name: Check out dev container definition
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
-      - name: Download the patch tool
+      - name: Download copa from build artifacts
         uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
           name: copa_edge_linux_amd64.tar.gz
-      - name: Extract patch tool
-        run: tar xzf copa_edge_linux_amd64.tar.gz
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@465a07811f14bebb1938fbed4728c6a1ff8901fc # v2.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Install required tools
+        shell: bash
+        run: |
+          curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb -o trivy.deb \
+            && sudo dpkg -i trivy.deb \
+            && rm trivy.deb
+          curl -sfL https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.linux-amd64.tar.gz -o buildkit.tar.gz \
+            && sudo tar -zxvf buildkit.tar.gz -C /usr/local/ \
+            && rm buildkit.tar.gz
       - name: Create Trivy ignore policy
         shell: bash
         run: |
@@ -125,24 +137,19 @@ jobs:
             input.VulnerabilityID == ignore_vulnerability_ids[_]
           }
           EOF
-      - name: Run functional test in dev container
-        uses: devcontainers/ci@57eaf0c9b518a76872bc429cdceefd65a912309b # v0.3.1900000329
-        with:
-          cacheFrom: ${{ env.DEVCON_NAME }}
-          push: never
-          env: |
-            BUILDKIT_PORT=30321
-            BUILDKIT_VERSION=0.12.0
-          runCmd: |
-            set -e
-            echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
-            echo "[INFO]: Scanning image with trivy ..."
-            trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" --exit-on-eol 1 --ignore-policy trivy_ignore.rego
-            echo "[INFO]: Start buildkitd in the background ..."
-            docker run --detach --rm --privileged -p 0.0.0.0:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp --name buildkitd --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr tcp://0.0.0.0:$BUILDKIT_PORT
-            docker stats buildkitd --no-stream
-            sudo lsof -nP -iTCP -sTCP:LISTEN
-            echo "[INFO]: Run copa on target ..."
-            ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://0.0.0.0:$BUILDKIT_PORT --timeout 20m
-            echo "[INFO]: Rescanning patched image with same vuln DB ..."
-            trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1 --exit-on-eol 1 --ignore-policy trivy_ignore.rego
+      - name: Run functional test
+        shell: bash
+        run: |
+          echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description }}"
+
+          echo "[INFO]: Scanning image with trivy ..."
+          trivy image --vuln-type os --ignore-unfixed --scanners vuln -f json -o scan.json "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" --exit-on-eol 1 --ignore-policy trivy_ignore.rego
+
+          echo "[INFO]: Start buildkitd in the background ..."
+          docker run --net=host --detach --rm --privileged -p 127.0.0.1:8888:8888/tcp --name buildkitd --entrypoint buildkitd moby/buildkit:v${{ env.BUILDKIT_VERSION }} --addr tcp://0.0.0.0:8888
+
+          echo "[INFO]: Run copa on target ..."
+          ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://127.0.0.1:8888 --timeout 10m
+
+          echo "[INFO]: Rescanning patched image with same vuln DB ..."
+          trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1 --exit-on-eol 1 --ignore-policy trivy_ignore.rego
