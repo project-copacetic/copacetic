@@ -128,7 +128,7 @@ func InitializeBuildkitConfig(ctx context.Context, buildkitAddr, image string, m
 		return nil, err
 	}
 
-	config.Client, err = client.New(ctx, buildkitAddr, client.WithFailFast())
+	config.Client, err = client.New(ctx, buildkitAddr)
 	if err != nil {
 		return nil, err
 	}
