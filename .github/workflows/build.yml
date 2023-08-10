@@ -117,10 +117,6 @@ jobs:
           curl -sfL https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.linux-amd64.tar.gz -o buildkit.tar.gz \
             && sudo tar -zxvf buildkit.tar.gz -C /usr/local/ \
             && rm buildkit.tar.gz
-          curl -sfL https://github.com/joshdk/retry/releases/download/v1.4.0/retry-linux-amd64.tar.gz -o retry.tar.gz \
-            && sudo tar -xzf retry.tar.gz -C /usr/local/bin/ \
-            && rm retry.tar.gz \
-            && sudo chmod +x /usr/local/bin/retry
       - name: Create Trivy ignore policy
         shell: bash
         run: |
@@ -153,7 +149,7 @@ jobs:
           docker run --net=host --detach --rm --privileged -p 127.0.0.1:8888:8888/tcp --name buildkitd --entrypoint buildkitd moby/buildkit:v${{ env.BUILDKIT_VERSION }} --addr tcp://0.0.0.0:8888
 
           echo "[INFO]: Run copa on target ..."
-          retry -max-time 10m ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://127.0.0.1:8888 --timeout 10m
+          ./copa patch -i "${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}" -r scan.json -t "${{ matrix.tag }}-patched" -a tcp://127.0.0.1:8888 --timeout 10m
 
           echo "[INFO]: Rescanning patched image with same vuln DB ..."
           trivy image --vuln-type os --ignore-unfixed --skip-db-update --scanners vuln "${{ matrix.image }}:${{ matrix.tag }}-patched" --exit-code 1 --exit-on-eol 1 --ignore-policy trivy_ignore.rego
