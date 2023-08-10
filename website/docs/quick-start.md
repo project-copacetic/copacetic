@@ -6,7 +6,7 @@ This sample illustrates how to patch containers using vulnerability reports with
 
 ## Prerequisites
 
-* An Ubuntu 22.04 VM configured through the [setup instructions](./installation.md) or a VSCode [devcontainer](./contributing.md/#visual-studio-code-development-container) environment. This includes:
+* An Ubuntu 22.04 VM configured through the [setup instructions](./installation.md). This includes:
   * `copa` tool [built & pathed](./installation.md).
   * [buildkit](https://github.com/moby/buildkit/#quick-start) daemon installed & pathed.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
