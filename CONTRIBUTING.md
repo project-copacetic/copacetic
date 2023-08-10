@@ -19,10 +19,7 @@ When opening an issue, please select the most appropriate template for what you'
 
 ### Getting Started
 
-Follow the instructions to either:
-
-* [Setup your dev environment to build copa](./docs/tutorials/dev-setup.md).
-* [Use the copa development container](./.devcontainer/README.md) in [Visual Studio Code](https://code.visualstudio.com/).
+Follow the instructions to [setup your dev environment to build copa](./docs/tutorials/dev-setup.md).
 
 For an overview of the project components, refer to the [copa design](./docs/vulnerability-driven-patching.md) document.
 

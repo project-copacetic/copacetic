@@ -18,13 +18,6 @@ updates:
     commit-message:
       prefix: "chore"
 
-  - package-ecosystem: "docker"
-    directory: "/.devcontainer"
-    schedule:
-      interval: "daily"
-    commit-message:
-      prefix: "chore"
-      
   - package-ecosystem: "npm"
     directory: "/website"
     schedule:
