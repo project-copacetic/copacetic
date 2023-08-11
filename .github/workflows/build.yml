@@ -79,22 +79,22 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
       - name: Load test cases for patch testing
-        id: load-tests
+        id: load-test-envs-matrix
         shell: bash
-        run: echo "include=$(.github/workflows/generate-matrix.sh)" | tee -a "${GITHUB_OUTPUT}"
+        run: echo "buildkitenvs=$(.github/workflows/scripts/buildkit-env-matrix.sh)" | tee -a "${GITHUB_OUTPUT}"
     outputs:
-      include: ${{ steps.load-tests.outputs.include }}
+      buildkitenvs: ${{ steps.load-test-envs-matrix.outputs.buildkitenvs }}
 
   test-patch:
     needs: build
-    name: Test patch ${{matrix.mode }} ${{ matrix.image }}:${{ matrix.tag }}
+    name: Test patch ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     permissions: read-all
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJson(needs.build.outputs.include) }}
+        buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Download copa from build artifacts
         uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
@@ -104,7 +104,7 @@ jobs:
         uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       - name: Install required tools
         shell: bash
-        run: ./scripts/ci/download-tooling.sh
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
         with:
@@ -115,13 +115,12 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v2
+        uses: docker/setup-qemu-action@2b82ce82d56a2a04d2637cd93a637ae1b359c0a7 # v2.2.0
       - name: Run functional test
         shell: bash
         run: |
-            echo "[INFO]: Patching ${{ matrix.distro }} image with: ${{ matrix.description}}"
-            COPA="$(pwd)/copa" ./scripts/ci/run-functional-tests.sh
-        env:
-          TEST_BUILDKIT_MODE: ${{ matrix.mode }}
-          IMAGE_REF: ${{ matrix.image }}:${{ matrix.tag }}@${{ matrix.digest }}
+          set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa"
+
         
