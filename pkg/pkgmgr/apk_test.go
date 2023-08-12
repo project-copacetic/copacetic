@@ -136,7 +136,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		// Use t.Run to run each test case as a subtest
 		t.Run(tc.name, func(t *testing.T) {
 			// Run the function to be tested
-			err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath)
+			err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath, false)
 			if tc.expectedErr != nil {
 				if err == nil || errors.Is(err, tc.expectedErr) {
 					t.Errorf("expected error %v, got %v", tc.expectedErr, err)

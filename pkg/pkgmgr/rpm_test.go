@@ -294,7 +294,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath)
+			err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath, false)
 			if tc.expectedError != nil {
 				if err == nil || errors.Is(err, tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err)

@@ -23,6 +23,7 @@ type patchArgs struct {
 	workingFolder string
 	buildkitAddr  string
 	timeout       time.Duration
+	ignoreError   bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -38,7 +39,8 @@ func NewPatchCmd() *cobra.Command {
 				ua.appImage,
 				ua.reportFile,
 				ua.patchedTag,
-				ua.workingFolder)
+				ua.workingFolder,
+				ua.ignoreError)
 		},
 	}
 	flags := patchCmd.Flags()
@@ -48,6 +50,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
 	flags.StringVarP(&ua.buildkitAddr, "addr", "a", defaultBuildkitAddr, "Address of buildkitd service, defaults to local buildkitd.sock")
 	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
+	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
