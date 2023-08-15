@@ -40,8 +40,8 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.WorkDir, "working-folder", "w", "", "Working folder, defaults to system temp folder")
 	flags.StringVarP(&ua.BuildkitAddr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.DurationVar(&ua.Timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
-	flags.StringSliceVar(&ua.CacheFrom, "cache-from", nil, "Cache import sources")
-	flags.StringSliceVar(&ua.CacheTo, "cache-to", nil, "Cache export destination")
+	flags.StringArrayVar(&ua.CacheFrom, "cache-from", []string{}, "Cache import sources")
+	flags.StringArrayVar(&ua.CacheTo, "cache-to", []string{}, "Cache export destination")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

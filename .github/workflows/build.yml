@@ -116,11 +116,13 @@ jobs:
           ./copa --version
       - name: Set up QEMU
         uses: docker/setup-qemu-action@2b82ce82d56a2a04d2637cd93a637ae1b359c0a7 # v2.2.0
+      - name: Setup gha cache vars
+        uses: crazy-max/ghaction-github-runtime@v2
       - name: Run functional test
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa"
+          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --cache-from=type=gha,scope=${{matrix.buildkit_mode}} --cache-to=type=gha,scope=${{ matrix.buildkit_mode }}
 
         

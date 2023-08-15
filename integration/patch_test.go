@@ -87,6 +87,18 @@ func patch(t *testing.T, ref, patchedTag, scan string) {
 		"-t="+patchedTag,
 		"-r="+scan,
 		"--timeout=20m",
+		func() string {
+			if cacheFrom == "" {
+				return ""
+			}
+			return "--cache-from=" + cacheFrom
+		}(),
+		func() string {
+			if cacheTo == "" {
+				return ""
+			}
+			return "--cache-to=" + cacheTo
+		}(),
 		addrFl,
 	)
 	out, err := cmd.CombinedOutput()
