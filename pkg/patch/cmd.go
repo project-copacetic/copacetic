@@ -9,11 +9,15 @@ import (
 	"context"
 	"time"
 
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/spf13/cobra"
-)
 
-const (
-	defaultBuildkitAddr = "unix:///run/buildkit/buildkitd.sock"
+	// Register connection helpers for buildkit.
+	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
+	_ "github.com/moby/buildkit/client/connhelper/kubepod"
+	_ "github.com/moby/buildkit/client/connhelper/nerdctlcontainer"
+	_ "github.com/moby/buildkit/client/connhelper/podmancontainer"
+	_ "github.com/moby/buildkit/client/connhelper/ssh"
 )
 
 type patchArgs struct {
@@ -46,7 +50,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
-	flags.StringVarP(&ua.buildkitAddr, "addr", "a", defaultBuildkitAddr, "Address of buildkitd service, defaults to local buildkitd.sock")
+	flags.StringVarP(&ua.buildkitAddr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
