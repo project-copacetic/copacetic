@@ -101,7 +101,7 @@ func resolveImageConfig(ctx context.Context, ref string, platform *ispec.Platfor
 	return dgst, config, nil
 }
 
-func InitializeBuildkitConfig(ctx context.Context, buildkitAddr, image string, manifest *types.UpdateManifest) (*Config, error) {
+func InitializeBuildkitConfig(ctx context.Context, client *client.Client, image string, manifest *types.UpdateManifest) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
@@ -128,10 +128,7 @@ func InitializeBuildkitConfig(ctx context.Context, buildkitAddr, image string, m
 		return nil, err
 	}
 
-	config.Client, err = client.New(ctx, buildkitAddr)
-	if err != nil {
-		return nil, err
-	}
+	config.Client = client
 
 	return &config, nil
 }
