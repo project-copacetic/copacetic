@@ -158,7 +158,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 	probeCmd := fmt.Sprintf(probeTemplate, dpkgStatusPath, dpkgStatusFolder, resultsPath, filepath.Join(resultsPath, "status.d"))
 	probed := mkFolders.Run(llb.Shlex(probeCmd)).Root()
 	outState := llb.Diff(busyBoxApplied, probed)
-	if err := buildkit.SolveToLocal(ctx, dm.config.Client, &outState, dm.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, dm.config.Client, &outState, dm.workingFolder, dm.config.CacheFrom, dm.config.CacheTo); err != nil {
 		return err
 	}
 
@@ -217,7 +217,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates types.UpdateP
 	resultsWritten := aptInstalled.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(aptInstalled, resultsWritten)
 
-	if err := buildkit.SolveToLocal(ctx, dm.config.Client, &resultsDiff, dm.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, dm.config.Client, &resultsDiff, dm.workingFolder, dm.config.CacheFrom, dm.config.CacheTo); err != nil {
 		return nil, err
 	}
 
@@ -267,7 +267,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, resultManifest)
 	resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
-	if err := buildkit.SolveToLocal(ctx, dm.config.Client, &resultsDiff, dm.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, dm.config.Client, &resultsDiff, dm.workingFolder, dm.config.CacheFrom, dm.config.CacheTo); err != nil {
 		return nil, err
 	}
 

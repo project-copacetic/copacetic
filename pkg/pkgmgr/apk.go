@@ -182,7 +182,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdateP
 	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(apkInstalled, resultsWritten)
 
-	if err := buildkit.SolveToLocal(ctx, am.config.Client, &resultsDiff, am.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, am.config.Client, &resultsDiff, am.workingFolder, am.config.CacheFrom, am.config.CacheTo); err != nil {
 		return nil, err
 	}
 

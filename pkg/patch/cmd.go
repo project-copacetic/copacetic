@@ -6,7 +6,8 @@
 package patch
 
 import (
-	"context"
+	"os"
+	"os/signal"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -20,38 +21,27 @@ import (
 	_ "github.com/moby/buildkit/client/connhelper/ssh"
 )
 
-type patchArgs struct {
-	appImage      string
-	reportFile    string
-	patchedTag    string
-	workingFolder string
-	buildkitAddr  string
-	timeout       time.Duration
-}
-
 func NewPatchCmd() *cobra.Command {
-	ua := patchArgs{}
+	ua := Config{}
 	patchCmd := &cobra.Command{
 		Use:     "patch",
 		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
 		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return Patch(context.Background(),
-				ua.timeout,
-				ua.buildkitAddr,
-				ua.appImage,
-				ua.reportFile,
-				ua.patchedTag,
-				ua.workingFolder)
+			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer cancel()
+			return Patch(ctx, &ua)
 		},
 	}
 	flags := patchCmd.Flags()
-	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
-	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
-	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
-	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
-	flags.StringVarP(&ua.buildkitAddr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
-	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
+	flags.StringVarP(&ua.Image, "image", "i", "", "Application image name and tag to patch")
+	flags.StringVarP(&ua.ReportFile, "report", "r", "", "Vulnerability report file path")
+	flags.StringVarP(&ua.PatchedTag, "tag", "t", "", "Tag for the patched image")
+	flags.StringVarP(&ua.WorkDir, "working-folder", "w", "", "Working folder, defaults to system temp folder")
+	flags.StringVarP(&ua.BuildkitAddr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
+	flags.DurationVar(&ua.Timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
+	flags.StringSliceVar(&ua.CacheFrom, "cache-from", nil, "Cache import sources")
+	flags.StringSliceVar(&ua.CacheTo, "cache-to", nil, "Cache export destination")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

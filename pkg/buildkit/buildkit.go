@@ -38,6 +38,8 @@ type Config struct {
 	ConfigData []byte
 	Platform   ispec.Platform
 	ImageState llb.State
+	CacheFrom  []client.CacheOptionsEntry
+	CacheTo    []client.CacheOptionsEntry
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
@@ -133,7 +135,7 @@ func InitializeBuildkitConfig(ctx context.Context, client *client.Client, image 
 	return &config, nil
 }
 
-func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath string) error {
+func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath string, cacheFrom, cacheTo []client.CacheOptionsEntry) error {
 	def, err := st.Marshal(ctx)
 	if err != nil {
 		log.Errorf("st.Marshal failed with %s", err)
@@ -149,8 +151,10 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 				OutputDir: outPath,
 			},
 		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+		Frontend:     "",         // i.e. we are passing in the llb.Definition directly
+		Session:      attachable, // used for authprovider, sshagentprovider and secretprovider
+		CacheImports: cacheFrom,
+		CacheExports: cacheTo,
 	}
 	ch := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
@@ -174,7 +178,7 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 	return nil
 }
 
-func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string) error {
+func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string, cacheFrom, cacheTo []client.CacheOptionsEntry) error {
 	def, err := st.Marshal(ctx)
 	if err != nil {
 		log.Errorf("st.Marshal failed with %s", err)
@@ -184,6 +188,7 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
+
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
@@ -198,8 +203,10 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 				},
 			},
 		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+		Frontend:     "",         // i.e. we are passing in the llb.Definition directly
+		Session:      attachable, // used for authprovider, sshagentprovider and secretprovider
+		CacheImports: cacheFrom,
+		CacheExports: cacheTo,
 	}
 
 	ch := make(chan *client.SolveStatus)
