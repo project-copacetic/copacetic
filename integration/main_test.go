@@ -9,11 +9,13 @@ import (
 var (
 	buildkitAddr string
 	copaPath     string
+	ignoreErrors bool
 )
 
 func TestMain(m *testing.M) {
 	flag.StringVar(&buildkitAddr, "addr", "", "buildkit address to pass through to copa binary")
 	flag.StringVar(&copaPath, "copa", "./copa", "path to copa binary")
+	flag.BoolVar(&ignoreErrors, "ignore-errors", false, "Ignore errors and continue patching")
 	flag.Parse()
 
 	if copaPath == "" {
