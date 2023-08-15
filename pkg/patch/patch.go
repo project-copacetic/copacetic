@@ -110,8 +110,14 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 	}
 	log.Debugf("updates to apply: %v", updates)
 
+	client, err := buildkit.NewClient(ctx, buildkitAddr)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
 	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, buildkitAddr, image, updates)
+	config, err := buildkit.InitializeBuildkitConfig(ctx, client, image, updates)
 	if err != nil {
 		return err
 	}

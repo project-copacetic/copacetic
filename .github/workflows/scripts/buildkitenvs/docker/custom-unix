@@ -1,0 +1,31 @@
+#!/usr/bin/env sh
+
+# dockerd requires containerd snapshotter support to be enabled otherwise required features for buildkit are disabled.
+docker build -t dind -<<EOF
+FROM docker:24.0-dind
+RUN mkdir -p /etc/docker && echo '{"features": { "containerd-snapshotter": true }}' > /etc/docker/daemon.json
+ENTRYPOINT ["dockerd"]
+EOF
+
+: "${DOCKER_DIND_VOLUME:="copa-docker-dind"}"
+
+sock_dir="$(mktemp -d)"
+
+docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
+
+_cleanup() {
+    docker rm -f "$docker_custom_unix_id"
+    sudo rm -rf "${sock_dir}"
+}
+
+trap '_cleanup' EXIT
+
+_check_docker_dind() {
+    docker -H "unix://${sock_dir}/docker.sock" info
+}
+
+while ! _check_docker_dind; do
+    check_docker_dind || sleep 1
+done
+
+export COPA_BUILDKIT_ADDR="docker://unix://${sock_dir}/docker.sock"

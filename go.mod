@@ -8,6 +8,7 @@ require (
 	github.com/aquasecurity/trivy v0.44.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.3
+	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/distribution/distribution v2.8.2+incompatible
 	github.com/docker/cli v24.0.5+incompatible
 	github.com/google/go-containerregistry v0.16.1
@@ -34,6 +35,7 @@ require (
 	github.com/containerd/continuity v0.4.1 // indirect
 	github.com/containerd/ttrpc v1.2.2 // indirect
 	github.com/containerd/typeurl/v2 v2.1.1 // indirect
+	github.com/cpuguy83/go-docker v0.1.2
 	github.com/cyphar/filepath-securejoin v0.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
@@ -94,7 +96,7 @@ require (
 	golang.org/x/tools v0.10.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/grpc v1.55.0 // indirect
+	google.golang.org/grpc v1.55.0
 	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

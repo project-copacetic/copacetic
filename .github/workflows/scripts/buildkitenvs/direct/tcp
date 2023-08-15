@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+
+
+: "${BUILDKIT_PORT:=30321}"
+: "${BUILDKIT_VERSION=0.12.0}"
+
+_buildkit_direct_tcp_id="$(docker run --detach --rm --privileged -p 127.0.0.1::${BUILDKIT_PORT}/tcp  --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr tcp://0.0.0.0:${BUILDKIT_PORT})"
+_buildkitd_tcp_addr="$(docker port ${_buildkit_direct_tcp_id} ${BUILDKIT_PORT})"
+export COPA_BUILDKIT_ADDR="tcp://${_buildkitd_tcp_addr}"
+
+_cleanup() {
+    docker rm -f "${_buildkit_direct_tcp_id}"
+}
+
+trap '_cleanup' EXIT
+
+_check_buildkitd_tcp() {
+    buildctl --addr ${COPA_BUILDKIT_ADDR} debug info
+}
+
+echo "[INFO] Wait for buildkitd to be ready @ ${COPA_BUILDKIT_ADDR}"
+while ! _check_buildkitd_tcp; do
+    sleep 1
+done
