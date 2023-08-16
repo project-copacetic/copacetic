@@ -34,9 +34,9 @@ This sample illustrates how to patch containers using vulnerability reports with
 3. To patch the image, use the Trivy report and specify a buildkit instance to connect to:
 
     By default copa will attempt to auto-connect to an instance in order:
-        1. Default docker buildkit endpoint (requires at least docker v24.0 with [containerd snapshotter](https://docs.docker.com/storage/containerd/#enable-containerd-image-store-on-docker-engine) support enabled)
-        2. Currently selected buildx builder (see: `docker buildx --help`)
-        3. buildkit daemon at the default address `/run/buildkit/buildkitd.sock`
+      1. Default docker buildkit endpoint (requires at least docker v24.0 with [containerd snapshotter](https://docs.docker.com/storage/containerd/#enable-containerd-image-store-on-docker-engine) support enabled)
+      2. Currently selected buildx builder (see: `docker buildx --help`)
+      3. buildkit daemon at the default address `/run/buildkit/buildkitd.sock`
     
     If an instance doesn't exist or that instance doesn't support all the features copa needs the next will be attempted.
     You may need to specify a custom address using the `--addr` flag. Here are the supported formats:
@@ -104,7 +104,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     > ensure that the credentials are configured in the default Docker config.json before running `copa patch`,
     > for example, via `sudo docker login -u <user> -p <password> <registry>`.
 
-4. Scan the patched image and verify that the vulnerabilities have been patched:
+5. Scan the patched image and verify that the vulnerabilities have been patched:
 
     ```bash
     trivy image --vuln-type os --ignore-unfixed mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
@@ -133,7 +133,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     <missing>      4 months ago   /bin/sh -c #(nop) ADD file:09675d11695f65c55…   80.4MB
     ```
 
-5. Run the container to verify that the image has no regressions:
+6. Run the container to verify that the image has no regressions:
 
     ```bash
     $ docker run -it --rm --name nginx-test mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
