@@ -17,6 +17,7 @@ const sidebars = {
     'introduction',
     'installation',
     'quick-start',
+    'troubleshooting',
     'design',
     'contributing',
     'code-of-conduct'
