@@ -8,7 +8,7 @@ This sample illustrates how to patch containers using vulnerability reports with
 
 * An Ubuntu 22.04 VM configured through the [setup instructions](./installation.md). This includes:
   * `copa` tool [built & pathed](./installation.md).
-  * [buildkit](https://github.com/moby/buildkit/#quick-start) daemon installed & pathed.
+  * [buildkit](https://github.com/moby/buildkit/#quick-start) daemon installed & pathed. [Examples](#buildkit-connection-examples)
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
   * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.
 
@@ -31,32 +31,71 @@ This sample illustrates how to patch containers using vulnerability reports with
     ```bash
     trivy image --vuln-type os --ignore-unfixed mcr.microsoft.com/oss/nginx/nginx:1.21.6
 
-3. Patch the image using the Trivy report. You will need to start `buildkitd` if it is not already running:
+3. To patch the image, use the Trivy report and specify a buildkit instance to connect to:
 
+    By default copa will attempt to auto-connect to an instance in order:
+      1. Default docker buildkit endpoint (requires at least docker v24.0 with [containerd snapshotter](https://docs.docker.com/storage/containerd/#enable-containerd-image-store-on-docker-engine) support enabled)
+      2. Currently selected buildx builder (see: `docker buildx --help`)
+      3. buildkit daemon at the default address `/run/buildkit/buildkitd.sock`
+    
+    If an instance doesn't exist or that instance doesn't support all the features copa needs the next will be attempted.
+    You may need to specify a custom address using the `--addr` flag. Here are the supported formats:
+
+    - `unix:///path/to/buildkit.sock` - Connect to buildkit over unix socket.
+    - `tcp://$BUILDKIT_ADDR:$PORT` - Connec to buildkit over TCP. (not recommended for security reasons)
+    - `docker://<docker connection spec>` - Connect to docker, currently only unix sockets are supported, e.g. `docker://unix:///var/run/docker.sock` (or just `docker://`).
+    - `docker-container://my-buildkit-container` - Connect to a buildkitd running in a docker container.
+    - `buildx://my-builder` - Connect to a buildx builder (or `buildx://` for the currently selected builder). *Note: only container-backed buildx instances are currently supported*
+    - `nerdctl-container://my-container-name` - Similar to `docker-container` but uses `nerdctl`.
+    - `podman-container://my-container-name` - Similar to `docker-container` but uses `podman`.
+    - `ssh://myhost` - Connect to a buildkit instance over SSH. Format of the host spec should mimic the SSH command.
+    - `kubepod://mypod` - Connect to buildkit running in a Kubernetes pod. Can also specify kubectl context and pod namespace (`kubepod://mypod?context=foo&namespace=notdefault`).
+
+    #### Buildkit Connection Examples
+
+    Example: Connect using defaults: 
     ```bash
-    sudo buildkitd &
-    sudo copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched
+    copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched
     ```
 
-    Alternatively, you can run `buildkitd` in a container, which allows copa to be run without root access to the local buildkit socket:
+    Example: Connect to buildx
+    ```
+    docker buildx create --name demo
+    copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr buildx://demo
+    ```
 
-    ```bash
+    Example: Buildkit in a container
+    ```
     export BUILDKIT_VERSION=v0.12.0
-    export BUILDKIT_PORT=8888
     docker run \
         --detach \
         --rm \
         --privileged \
-        -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
         --name buildkitd \
         --entrypoint buildkitd \
-        "moby/buildkit:$BUILDKIT_VERSION" \
-        --addr tcp://0.0.0.0:$BUILDKIT_PORT
-    copa patch \
-        -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 \
-        -r nginx.1.21.6.json \
-        -t 1.21.6-patched \
-        -a tcp://0.0.0.0:$BUILDKIT_PORT
+        "moby/buildkit:$BUILDKIT_VERSION"
+    
+    copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr docker-container://buildkitd
+    ```
+
+    Example: Buildkit over TCP
+    ```
+    export BUILDKIT_VERSION=v0.12.0
+     export BUILDKIT_PORT=8888
+     docker run \
+         --detach \
+         --rm \
+         --privileged \
+         -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
+         --name buildkitd \
+         --entrypoint buildkitd \
+         "moby/buildkit:$BUILDKIT_VERSION" \
+         --addr tcp://0.0.0.0:$BUILDKIT_PORT
+     copa patch \
+         -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 \
+         -r nginx.1.21.6.json \
+         -t 1.21.6-patched \
+         -a tcp://0.0.0.0:$BUILDKIT_PORT    
     ```
 
     In either case, `copa` is non-destructive and exports a new image with the specified `1.21.6-patched` label to the local Docker daemon.
@@ -65,7 +104,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     > ensure that the credentials are configured in the default Docker config.json before running `copa patch`,
     > for example, via `sudo docker login -u <user> -p <password> <registry>`.
 
-4. Scan the patched image and verify that the vulnerabilities have been patched:
+5. Scan the patched image and verify that the vulnerabilities have been patched:
 
     ```bash
     trivy image --vuln-type os --ignore-unfixed mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
@@ -94,7 +133,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     <missing>      4 months ago   /bin/sh -c #(nop) ADD file:09675d11695f65c55…   80.4MB
     ```
 
-5. Run the container to verify that the image has no regressions:
+6. Run the container to verify that the image has no regressions:
 
     ```bash
     $ docker run -it --rm --name nginx-test mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
