@@ -248,7 +248,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 	probed := mkFolders.Run(llb.Shlex(probeToolsCmd)).Run(llb.Shlex(probeDBCmd)).Root()
 	outState := llb.Diff(toolsApplied, probed)
-	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &outState, rm.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &outState, rm.workingFolder, rm.config.CacheFrom, rm.config.CacheTo); err != nil {
 		return err
 	}
 
@@ -333,7 +333,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates types.UpdatePa
 	resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(installed, resultsWritten)
 
-	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &resultsDiff, rm.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &resultsDiff, rm.workingFolder, rm.config.CacheFrom, rm.config.CacheTo); err != nil {
 		return nil, err
 	}
 
@@ -414,7 +414,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 	resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(writeResultsCmd)).Root()
 
 	resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
-	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &resultsDiff, rm.workingFolder); err != nil {
+	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &resultsDiff, rm.workingFolder, rm.config.CacheFrom, rm.config.CacheTo); err != nil {
 		return nil, err
 	}
 	// Diff unpacked packages layers from previous and merge with target
