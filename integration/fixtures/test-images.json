@@ -96,11 +96,11 @@
         "ignoreErrors": false
     },
     {
-        "image": "mcr.microsoft.com/oss/nginx/nginx",
-        "tag" : "1.21.6",
-        "digest": "sha256:bcdc041d100a3cc9fec472a8133ad566166e366241587ff92e8cc8fcf955229d",
-        "distro": "Debian",
-        "description": "Valid dpkg/status, apt present",
+        "image": "docker.io/grafana/grafana-image-renderer",
+        "tag" : "3.4.0",
+        "digest": "sha256:205a39f5b58f96b9ff81a0b523a60c26c86e88e76575696fcd6debde9de02197",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present",
         "ignoreErrors": true
     }
 ]
