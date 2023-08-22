@@ -14,30 +14,24 @@ This sample illustrates how to patch containers using vulnerability reports with
 
 ## Sample Steps
 
-1. Download the target container to scan and patch:
+1. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
 
     ```bash
-    docker pull mcr.microsoft.com/oss/nginx/nginx:1.21.6
-    ```
-
-2. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
-
-    ```bash
-    trivy image --vuln-type os --ignore-unfixed -f json -o nginx.1.21.6.json mcr.microsoft.com/oss/nginx/nginx:1.21.6
+    trivy image --vuln-type os --ignore-unfixed -f json -o nginx.1.21.6.json docker.io/library/nginx:1.21.6
     ```
 
     You can also see the existing patchable vulnerabilities in table form on the shell with:
 
     ```bash
-    trivy image --vuln-type os --ignore-unfixed mcr.microsoft.com/oss/nginx/nginx:1.21.6
+    trivy image --vuln-type os --ignore-unfixed docker.io/library/nginx:1.21.6
 
-3. To patch the image, use the Trivy report and specify a buildkit instance to connect to:
+2. To patch the image, use the Trivy report and specify a buildkit instance to connect to:
 
     By default copa will attempt to auto-connect to an instance in order:
       1. Default docker buildkit endpoint (requires at least docker v24.0 with [containerd snapshotter](https://docs.docker.com/storage/containerd/#enable-containerd-image-store-on-docker-engine) support enabled)
       2. Currently selected buildx builder (see: `docker buildx --help`)
       3. buildkit daemon at the default address `/run/buildkit/buildkitd.sock`
-    
+
     If an instance doesn't exist or that instance doesn't support all the features copa needs the next will be attempted.
     You may need to specify a custom address using the `--addr` flag. Here are the supported formats:
 
@@ -53,15 +47,15 @@ This sample illustrates how to patch containers using vulnerability reports with
 
     #### Buildkit Connection Examples
 
-    Example: Connect using defaults: 
+    Example: Connect using defaults:
     ```bash
-    copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched
+    copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched
     ```
 
     Example: Connect to buildx
     ```
     docker buildx create --name demo
-    copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr buildx://demo
+    copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr buildx://demo
     ```
 
     Example: Buildkit in a container
@@ -74,8 +68,8 @@ This sample illustrates how to patch containers using vulnerability reports with
         --name buildkitd \
         --entrypoint buildkitd \
         "moby/buildkit:$BUILDKIT_VERSION"
-    
-    copa patch -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr docker-container://buildkitd
+
+    copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr docker-container://buildkitd
     ```
 
     Example: Buildkit over TCP
@@ -92,10 +86,10 @@ This sample illustrates how to patch containers using vulnerability reports with
          "moby/buildkit:$BUILDKIT_VERSION" \
          --addr tcp://0.0.0.0:$BUILDKIT_PORT
      copa patch \
-         -i mcr.microsoft.com/oss/nginx/nginx:1.21.6 \
+         -i docker.io/library/nginx:1.21.6 \
          -r nginx.1.21.6.json \
          -t 1.21.6-patched \
-         -a tcp://0.0.0.0:$BUILDKIT_PORT    
+         -a tcp://0.0.0.0:$BUILDKIT_PORT
     ```
 
     In either case, `copa` is non-destructive and exports a new image with the specified `1.21.6-patched` label to the local Docker daemon.
@@ -104,16 +98,16 @@ This sample illustrates how to patch containers using vulnerability reports with
     > ensure that the credentials are configured in the default Docker config.json before running `copa patch`,
     > for example, via `sudo docker login -u <user> -p <password> <registry>`.
 
-5. Scan the patched image and verify that the vulnerabilities have been patched:
+3. Scan the patched image and verify that the vulnerabilities have been patched:
 
     ```bash
-    trivy image --vuln-type os --ignore-unfixed mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
+    trivy image --vuln-type os --ignore-unfixed docker.io/library/nginx:1.21.6-patched
     ```
 
     You can also inspect the structure of the patched image with `docker history` to see the new patch layer appended to the image:
 
     ```bash
-    $ docker history mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
+    $ docker history docker.io/library/nginx:1.21.6-patched
     IMAGE          CREATED        CREATED BY                                      SIZE      COMMENT
     a372df41e06d   1 minute ago   mount / from exec sh -c apt install --no-ins…   26.1MB    buildkit.exporter.image.v0
     <missing>      3 months ago   CMD ["nginx" "-g" "daemon off;"]                0B        buildkit.dockerfile.v0
@@ -133,10 +127,10 @@ This sample illustrates how to patch containers using vulnerability reports with
     <missing>      4 months ago   /bin/sh -c #(nop) ADD file:09675d11695f65c55…   80.4MB
     ```
 
-6. Run the container to verify that the image has no regressions:
+4. Run the container to verify that the image has no regressions:
 
     ```bash
-    $ docker run -it --rm --name nginx-test mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
+    $ docker run -it --rm --name nginx-test docker.io/library/nginx:1.21.6-patched
     /docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
     /docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
     /docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
