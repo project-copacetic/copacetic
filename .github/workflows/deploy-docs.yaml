@@ -1,7 +1,13 @@
-name: Deploy docs website to GitHub Pages
+name: Generate docs website to GitHub Pages
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/deploy-docs.yaml'
+      - 'website/**'
+  pull_request:
     branches:
       - main
     paths:
@@ -13,7 +19,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy docs website to GitHub Pages
+    name: Generate docs website to GitHub Pages
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -48,9 +54,10 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn build
 
+      # deploy only after PR is merged to main
       - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository == 'project-copacetic/copacetic'
         uses: peaceiris/actions-gh-pages@373f7f263a76c20808c831209c920827a82a2847 # v3.9.3
-        if: ${{ github.ref == 'refs/heads/main' }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./website/build
