@@ -50,3 +50,5 @@ jobs:
         run: |
           tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
           docker buildx build --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-action:v"$tag" --push .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
