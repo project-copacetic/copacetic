@@ -26,13 +26,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, buildkitAddr, image, reportFile, patchedTag, workingFolder string) error {
+func Patch(ctx context.Context, timeout time.Duration, buildkitAddr, image, reportFile, patchedTag, workingFolder string, ignoreError bool) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, buildkitAddr, image, reportFile, patchedTag, workingFolder)
+		ch <- patchWithContext(timeoutCtx, buildkitAddr, image, reportFile, patchedTag, workingFolder, ignoreError)
 	}()
 
 	select {
@@ -57,7 +57,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patchedTag, workingFolder string) error {
+func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patchedTag, workingFolder string, ignoreError bool) error {
 	imageName, err := ref.ParseNamed(image)
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 
 	// Export the patched image state to Docker
 	// TODO: Add support for other output modes as buildctl does.
-	patchedImageState, err := pkgmgr.InstallUpdates(ctx, updates)
+	patchedImageState, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
 	if err != nil {
 		return err
 	}

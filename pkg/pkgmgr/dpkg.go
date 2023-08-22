@@ -98,10 +98,10 @@ func getDPKGStatusType(dir string) dpkgStatusType {
 	return out
 }
 
-func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest) (*llb.State, error) {
+func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, error) {
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer)
+	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +131,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.Updat
 
 	// Validate that the deployed packages are of the requested version or better
 	resultManifestPath := filepath.Join(dm.workingFolder, resultsPath, resultManifest)
-	if err := validateDebianPackageVersions(updates, debComparer, resultManifestPath); err != nil {
+	if err := validateDebianPackageVersions(updates, debComparer, resultManifestPath, ignoreErrors); err != nil {
 		return nil, err
 	}
 
@@ -352,7 +352,7 @@ func dpkgParseResultsManifest(path string) (map[string]string, error) {
 	return updateMap, nil
 }
 
-func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string) error {
+func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) error {
 	// Load file into map[string]string for package:version lookup
 	updateMap, err := dpkgParseResultsManifest(resultsPath)
 	if err != nil {
@@ -380,6 +380,10 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 			continue
 		}
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
+	}
+
+	if ignoreErrors {
+		return nil
 	}
 
 	return allErrors.ErrorOrNil()
