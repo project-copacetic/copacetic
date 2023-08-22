@@ -56,7 +56,7 @@ func apkReadResultsManifest(path string) ([]string, error) {
 	return lines, nil
 }
 
-func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string) error {
+func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) error {
 	lines, err := apkReadResultsManifest(resultsPath)
 	if err != nil {
 		return err
@@ -115,13 +115,17 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
 	}
 
+	if ignoreErrors {
+		return nil
+	}
+
 	return allErrors.ErrorOrNil()
 }
 
-func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest) (*llb.State, error) {
+func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, error) {
 	// Resolve set of unique packages to update
 	apkComparer := VersionComparer{isValidAPKVersion, isLessThanAPKVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, apkComparer)
+	updates, err := GetUniqueLatestUpdates(manifest.Updates, apkComparer, ignoreErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +142,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.Update
 
 	// Validate that the deployed packages are of the requested version or better
 	resultManifestPath := filepath.Join(am.workingFolder, resultsPath, resultManifest)
-	if err := validateAPKPackageVersions(updates, apkComparer, resultManifestPath); err != nil {
+	if err := validateAPKPackageVersions(updates, apkComparer, resultManifestPath, ignoreErrors); err != nil {
 		return nil, err
 	}
 

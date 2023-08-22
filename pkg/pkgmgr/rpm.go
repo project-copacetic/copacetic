@@ -159,10 +159,10 @@ func getRPMDBType(dir string) rpmDBType {
 	return out
 }
 
-func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest) (*llb.State, error) {
+func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, error) {
 	// Resolve set of unique packages to update
 	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, rpmComparer)
+	updates, err := GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.Update
 
 	// Validate that the deployed packages are of the requested version or better
 	resultManifestPath := filepath.Join(rm.workingFolder, resultsPath, resultManifest)
-	if err := validateRPMPackageVersions(updates, rpmComparer, resultManifestPath); err != nil {
+	if err := validateRPMPackageVersions(updates, rpmComparer, resultManifestPath, ignoreErrors); err != nil {
 		return nil, err
 	}
 
@@ -440,7 +440,7 @@ func rpmReadResultsManifest(path string) ([]string, error) {
 	return lines, nil
 }
 
-func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string) error {
+func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) error {
 	lines, err := rpmReadResultsManifest(resultsPath)
 	if err != nil {
 		return err
@@ -497,6 +497,10 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 			continue
 		}
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
+	}
+
+	if ignoreErrors {
+		return nil
 	}
 
 	return allErrors.ErrorOrNil()
