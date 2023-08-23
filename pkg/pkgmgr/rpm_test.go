@@ -260,6 +260,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		updates       types.UpdatePackages
 		cmp           VersionComparer
 		resultsPath   string
+		ignoreErrors  bool
 		expectedError error
 	}{
 		{
@@ -268,8 +269,9 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 				{Name: "openssl", Version: "1.1.1k-21.cm2"},
 				{Name: "openssl-libs", Version: "1.1.1k-21.cm2"},
 			},
-			cmp:         rpmComparer,
-			resultsPath: "testdata/rpm_valid.txt",
+			cmp:          rpmComparer,
+			resultsPath:  "testdata/rpm_valid.txt",
+			ignoreErrors: false,
 		},
 		{
 			name: "downloaded package version lower than required",
@@ -279,7 +281,19 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 			},
 			cmp:           rpmComparer,
 			resultsPath:   "testdata/rpm_valid.txt",
+			ignoreErrors:  false,
 			expectedError: fmt.Errorf("2 errors occurred:\n\t* downloaded package openssl version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update\n\t* downloaded package openssl-libs version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update"), // nolint:lll
+		},
+		{
+			name: "downloaded package version lower than required with ignore errors",
+			updates: types.UpdatePackages{
+				{Name: "openssl", Version: "3.1.1k-21.cm2"},
+				{Name: "openssl-libs", Version: "3.1.1k-21.cm2"},
+			},
+			cmp:           rpmComparer,
+			resultsPath:   "testdata/rpm_valid.txt",
+			ignoreErrors:  true,
+			expectedError: nil,
 		},
 		{
 			name: "unexpected number of installed packages",
@@ -294,7 +308,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath)
+			err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
 			if tc.expectedError != nil {
 				if err == nil || errors.Is(err, tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err)

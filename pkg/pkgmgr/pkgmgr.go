@@ -27,7 +27,7 @@ const (
 )
 
 type PackageManager interface {
-	InstallUpdates(context.Context, *types.UpdateManifest) (*llb.State, error)
+	InstallUpdates(context.Context, *types.UpdateManifest, bool) (*llb.State, error)
 }
 
 func GetPackageManager(osType string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
@@ -50,7 +50,7 @@ type VersionComparer struct {
 	LessThan func(string, string) bool
 }
 
-func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer) (types.UpdatePackages, error) {
+func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (types.UpdatePackages, error) {
 	dict := make(map[string]string)
 	var allErrors *multierror.Error
 	for _, u := range updates {
@@ -68,7 +68,7 @@ func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer) (
 			continue
 		}
 	}
-	if allErrors != nil {
+	if allErrors != nil && !ignoreErrors {
 		return nil, allErrors.ErrorOrNil()
 	}
 

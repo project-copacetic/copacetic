@@ -24,11 +24,12 @@ var (
 )
 
 type testImage struct {
-	Image       string        `json:"image"`
-	Tag         string        `json:"tag"`
-	Distro      string        `json:"distro"`
-	Digest      digest.Digest `json:"digest"`
-	Description string        `json:"description"`
+	Image        string        `json:"image"`
+	Tag          string        `json:"tag"`
+	Distro       string        `json:"distro"`
+	Digest       digest.Digest `json:"digest"`
+	Description  string        `json:"description"`
+	IgnoreErrors bool          `json:"ignoreErrors"`
 }
 
 func TestPatch(t *testing.T) {
@@ -57,10 +58,10 @@ func TestPatch(t *testing.T) {
 				withIgnoreFile(ignoreFile).
 				withOutput(output).
 				// Do not set a non-zero exit code because we are expecting vulnerabilities.
-				scan(t, ref)
+				scan(t, ref, img.IgnoreErrors)
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, output)
+			patch(t, ref, tagPatched, output, img.IgnoreErrors)
 
 			t.Log("scanning patched image")
 			scanner().
@@ -68,12 +69,12 @@ func TestPatch(t *testing.T) {
 				withSkipDBUpdate().
 				// here we want a non-zero exit code because we are expecting no vulnerabilities.
 				withExitCode(1).
-				scan(t, patchedRef)
+				scan(t, patchedRef, img.IgnoreErrors)
 		})
 	}
 }
 
-func patch(t *testing.T, ref, patchedTag, scan string) {
+func patch(t *testing.T, ref, patchedTag, scan string, ignoreErrors bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
@@ -88,6 +89,7 @@ func patch(t *testing.T, ref, patchedTag, scan string) {
 		"-r="+scan,
 		"--timeout=20m",
 		addrFl,
+		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
@@ -104,7 +106,7 @@ type scannerCmd struct {
 	exitCode     int
 }
 
-func (s *scannerCmd) scan(t *testing.T, ref string) {
+func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args := []string{
 		"trivy",
 		"image",
@@ -121,7 +123,8 @@ func (s *scannerCmd) scan(t *testing.T, ref string) {
 	if s.ignoreFile != "" {
 		args = append(args, "--ignore-policy="+s.ignoreFile)
 	}
-	if s.exitCode != 0 {
+	// If ignoreErrors is false, we expect a non-zero exit code.
+	if s.exitCode != 0 && !ignoreErrors {
 		args = append(args, "--exit-code="+strconv.Itoa(s.exitCode))
 	}
 

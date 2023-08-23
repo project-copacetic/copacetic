@@ -103,32 +103,44 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 
 	// Define some test cases with inputs and expected outputs
 	testCases := []struct {
-		name        string
-		updates     types.UpdatePackages
-		cmp         VersionComparer
-		resultsPath string
-		expectedErr error
+		name         string
+		updates      types.UpdatePackages
+		cmp          VersionComparer
+		resultsPath  string
+		ignoreErrors bool
+		expectedErr  error
 	}{
 		{
-			name:        "valid updates",
-			updates:     []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}, {Name: "busybox", Version: "1.33.1-r8"}},
-			cmp:         apkComparer,
-			resultsPath: "testdata/apk_valid.txt",
-			expectedErr: nil,
+			name:         "valid updates",
+			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}, {Name: "busybox", Version: "1.33.1-r8"}},
+			cmp:          apkComparer,
+			resultsPath:  "testdata/apk_valid.txt",
+			ignoreErrors: false,
+			expectedErr:  nil,
 		},
 		{
-			name:        "invalid version",
-			updates:     []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
-			cmp:         apkComparer,
-			resultsPath: "testdata/apk_invalid.txt",
-			expectedErr: fmt.Errorf("2 errors occurred:\n\t* invalid version x.y found for package apk-tools\n\t* invalid version a.b.c found for package busybox"),
+			name:         "invalid version",
+			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
+			cmp:          apkComparer,
+			resultsPath:  "testdata/apk_invalid.txt",
+			ignoreErrors: false,
+			expectedErr:  fmt.Errorf("2 errors occurred:\n\t* invalid version x.y found for package apk-tools\n\t* invalid version a.b.c found for package busybox"),
 		},
 		{
-			name:        "expected 2 updates, installed 1",
-			updates:     []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}},
-			cmp:         apkComparer,
-			resultsPath: "testdata/apk_valid.txt",
-			expectedErr: fmt.Errorf("expected 2 updates, installed 1"),
+			name:         "invalid version with ignore errors",
+			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
+			cmp:          apkComparer,
+			resultsPath:  "testdata/apk_valid.txt",
+			ignoreErrors: true,
+			expectedErr:  nil,
+		},
+		{
+			name:         "expected 2 updates, installed 1",
+			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}},
+			cmp:          apkComparer,
+			resultsPath:  "testdata/apk_valid.txt",
+			ignoreErrors: false,
+			expectedErr:  fmt.Errorf("expected 2 updates, installed 1"),
 		},
 	}
 
@@ -136,7 +148,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		// Use t.Run to run each test case as a subtest
 		t.Run(tc.name, func(t *testing.T) {
 			// Run the function to be tested
-			err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath)
+			err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
 			if tc.expectedErr != nil {
 				if err == nil || errors.Is(err, tc.expectedErr) {
 					t.Errorf("expected error %v, got %v", tc.expectedErr, err)
