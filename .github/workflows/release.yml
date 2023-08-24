@@ -37,18 +37,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Checkout copa-action repository
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
-        with:
-          repository: project-copacetic/copa-action
-          ref: main
-
-      - name: Set up Docker
-        uses: docker/setup-buildx-action@4c0219f9ac95b02789c1075625400b2acbff50b1 # v2.9.1
-
-      - name: Build and push copa-action image with new version
+      - name: Trigger Repo Dispatch for Copa Action Release
         run: |
-          tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
-          docker buildx build --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-action:v"$tag" --push .
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
+            payload="{\"event_type\": \"copa_release\", \"client_payload\": { \"version\": \"$tag\" }}"
+            curl -H "Accept: application/vnd.github.everest-preview+json" \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            --request POST \
+            --data "$payload" \
+            https://api.github.com/repos/project-copacetic/copa-action/dispatches
