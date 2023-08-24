@@ -12,7 +12,7 @@ INFOMARK = $(shell printf "\033[34;1m=>\033[0m")
 ROOTMARK = $(shell printf "\033[31;1m[needs root]\033[0m")
 
 # Optional Make arguments
-CGO_ENABLED  ?= 0
+CGO_ENABLED  ?= 1
 CLI_VERSION  ?= edge
 DEBUG        ?= 0
 NODE_VERSION ?= 16-bullseye-slim
@@ -37,7 +37,7 @@ endif
 # Build configuration variables
 ifeq ($(DEBUG),0)
   BUILDTYPE_DIR:=release
-  LDFLAGS:="$(DEFAULT_LDFLAGS) -s -w -extldflags -static"
+  LDFLAGS:="$(DEFAULT_LDFLAGS) -s -w"
 else
   BUILDTYPE_DIR:=debug
   LDFLAGS:="$(DEFAULT_LDFLAGS)"
@@ -139,3 +139,16 @@ version-docs:
 		-u $(shell id -u):$(shell id -g) \
 		node:${NODE_VERSION} \
 		sh -c "yarn install --frozen lockfile && yarn run docusaurus docs:version ${NEWVERSION}"
+
+################################################################################
+# Target: plugin  				                                               #
+################################################################################
+PLUGIN_BINARY	:= copa-grype.so
+
+.PHONY: plugin
+plugin:
+	$(info $(INFOMARK) Building $(PLUGIN_BINARY) ...)
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
+	go build $(GCFLAGS) -buildmode=plugin -ldflags $(LDFLAGS) -o $(BINS_OUT_DIR)/$(PLUGIN_BINARY) plugins/grype/copa-grype.go;
+
+# TODO: Change the logic to build the plugin for all the plugins in the plugins folder 
