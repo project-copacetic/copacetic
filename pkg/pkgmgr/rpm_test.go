@@ -266,8 +266,8 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		{
 			name: "successful validation",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "1.1.1k-21.cm2"},
-				{Name: "openssl-libs", Version: "1.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:          rpmComparer,
 			resultsPath:  "testdata/rpm_valid.txt",
@@ -276,8 +276,8 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		{
 			name: "downloaded package version lower than required",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "3.1.1k-21.cm2"},
-				{Name: "openssl-libs", Version: "3.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
 			cmp:           rpmComparer,
 			resultsPath:   "testdata/rpm_valid.txt",
@@ -287,8 +287,8 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		{
 			name: "downloaded package version lower than required with ignore errors",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "3.1.1k-21.cm2"},
-				{Name: "openssl-libs", Version: "3.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
 			cmp:           rpmComparer,
 			resultsPath:   "testdata/rpm_valid.txt",
@@ -298,7 +298,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		{
 			name: "unexpected number of installed packages",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "1.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:           rpmComparer,
 			resultsPath:   "testdata/rpm_valid.txt",

@@ -112,7 +112,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 	}{
 		{
 			name:         "valid updates",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}, {Name: "busybox", Version: "1.33.1-r8"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}, {Name: "busybox", FixedVersion: "1.33.1-r8"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: false,
@@ -120,7 +120,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		},
 		{
 			name:         "invalid version",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_invalid.txt",
 			ignoreErrors: false,
@@ -128,7 +128,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		},
 		{
 			name:         "invalid version with ignore errors",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: true,
@@ -136,7 +136,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		},
 		{
 			name:         "expected 2 updates, installed 1",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: false,

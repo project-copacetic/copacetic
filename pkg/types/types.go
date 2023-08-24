@@ -6,8 +6,10 @@
 package types
 
 type UpdatePackage struct {
-	Name    string `json:"name"`
-	Version string `json:"version"`
+	Name             string `json:"name"`
+	InstalledVersion string `json:"installedVersion"`
+	FixedVersion     string `json:"fixedVersion"`
+	VulnerabilityID  string `json:"vulnerability"`
 }
 
 type UpdatePackages []UpdatePackage

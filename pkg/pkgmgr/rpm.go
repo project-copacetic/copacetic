@@ -423,6 +423,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 	return &merged, nil
 }
 
+func (rm *rpmManager) GetPackageType() string {
+	return "rpm"
+}
+
 func rpmReadResultsManifest(path string) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -489,14 +493,14 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 			continue
 		}
 		// Strip epoch from update.Version; report may specify it, but RPM naming scheme does not support epochs
-		expectedVersion := update.Version[strings.Index(update.Version, ":")+1:]
+		expectedVersion := update.FixedVersion[strings.Index(update.FixedVersion, ":")+1:]
 		if cmp.LessThan(version, expectedVersion) {
-			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
+			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
+		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.FixedVersion)
 	}
 
 	if ignoreErrors {

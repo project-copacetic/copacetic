@@ -373,13 +373,13 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		if cmp.LessThan(version, update.Version) {
-			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
+		if cmp.LessThan(version, update.FixedVersion) {
+			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
+		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.FixedVersion)
 	}
 
 	if ignoreErrors {
@@ -387,4 +387,8 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 	}
 
 	return allErrors.ErrorOrNil()
+}
+
+func (dm *dpkgManager) GetPackageType() string {
+	return "deb"
 }

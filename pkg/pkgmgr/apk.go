@@ -106,13 +106,13 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		if cmp.LessThan(version, update.Version) {
-			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
+		if cmp.LessThan(version, update.FixedVersion) {
+			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
+		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.FixedVersion)
 	}
 
 	if ignoreErrors {
@@ -194,4 +194,8 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdateP
 	patchDiff := llb.Diff(apkUpdated, apkInstalled)
 	patchMerge := llb.Merge([]llb.State{am.config.ImageState, patchDiff})
 	return &patchMerge, nil
+}
+
+func (am *apkManager) GetPackageType() string {
+	return "apk"
 }

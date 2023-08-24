@@ -19,6 +19,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/utils"
+	"github.com/project-copacetic/copacetic/pkg/vex"
 )
 
 const (
@@ -26,13 +27,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, buildkitAddr, image, reportFile, patchedTag, workingFolder string, ignoreError bool) error {
+func Patch(ctx context.Context, timeout time.Duration, buildkitAddr, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, buildkitAddr, image, reportFile, patchedTag, workingFolder, ignoreError)
+		ch <- patchWithContext(timeoutCtx, buildkitAddr, image, reportFile, patchedTag, workingFolder, format, output, ignoreError)
 	}()
 
 	select {
@@ -57,7 +58,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patchedTag, workingFolder string, ignoreError bool) error {
+func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool) error {
 	imageName, err := ref.ParseNamed(image)
 	if err != nil {
 		return err
@@ -134,5 +135,13 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 	if err != nil {
 		return err
 	}
-	return buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName)
+
+	if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
+		return err
+	}
+
+	if output != "" {
+		return vex.TryOutputVexDocument(updates, pkgmgr, format, output)
+	}
+	return nil
 }
