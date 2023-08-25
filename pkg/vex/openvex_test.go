@@ -54,15 +54,18 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
   "@context": "https://openvex.dev/ns",
   "@id": "https://openvex.dev/test",
   "author": "Project Copacetic",
-  "role": "",
   "timestamp": "2009-11-17T20:34:58.651387237Z",
-  "version": "0.1",
+  "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
     {
-      "vulnerability": "CVE-2020-1234",
+      "vulnerability": {
+        "@id": "CVE-2020-1234"
+      },
       "products": [
-        "pkg:apk/alpine/test@1.0?x86_64"
+        {
+          "@id": "pkg:apk/alpine/test@1.0?arch=x86_64"
+        }
       ],
       "status": "fixed"
     }
@@ -102,24 +105,35 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
   "@context": "https://openvex.dev/ns",
   "@id": "https://openvex.dev/test",
   "author": "Project Copacetic",
-  "role": "",
   "timestamp": "2009-11-17T20:34:58.651387237Z",
-  "version": "0.1",
+  "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
     {
-      "vulnerability": "CVE-2020-1234",
+      "vulnerability": {
+        "@id": "CVE-2020-1234"
+      },
       "products": [
-        "pkg:apk/alpine/test@1.0?x86_64",
-        "pkg:deb/debian/test@1.0?x86_64",
-        "pkg:deb/debian/test2@1.0?x86_64"
+        {
+          "@id": "pkg:apk/alpine/test@1.0?arch=x86_64"
+        },
+        {
+          "@id": "pkg:deb/debian/test@1.0?arch=x86_64"
+        },
+        {
+          "@id": "pkg:deb/debian/test2@1.0?arch=x86_64"
+        }
       ],
       "status": "fixed"
     },
     {
-      "vulnerability": "CVE-2020-1235",
+      "vulnerability": {
+        "@id": "CVE-2020-1235"
+      },
       "products": [
-        "pkg:deb/debian/test3@1.0?x86_64"
+        {
+          "@id": "pkg:deb/debian/test3@1.0?arch=x86_64"
+        }
       ],
       "status": "fixed"
     }
