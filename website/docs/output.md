@@ -21,23 +21,38 @@ This will generate a VEX Document that looks like:
 ```json
 {
   "@context": "https://openvex.dev/ns",
-  "@id": "https://openvex.dev/docs/public/vex-6776bfe4124807727d1a9fa90af438838efcf4454c4ed28253a3063ed64210a0",
+  "@id": "https://openvex.dev/docs/public/vex-6f15c26e0410a4d44e0af4062f4b883fbc19a98e57baf131715d942213e5002a",
   "author": "Project Copacetic",
-  "role": "",
-  "timestamp": "2023-08-24T23:04:51.41869446Z",
-  "version": "0.1",
+  "timestamp": "2023-08-25T21:40:23.891230545Z",
+  "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
     {
-      "vulnerability": "CVE-2021-3995",
+      "vulnerability": {
+        "@id": "CVE-2021-3995"
+      },
       "products": [
-        "pkg:deb/debian/bsdutils@1:2.36.1-8?amd64",
-        "pkg:deb/debian/libblkid1@2.36.1-8?amd64",
-        "pkg:deb/debian/libmount1@2.36.1-8?amd64",
-        "pkg:deb/debian/libsmartcols1@2.36.1-8?amd64",
-        "pkg:deb/debian/libuuid1@2.36.1-8?amd64",
-        "pkg:deb/debian/mount@2.36.1-8?amd64",
-        "pkg:deb/debian/util-linux@2.36.1-8?amd64"
+        {
+          "@id": "pkg:deb/debian/bsdutils@1:2.36.1-8?arch=amd64"
+        },
+        {
+          "@id": "pkg:deb/debian/libblkid1@2.36.1-8?arch=amd64"
+        },
+        {
+          "@id": "pkg:deb/debian/libmount1@2.36.1-8?arch=amd64"
+        },
+        {
+          "@id": "pkg:deb/debian/libsmartcols1@2.36.1-8?arch=amd64"
+        },
+        {
+          "@id": "pkg:deb/debian/libuuid1@2.36.1-8?arch=amd64"
+        },
+        {
+          "@id": "pkg:deb/debian/mount@2.36.1-8?arch=amd64"
+        },
+        {
+          "@id": "pkg:deb/debian/util-linux@2.36.1-8?arch=amd64"
+        }
       ],
       "status": "fixed"
     },
