@@ -27,7 +27,7 @@ const (
 )
 
 type PackageManager interface {
-	InstallUpdates(context.Context, *types.UpdateManifest, bool) (*llb.State, error)
+	InstallUpdates(context.Context, *types.UpdateManifest, bool) (*llb.State, []string, error)
 	GetPackageType() string
 }
 

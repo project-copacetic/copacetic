@@ -13,11 +13,13 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 
 	ref "github.com/distribution/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 )
@@ -131,7 +133,7 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 
 	// Export the patched image state to Docker
 	// TODO: Add support for other output modes as buildctl does.
-	patchedImageState, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
+	patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
 	if err != nil {
 		return err
 	}
@@ -140,8 +142,20 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 		return err
 	}
 
+	// create a new manifest with the successfully patched packages
+	validatedManifest := &types.UpdateManifest{
+		OSType:    updates.OSType,
+		OSVersion: updates.OSVersion,
+		Arch:      updates.Arch,
+		Updates:   []types.UpdatePackage{},
+	}
+	for _, update := range updates.Updates {
+		if !slices.Contains(errPkgs, update.Name) {
+			validatedManifest.Updates = append(validatedManifest.Updates, update)
+		}
+	}
 	if output != "" {
-		return vex.TryOutputVexDocument(updates, pkgmgr, format, output)
+		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, format, output)
 	}
 	return nil
 }

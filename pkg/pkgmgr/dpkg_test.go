@@ -232,7 +232,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 	dpkgComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 
 	t.Run("no updates", func(t *testing.T) {
-		err := validateDebianPackageVersions(nil, dpkgComparer, "testdata/dpkg_valid.txt", false)
+		_, err := validateDebianPackageVersions(nil, dpkgComparer, "testdata/dpkg_valid.txt", false)
 		assert.NoError(t, err)
 	})
 
@@ -240,7 +240,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "not_installed", FixedVersion: "1.0"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
 		assert.NoError(t, err)
 	})
 
@@ -248,7 +248,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "base-files", FixedVersion: "1.0.0"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_invalid.txt", false)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_invalid.txt", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid version")
 	})
@@ -257,7 +257,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "base-files", FixedVersion: "1.0.0"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_invalid.txt", true)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_invalid.txt", true)
 		assert.NoError(t, err)
 	})
 
@@ -265,7 +265,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "apt", FixedVersion: "2.0"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "downloaded package")
 	})
@@ -274,7 +274,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "apt", FixedVersion: "2.0"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", true)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", true)
 		assert.NoError(t, err)
 	})
 
@@ -282,7 +282,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "apt", FixedVersion: "1.8.2.3"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
 		assert.NoError(t, err)
 	})
 
@@ -290,7 +290,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		updates := []types.UpdatePackage{
 			{Name: "apt", FixedVersion: "0.9"},
 		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
+		_, err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
 		assert.NoError(t, err)
 	})
 }

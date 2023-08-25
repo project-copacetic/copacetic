@@ -159,45 +159,46 @@ func getRPMDBType(dir string) rpmDBType {
 	return out
 }
 
-func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, error) {
+func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update
 	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(updates) == 0 {
 		log.Warn("No update packages were specified to apply")
-		return &rm.config.ImageState, nil
+		return &rm.config.ImageState, nil, nil
 	}
 	log.Debugf("latest unique RPMs: %v", updates)
 
 	// Probe RPM status for available tooling on the target image
 	toolImageName := getRPMImageName(manifest)
 	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var updatedImageState *llb.State
 	if rm.isDistroless {
 		updatedImageState, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		updatedImageState, err = rm.installUpdates(ctx, updates)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	// Validate that the deployed packages are of the requested version or better
 	resultManifestPath := filepath.Join(rm.workingFolder, resultsPath, resultManifest)
-	if err := validateRPMPackageVersions(updates, rpmComparer, resultManifestPath, ignoreErrors); err != nil {
-		return nil, err
+	errPkgs, err := validateRPMPackageVersions(updates, rpmComparer, resultManifestPath, ignoreErrors)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return updatedImageState, nil
+	return updatedImageState, errPkgs, nil
 }
 
 func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
@@ -444,17 +445,17 @@ func rpmReadResultsManifest(path string) ([]string, error) {
 	return lines, nil
 }
 
-func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) error {
+func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
 	lines, err := rpmReadResultsManifest(resultsPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Assert rpm info list doesn't contain more entries than expected
 	if len(lines) > len(updates) {
 		err = fmt.Errorf("expected %d updates, installed %d", len(updates), len(lines))
 		log.Error(err)
-		return err
+		return nil, err
 	}
 
 	// Not strictly necessary, but sort the two lists to not take a dependency on the
@@ -473,6 +474,7 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 	// results.manifest file is expected to the `rpm -qa <packages ...>`
 	// using the resultQueryFormat with tab delimiters.
 	var allErrors *multierror.Error
+	var errorPkgs []string
 	lineIndex := 0
 	for _, update := range updates {
 		expectedPrefix := update.Name + "\t"
@@ -489,6 +491,7 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
 			log.Error(err)
+			errorPkgs = append(errorPkgs, update.Name)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
@@ -497,6 +500,7 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 		if cmp.LessThan(version, expectedVersion) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
+			errorPkgs = append(errorPkgs, update.Name)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
@@ -504,8 +508,8 @@ func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 	}
 
 	if ignoreErrors {
-		return nil
+		return errorPkgs, nil
 	}
 
-	return allErrors.ErrorOrNil()
+	return errorPkgs, allErrors.ErrorOrNil()
 }
