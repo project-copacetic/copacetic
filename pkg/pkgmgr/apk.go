@@ -115,7 +115,6 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 			continue
 		}
 		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.FixedVersion)
-
 	}
 
 	if ignoreErrors {

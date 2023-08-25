@@ -306,6 +306,10 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	return &merged, nil
 }
 
+func (dm *dpkgManager) GetPackageType() string {
+	return "deb"
+}
+
 func dpkgParseResultsManifest(path string) (map[string]string, error) {
 	// Open result file
 	f, err := os.Open(path)
@@ -391,8 +395,4 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 	}
 
 	return errorPkgs, allErrors.ErrorOrNil()
-}
-
-func (dm *dpkgManager) GetPackageType() string {
-	return "deb"
 }
