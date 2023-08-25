@@ -4,7 +4,7 @@ title: Output
 
 Copa optionally outputs a Vulnerability Exploitability eXchange (VEX) file as a result of the patching process to surface the vulnerabilities and packages that were patched.
 
-Currently, Copa supports the OpenVEX format, but it can be extended to support other formats as well.
+Currently, Copa supports the [OpenVEX](https://github.com/openvex) format, but it can be extended to support other formats.
 
 ## OpenVEX
 
@@ -15,6 +15,8 @@ To generate a VEX document using OpenVEX, use `--format="openvex"` flag, and use
 ```bash
 copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --format="openvex" --output "nginx.1.21.6-vex.json"
 ```
+
+Use `COPA_VEX_AUTHOR` environment variable to set the author of the VEX document. If it's not set, the author will default to `Project Copacetic`.
 
 This will generate a VEX Document that looks like:
 

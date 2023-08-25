@@ -2,6 +2,7 @@ package vex
 
 import (
 	"bytes"
+	"os"
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
@@ -29,6 +30,12 @@ func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr
 	t := now()
 	doc := v
 	doc.Timestamp = &t
+
+	// set author from environment variable if it exists
+	author := os.Getenv("COPA_VEX_AUTHOR")
+	if author != "" {
+		doc.Metadata.Author = author
+	}
 
 	id, err := id()
 	if err != nil {
