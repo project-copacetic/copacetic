@@ -17,6 +17,7 @@ const sidebars = {
     'introduction',
     'installation',
     'quick-start',
+    'output',
     'troubleshooting',
     'design',
     'contributing',

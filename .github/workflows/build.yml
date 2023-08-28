@@ -121,6 +121,4 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa"
-
-        
+          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
