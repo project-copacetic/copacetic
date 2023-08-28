@@ -58,7 +58,7 @@ func (t *TrivyParser) Parse(file string) (*types.UpdateManifest, error) {
 	for i := range result.Vulnerabilities {
 		vuln := &result.Vulnerabilities[i]
 		if vuln.FixedVersion != "" {
-			updates.Updates = append(updates.Updates, types.UpdatePackage{Name: vuln.PkgName, Version: vuln.FixedVersion})
+			updates.Updates = append(updates.Updates, types.UpdatePackage{Name: vuln.PkgName, InstalledVersion: vuln.InstalledVersion, FixedVersion: vuln.FixedVersion, VulnerabilityID: vuln.VulnerabilityID})
 		}
 	}
 

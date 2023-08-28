@@ -27,7 +27,8 @@ const (
 )
 
 type PackageManager interface {
-	InstallUpdates(context.Context, *types.UpdateManifest, bool) (*llb.State, error)
+	InstallUpdates(context.Context, *types.UpdateManifest, bool) (*llb.State, []string, error)
+	GetPackageType() string
 }
 
 func GetPackageManager(osType string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
@@ -54,15 +55,15 @@ func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer, i
 	dict := make(map[string]string)
 	var allErrors *multierror.Error
 	for _, u := range updates {
-		if cmp.IsValid(u.Version) {
+		if cmp.IsValid(u.FixedVersion) {
 			ver, ok := dict[u.Name]
 			if !ok {
-				dict[u.Name] = u.Version
-			} else if cmp.LessThan(ver, u.Version) {
-				dict[u.Name] = u.Version
+				dict[u.Name] = u.FixedVersion
+			} else if cmp.LessThan(ver, u.FixedVersion) {
+				dict[u.Name] = u.FixedVersion
 			}
 		} else {
-			err := fmt.Errorf("invalid version %s found for package %s", u.Version, u.Name)
+			err := fmt.Errorf("invalid version %s found for package %s", u.FixedVersion, u.Name)
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
 			continue
@@ -74,7 +75,7 @@ func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer, i
 
 	out := types.UpdatePackages{}
 	for k, v := range dict {
-		out = append(out, types.UpdatePackage{Name: k, Version: v})
+		out = append(out, types.UpdatePackage{Name: k, FixedVersion: v})
 	}
 	return out, nil
 }
@@ -94,7 +95,7 @@ type UpdateMap map[string]*UpdatePackageInfo
 func GetValidatedUpdatesMap(updates types.UpdatePackages, cmp VersionComparer, reader PackageInfoReader, stagingPath string) (UpdateMap, error) {
 	m := make(UpdateMap)
 	for _, update := range updates {
-		m[update.Name] = &UpdatePackageInfo{Version: update.Version}
+		m[update.Name] = &UpdatePackageInfo{Version: update.FixedVersion}
 	}
 
 	files, err := os.ReadDir(stagingPath)
