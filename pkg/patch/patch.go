@@ -154,7 +154,8 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 			validatedManifest.Updates = append(validatedManifest.Updates, update)
 		}
 	}
-	if output != "" {
+	// vex document must contain at least one statement
+	if output != "" && len(validatedManifest.Updates) > 0 {
 		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, format, output)
 	}
 	return nil

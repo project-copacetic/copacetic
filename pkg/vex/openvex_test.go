@@ -40,8 +40,9 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 				updates: &types.UpdateManifest{
 					Updates: []types.UpdatePackage{
 						{
-							Name:             "test",
+							Name:             "test1",
 							InstalledVersion: "1.0",
+							FixedVersion:     "1.1",
 							VulnerabilityID:  "CVE-2020-1234",
 						},
 					},
@@ -64,7 +65,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
       },
       "products": [
         {
-          "@id": "pkg:apk/alpine/test@1.0?arch=x86_64"
+          "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
         }
       ],
       "status": "fixed"
@@ -81,18 +82,15 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 				updates: &types.UpdateManifest{
 					Updates: []types.UpdatePackage{
 						{
-							Name:             "test",
-							InstalledVersion: "1.0",
-							VulnerabilityID:  "CVE-2020-1234",
-						},
-						{
 							Name:             "test2",
 							InstalledVersion: "1.0",
+							FixedVersion:     "1.2",
 							VulnerabilityID:  "CVE-2020-1234",
 						},
 						{
 							Name:             "test3",
 							InstalledVersion: "1.0",
+							FixedVersion:     "1.3",
 							VulnerabilityID:  "CVE-2020-1235",
 						},
 					},
@@ -115,13 +113,10 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
       },
       "products": [
         {
-          "@id": "pkg:apk/alpine/test@1.0?arch=x86_64"
+          "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
         },
         {
-          "@id": "pkg:deb/debian/test@1.0?arch=x86_64"
-        },
-        {
-          "@id": "pkg:deb/debian/test2@1.0?arch=x86_64"
+          "@id": "pkg:deb/debian/test2@1.2?arch=x86_64"
         }
       ],
       "status": "fixed"
@@ -132,7 +127,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
       },
       "products": [
         {
-          "@id": "pkg:deb/debian/test3@1.0?arch=x86_64"
+          "@id": "pkg:deb/debian/test3@1.3?arch=x86_64"
         }
       ],
       "status": "fixed"

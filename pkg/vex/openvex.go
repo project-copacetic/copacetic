@@ -48,7 +48,7 @@ func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr
 		product := vex.Product{
 			Component: vex.Component{
 				// syntax is "pkg:<pkgType>/<osType>/<packageName>@<installedVersion>?arch=<arch>"
-				ID: "pkg:" + pkgType + "/" + updates.OSType + "/" + u.Name + "@" + u.InstalledVersion + "?arch=" + updates.Arch,
+				ID: "pkg:" + pkgType + "/" + updates.OSType + "/" + u.Name + "@" + u.FixedVersion + "?arch=" + updates.Arch,
 			},
 		}
 
