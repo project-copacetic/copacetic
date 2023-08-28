@@ -6,11 +6,11 @@
 package pkgmgr
 
 import (
-	"errors"
-	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
@@ -103,44 +103,45 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 
 	// Define some test cases with inputs and expected outputs
 	testCases := []struct {
-		name         string
-		updates      types.UpdatePackages
-		cmp          VersionComparer
-		resultsPath  string
-		ignoreErrors bool
-		expectedErr  error
+		name            string
+		updates         types.UpdatePackages
+		cmp             VersionComparer
+		resultsPath     string
+		ignoreErrors    bool
+		expectedError   string
+		expectedErrPkgs []string
 	}{
 		{
 			name:         "valid updates",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}, {Name: "busybox", Version: "1.33.1-r8"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}, {Name: "busybox", FixedVersion: "1.33.1-r8"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: false,
-			expectedErr:  nil,
 		},
 		{
 			name:         "invalid version",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_invalid.txt",
 			ignoreErrors: false,
-			expectedErr:  fmt.Errorf("2 errors occurred:\n\t* invalid version x.y found for package apk-tools\n\t* invalid version a.b.c found for package busybox"),
+			expectedError: `2 errors occurred:
+	* invalid version x.y found for package apk-tools
+	* invalid version a.b.c found for package busybox`,
 		},
 		{
 			name:         "invalid version with ignore errors",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "1.0"}, {Name: "busybox", Version: "2.0"}},
+			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: true,
-			expectedErr:  nil,
 		},
 		{
-			name:         "expected 2 updates, installed 1",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", Version: "2.12.7-r0"}},
-			cmp:          apkComparer,
-			resultsPath:  "testdata/apk_valid.txt",
-			ignoreErrors: false,
-			expectedErr:  fmt.Errorf("expected 2 updates, installed 1"),
+			name:          "expected 1 updates, installed 2",
+			updates:       []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}},
+			cmp:           apkComparer,
+			resultsPath:   "testdata/apk_valid.txt",
+			ignoreErrors:  false,
+			expectedError: `expected 1 updates, installed 2`,
 		},
 	}
 
@@ -148,15 +149,53 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		// Use t.Run to run each test case as a subtest
 		t.Run(tc.name, func(t *testing.T) {
 			// Run the function to be tested
-			err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
-			if tc.expectedErr != nil {
-				if err == nil || errors.Is(err, tc.expectedErr) {
-					t.Errorf("expected error %v, got %v", tc.expectedErr, err)
+			errorPkgs, err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
+			if tc.expectedError != "" {
+				if !strings.Contains(err.Error(), tc.expectedError) {
+					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
 				}
 			} else {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+			}
+
+			if tc.expectedErrPkgs != nil {
+				if !reflect.DeepEqual(tc.expectedErrPkgs, errorPkgs) {
+					t.Errorf("expected error packages %v, got %v", tc.expectedErrPkgs, errorPkgs)
+				}
+			}
+		})
+	}
+}
+
+func Test_apkManager_GetPackageType(t *testing.T) {
+	type fields struct {
+		config        *buildkit.Config
+		workingFolder string
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   string
+	}{
+		{
+			name: "alpine",
+			fields: fields{
+				config:        &buildkit.Config{},
+				workingFolder: "/tmp",
+			},
+			want: "apk",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			am := &apkManager{
+				config:        tt.fields.config,
+				workingFolder: tt.fields.workingFolder,
+			}
+			if got := am.GetPackageType(); got != tt.want {
+				t.Errorf("apkManager.GetPackageType() = %v, want %v", got, tt.want)
 			}
 		})
 	}

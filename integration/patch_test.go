@@ -48,7 +48,7 @@ func TestPatch(t *testing.T) {
 			t.Parallel()
 
 			dir := t.TempDir()
-			output := filepath.Join(dir, "output.json")
+			scanResults := filepath.Join(dir, "scan.json")
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", img.Image, tagPatched)
@@ -56,12 +56,12 @@ func TestPatch(t *testing.T) {
 			t.Log("scanning original image")
 			scanner().
 				withIgnoreFile(ignoreFile).
-				withOutput(output).
+				withOutput(scanResults).
 				// Do not set a non-zero exit code because we are expecting vulnerabilities.
 				scan(t, ref, img.IgnoreErrors)
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, output, img.IgnoreErrors)
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors)
 
 			t.Log("scanning patched image")
 			scanner().
@@ -70,11 +70,14 @@ func TestPatch(t *testing.T) {
 				// here we want a non-zero exit code because we are expecting no vulnerabilities.
 				withExitCode(1).
 				scan(t, patchedRef, img.IgnoreErrors)
+
+			t.Log("verifying the vex output")
+			validVEXJSON(t, dir)
 		})
 	}
 }
 
-func patch(t *testing.T, ref, patchedTag, scan string, ignoreErrors bool) {
+func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
@@ -86,10 +89,11 @@ func patch(t *testing.T, ref, patchedTag, scan string, ignoreErrors bool) {
 		"patch",
 		"-i="+ref,
 		"-t="+patchedTag,
-		"-r="+scan,
+		"-r="+path+"/scan.json",
 		"--timeout=20m",
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
+		"--output="+path+"/vex.json",
 	)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
@@ -152,4 +156,11 @@ func (s *scannerCmd) withIgnoreFile(p string) *scannerCmd {
 func (s *scannerCmd) withExitCode(code int) *scannerCmd {
 	s.exitCode = code
 	return s
+}
+
+func validVEXJSON(t *testing.T, path string) {
+	file, err := os.ReadFile(filepath.Join(path, "vex.json"))
+	require.NoError(t, err)
+	isValid := json.Valid(file)
+	assert.True(t, isValid, "vex.json is not valid json")
 }

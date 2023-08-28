@@ -69,7 +69,7 @@ func parseQualysUpdatePackages(resultNode *xmlquery.Node) (types.UpdatePackages,
 			log.Error(err)
 			return nil, err
 		}
-		updates = append(updates, types.UpdatePackage{Name: tokens[0], Version: tokens[2]})
+		updates = append(updates, types.UpdatePackage{Name: tokens[0], FixedVersion: tokens[2]})
 	}
 	return updates, nil
 }
