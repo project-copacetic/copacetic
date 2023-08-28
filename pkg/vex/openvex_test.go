@@ -14,6 +14,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	workingFolder := "/tmp"
 	alpineManager, _ := pkgmgr.GetPackageManager("alpine", config, workingFolder)
 	debianManager, _ := pkgmgr.GetPackageManager("debian", config, workingFolder)
+	t.Setenv("COPA_VEX_AUTHOR", "test author")
 
 	// mock time
 	expectedTime := time.Date(2009, 11, 17, 20, 34, 58, 651387237, time.UTC)
@@ -54,7 +55,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			want: `{
   "@context": "https://openvex.dev/ns",
   "@id": "https://openvex.dev/test",
-  "author": "Project Copacetic",
+  "author": "test author",
   "timestamp": "2009-11-17T20:34:58.651387237Z",
   "version": 1,
   "tooling": "Project Copacetic",
@@ -102,7 +103,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			want: `{
   "@context": "https://openvex.dev/ns",
   "@id": "https://openvex.dev/test",
-  "author": "Project Copacetic",
+  "author": "test author",
   "timestamp": "2009-11-17T20:34:58.651387237Z",
   "version": 1,
   "tooling": "Project Copacetic",
