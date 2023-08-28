@@ -43,7 +43,7 @@ jobs:
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Unit test
         shell: bash
         env:
@@ -67,7 +67,7 @@ jobs:
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Build copa
         shell: bash
         run: |
@@ -101,7 +101,7 @@ jobs:
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Check out code
-        uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
