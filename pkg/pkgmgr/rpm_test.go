@@ -6,12 +6,13 @@
 package pkgmgr
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -256,18 +257,19 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 
 	testCases := []struct {
-		name          string
-		updates       types.UpdatePackages
-		cmp           VersionComparer
-		resultsPath   string
-		ignoreErrors  bool
-		expectedError error
+		name            string
+		updates         types.UpdatePackages
+		cmp             VersionComparer
+		resultsPath     string
+		ignoreErrors    bool
+		expectedError   string
+		expectedErrPkgs []string
 	}{
 		{
 			name: "successful validation",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "1.1.1k-21.cm2"},
-				{Name: "openssl-libs", Version: "1.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:          rpmComparer,
 			resultsPath:  "testdata/rpm_valid.txt",
@@ -276,47 +278,93 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		{
 			name: "downloaded package version lower than required",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "3.1.1k-21.cm2"},
-				{Name: "openssl-libs", Version: "3.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
-			cmp:           rpmComparer,
-			resultsPath:   "testdata/rpm_valid.txt",
-			ignoreErrors:  false,
-			expectedError: fmt.Errorf("2 errors occurred:\n\t* downloaded package openssl version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update\n\t* downloaded package openssl-libs version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update"), // nolint:lll
+			cmp:          rpmComparer,
+			resultsPath:  "testdata/rpm_valid.txt",
+			ignoreErrors: false,
+			expectedError: `2 errors occurred:
+	* downloaded package openssl version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update
+	* downloaded package openssl-libs version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update`,
+			expectedErrPkgs: []string{"openssl", "openssl-libs"},
 		},
 		{
 			name: "downloaded package version lower than required with ignore errors",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "3.1.1k-21.cm2"},
-				{Name: "openssl-libs", Version: "3.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
-			cmp:           rpmComparer,
-			resultsPath:   "testdata/rpm_valid.txt",
-			ignoreErrors:  true,
-			expectedError: nil,
+			cmp:          rpmComparer,
+			resultsPath:  "testdata/rpm_valid.txt",
+			ignoreErrors: true,
 		},
 		{
 			name: "unexpected number of installed packages",
 			updates: types.UpdatePackages{
-				{Name: "openssl", Version: "1.1.1k-21.cm2"},
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:           rpmComparer,
 			resultsPath:   "testdata/rpm_valid.txt",
-			expectedError: fmt.Errorf("expected 1 updates, installed 2"),
+			expectedError: `expected 1 updates, installed 2`,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
-			if tc.expectedError != nil {
-				if err == nil || errors.Is(err, tc.expectedError) {
-					t.Errorf("expected error %v, got %v", tc.expectedError, err)
+			errorPkgs, err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
+			if tc.expectedError != "" {
+				if !strings.Contains(err.Error(), tc.expectedError) {
+					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
 				}
 			} else {
 				if err != nil {
 					t.Errorf("unexpected error: %v", err)
 				}
+			}
+
+			if tc.expectedErrPkgs != nil {
+				if !reflect.DeepEqual(tc.expectedErrPkgs, errorPkgs) {
+					t.Errorf("expected error packages %v, got %v", tc.expectedErrPkgs, errorPkgs)
+				}
+			}
+		})
+	}
+}
+
+func Test_rpmManager_GetPackageType(t *testing.T) {
+	type fields struct {
+		config        *buildkit.Config
+		workingFolder string
+		rpmTools      rpmToolPaths
+		isDistroless  bool
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   string
+	}{
+		{
+			name: "rpm manager",
+			fields: fields{
+				config:        &buildkit.Config{},
+				workingFolder: "/tmp",
+				rpmTools:      rpmToolPaths{},
+				isDistroless:  false,
+			},
+			want: "rpm",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rm := &rpmManager{
+				config:        tt.fields.config,
+				workingFolder: tt.fields.workingFolder,
+				rpmTools:      tt.fields.rpmTools,
+				isDistroless:  tt.fields.isDistroless,
+			}
+			if got := rm.GetPackageType(); got != tt.want {
+				t.Errorf("rpmManager.GetPackageType() = %v, want %v", got, tt.want)
 			}
 		})
 	}

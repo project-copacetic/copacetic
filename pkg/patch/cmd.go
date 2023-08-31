@@ -28,6 +28,8 @@ type patchArgs struct {
 	buildkitAddr  string
 	timeout       time.Duration
 	ignoreError   bool
+	format        string
+	output        string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -44,6 +46,8 @@ func NewPatchCmd() *cobra.Command {
 				ua.reportFile,
 				ua.patchedTag,
 				ua.workingFolder,
+				ua.format,
+				ua.output,
 				ua.ignoreError)
 		},
 	}
@@ -55,6 +59,8 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.buildkitAddr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
 	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
+	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
+	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

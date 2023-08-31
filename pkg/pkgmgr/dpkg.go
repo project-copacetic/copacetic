@@ -98,44 +98,45 @@ func getDPKGStatusType(dir string) dpkgStatusType {
 	return out
 }
 
-func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, error) {
+func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(updates) == 0 {
 		log.Warn("No update packages were specified to apply")
-		return &dm.config.ImageState, nil
+		return &dm.config.ImageState, nil, nil
 	}
 
 	// Probe for additional information to execute the appropriate update install graphs
 	toolImageName := getAPTImageName(manifest)
 	if err := dm.probeDPKGStatus(ctx, toolImageName); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var updatedImageState *llb.State
 	if dm.isDistroless {
 		updatedImageState, err = dm.unpackAndMergeUpdates(ctx, updates, toolImageName)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	} else {
 		updatedImageState, err = dm.installUpdates(ctx, updates)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	// Validate that the deployed packages are of the requested version or better
 	resultManifestPath := filepath.Join(dm.workingFolder, resultsPath, resultManifest)
-	if err := validateDebianPackageVersions(updates, debComparer, resultManifestPath, ignoreErrors); err != nil {
-		return nil, err
+	errPkgs, err := validateDebianPackageVersions(updates, debComparer, resultManifestPath, ignoreErrors)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	return updatedImageState, nil
+	return updatedImageState, errPkgs, nil
 }
 
 // Probe the target image for:
@@ -305,6 +306,10 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	return &merged, nil
 }
 
+func (dm *dpkgManager) GetPackageType() string {
+	return "deb"
+}
+
 func dpkgParseResultsManifest(path string) (map[string]string, error) {
 	// Open result file
 	f, err := os.Open(path)
@@ -352,15 +357,16 @@ func dpkgParseResultsManifest(path string) (map[string]string, error) {
 	return updateMap, nil
 }
 
-func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) error {
+func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
 	// Load file into map[string]string for package:version lookup
 	updateMap, err := dpkgParseResultsManifest(resultsPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// for each target package, validate version is mapped version is >= requested version
 	var allErrors *multierror.Error
+	errorPkgs := []string{}
 	for _, update := range updates {
 		version, ok := updateMap[update.Name]
 		if !ok {
@@ -370,21 +376,23 @@ func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComp
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
 			log.Error(err)
+			errorPkgs = append(errorPkgs, update.Name)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		if cmp.LessThan(version, update.Version) {
-			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.Version)
+		if cmp.LessThan(version, update.FixedVersion) {
+			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
+			errorPkgs = append(errorPkgs, update.Name)
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.Version)
+		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.FixedVersion)
 	}
 
 	if ignoreErrors {
-		return nil
+		return errorPkgs, nil
 	}
 
-	return allErrors.ErrorOrNil()
+	return errorPkgs, allErrors.ErrorOrNil()
 }

@@ -10,11 +10,12 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
 	"github.com/project-copacetic/copacetic/pkg/types"
-	"github.com/stretchr/testify/assert"
 )
 
 // TestGetPackageManager tests the GetPackageManager function.
@@ -231,66 +232,147 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 func TestValidateDebianPackageVersions(t *testing.T) {
 	dpkgComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 
-	t.Run("no updates", func(t *testing.T) {
-		err := validateDebianPackageVersions(nil, dpkgComparer, "testdata/dpkg_valid.txt", false)
-		assert.NoError(t, err)
-	})
+	testCases := []struct {
+		name            string
+		updates         types.UpdatePackages
+		cmp             VersionComparer
+		resultsPath     string
+		ignoreErrors    bool
+		expectedError   string
+		expectedErrPkgs []string
+	}{
+		{
+			name:         "no updates",
+			updates:      types.UpdatePackages{},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: false,
+		},
+		{
+			name: "package not installed",
+			updates: types.UpdatePackages{
+				{Name: "not-installed", FixedVersion: "1.0.0"},
+			},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: false,
+		},
+		{
+			name: "invalid version",
+			updates: types.UpdatePackages{
+				{Name: "base-files", FixedVersion: "1.0.0"},
+			},
+			cmp:           dpkgComparer,
+			resultsPath:   "testdata/dpkg_invalid.txt",
+			ignoreErrors:  false,
+			expectedError: `invalid version`,
+		},
+		{
+			name: "invalid version with ignore errors",
+			updates: types.UpdatePackages{
+				{Name: "base-files", FixedVersion: "1.0.0"},
+			},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: true,
+		},
+		{
+			name: "version lower than requested",
+			updates: types.UpdatePackages{
+				{Name: "apt", FixedVersion: "2.0"},
+			},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: false,
+			expectedError: `1 error occurred:
+	* downloaded package apt version 1.8.2.3 lower than required 2.0 for update`,
+			expectedErrPkgs: []string{"apt"},
+		},
+		{
+			name: "version lower than requested with ignore errors",
+			updates: types.UpdatePackages{
+				{Name: "apt", FixedVersion: "2.0"},
+			},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: true,
+		},
+		{
+			name: "version equal to requested",
+			updates: types.UpdatePackages{
+				{Name: "apt", FixedVersion: "1.8.2.3"},
+			},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: false,
+		},
+		{
+			name: "version greater than requested",
+			updates: types.UpdatePackages{
+				{Name: "apt", FixedVersion: "0.9"},
+			},
+			cmp:          dpkgComparer,
+			resultsPath:  "testdata/dpkg_valid.txt",
+			ignoreErrors: false,
+		},
+	}
 
-	t.Run("package not installed", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "not_installed", Version: "1.0"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
-		assert.NoError(t, err)
-	})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			errorPkgs, err := validateDebianPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
+			if tc.expectedError != "" {
+				if !strings.Contains(err.Error(), tc.expectedError) {
+					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+			}
 
-	t.Run("invalid version", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "base-files", Version: "1.0.0"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_invalid.txt", false)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid version")
-	})
+			if tc.expectedErrPkgs != nil {
+				if !reflect.DeepEqual(tc.expectedErrPkgs, errorPkgs) {
+					t.Errorf("expected error packages %v, got %v", tc.expectedErrPkgs, errorPkgs)
+				}
+			}
+		})
+	}
+}
 
-	t.Run("invalid version: ignore errors", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "base-files", Version: "1.0.0"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_invalid.txt", true)
-		assert.NoError(t, err)
-	})
-
-	t.Run("version lower than requested", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "apt", Version: "2.0"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "downloaded package")
-	})
-
-	t.Run("version lower than requested: ignore errors", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "apt", Version: "2.0"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", true)
-		assert.NoError(t, err)
-	})
-
-	t.Run("version equal to requested", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "apt", Version: "1.8.2.3"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
-		assert.NoError(t, err)
-	})
-
-	t.Run("version greater than requested", func(t *testing.T) {
-		updates := []types.UpdatePackage{
-			{Name: "apt", Version: "0.9"},
-		}
-		err := validateDebianPackageVersions(updates, dpkgComparer, "testdata/dpkg_valid.txt", false)
-		assert.NoError(t, err)
-	})
+func Test_dpkgManager_GetPackageType(t *testing.T) {
+	type fields struct {
+		config        *buildkit.Config
+		workingFolder string
+		isDistroless  bool
+		statusdNames  string
+	}
+	tests := []struct {
+		name   string
+		fields fields
+		want   string
+	}{
+		{
+			name: "debian",
+			fields: fields{
+				config:        &buildkit.Config{},
+				workingFolder: "/tmp",
+				isDistroless:  false,
+				statusdNames:  "",
+			},
+			want: "deb",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dm := &dpkgManager{
+				config:        tt.fields.config,
+				workingFolder: tt.fields.workingFolder,
+				isDistroless:  tt.fields.isDistroless,
+				statusdNames:  tt.fields.statusdNames,
+			}
+			if got := dm.GetPackageType(); got != tt.want {
+				t.Errorf("dpkgManager.GetPackageType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
