@@ -20,6 +20,7 @@ const sidebars = {
     'output',
     'troubleshooting',
     'design',
+    'faq',
     'contributing',
     'code-of-conduct'
   ]
