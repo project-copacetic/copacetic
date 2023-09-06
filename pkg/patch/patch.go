@@ -29,13 +29,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, buildkitAddr, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, buildkitAddr, image, reportFile, patchedTag, workingFolder, format, output, ignoreError)
+		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -60,7 +60,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool) error {
+func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := ref.ParseNamed(image)
 	if err != nil {
 		return err
@@ -113,7 +113,7 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 	}
 	log.Debugf("updates to apply: %v", updates)
 
-	client, err := buildkit.NewClient(ctx, buildkitAddr)
+	client, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
 		return err
 	}

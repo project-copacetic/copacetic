@@ -143,6 +143,39 @@ func checkMissingCapsError(t *testing.T, err error, caps ...apicaps.CapID) {
 	}
 }
 
+func TestGetServerNameFromAddr(t *testing.T) {
+	testCases := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{
+			name: "hostname",
+			addr: "tcp://hostname:1234",
+			want: "hostname",
+		},
+		{
+			name: "IP address",
+			addr: "tcp://127.0.0.1:1234",
+			want: "127.0.0.1",
+		},
+		{
+			name: "invalid URL",
+			addr: "hostname:1234",
+			want: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := getServerNameFromAddr(tc.addr)
+			if got != tc.want {
+				t.Errorf("getServerNameFromAddr(%q) = %q, want %q", tc.addr, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewClient(t *testing.T) {
 	ctx := context.Background()
 
@@ -151,7 +184,10 @@ func TestNewClient(t *testing.T) {
 			t.Parallel()
 			addr := newMockBuildkitAPI(t)
 			ctxT, cancel := context.WithTimeout(ctx, time.Second)
-			client, err := NewClient(ctxT, "unix://"+addr)
+			bkOpts := Opts{
+				Addr: "unix://" + addr,
+			}
+			client, err := NewClient(ctxT, bkOpts)
 			cancel()
 			assert.NoError(t, err)
 			defer client.Close()
@@ -167,7 +203,10 @@ func TestNewClient(t *testing.T) {
 
 			ctxT, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
-			client, err := NewClient(ctxT, "unix://"+addr)
+			bkOpts := Opts{
+				Addr: "unix://" + addr,
+			}
+			client, err := NewClient(ctxT, bkOpts)
 			assert.NoError(t, err)
 			defer client.Close()
 
