@@ -41,7 +41,6 @@ func NewClient(ctx context.Context, bkOpts Opts) (*client.Client, error) {
 
 func getCredentialOptions(bkOpts Opts) []client.ClientOpt {
 	opts := []client.ClientOpt{}
-	// addr := bkOpts.Addr
 	if bkOpts.CACertPath != "" {
 		opts = append(opts, client.WithServerConfig(getServerNameFromAddr(bkOpts.Addr), bkOpts.CACertPath))
 	}
