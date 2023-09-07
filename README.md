@@ -48,4 +48,10 @@ This approach is motivated by the core principles of making direct container pat
 
 For more details refer to the [full documentation](https://project-copacetic.github.io/copacetic/).
 
+## Contributing
+There are several ways to get involved:
+* Join the [mailing list](https://groups.google.com/g/project-copa) to get notifications for releases, security announcements, etc.
+* Join the [biweekly community meetings](https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit#heading=h.294j02tlxam) to discuss development, issues, use cases, etc.
+* Join the `#copa` channel on the [OCI Slack](https://communityinviter.com/apps/opencontainers/join-the-oci-community)
 
+The project welcomes contributions and suggestions that abide by the [Code of Conduct](./CODE_OF_CONDUCT.md)

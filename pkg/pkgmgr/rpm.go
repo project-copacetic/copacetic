@@ -35,7 +35,7 @@ const (
 	rpmManifest2        = "container-manifest-2"
 	rpmManifestWildcard = "container-manifest-*"
 
-	installToolsCmd   = "yum install busybox -y"
+	installToolsCmd   = "yum install busybox cpio -y"
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
 
@@ -360,17 +360,16 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
-	const aptDownloadTemplate = "yum reinstall --downloadonly --downloaddir=. --best -y %s"
+	const rpmDownloadTemplate = `yum reinstall --downloadonly --downloaddir=. --best -y %s`
 	pkgStrings := []string{}
 	for _, u := range updates {
 		pkgStrings = append(pkgStrings, u.Name)
 	}
-	downloadCmd := fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
+	downloadCmd := fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
 	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
-	// `rpm -i` doesn't support installing to a target directory, so chroot into the download folder to install the packages.
-	const extractTemplate = `chroot %s ./busybox find . -name '*.rpm' -exec ./busybox rpm -i '{}' \;`
+	const extractTemplate = `sh -c 'for f in %[1]s/*.rpm ; do rpm2cpio "$f" | cpio -idmv -D %[1]s ; done'`
 	extractCmd := fmt.Sprintf(extractTemplate, downloadPath)
 	unpacked := downloaded.Run(llb.Shlex(extractCmd)).Root()
 
