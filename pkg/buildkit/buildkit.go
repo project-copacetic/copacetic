@@ -237,3 +237,47 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 	})
 	return eg.Wait()
 }
+
+func SolveToRegistry(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string) error {
+	def, err := st.Marshal(ctx)
+	if err != nil {
+		log.Errorf("st.Marshal failed with %s", err)
+		return err
+	}
+
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
+	solveOpt := client.SolveOpt{
+		Exports: []client.ExportEntry{
+			{
+				Type: client.ExporterImage,
+				Attrs: map[string]string{
+					"name": tag,
+					"push": "true",
+					// Pass through resolved configData from original image
+					exptypes.ExporterImageConfigKey: string(configData),
+				},
+			},
+		},
+		Frontend: "",         // i.e. we are passing in the llb.Definition directly
+		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+	}
+
+	ch := make(chan *client.SolveStatus)
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		_, err := c.Solve(ctx, def, solveOpt, ch)
+		return err
+	})
+	eg.Go(func() error {
+		var c console.Console
+		if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
+			c = cn
+		}
+		// not using shared context to not disrupt display but let us finish reporting errors
+		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
+		return err
+	})
+
+	return eg.Wait()
+}

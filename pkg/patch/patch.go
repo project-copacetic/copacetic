@@ -133,8 +133,14 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 		return err
 	}
 
-	if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
-		return err
+	if pushDest != "" {
+		if err = buildkit.SolveToRegistry(ctx, config.Client, patchedImageState, config.ConfigData, pushDest); err != nil {
+			return err
+		}
+	} else {
+		if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
+			return err
+		}
 	}
 
 	// create a new manifest with the successfully patched packages
