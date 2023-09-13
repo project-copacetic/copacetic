@@ -7,6 +7,7 @@ package report
 
 import (
 	"fmt"
+	"os"
 	"plugin"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -23,7 +24,6 @@ type ScanReportParser interface {
 }
 
 func TryParseScanReport(file, scanner string) (*types.UpdateManifest, error) {
-
 	if scanner == "" {
 		return defaultParse(file)
 	} else {
@@ -32,9 +32,15 @@ func TryParseScanReport(file, scanner string) (*types.UpdateManifest, error) {
 }
 
 func pluginParse(file, scanner string) (*types.UpdateManifest, error) {
+	// Define the path where all copa plugins are located
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("%s/.copa/plugins/%s.so", home, scanner)
 
 	// load module
-	plug, err := plugin.Open(scanner)
+	plug, err := plugin.Open(path)
 	if err != nil {
 		return nil, err
 	}
@@ -55,11 +61,9 @@ func pluginParse(file, scanner string) (*types.UpdateManifest, error) {
 
 	// Call the plugin's Parse function
 	return reportParser.Parse(file)
-	
 }
 
 func defaultParse(file string) (*types.UpdateManifest, error) {
-
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
 		&QualysParser{},
