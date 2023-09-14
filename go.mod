@@ -7,7 +7,7 @@ require (
 	github.com/antchfx/xmlquery v1.3.17
 	github.com/aquasecurity/trivy v0.45.0
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.7.3
+	github.com/containerd/containerd v1.7.6
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/distribution/distribution v2.8.2+incompatible
 	github.com/docker/cli v24.0.6+incompatible
@@ -29,17 +29,18 @@ require (
 	google.golang.org/grpc v1.58.0
 )
 
+require github.com/Microsoft/hcsshim v0.11.0 // indirect
+
 require (
-	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230106234847-43070de90fa1 // indirect
+	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
 	github.com/antchfx/xpath v1.2.4 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917 // indirect
-	github.com/containerd/continuity v0.4.1 // indirect
+	github.com/containerd/continuity v0.4.2 // indirect
 	github.com/containerd/ttrpc v1.2.2 // indirect
 	github.com/containerd/typeurl/v2 v2.1.1 // indirect
 	github.com/cpuguy83/go-docker v0.2.1
-	github.com/cyphar/filepath-securejoin v0.2.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
 	github.com/docker/docker v24.0.5+incompatible // indirect
