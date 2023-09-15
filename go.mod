@@ -18,7 +18,7 @@ require (
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
 	github.com/moby/buildkit v0.12.2
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.1.0-rc4
+	github.com/opencontainers/image-spec v1.1.0-rc5
 	github.com/openvex/go-vex v0.2.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.7.0
@@ -26,7 +26,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1
 	golang.org/x/sync v0.3.0
-	google.golang.org/grpc v1.58.0
+	google.golang.org/grpc v1.58.1
 )
 
 require github.com/Microsoft/hcsshim v0.11.0 // indirect
