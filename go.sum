@@ -58,8 +58,8 @@ github.com/antchfx/xmlquery v1.3.17/go.mod h1:Afkq4JIeXut75taLSuI31ISJ/zeq+3jG7T
 github.com/antchfx/xpath v1.2.4 h1:dW1HB/JxKvGtJ9WyVGJ0sIoEcqftV3SqIstujI+B9XY=
 github.com/antchfx/xpath v1.2.4/go.mod h1:i54GszH55fYfBmoZXapTHN8T8tkcHfRgLyVwwqzXNcs=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
-github.com/aquasecurity/trivy v0.45.0 h1:Pwla4x6G2U2xrcsfsrdeZmLUmnrFPlUhg23xcNTzJX8=
-github.com/aquasecurity/trivy v0.45.0/go.mod h1:nqruwuHFYfEDw4UGeg0oAzgAHYAtMpUR/PNfVDTidF4=
+github.com/aquasecurity/trivy v0.45.1 h1:JjkrawgNpVUV6mxtFX635I3MhzDqmGkze46SnygkYN0=
+github.com/aquasecurity/trivy v0.45.1/go.mod h1:3cawI6q9o32pPGXhuGEIWWwUCSMAzRk/FhsEdA4eW1k=
 github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917 h1:MQd7h7yUyA8UlUzhjNMzpUX0NpD7jfxmRfSKwp/Ji3E=
 github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917/go.mod h1:WJ5Qnk5ZNGWvks07GOZe2IOsuXrPfSC5c8hYGOGfrsU=
 github.com/census-instrumentation/opencensus-proto v0.2.1/go.mod h1:f6KPmirojxKA12rnyqOA5BBL4O983OfeGPqjHWSTneU=
