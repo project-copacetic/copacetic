@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/Masterminds/semver/v3 v3.2.1
 	github.com/antchfx/xmlquery v1.3.17
-	github.com/aquasecurity/trivy v0.45.0
+	github.com/aquasecurity/trivy v0.45.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.6
 	github.com/cpuguy83/dockercfg v0.3.1
