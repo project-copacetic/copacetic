@@ -27,15 +27,37 @@ var (
 
 // NewClient returns a new buildkit client with the given addr.
 // If addr is empty it will first try to connect to docker's buildkit instance and then fallback to DefaultAddr.
-func NewClient(ctx context.Context, addr string) (*client.Client, error) {
-	if addr == "" {
+func NewClient(ctx context.Context, bkOpts Opts) (*client.Client, error) {
+	if bkOpts.Addr == "" {
 		return autoClient(ctx)
 	}
-	client, err := client.New(ctx, addr)
+	opts := getCredentialOptions(bkOpts)
+	client, err := client.New(ctx, bkOpts.Addr, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return client, nil
+}
+
+func getCredentialOptions(bkOpts Opts) []client.ClientOpt {
+	opts := []client.ClientOpt{}
+	if bkOpts.CACertPath != "" {
+		opts = append(opts, client.WithServerConfig(getServerNameFromAddr(bkOpts.Addr), bkOpts.CACertPath))
+	}
+
+	if bkOpts.CertPath != "" || bkOpts.KeyPath != "" {
+		opts = append(opts, client.WithCredentials(bkOpts.CertPath, bkOpts.KeyPath))
+	}
+
+	return opts
+}
+
+func getServerNameFromAddr(addr string) string {
+	u, err := url.Parse(addr)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // ValidateClient checks to ensure the connected buildkit instance supports the features required by copa.

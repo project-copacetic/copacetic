@@ -40,6 +40,13 @@ type Config struct {
 	ImageState llb.State
 }
 
+type Opts struct {
+	Addr       string
+	CACertPath string
+	CertPath   string
+	KeyPath    string
+}
+
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	cmd := exec.CommandContext(ctx, "docker", "load")
 	cmd.Stdin = pipeR
