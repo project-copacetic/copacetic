@@ -53,8 +53,8 @@ github.com/Microsoft/hcsshim v0.11.0/go.mod h1:OEthFdQv/AD2RAdzR6Mm1N1KPCztGKDur
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=
 github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 h1:aM1rlcoLz8y5B2r4tTLMiVTrMtpfY0O8EScKJxaSaEc=
 github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092/go.mod h1:rYqSE9HbjzpHTI74vwPvae4ZVYZd1lue2ta6xHPdblA=
-github.com/antchfx/xmlquery v1.3.17 h1:d0qWjPp/D+vtRw7ivCwT5ApH/3CkQU8JOeo3245PpTk=
-github.com/antchfx/xmlquery v1.3.17/go.mod h1:Afkq4JIeXut75taLSuI31ISJ/zeq+3jG7TunF7noreA=
+github.com/antchfx/xmlquery v1.3.18 h1:FSQ3wMuphnPPGJOFhvc+cRQ2CT/rUj4cyQXkJcjOwz0=
+github.com/antchfx/xmlquery v1.3.18/go.mod h1:Afkq4JIeXut75taLSuI31ISJ/zeq+3jG7TunF7noreA=
 github.com/antchfx/xpath v1.2.4 h1:dW1HB/JxKvGtJ9WyVGJ0sIoEcqftV3SqIstujI+B9XY=
 github.com/antchfx/xpath v1.2.4/go.mod h1:i54GszH55fYfBmoZXapTHN8T8tkcHfRgLyVwwqzXNcs=
 github.com/antihax/optional v1.0.0/go.mod h1:uupD/76wgC+ih3iEmQUL+0Ugr19nfwCT1kdvxnR2qWY=
