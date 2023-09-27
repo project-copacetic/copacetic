@@ -36,7 +36,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     You may need to specify a custom address using the `--addr` flag. Here are the supported formats:
 
     - `unix:///path/to/buildkit.sock` - Connect to buildkit over unix socket.
-    - `tcp://$BUILDKIT_ADDR:$PORT` - Connec to buildkit over TCP. (not recommended for security reasons)
+    - `tcp://$BUILDKIT_ADDR:$PORT` - Connect to buildkit over TCP. (not recommended for security reasons)
     - `docker://<docker connection spec>` - Connect to docker, currently only unix sockets are supported, e.g. `docker://unix:///var/run/docker.sock` (or just `docker://`).
     - `docker-container://my-buildkit-container` - Connect to a buildkitd running in a docker container.
     - `buildx://my-builder` - Connect to a buildx builder (or `buildx://` for the currently selected builder). *Note: only container-backed buildx instances are currently supported*
