@@ -133,10 +133,12 @@ func TestGetRPMImageName(t *testing.T) {
 	// Loop over test cases and run getRPMImageName function with each input manifest
 	for _, tc := range testCases {
 		t.Run(tc.image, func(t *testing.T) {
-			image := getRPMImageName(tc.manifest)
-
-			// Use testify package to assert that the output image name matches the expected one
+			image := getRPMImageName(tc.manifest, "")
 			assert.Equal(t, tc.image, image)
+
+			// Test with custom tooling image
+			image = getRPMImageName(tc.manifest, "docker.io/foo:bar")
+			assert.Equal(t, "docker.io/foo:bar", image)
 		})
 	}
 }

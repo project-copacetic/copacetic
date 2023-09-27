@@ -72,7 +72,11 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getAPTImageName(manifest *types.UpdateManifest) string {
+func getAPTImageName(manifest *types.UpdateManifest, customToolingImage string) string {
+	if customToolingImage != "" {
+		return customToolingImage
+	}
+
 	version := manifest.OSVersion
 	if manifest.OSType == "debian" {
 		version = strings.Split(manifest.OSVersion, ".")[0] + "-slim"
@@ -98,7 +102,7 @@ func getDPKGStatusType(dir string) dpkgStatusType {
 	return out
 }
 
-func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool, customToolingImage string) (*llb.State, []string, error) {
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
@@ -111,7 +115,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.Updat
 	}
 
 	// Probe for additional information to execute the appropriate update install graphs
-	toolImageName := getAPTImageName(manifest)
+	toolImageName := getAPTImageName(manifest, customToolingImage)
 	if err := dm.probeDPKGStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
 	}

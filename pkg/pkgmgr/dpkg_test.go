@@ -119,9 +119,15 @@ func TestGetAPTImageName(t *testing.T) {
 	// Run test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getAPTImageName(tc.manifest)
+			got := getAPTImageName(tc.manifest, "")
 			if got != tc.want {
 				t.Errorf("getAPTImageName() = %v, want %v", got, tc.want)
+			}
+
+			// Test with custom tooling image
+			got = getAPTImageName(tc.manifest, "docker.io/foo:bar")
+			if got != "docker.io/foo:bar" {
+				t.Errorf("getAPTImageName() = %v, want %v", got, "docker.io/foo:bar")
 			}
 		})
 	}

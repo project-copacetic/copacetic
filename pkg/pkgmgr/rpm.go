@@ -90,7 +90,11 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getRPMImageName(manifest *types.UpdateManifest) string {
+func getRPMImageName(manifest *types.UpdateManifest, customToolingImage string) string {
+	if customToolingImage != "" {
+		return customToolingImage
+	}
+
 	// Standardize on mariner as tooling image base as redhat/ubi does not provide
 	// static busybox binary
 	image := "mcr.microsoft.com/cbl-mariner/base/core"
@@ -159,7 +163,7 @@ func getRPMDBType(dir string) rpmDBType {
 	return out
 }
 
-func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool, customToolingImage string) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update
 	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
@@ -173,7 +177,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.Update
 	log.Debugf("latest unique RPMs: %v", updates)
 
 	// Probe RPM status for available tooling on the target image
-	toolImageName := getRPMImageName(manifest)
+	toolImageName := getRPMImageName(manifest, customToolingImage)
 	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
 	}

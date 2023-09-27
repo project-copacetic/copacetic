@@ -21,15 +21,16 @@ import (
 )
 
 type patchArgs struct {
-	appImage      string
-	reportFile    string
-	patchedTag    string
-	workingFolder string
-	timeout       time.Duration
-	ignoreError   bool
-	format        string
-	output        string
-	bkOpts        buildkit.Opts
+	appImage           string
+	reportFile         string
+	patchedTag         string
+	workingFolder      string
+	timeout            time.Duration
+	ignoreError        bool
+	format             string
+	output             string
+	customToolingImage string
+	bkOpts             buildkit.Opts
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -53,6 +54,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.workingFolder,
 				ua.format,
 				ua.output,
+				ua.customToolingImage,
 				ua.ignoreError,
 				bkopts)
 		},
@@ -70,6 +72,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
+	flags.StringVarP(&ua.customToolingImage, "custom-tooling-image", "", "", "[EXPERIMENTAL] Custom tooling image to use for patching")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

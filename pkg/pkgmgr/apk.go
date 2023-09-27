@@ -124,7 +124,7 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 	return errorPkgs, allErrors.ErrorOrNil()
 }
 
-func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool, _ string) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update
 	apkComparer := VersionComparer{isValidAPKVersion, isLessThanAPKVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, apkComparer, ignoreErrors)
