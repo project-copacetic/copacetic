@@ -3,7 +3,6 @@
 ## Overview
 
 The [Copa Github Action](https://github.com/project-copacetic/copa-action) allows you patch vulnerable containers in your workflows using Copa. 
-See Copa Action docs for example workflow.
 
 ## Inputs
 
@@ -32,3 +31,66 @@ See Copa Action docs for example workflow.
 ## `patched-image`
 
 Image reference of the resulting patched image.
+
+## Example Workflow
+
+```
+on: [push]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+
+        strategy:
+          fail-fast: false
+          matrix:
+            # provide relevant list of images to scan on each run
+            images: ['docker.io/library/nginx:1.21.6', 'docker.io/openpolicyagent/opa:0.46.0', 'docker.io/library/hello-world:latest']
+
+        steps:
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@dedd61cf5d839122591f5027c89bf3ad27691d18
+
+        - name: Generate Trivy Report
+          uses: aquasecurity/trivy-action@69cbbc0cbbf6a2b0bab8dcf0e9f2d7ead08e87e4
+          with:
+            scan-type: 'image'
+            format: 'json'
+            output: 'report.json'
+            ignore-unfixed: true
+            vuln-type: 'os'
+            image-ref: ${{ matrix.images }}
+
+        - name: Check Vuln Count
+          id: vuln_count
+          run: |
+            report_file="report.json"
+            vuln_count=$(jq '.Results | length' "$report_file")
+            echo "vuln_count=$vuln_count" >> $GITHUB_OUTPUT
+
+        - name: Copa Action
+          if: steps.vuln_count.outputs.vuln_count != '0'
+          id: copa
+          uses: project-copacetic/copa-action@v1.0.0
+          with:
+            image: ${{ matrix.images }}
+            image-report: 'report.json'
+            patched-tag: 'patched'
+            buildkit-version: 'v0.11.6'
+            # optional, default is latest
+            copa-version: '0.3.0'
+
+        - name: Login to Docker Hub
+          if: steps.copa.conclusion == 'success'
+          id: login
+          uses: docker/login-action@b4bedf8053341df3b5a9f9e0f2cf4e79e27360c6
+          with:
+            username: 'user'
+            password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+        - name: Docker Push Patched Image
+          if: steps.login.conclusion == 'success'
+          run: |
+            docker push ${{ steps.copa.outputs.patched-image }}
+
+```
