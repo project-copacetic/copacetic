@@ -3,7 +3,7 @@
 ## Overview
 
 The [Copa Github Action](https://github.com/project-copacetic/copa-action) allows you patch vulnerable containers in your workflows using Copa. 
-See Copa Action docs for example usage.
+See Copa Action docs for example workflow.
 
 ## Inputs
 
