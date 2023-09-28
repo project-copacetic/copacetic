@@ -1,4 +1,6 @@
-# Release Process
+---
+title: Release Process
+---
 
 ## Overview
 
