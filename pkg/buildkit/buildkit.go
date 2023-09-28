@@ -7,6 +7,7 @@ package buildkit
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/containerd/console"
 	"github.com/containerd/containerd/remotes/docker"
 	"github.com/docker/cli/cli/config"
+	dockerClient "github.com/docker/docker/client"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -75,6 +77,23 @@ func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 // there doesn't seem to be a way to configure the necessary DockerAuthorizer or RegistryHosts
 // against an ImageMetaResolver, which causes the resolve to only use anonymous tokens and fail.
 func resolveImageConfig(ctx context.Context, ref string, platform *ispec.Platform) (digest.Digest, []byte, error) {
+	var errs []error
+
+	// Check if image is available locally
+	dc, err := dockerClient.NewClientWithOpts()
+	if err != nil {
+		return "", nil, err
+	}
+
+	configStruct, configBytes, err := dc.ImageInspectWithRaw(ctx, ref)
+	if err == nil { // Success
+		dgst := configStruct.ID
+		return digest.Digest(dgst), configBytes, nil
+	}
+	// Otherwise, note the error and try remote registry
+	errs = append(errs, err)
+
+	// Resolve and pull the config for the target image
 	auth := docker.NewDockerAuthorizer(
 		docker.WithAuthCreds(func(ref string) (string, string, error) {
 			defaultConfig := config.LoadDefaultConfigFile(os.Stderr)
@@ -103,7 +122,8 @@ func resolveImageConfig(ctx context.Context, ref string, platform *ispec.Platfor
 
 	_, dgst, config, err := imageutil.Config(ctx, ref, resolver, contentutil.NewBuffer(), nil, platform, nil)
 	if err != nil {
-		return "", nil, err
+		errs = append(errs, err)
+		return "", nil, errors.Join(errs...)
 	}
 	return dgst, config, nil
 }
@@ -129,7 +149,7 @@ func InitializeBuildkitConfig(ctx context.Context, client *client.Client, image 
 	// are necessary for running apps in the target image for updates
 	config.ImageState, err = llb.Image(image,
 		llb.Platform(config.Platform),
-		llb.ResolveModeDefault,
+		llb.ResolveModePreferLocal,
 	).WithImageConfig(config.ConfigData)
 	if err != nil {
 		return nil, err

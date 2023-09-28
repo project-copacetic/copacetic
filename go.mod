@@ -29,7 +29,11 @@ require (
 	google.golang.org/grpc v1.58.2
 )
 
-require github.com/Microsoft/hcsshim v0.11.0 // indirect
+require (
+	github.com/Microsoft/hcsshim v0.11.0 // indirect
+	github.com/docker/go-connections v0.4.0 // indirect
+	github.com/docker/go-units v0.5.0 // indirect
+)
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
@@ -43,7 +47,7 @@ require (
 	github.com/cpuguy83/go-docker v0.2.1
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
-	github.com/docker/docker v24.0.5+incompatible // indirect
+	github.com/docker/docker v24.0.5+incompatible
 	github.com/docker/docker-credential-helpers v0.7.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
 	github.com/go-logr/logr v1.2.4 // indirect
