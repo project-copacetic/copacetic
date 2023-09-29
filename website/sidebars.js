@@ -22,7 +22,9 @@ const sidebars = {
     'design',
     'faq',
     'contributing',
-    'code-of-conduct'
+    'code-of-conduct',
+    'github-action',
+    'release'
   ]
 };
 
