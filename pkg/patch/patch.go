@@ -156,7 +156,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	// vex document must contain at least one statement
 	if output != "" && len(validatedManifest.Updates) > 0 {
-		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, format, output)
+		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output)
 	}
 	return nil
 }
