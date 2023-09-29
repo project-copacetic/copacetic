@@ -3,6 +3,7 @@
 ![GitHub](https://img.shields.io/github/license/project-copacetic/copacetic)
 [![codecov](https://codecov.io/gh/project-copacetic/copacetic/branch/main/graph/badge.svg?token=PBC8EPNHRL)](https://codecov.io/gh/project-copacetic/copacetic)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/project-copacetic/copacetic/badge)](https://api.securityscorecards.dev/projects/github.com/project-copacetic/copacetic)
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fproject-copacetic%2Fcopacetic.svg?type=shield&issueType=license)](https://app.fossa.com/projects/git%2Bgithub.com%2Fproject-copacetic%2Fcopacetic?ref=badge_shield&issueType=license)
 
 `copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
 

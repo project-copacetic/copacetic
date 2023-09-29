@@ -54,6 +54,11 @@ const config = {
     ({
       navbar: {
         title: 'Copacetic',
+        logo: {
+          alt: 'Copacetic Logo',
+          src: 'img/logo.png',
+          href: 'https://project-copacetic.github.io/copacetic/',
+        },
         items: [
           {
             type: 'docsVersionDropdown',
