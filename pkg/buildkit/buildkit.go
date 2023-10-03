@@ -14,6 +14,7 @@ import (
 
 	"github.com/containerd/console"
 	"github.com/containerd/containerd/remotes/docker"
+	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
@@ -159,6 +160,11 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 		Frontend: "",         // i.e. we are passing in the llb.Definition directly
 		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
 	}
+	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
+	if err != nil {
+		return err
+	}
+
 	ch := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
@@ -207,6 +213,10 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 		},
 		Frontend: "",         // i.e. we are passing in the llb.Definition directly
 		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+	}
+	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
+	if err != nil {
+		return err
 	}
 
 	ch := make(chan *client.SolveStatus)
