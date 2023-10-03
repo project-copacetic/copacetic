@@ -34,7 +34,7 @@ cat <<EOF > source-policy.json
 }
 EOF
 
-export COPA_SOURCE_POLICY=source-policy.json
+export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 ```
 
 > Tooling image for Debian-based images are `docker.io/library/debian:11-slim` and RPM-based repos are `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
