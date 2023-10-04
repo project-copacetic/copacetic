@@ -9,7 +9,7 @@ require (
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.6
 	github.com/cpuguy83/dockercfg v0.3.1
-	github.com/distribution/distribution v2.8.2+incompatible
+	github.com/distribution/distribution v2.8.3+incompatible
 	github.com/docker/buildx v0.11.2
 	github.com/docker/cli v24.0.6+incompatible
 	github.com/google/go-containerregistry v0.16.1
@@ -29,6 +29,8 @@ require (
 	golang.org/x/sync v0.3.0
 	google.golang.org/grpc v1.58.2
 )
+
+require github.com/distribution/reference v0.5.0 // indirect
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
