@@ -25,7 +25,7 @@ func TestDummyProvider(t *testing.T) {
 				Updates: []types.UpdatePackage{
 					{
 						Name:    "apk-tools",
-						Version: "2.12.6-r0",
+						InstalledVersion: "2.12.6-r0",
 					},
 				},
 			},

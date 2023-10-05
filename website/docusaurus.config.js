@@ -54,6 +54,11 @@ const config = {
     ({
       navbar: {
         title: 'Copacetic',
+        logo: {
+          alt: 'Copacetic Logo',
+          src: 'img/logo.png',
+          href: 'https://project-copacetic.github.io/copacetic/',
+        },
         items: [
           {
             type: 'docsVersionDropdown',
@@ -69,7 +74,7 @@ const config = {
       },
       footer: {
         style: 'dark',
-        copyright: `Copyright © ${new Date().getFullYear()}, Built with Docusaurus.`,
+        copyright: `Copyright © ${new Date().getFullYear()} Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.`,
       },
       prism: {
         theme: lightCodeTheme,

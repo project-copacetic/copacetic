@@ -29,8 +29,10 @@ func TestTryParseScanReport(t *testing.T) {
 				Arch:      "amd64",
 				Updates: []types.UpdatePackage{
 					{
-						Name:    "apk-tools",
-						Version: "2.12.6-r0",
+						Name:             "apk-tools",
+						VulnerabilityID:  "CVE-2021-36159",
+						FixedVersion:     "2.12.6-r0",
+						InstalledVersion: "2.12.5-r1",
 					},
 				},
 			},

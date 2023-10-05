@@ -13,12 +13,15 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 
 	ref "github.com/distribution/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
+	"github.com/project-copacetic/copacetic/pkg/vex"
 )
 
 const (
@@ -26,13 +29,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, buildkitAddr, image, reportFile, patchedTag, workingFolder, scanner string) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, buildkitAddr, image, reportFile, patchedTag, workingFolder, scanner)
+		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -57,7 +60,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patchedTag, workingFolder, scanner string) error {
+func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := ref.ParseNamed(image)
 	if err != nil {
 		return err
@@ -110,7 +113,7 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 	}
 	log.Debugf("updates to apply: %v", updates)
 
-	client, err := buildkit.NewClient(ctx, buildkitAddr)
+	client, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
 		return err
 	}
@@ -130,9 +133,30 @@ func patchWithContext(ctx context.Context, buildkitAddr, image, reportFile, patc
 
 	// Export the patched image state to Docker
 	// TODO: Add support for other output modes as buildctl does.
-	patchedImageState, err := pkgmgr.InstallUpdates(ctx, updates)
+	patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
 	if err != nil {
 		return err
 	}
-	return buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName)
+
+	if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
+		return err
+	}
+
+	// create a new manifest with the successfully patched packages
+	validatedManifest := &types.UpdateManifest{
+		OSType:    updates.OSType,
+		OSVersion: updates.OSVersion,
+		Arch:      updates.Arch,
+		Updates:   []types.UpdatePackage{},
+	}
+	for _, update := range updates.Updates {
+		if !slices.Contains(errPkgs, update.Name) {
+			validatedManifest.Updates = append(validatedManifest.Updates, update)
+		}
+	}
+	// vex document must contain at least one statement
+	if output != "" && len(validatedManifest.Updates) > 0 {
+		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, format, output)
+	}
+	return nil
 }

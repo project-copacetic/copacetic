@@ -1,7 +1,13 @@
-name: Deploy docs website to GitHub Pages
+name: Generate docs website to GitHub Pages
 
 on:
   push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/deploy-docs.yaml'
+      - 'website/**'
+  pull_request:
     branches:
       - main
     paths:
@@ -13,7 +19,7 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy docs website to GitHub Pages
+    name: Generate docs website to GitHub Pages
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -21,15 +27,15 @@ jobs:
       run:
         working-directory: website
     steps:
-      - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # v4.1.0
 
       - name: Harden Runner
-        uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09
+        uses: step-security/harden-runner@1b05615854632b887b69ae1be8cbefe72d3ae423
         with:
           egress-policy: audit
 
       - name: Setup Node
-        uses: actions/setup-node@bea5baf987ba7aa777a8a0b4ace377a21c45c381 # v3.8.0
+        uses: actions/setup-node@5e21ff4d9bc1a8cf6de233a3057d20ec6b3fb69d # v3.8.1
         with:
           node-version: 16.x
 
@@ -38,7 +44,7 @@ jobs:
         run: echo "dir=$(yarn cache dir)" > $GITHUB_OUTPUT
 
       - name: Cache dependencies
-        uses: actions/cache@88522ab9f39a2ea568f7027eddc7d8d8bc9d59c8 # v3.3.1
+        uses: actions/cache@704facf57e6136b1bc63b828d79edcd491f0ee84 # v3.3.2
         with:
           path: ${{ steps.yarn-cache.outputs.dir }}
           key: ${{ runner.os }}-website-${{ hashFiles('**/yarn.lock') }}
@@ -48,9 +54,10 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn build
 
+      # deploy only after PR is merged to main
       - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && github.repository == 'project-copacetic/copacetic'
         uses: peaceiris/actions-gh-pages@373f7f263a76c20808c831209c920827a82a2847 # v3.9.3
-        if: ${{ github.ref == 'refs/heads/main' }}
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./website/build

@@ -17,9 +17,14 @@ const sidebars = {
     'introduction',
     'installation',
     'quick-start',
+    'output',
+    'troubleshooting',
     'design',
+    'faq',
     'contributing',
-    'code-of-conduct'
+    'code-of-conduct',
+    'github-action',
+    'release'
   ]
 };
 
