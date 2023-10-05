@@ -27,7 +27,7 @@ func TryParseScanReport(file, scanner string) (*types.UpdateManifest, error) {
 
 	if scanner == "trivy" {
 		return defaultParseScanReport(file)
-	} 
+	}
 	return customParseScanReport(file, scanner)
 }
 

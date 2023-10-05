@@ -3,7 +3,6 @@ package report
 import (
 	"encoding/json"
 	"fmt"
-
 )
 
 func RunProvider(imageReport string) ([]byte, error) {
