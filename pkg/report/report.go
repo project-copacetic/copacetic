@@ -25,17 +25,17 @@ type ScanReportParser interface {
 
 func TryParseScanReport(file, scanner string) (*types.UpdateManifest, error) {
 
-	if scanner == "" {
+	if scanner == "trivy" {
 		return defaultParseScanReport(file)
-	} else {
-		return customParseScanReport(file, scanner)
-	}
+	} 
+	return customParseScanReport(file, scanner)
 }
 
 func customParseScanReport(file, scanner string) (*types.UpdateManifest, error) {
 
 	// Execute the plugin binary
-	scannerCommand := exec.Command(scanner, file)
+	cmd := "copa-" + scanner
+	scannerCommand := exec.Command(cmd, file)
 	// Capture the output
 	scannerOutput, err := scannerCommand.CombinedOutput()
 

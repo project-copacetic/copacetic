@@ -55,7 +55,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
 	flags.StringVarP(&ua.buildkitAddr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
-	flags.StringVarP(&ua.scanner, "scanner", "s", "", "Scanner used to generate the report, defaults to 'trivy'")
+	flags.StringVarP(&ua.scanner, "scanner", "s", "trivy", "Scanner used to generate the report, defaults to 'trivy'")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
