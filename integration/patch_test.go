@@ -86,6 +86,7 @@ func patch(t *testing.T, ref, patchedTag, scan string) {
 		"-i="+ref,
 		"-t="+patchedTag,
 		"-r="+scan,
+		"-s="+scanner_plugin,
 		"--timeout=20m",
 		addrFl,
 	)

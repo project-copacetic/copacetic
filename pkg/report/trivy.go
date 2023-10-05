@@ -28,6 +28,10 @@ func parseTrivyReport(file string) (*trivyTypes.Report, error) {
 	return &msr, nil
 }
 
+func NewTrivyParser() *TrivyParser {
+	return &TrivyParser{}
+}
+
 func (t *TrivyParser) Parse(file string) (*types.UpdateManifest, error) {
 	report, err := parseTrivyReport(file)
 	if err != nil {
