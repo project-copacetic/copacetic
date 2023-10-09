@@ -15,7 +15,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
-	ref "github.com/distribution/distribution/reference"
+	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -61,15 +61,15 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := ref.ParseNamed(image)
+	imageName, err := reference.ParseNamed(image)
 	if err != nil {
 		return err
 	}
-	if ref.IsNameOnly(imageName) {
+	if reference.IsNameOnly(imageName) {
 		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = ref.TagNameOnly(imageName)
+		imageName = reference.TagNameOnly(imageName)
 	}
-	taggedName, ok := imageName.(ref.Tagged)
+	taggedName, ok := imageName.(reference.Tagged)
 	if !ok {
 		err := errors.New("unexpected: TagNameOnly did create Tagged ref")
 		log.Error(err)

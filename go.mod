@@ -3,13 +3,11 @@ module github.com/project-copacetic/copacetic
 go 1.20
 
 require (
-	github.com/Masterminds/semver/v3 v3.2.1
-	github.com/antchfx/xmlquery v1.3.18
 	github.com/aquasecurity/trivy v0.45.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.6
 	github.com/cpuguy83/dockercfg v0.3.1
-	github.com/distribution/distribution v2.8.3+incompatible
+	github.com/distribution/reference v0.5.0
 	github.com/docker/buildx v0.11.2
 	github.com/docker/cli v24.0.6+incompatible
 	github.com/google/go-containerregistry v0.16.1
@@ -30,8 +28,6 @@ require (
 	google.golang.org/grpc v1.58.2
 )
 
-require github.com/distribution/reference v0.5.0 // indirect
-
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
@@ -40,7 +36,6 @@ require (
 	github.com/Shopify/logrus-bugsnag v0.0.0-20230117174420-439a4b8ba167 // indirect
 	github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
-	github.com/antchfx/xpath v1.2.4 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
@@ -64,7 +59,6 @@ require (
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/googleapis v1.4.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
