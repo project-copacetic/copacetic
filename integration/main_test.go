@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	buildkitAddr string
-	copaPath     string
-	ignoreErrors bool
+	buildkitAddr  string
+	copaPath      string
+	ignoreErrors  bool
 	scannerPlugin string
 )
 

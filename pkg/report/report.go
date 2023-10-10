@@ -46,8 +46,8 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 		return nil, fmt.Errorf("error parsing scanner output: %w", err)
 	}
 
-	// Convert the output to a UpdateManifest struct
-	updateManifest, err := convertToUnversionedAPI(m)
+	// Convert the output to an unversioned UpdateManifest struct
+	updateManifest, err := convertToUnversionedAPI(scannerOutput, m)
 	if err != nil {
 		return nil, err
 	}
@@ -72,16 +72,14 @@ func defaultParseScanReport(file string) (*unversioned.UpdateManifest, error) {
 	return nil, fmt.Errorf("%s is not a supported scan report format", file)
 }
 
-func convertToUnversionedAPI(m map[string]interface{}) (*unversioned.UpdateManifest, error) {
+func convertToUnversionedAPI(scannerOutput []byte, m map[string]interface{}) (*unversioned.UpdateManifest, error) {
 	switch v := m["apiVersion"].(type) {
-
 	case string:
 		if v == "v1alpha1" {
-			um, err := v1alpha1.Convert_v1alpha1_UpdateManifest_To_unversioned_UpdateManifest(m)
+			um, err := v1alpha1.ConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(scannerOutput)
 			return um, err
-		} else {
-			return nil, &ErrorUnsupported{fmt.Errorf("unsupported apiVersion: %s", v)}
 		}
+		return nil, &ErrorUnsupported{fmt.Errorf("unsupported apiVersion: %s", v)}
 	default:
 		return nil, &ErrorUnsupported{fmt.Errorf("unsupported apiVersion type: %v", v)}
 	}

@@ -1,6 +1,6 @@
 package v1alpha1
 
-const APIVersion = "v1alpha1"
+const APIVersion string = "v1alpha1"
 
 type UpdatePackage struct {
 	Name             string `json:"name"`
@@ -12,8 +12,9 @@ type UpdatePackage struct {
 type UpdatePackages []UpdatePackage
 
 type UpdateManifest struct {
-	OSType    string         `json:"ostype"`
-	OSVersion string         `json:"osversion"`
-	Arch      string         `json:"arch"`
-	Updates   UpdatePackages `json:"updates"`
+	APIVersion string         `json:"apiVersion"`
+	OSType     string         `json:"ostype"`
+	OSVersion  string         `json:"osversion"`
+	Arch       string         `json:"arch"`
+	Updates    UpdatePackages `json:"updates"`
 }

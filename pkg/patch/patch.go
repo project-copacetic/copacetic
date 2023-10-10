@@ -105,7 +105,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			defer removeIfNotDebug(workingFolder)
 		}
 	}
-	
+
 	// Parse report for update packages
 	updates, err := report.TryParseScanReport(reportFile, scanner)
 	if err != nil {
