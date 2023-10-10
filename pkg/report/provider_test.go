@@ -19,7 +19,7 @@ func TestDummyProvider(t *testing.T) {
 		{
 			file: "testdata/trivy_valid.json",
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "alpine",	
+				OSType:    "alpine",
 				OSVersion: "3.14.0",
 				Arch:      "amd64",
 				Updates: []unversioned.UpdatePackage{
