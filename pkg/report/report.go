@@ -58,7 +58,6 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 func defaultParseScanReport(file string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
-		&QualysParser{},
 	}
 	for _, parser := range allParsers {
 		manifest, err := parser.Parse(file)
