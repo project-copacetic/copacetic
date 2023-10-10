@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -13,16 +13,16 @@ func TestDummyProvider(t *testing.T) {
 	// Define test cases with input file and expected output manifest and error
 	testCases := []struct {
 		file     string
-		manifest *types.UpdateManifest
+		manifest *unversioned.UpdateManifest
 		err      error
 	}{
 		{
 			file: "testdata/trivy_valid.json",
-			manifest: &types.UpdateManifest{
-				OSType:    "alpine",
+			manifest: &unversioned.UpdateManifest{
+				OSType:    "alpine",	
 				OSVersion: "3.14.0",
 				Arch:      "amd64",
-				Updates: []types.UpdatePackage{
+				Updates: []unversioned.UpdatePackage{
 					{
 						Name:             "apk-tools",
 						InstalledVersion: "2.12.6-r0",

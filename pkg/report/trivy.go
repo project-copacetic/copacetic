@@ -11,7 +11,7 @@ import (
 	"os"
 
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 type TrivyParser struct{}
@@ -32,7 +32,7 @@ func NewTrivyParser() *TrivyParser {
 	return &TrivyParser{}
 }
 
-func (t *TrivyParser) Parse(file string) (*types.UpdateManifest, error) {
+func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	report, err := parseTrivyReport(file)
 	if err != nil {
 		return nil, err
@@ -53,7 +53,7 @@ func (t *TrivyParser) Parse(file string) (*types.UpdateManifest, error) {
 		return nil, errors.New("no scanning results for os-pkgs found")
 	}
 
-	updates := types.UpdateManifest{
+	updates := unversioned.UpdateManifest{
 		OSType:    report.Metadata.OS.Family,
 		OSVersion: report.Metadata.OS.Name,
 		Arch:      report.Metadata.ImageConfig.Architecture,
@@ -62,7 +62,7 @@ func (t *TrivyParser) Parse(file string) (*types.UpdateManifest, error) {
 	for i := range result.Vulnerabilities {
 		vuln := &result.Vulnerabilities[i]
 		if vuln.FixedVersion != "" {
-			updates.Updates = append(updates.Updates, types.UpdatePackage{Name: vuln.PkgName, InstalledVersion: vuln.InstalledVersion, FixedVersion: vuln.FixedVersion, VulnerabilityID: vuln.VulnerabilityID})
+			updates.Updates = append(updates.Updates, unversioned.UpdatePackage{Name: vuln.PkgName, InstalledVersion: vuln.InstalledVersion, FixedVersion: vuln.FixedVersion, VulnerabilityID: vuln.VulnerabilityID})
 		}
 	}
 

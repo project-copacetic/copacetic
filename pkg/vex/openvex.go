@@ -7,7 +7,7 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 // used for testing mock time and id.
@@ -26,7 +26,7 @@ var (
 
 type OpenVex struct{}
 
-func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr.PackageManager) (string, error) {
+func (o *OpenVex) CreateVEXDocument(updates *unversioned.UpdateManifest, pkgmgr pkgmgr.PackageManager) (string, error) {
 	t := now()
 	doc := v
 	doc.Timestamp = &t

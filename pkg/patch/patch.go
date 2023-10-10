@@ -19,7 +19,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 )
@@ -105,7 +105,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			defer removeIfNotDebug(workingFolder)
 		}
 	}
-
+	
 	// Parse report for update packages
 	updates, err := report.TryParseScanReport(reportFile, scanner)
 	if err != nil {
@@ -143,11 +143,11 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 
 	// create a new manifest with the successfully patched packages
-	validatedManifest := &types.UpdateManifest{
+	validatedManifest := &unversioned.UpdateManifest{
 		OSType:    updates.OSType,
 		OSVersion: updates.OSVersion,
 		Arch:      updates.Arch,
-		Updates:   []types.UpdatePackage{},
+		Updates:   []unversioned.UpdatePackage{},
 	}
 	for _, update := range updates.Updates {
 		if !slices.Contains(errPkgs, update.Name) {

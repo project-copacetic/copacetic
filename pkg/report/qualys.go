@@ -13,7 +13,7 @@ import (
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/antchfx/xmlquery"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -48,7 +48,7 @@ func parseQualysOSInfo(osNode *xmlquery.Node) (*osInfo, error) {
 	return nil, errors.New("report is for unsupported non-Linux OS")
 }
 
-func parseQualysUpdatePackages(resultNode *xmlquery.Node) (types.UpdatePackages, error) {
+func parseQualysUpdatePackages(resultNode *xmlquery.Node) (unversioned.UpdatePackages, error) {
 	// Based on sample string in CDATA (note inclusion of newlines):
 	// #table cols="3"
 	// Package Installed_Version Required_Version
@@ -60,7 +60,7 @@ func parseQualysUpdatePackages(resultNode *xmlquery.Node) (types.UpdatePackages,
 		log.Error(err)
 		return nil, err
 	}
-	updates := types.UpdatePackages{}
+	updates := unversioned.UpdatePackages{}
 	lines := strings.Split(text[len(vulnDataHeader):], "\n")
 	for _, line := range lines {
 		tokens := strings.Split(line, " ")
@@ -69,12 +69,12 @@ func parseQualysUpdatePackages(resultNode *xmlquery.Node) (types.UpdatePackages,
 			log.Error(err)
 			return nil, err
 		}
-		updates = append(updates, types.UpdatePackage{Name: tokens[0], FixedVersion: tokens[2]})
+		updates = append(updates, unversioned.UpdatePackage{Name: tokens[0], FixedVersion: tokens[2]})
 	}
 	return updates, nil
 }
 
-func (t *QualysParser) Parse(file string) (*types.UpdateManifest, error) {
+func (t *QualysParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return nil, err
@@ -107,7 +107,7 @@ func (t *QualysParser) Parse(file string) (*types.UpdateManifest, error) {
 		return nil, err
 	}
 
-	updates := types.UpdateManifest{
+	updates := unversioned.UpdateManifest{
 		OSType:    osInfo.family,
 		OSVersion: osInfo.version,
 		// TODO: Qualys report does not specify arch, may need to infer this

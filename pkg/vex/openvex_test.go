@@ -6,7 +6,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 func TestOpenVex_CreateVEXDocument(t *testing.T) {
@@ -24,7 +24,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	id = func() (string, error) { return "https://openvex.dev/test", nil }
 
 	type args struct {
-		updates *types.UpdateManifest
+		updates *unversioned.UpdateManifest
 		pkgmgr  pkgmgr.PackageManager
 	}
 	tests := []struct {
@@ -38,8 +38,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			name: "valid openvex document",
 			o:    &OpenVex{},
 			args: args{
-				updates: &types.UpdateManifest{
-					Updates: []types.UpdatePackage{
+				updates: &unversioned.UpdateManifest{
+					Updates: []unversioned.UpdatePackage{
 						{
 							Name:             "test1",
 							InstalledVersion: "1.0",
@@ -80,8 +80,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			name: "valid openvex document with multiple statements and multiple vulnerabilities",
 			o:    &OpenVex{},
 			args: args{
-				updates: &types.UpdateManifest{
-					Updates: []types.UpdatePackage{
+				updates: &unversioned.UpdateManifest{
+					Updates: []unversioned.UpdatePackage{
 						{
 							Name:             "test2",
 							InstalledVersion: "1.0",
