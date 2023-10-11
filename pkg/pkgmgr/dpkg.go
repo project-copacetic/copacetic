@@ -148,7 +148,11 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		llb.Platform(dm.config.Platform),
 		llb.ResolveModeDefault,
 	)
-	updated := toolingBase.Run(llb.Shlex("apt update"), llb.WithProxy(utils.GetProxy())).Root()
+	updated := toolingBase.Run(
+		llb.Shlex("apt update"),
+		llb.WithProxy(utils.GetProxy()),
+		llb.IgnoreCache,
+	).Root()
 
 	const installBusyBoxCmd = "apt install busybox-static"
 	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd), llb.WithProxy(utils.GetProxy())).Root()
@@ -198,7 +202,11 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates types.UpdateP
 	// Since this takes place in the target container, it can interfere with install actions
 	// such as the installation of the updated debian-archive-keyring package, so it's probably best
 	// to separate it out to an explicit container edit command or opt-in before patching.
-	aptUpdated := dm.config.ImageState.Run(llb.Shlex("apt update"), llb.WithProxy(utils.GetProxy())).Root()
+	aptUpdated := dm.config.ImageState.Run(
+		llb.Shlex("apt update"),
+		llb.WithProxy(utils.GetProxy()),
+		llb.IgnoreCache,
+	).Root()
 
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -237,7 +245,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.
 	)
 
 	// Run apt update && apt download list of updates to target folder
-	updated := toolingBase.Run(llb.Shlex("apt update"), llb.WithProxy(utils.GetProxy())).Root()
+	updated := toolingBase.Run(
+		llb.Shlex("apt update"),
+		llb.WithProxy(utils.GetProxy()),
+		llb.IgnoreCache,
+	).Root()
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.

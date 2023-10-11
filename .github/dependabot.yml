@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
     commit-message:
       prefix: "chore"
     ignore:
@@ -14,9 +14,13 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
     commit-message:
       prefix: "chore"
+    groups:
+      all:
+        patterns:
+        - "*"
 
   - package-ecosystem: "npm"
     directory: "/website"
@@ -24,3 +28,7 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "chore"
+    groups:
+      all:
+        patterns:
+        - "*"
