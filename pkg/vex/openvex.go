@@ -26,7 +26,11 @@ var (
 
 type OpenVex struct{}
 
-func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, patchedImageName string, pkgmgr pkgmgr.PackageManager) (string, error) {
+func (o *OpenVex) CreateVEXDocument(
+	updates *types.UpdateManifest,
+	patchedImageName string,
+	pkgmgr pkgmgr.PackageManager,
+) (string, error) {
 	t := now()
 	doc := v
 	doc.Timestamp = &t

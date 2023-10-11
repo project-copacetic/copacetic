@@ -29,11 +29,10 @@ require (
 	google.golang.org/grpc v1.58.2
 )
 
-require github.com/Microsoft/hcsshim v0.11.0 // indirect
-
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
+	github.com/Microsoft/hcsshim v0.11.0 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
 	github.com/antchfx/xpath v1.2.4 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917 // indirect

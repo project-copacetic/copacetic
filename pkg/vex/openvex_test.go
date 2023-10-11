@@ -14,6 +14,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	workingFolder := "/tmp"
 	alpineManager, _ := pkgmgr.GetPackageManager("alpine", config, workingFolder)
 	debianManager, _ := pkgmgr.GetPackageManager("debian", config, workingFolder)
+	patchedImageName := "foo.io/bar:latest"
 	t.Setenv("COPA_VEX_AUTHOR", "test author")
 
 	// mock time
@@ -24,8 +25,9 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	id = func() (string, error) { return "https://openvex.dev/test", nil }
 
 	type args struct {
-		updates *types.UpdateManifest
-		pkgmgr  pkgmgr.PackageManager
+		updates          *types.UpdateManifest
+		pkgmgr           pkgmgr.PackageManager
+		patchedImageName string
 	}
 	tests := []struct {
 		name    string
@@ -38,6 +40,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			name: "valid openvex document",
 			o:    &OpenVex{},
 			args: args{
+				patchedImageName: patchedImageName,
 				updates: &types.UpdateManifest{
 					Updates: []types.UpdatePackage{
 						{
@@ -66,7 +69,12 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
       },
       "products": [
         {
-          "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
+          "@id": "pkg:oci/foo.io/bar:latest",
+          "subcomponents": [
+            {
+              "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
+            }
+          ]
         }
       ],
       "status": "fixed"
@@ -80,6 +88,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			name: "valid openvex document with multiple statements and multiple vulnerabilities",
 			o:    &OpenVex{},
 			args: args{
+				patchedImageName: patchedImageName,
 				updates: &types.UpdateManifest{
 					Updates: []types.UpdatePackage{
 						{
@@ -114,10 +123,15 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
       },
       "products": [
         {
-          "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
-        },
-        {
-          "@id": "pkg:deb/debian/test2@1.2?arch=x86_64"
+          "@id": "pkg:oci/foo.io/bar:latest",
+          "subcomponents": [
+            {
+              "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
+            },
+            {
+              "@id": "pkg:deb/debian/test2@1.2?arch=x86_64"
+            }
+          ]
         }
       ],
       "status": "fixed"
@@ -128,7 +142,12 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
       },
       "products": [
         {
-          "@id": "pkg:deb/debian/test3@1.3?arch=x86_64"
+          "@id": "pkg:oci/foo.io/bar:latest",
+          "subcomponents": [
+            {
+              "@id": "pkg:deb/debian/test3@1.3?arch=x86_64"
+            }
+          ]
         }
       ],
       "status": "fixed"
@@ -142,7 +161,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			o := &OpenVex{}
-			got, err := o.CreateVEXDocument(tt.args.updates, tt.args.pkgmgr)
+			got, err := o.CreateVEXDocument(tt.args.updates, tt.args.patchedImageName, tt.args.pkgmgr)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("OpenVex.CreateVEXDocument() error = %v, wantErr %v", err, tt.wantErr)
 				return
