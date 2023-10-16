@@ -6,7 +6,7 @@ title: Scanner Plugins
 
 By default, `copa` uses [Trivy](https://github.com/aquasecurity/trivy) to scan container images for vulnerabilities. However, we understand that different organizations have different requirements and may want to use different vulnerability scanners.
 
-`copa` is designed to be extensible to support different vulnerability scanners. Plugin architecture allows users to use the vulnerability scanner of their choice to patch container images without having to modify `copa`'s core codebase.
+Starting with v0.5.0 and later, `copa` offers extensibility to support different vulnerability scanners. Plugin architecture allows users to use the vulnerability scanner of their choice to patch container images without having to modify `copa`'s core codebase.
 
 # Usage
 
@@ -20,10 +20,13 @@ copa patch --scanner foo --image $IMAGE ...
 
 # Community Scanner Plugins
 
-If you have built a scanner plugin and would like to add it to this list, please submit a PR to update this page.
+If you have built a scanner plugin and would like to add it to this list, please submit a PR to update this section with your plugin.
+
+:::tip
 
 If you have any issues with a specific plugin, please open an issue in the applicable plugin's repository.
 
+:::
 
 # Writing a Scanner Plugin
 
@@ -44,31 +47,48 @@ Scanner plugins must implement the following interface:
 
 ## v1alpha1
 
-```go
+```golang
 type UpdateManifest struct {
     // API version of the interface (e.g. v1alpha1)
-	APIVersion	     string         `json:"apiVersion"`
-    // OS Type (e.g. debian, alpine, etc.)
-	OSType           string         `json:"osType"`
-    // OS Version (e.g. 11.3)
-	OSVersion        string         `json:"osVersion"`
-    // OS Architecture (e.g. amd64)
-	Arch             string         `json:"arch"`
-    // Package information
-	Updates          UpdatePackages `json:"updates"`
+    APIVersion string         `json:"apiVersion"`
+    // Metadata contains information about the OS and config
+    Metadata   Metadata       `json:"metadata"`
+    // Updates is a list of UpdatePackage that contains information about the package updates
+    Updates    UpdatePackages `json:"updates"`
 }
 
+// UpdatePackages is a list of UpdatePackage
 type UpdatePackages []UpdatePackage
 
+// Metadata contains information about the OS and config
+type Metadata struct {
+    OS     OS     `json:"os"`
+    Config Config `json:"config"`
+}
+
+type OS struct {
+    // OS Type (e.g. debian, alpine, etc.)
+    Type    string `json:"type"`
+    // OS Version (e.g. 11.3)
+    Version string `json:"version"`
+}
+
+// Config contains information about the config
+type Config struct {
+    // OS Architecture (e.g. amd64)
+    Arch string `json:"arch"`
+}
+
+// UpdatePackage contains information about the package update
 type UpdatePackage struct {
     // Package name
-	Name             string `json:"name"`
+    Name             string `json:"name"`
     // Installed version
-	InstalledVersion string `json:"installedVersion"`
+    InstalledVersion string `json:"installedVersion"`
     // Fixed version
-	FixedVersion     string `json:"fixedVersion"`
+    FixedVersion     string `json:"fixedVersion"`
     // Vulnerability ID
-	VulnerabilityID  string `json:"vulnerabilityID"`
+    VulnerabilityID  string `json:"vulnerabilityID"`
 }
 ```
 
@@ -76,18 +96,23 @@ From the above, we can see that the plugin must return a JSON object via standar
 
 ```json
 {
-    "apiVersion": "v1alpha1",
-    "ostype": "debian",
-    "osversion": "11.3",
-    "arch": "amd64",
-    "updates": [
-        {
-            "name": "libcurl4",
-            "installedVersion": "7.74.0-1.3+deb11u1",
-            "fixedVersion": "7.74.0-1.3+deb11u2",
-            "vulnerabilityID": "CVE-2021-22945"
-        },
-        ...
-    ]
+  "apiVersion": "v1alpha1",
+  "metadata": {
+    "os": {
+        "type": "debian",
+        "version": "11.3",
+    },
+    "config": {
+      "arch": "amd64"
+    }
+  },
+  "updates": [
+      {
+          "name": "libcurl4",
+          "installedVersion": "7.74.0-1.3+deb11u1",
+          "fixedVersion": "7.74.0-1.3+deb11u2",
+          "vulnerabilityID": "CVE-2021-22945"
+      }
+  ]
 }
 ```
