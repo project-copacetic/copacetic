@@ -58,7 +58,7 @@ func (o *OpenVex) CreateVEXDocument(
 		subComponent := vex.Subcomponent{
 			Component: vex.Component{
 				// syntax is "pkg:<pkgType>/<osType>/<packageName>@<installedVersion>?arch=<arch>"
-				ID: "pkg:" + pkgType + "/" + updates.OSType + "/" + u.Name + "@" + u.FixedVersion + "?arch=" + updates.Arch,
+				ID: "pkg:" + pkgType + "/" + updates.Metadata.OS.Type + "/" + u.Name + "@" + u.FixedVersion + "?arch=" + updates.Metadata.Config.Arch,
 			},
 		}
 

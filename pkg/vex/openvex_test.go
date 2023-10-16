@@ -50,8 +50,14 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 							VulnerabilityID:  "CVE-2020-1234",
 						},
 					},
-					OSType: "alpine",
-					Arch:   "x86_64",
+					Metadata: unversioned.Metadata{
+						OS: unversioned.OS{
+							Type: "alpine",
+						},
+						Config: unversioned.Config{
+							Arch: "x86_64",
+						},
+					},
 				},
 				pkgmgr: alpineManager,
 			},
@@ -104,8 +110,14 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 							VulnerabilityID:  "CVE-2020-1235",
 						},
 					},
-					OSType: "debian",
-					Arch:   "x86_64",
+					Metadata: unversioned.Metadata{
+						OS: unversioned.OS{
+							Type: "debian",
+						},
+						Config: unversioned.Config{
+							Arch: "x86_64",
+						},
+					},
 				},
 				pkgmgr: debianManager,
 			},

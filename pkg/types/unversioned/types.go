@@ -1,17 +1,29 @@
 package unversioned
 
-type UpdatePackage struct {
-	Name             string `json:"name"`
-	InstalledVersion string `json:"installedVersion"`
-	FixedVersion     string `json:"fixedVersion"`
-	VulnerabilityID  string `json:"vulnerability"`
+type UpdateManifest struct {
+	Metadata Metadata       `json:"metadata"`
+	Updates  UpdatePackages `json:"updates"`
 }
 
 type UpdatePackages []UpdatePackage
 
-type UpdateManifest struct {
-	OSType    string         `json:"ostype"`
-	OSVersion string         `json:"osversion"`
-	Arch      string         `json:"arch"`
-	Updates   UpdatePackages `json:"updates"`
+type Metadata struct {
+	OS     OS     `json:"os"`
+	Config Config `json:"config"`
+}
+
+type OS struct {
+	Type    string `json:"type"`
+	Version string `json:"version"`
+}
+
+type Config struct {
+	Arch string `json:"arch"`
+}
+
+type UpdatePackage struct {
+	Name             string `json:"name"`
+	InstalledVersion string `json:"installedVersion"`
+	FixedVersion     string `json:"fixedVersion"`
+	VulnerabilityID  string `json:"vulnerabilityID"`
 }

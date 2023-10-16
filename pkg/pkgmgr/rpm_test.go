@@ -102,29 +102,45 @@ func TestGetRPMImageName(t *testing.T) {
 	}{
 		{
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "cbl-mariner",
-				OSVersion: "2.0.0",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "cbl-mariner",
+						Version: "2.0.0",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0",
 		},
 		{
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "cbl-mariner",
-				OSVersion: "1.5",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "cbl-mariner",
+						Version: "1.5",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:1.5",
 		},
 		{
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "cbl-mariner",
-				OSVersion: "3", // missing minor version
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "cbl-mariner",
+						Version: "3",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:3.0", // default minor version to 0
 		},
 		{
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "redhat", // not cbl-mariner
-				OSVersion: "8.4",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "redhat",
+						Version: "8.4",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0", // use default version of cbl-mariner image
 		},

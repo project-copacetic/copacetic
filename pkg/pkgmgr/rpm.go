@@ -95,9 +95,9 @@ func getRPMImageName(manifest *unversioned.UpdateManifest) string {
 	// static busybox binary
 	image := "mcr.microsoft.com/cbl-mariner/base/core"
 	version := "2.0"
-	if manifest.OSType == "cbl-mariner" {
+	if manifest.Metadata.OS.Type == "cbl-mariner" {
 		// Use appropriate version of cbl-mariner image if available
-		vers := strings.Split(manifest.OSVersion, ".")
+		vers := strings.Split(manifest.Metadata.OS.Version, ".")
 		if len(vers) < 2 {
 			vers = append(vers, "0")
 		}

@@ -73,14 +73,14 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
 func getAPTImageName(manifest *unversioned.UpdateManifest) string {
-	version := manifest.OSVersion
-	if manifest.OSType == "debian" {
-		version = strings.Split(manifest.OSVersion, ".")[0] + "-slim"
+	version := manifest.Metadata.OS.Version
+	if manifest.Metadata.OS.Type == "debian" {
+		version = strings.Split(manifest.Metadata.OS.Version, ".")[0] + "-slim"
 	}
 
 	// TODO: support qualifying image name with designated repository
-	log.Debugf("Using %s:%s as basis for tooling image", manifest.OSType, version)
-	return fmt.Sprintf("%s:%s", manifest.OSType, version)
+	log.Debugf("Using %s:%s as basis for tooling image", manifest.Metadata.OS.Type, version)
+	return fmt.Sprintf("%s:%s", manifest.Metadata.OS.Type, version)
 }
 
 func getDPKGStatusType(dir string) dpkgStatusType {

@@ -126,7 +126,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 
 	// Create package manager helper
-	pkgmgr, err := pkgmgr.GetPackageManager(updates.OSType, config, workingFolder)
+	pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
 	if err != nil {
 		return err
 	}
@@ -144,10 +144,16 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 
 	// create a new manifest with the successfully patched packages
 	validatedManifest := &unversioned.UpdateManifest{
-		OSType:    updates.OSType,
-		OSVersion: updates.OSVersion,
-		Arch:      updates.Arch,
-		Updates:   []unversioned.UpdatePackage{},
+		Metadata: unversioned.Metadata{
+			OS: unversioned.OS{
+				Type:    updates.Metadata.OS.Type,
+				Version: updates.Metadata.OS.Version,
+			},
+			Config: unversioned.Config{
+				Arch: updates.Metadata.Config.Arch,
+			},
+		},
+		Updates: []unversioned.UpdatePackage{},
 	}
 	for _, update := range updates.Updates {
 		if !slices.Contains(errPkgs, update.Name) {

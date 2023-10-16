@@ -54,9 +54,15 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	}
 
 	updates := unversioned.UpdateManifest{
-		OSType:    report.Metadata.OS.Family,
-		OSVersion: report.Metadata.OS.Name,
-		Arch:      report.Metadata.ImageConfig.Architecture,
+		Metadata: unversioned.Metadata{
+			OS: unversioned.OS{
+				Type:    report.Metadata.OS.Family,
+				Version: report.Metadata.OS.Name,
+			},
+			Config: unversioned.Config{
+				Arch: report.Metadata.ImageConfig.Architecture,
+			},
+		},
 	}
 
 	for i := range result.Vulnerabilities {

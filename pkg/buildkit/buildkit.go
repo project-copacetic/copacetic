@@ -115,7 +115,7 @@ func InitializeBuildkitConfig(ctx context.Context, client *client.Client, image 
 		ImageName: image,
 		Platform: ispec.Platform{
 			OS:           "linux",
-			Architecture: manifest.Arch,
+			Architecture: manifest.Metadata.Config.Arch,
 		},
 	}
 

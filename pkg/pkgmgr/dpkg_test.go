@@ -93,24 +93,36 @@ func TestGetAPTImageName(t *testing.T) {
 		{
 			name: "ubuntu 20.04",
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "ubuntu",
-				OSVersion: "20.04",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "ubuntu",
+						Version: "20.04",
+					},
+				},
 			},
 			want: "ubuntu:20.04",
 		},
 		{
 			name: "debian 11.0",
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "debian",
-				OSVersion: "11.0",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "debian",
+						Version: "11.0",
+					},
+				},
 			},
 			want: "debian:11-slim",
 		},
 		{
 			name: "debian 11.1",
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "debian",
-				OSVersion: "11.1",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "debian",
+						Version: "11.1",
+					},
+				},
 			},
 			want: "debian:11-slim",
 		},

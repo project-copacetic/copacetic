@@ -24,9 +24,15 @@ func TestTryParseScanReport(t *testing.T) {
 		{
 			file: "testdata/trivy_valid.json",
 			manifest: &unversioned.UpdateManifest{
-				OSType:    "alpine",
-				OSVersion: "3.14.0",
-				Arch:      "amd64",
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "alpine",
+						Version: "3.14.0",
+					},
+					Config: unversioned.Config{
+						Arch: "amd64",
+					},
+				},
 				Updates: []unversioned.UpdatePackage{
 					{
 						Name:             "apk-tools",
