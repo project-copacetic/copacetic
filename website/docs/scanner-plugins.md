@@ -44,31 +44,48 @@ Scanner plugins must implement the following interface:
 
 ## v1alpha1
 
-```go
+```golang
 type UpdateManifest struct {
     // API version of the interface (e.g. v1alpha1)
-	APIVersion	     string         `json:"apiVersion"`
-    // OS Type (e.g. debian, alpine, etc.)
-	OSType           string         `json:"osType"`
-    // OS Version (e.g. 11.3)
-	OSVersion        string         `json:"osVersion"`
-    // OS Architecture (e.g. amd64)
-	Arch             string         `json:"arch"`
-    // Package information
-	Updates          UpdatePackages `json:"updates"`
+    APIVersion string         `json:"apiVersion"`
+    // Metadata contains information about the OS and config
+    Metadata   Metadata       `json:"metadata"`
+    // Updates is a list of UpdatePackage that contains information about the package updates
+    Updates    UpdatePackages `json:"updates"`
 }
 
+// UpdatePackages is a list of UpdatePackage
 type UpdatePackages []UpdatePackage
 
+// Metadata contains information about the OS and config
+type Metadata struct {
+    OS     OS     `json:"os"`
+    Config Config `json:"config"`
+}
+
+type OS struct {
+    // OS Type (e.g. debian, alpine, etc.)
+    Type    string `json:"type"`
+    // OS Version (e.g. 11.3)
+    Version string `json:"version"`
+}
+
+// Config contains information about the config
+type Config struct {
+    // OS Architecture (e.g. amd64)
+    Arch string `json:"arch"`
+}
+
+// UpdatePackage contains information about the package update
 type UpdatePackage struct {
     // Package name
-	Name             string `json:"name"`
+    Name             string `json:"name"`
     // Installed version
-	InstalledVersion string `json:"installedVersion"`
+    InstalledVersion string `json:"installedVersion"`
     // Fixed version
-	FixedVersion     string `json:"fixedVersion"`
+    FixedVersion     string `json:"fixedVersion"`
     // Vulnerability ID
-	VulnerabilityID  string `json:"vulnerabilityID"`
+    VulnerabilityID  string `json:"vulnerabilityID"`
 }
 ```
 
@@ -76,18 +93,24 @@ From the above, we can see that the plugin must return a JSON object via standar
 
 ```json
 {
-    "apiVersion": "v1alpha1",
-    "ostype": "debian",
-    "osversion": "11.3",
-    "arch": "amd64",
-    "updates": [
-        {
-            "name": "libcurl4",
-            "installedVersion": "7.74.0-1.3+deb11u1",
-            "fixedVersion": "7.74.0-1.3+deb11u2",
-            "vulnerabilityID": "CVE-2021-22945"
-        },
-        ...
-    ]
+  "apiVersion": "v1alpha1",
+  "metadata": {
+    "os": {
+        "type": "debian",
+        "version": "11.3",
+    },
+    "config": {
+      "arch": "amd64"
+    }
+  },
+  "updates": [
+      {
+          "name": "libcurl4",
+          "installedVersion": "7.74.0-1.3+deb11u1",
+          "fixedVersion": "7.74.0-1.3+deb11u2",
+          "vulnerabilityID": "CVE-2021-22945"
+      },
+      ...
+  ]
 }
 ```
