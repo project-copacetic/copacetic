@@ -16,6 +16,8 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -26,6 +28,7 @@ import (
 
 const (
 	defaultPatchedTagSuffix = "patched"
+	copaProduct             = "copa"
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
@@ -113,56 +116,65 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	log.Debugf("updates to apply: %v", updates)
 
-	client, err := buildkit.NewClient(ctx, bkOpts)
+	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer bkClient.Close()
 
-	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, client, image, updates)
-	if err != nil {
-		return err
-	}
-
-	// Create package manager helper
-	pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
-	if err != nil {
-		return err
-	}
-
-	// Export the patched image state to Docker
-	// TODO: Add support for other output modes as buildctl does.
-	patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
-	if err != nil {
-		return err
-	}
-
-	if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
-		return err
-	}
-
-	// create a new manifest with the successfully patched packages
-	validatedManifest := &unversioned.UpdateManifest{
-		Metadata: unversioned.Metadata{
-			OS: unversioned.OS{
-				Type:    updates.Metadata.OS.Type,
-				Version: updates.Metadata.OS.Version,
-			},
-			Config: unversioned.Config{
-				Arch: updates.Metadata.Config.Arch,
-			},
-		},
-		Updates: []unversioned.UpdatePackage{},
-	}
-	for _, update := range updates.Updates {
-		if !slices.Contains(errPkgs, update.Name) {
-			validatedManifest.Updates = append(validatedManifest.Updates, update)
+	_, err = bkClient.Build(ctx, client.SolveOpt{}, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		// Configure buildctl/client for use by package manager
+		config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, updates)
+		if err != nil {
+			return nil, err
 		}
-	}
-	// vex document must contain at least one statement
-	if output != "" && len(validatedManifest.Updates) > 0 {
-		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output)
-	}
-	return nil
+
+		// Create package manager helper
+		pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+		if err != nil {
+			return nil, err
+		}
+
+		// Export the patched image state to Docker
+		// TODO: Add support for other output modes as buildctl does.
+		patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
+		if err != nil {
+			return nil, err
+		}
+
+		if err = buildkit.SolveToDocker(ctx, bkClient, patchedImageState, config.ConfigData, patchedImageName); err != nil {
+			return nil, err
+		}
+
+		// create a new manifest with the successfully patched packages
+		validatedManifest := &unversioned.UpdateManifest{
+			Metadata: unversioned.Metadata{
+				OS: unversioned.OS{
+					Type:    updates.Metadata.OS.Type,
+					Version: updates.Metadata.OS.Version,
+				},
+				Config: unversioned.Config{
+					Arch: updates.Metadata.Config.Arch,
+				},
+			},
+			Updates: []unversioned.UpdatePackage{},
+		}
+		for _, update := range updates.Updates {
+			if !slices.Contains(errPkgs, update.Name) {
+				validatedManifest.Updates = append(validatedManifest.Updates, update)
+			}
+		}
+		// vex document must contain at least one statement
+		if output != "" && len(validatedManifest.Updates) > 0 {
+			if err := vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output); err != nil {
+				return nil, err
+			}
+
+			return nil, nil
+		}
+
+		return nil, nil
+	}, nil)
+
+	return err
 }

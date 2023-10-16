@@ -6,14 +6,14 @@
 package pkgmgr
 
 import (
+	"bytes"
+	_ "embed"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/assert"
 )
@@ -160,22 +160,14 @@ func TestGetRPMImageName(t *testing.T) {
 // TestParseRPMTools tests the parseRPMTools function with a sample file.
 func TestParseRPMTools(t *testing.T) {
 	// Create a temporary file with some sample data
-	tmpfile, err := os.CreateTemp("", "rpmtools")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.Remove(tmpfile.Name()) // clean up
+	var tmpfile bytes.Buffer
 
-	fmt.Fprintln(tmpfile, "tool1:/path/to/tool1")
-	fmt.Fprintln(tmpfile, "tool2:notfound")
-	fmt.Fprintln(tmpfile, "tool3:/path/to/tool3")
-
-	if err := tmpfile.Close(); err != nil {
-		t.Fatal(err)
-	}
+	tmpfile.WriteString("tool1:/path/to/tool1\n")
+	tmpfile.WriteString("tool2:notfound\n")
+	tmpfile.WriteString("tool3:/path/to/tool3\n")
 
 	// Call the parseRPMTools function with the temporary file name
-	rpmTools, err := parseRPMTools(tmpfile.Name())
+	rpmTools, err := parseRPMTools(tmpfile.Bytes())
 	if err != nil {
 		t.Errorf("parseRPMTools failed: %v", err)
 	}
@@ -194,33 +186,16 @@ func TestParseRPMTools(t *testing.T) {
 
 // TestGetRPMDBType tests the getRPMDBType function with different input directories.
 func TestGetRPMDBType(t *testing.T) {
-	// Create some temporary directories with different files
-	dir1 := t.TempDir() // empty directory
-
-	dir2 := t.TempDir() // directory with rpmBDB file
-	testutils.CreateTempFileWithContent(dir2, rpmBDB)
-	defer os.Remove(dir2)
-
-	dir3 := t.TempDir() // directory with rpmNDB and rpmSQLLiteDB files
-	testutils.CreateTempFileWithContent(dir3, rpmNDB)
-	testutils.CreateTempFileWithContent(dir3, rpmSQLLiteDB)
-	defer os.Remove(dir3)
-
-	dir4 := t.TempDir() // directory with rpmManifest1 and rpmManifest2 files
-	testutils.CreateTempFileWithContent(dir4, rpmManifest1)
-	testutils.CreateTempFileWithContent(dir4, rpmManifest2)
-	defer os.Remove(dir4)
-
 	// Define some test cases with expected output
 	testCases := []struct {
 		name     string
-		input    string
+		input    []byte
 		expected rpmDBType
 	}{
-		{"empty dir", dir1, RPMDBNone},
-		{"dir with berkeley db", dir2, RPMDBBerkley},
-		{"dir with mixed db", dir3, RPMDBMixed},
-		{"dir with manifests", dir4, RPMDBManifests},
+		{"empty dir", []byte{}, RPMDBNone},
+		{"dir with berkeley db", []byte(fmt.Sprintf("%s\n", rpmBDB)), RPMDBBerkley},
+		{"dir with mixed db", []byte(fmt.Sprintf("%s\n%s\n", rpmBDB, rpmNDB)), RPMDBMixed},
+		{"dir with manifests", []byte(fmt.Sprintf("%s\n%s\n", rpmManifest1, rpmManifest2)), RPMDBManifests},
 	}
 
 	for _, tc := range testCases {
@@ -233,23 +208,28 @@ func TestGetRPMDBType(t *testing.T) {
 	}
 }
 
+var (
+	//go:embed testdata/rpm_valid.txt
+	rpmValidManifest []byte
+)
+
 func TestRpmReadResultsManifest(t *testing.T) {
 	// Test cases
 	tests := []struct {
 		name    string
-		path    string
+		input   []byte
 		want    []string
 		wantErr bool
 	}{
 		{
 			name:    "valid path",
-			path:    "testdata/rpm_valid.txt",
+			input:   rpmValidManifest,
 			want:    []string{"openssl	2.1.1k-21.cm2	x86_64", "openssl-libs	2.1.1k-21.cm2	x86_64"},
 			wantErr: false,
 		},
 		{
 			name:    "invalid path",
-			path:    "testdata/nonexistent.txt",
+			input:   nonExistingManifest,
 			want:    nil,
 			wantErr: true,
 		},
@@ -257,13 +237,13 @@ func TestRpmReadResultsManifest(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := rpmReadResultsManifest(tc.path)
+			got, err := rpmReadResultsManifest(tc.input)
 			if (err != nil) != tc.wantErr {
-				t.Errorf("rpmReadResultsManifest(%v) error = %v, wantErr %v", tc.path, err, tc.wantErr)
+				t.Errorf("rpmReadResultsManifest(%v) error = %v, wantErr %v", tc.input, err, tc.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tc.want) {
-				t.Errorf("rpmReadResultsManifest(%v) = %v, want %v", tc.path, got, tc.want)
+				t.Errorf("rpmReadResultsManifest(%v) = %v, want %v", tc.input, got, tc.want)
 			}
 		})
 	}
@@ -276,7 +256,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		name            string
 		updates         unversioned.UpdatePackages
 		cmp             VersionComparer
-		resultsPath     string
+		resultsBytes    []byte
 		ignoreErrors    bool
 		expectedError   string
 		expectedErrPkgs []string
@@ -288,7 +268,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 				{Name: "openssl-libs", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:          rpmComparer,
-			resultsPath:  "testdata/rpm_valid.txt",
+			resultsBytes: rpmValidManifest,
 			ignoreErrors: false,
 		},
 		{
@@ -298,7 +278,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
 			cmp:          rpmComparer,
-			resultsPath:  "testdata/rpm_valid.txt",
+			resultsBytes: rpmValidManifest,
 			ignoreErrors: false,
 			expectedError: `2 errors occurred:
 	* downloaded package openssl version 2.1.1k-21.cm2 lower than required 3.1.1k-21.cm2 for update
@@ -312,7 +292,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
 			cmp:          rpmComparer,
-			resultsPath:  "testdata/rpm_valid.txt",
+			resultsBytes: rpmValidManifest,
 			ignoreErrors: true,
 		},
 		{
@@ -321,14 +301,14 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:           rpmComparer,
-			resultsPath:   "testdata/rpm_valid.txt",
+			resultsBytes:  rpmValidManifest,
 			expectedError: `expected 1 updates, installed 2`,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			errorPkgs, err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
+			errorPkgs, err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsBytes, tc.ignoreErrors)
 			if tc.expectedError != "" {
 				if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())

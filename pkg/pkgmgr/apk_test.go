@@ -6,6 +6,7 @@
 package pkgmgr
 
 import (
+	_ "embed"
 	"reflect"
 	"strings"
 	"testing"
@@ -68,10 +69,25 @@ func TestIsLessThanAPKVersion(t *testing.T) {
 	}
 }
 
+var (
+	//go:embed testdata/apk_valid.txt
+	apkValid []byte
+
+	//go:embed testdata/apk_invalid.txt
+	apkInvalid []byte
+
+	//go:embed testdata/empty.txt
+	apkEmpty []byte
+
+	// tests the error handling of the function
+	apkNoSuchFile []byte = nil
+)
+
 // TestApkReadResultsManifest tests the apkReadResultsManifest function.
 func TestApkReadResultsManifest(t *testing.T) {
+
 	type args struct {
-		path string
+		path []byte
 	}
 	tests := []struct {
 		name    string
@@ -79,9 +95,9 @@ func TestApkReadResultsManifest(t *testing.T) {
 		want    []string
 		wantErr bool
 	}{
-		{"valid file", args{"testdata/apk_valid.txt"}, []string{"apk-tools-2.12.7-r0", "busybox-1.33.1-r8"}, false},
-		{"file does not exist", args{"testdata/no_such_file.txt"}, nil, true},
-		{"empty file", args{"testdata/empty.txt"}, nil, false},
+		{"valid file", args{apkValid}, []string{"apk-tools-2.12.7-r0", "busybox-1.33.1-r8"}, false},
+		{"file does not exist", args{apkNoSuchFile}, nil, true},
+		{"empty file", args{apkEmpty}, nil, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -106,7 +122,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		name            string
 		updates         unversioned.UpdatePackages
 		cmp             VersionComparer
-		resultsPath     string
+		resultsBytes    []byte
 		ignoreErrors    bool
 		expectedError   string
 		expectedErrPkgs []string
@@ -115,14 +131,14 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			name:         "valid updates",
 			updates:      []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}, {Name: "busybox", FixedVersion: "1.33.1-r8"}},
 			cmp:          apkComparer,
-			resultsPath:  "testdata/apk_valid.txt",
+			resultsBytes: apkValid,
 			ignoreErrors: false,
 		},
 		{
 			name:         "invalid version",
 			updates:      []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
-			resultsPath:  "testdata/apk_invalid.txt",
+			resultsBytes: apkInvalid,
 			ignoreErrors: false,
 			expectedError: `2 errors occurred:
 	* invalid version x.y found for package apk-tools
@@ -132,14 +148,14 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			name:         "invalid version with ignore errors",
 			updates:      []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
-			resultsPath:  "testdata/apk_valid.txt",
+			resultsBytes: apkValid,
 			ignoreErrors: true,
 		},
 		{
 			name:          "expected 1 updates, installed 2",
 			updates:       []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}},
 			cmp:           apkComparer,
-			resultsPath:   "testdata/apk_valid.txt",
+			resultsBytes:  apkValid,
 			ignoreErrors:  false,
 			expectedError: `expected 1 updates, installed 2`,
 		},
@@ -149,7 +165,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		// Use t.Run to run each test case as a subtest
 		t.Run(tc.name, func(t *testing.T) {
 			// Run the function to be tested
-			errorPkgs, err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
+			errorPkgs, err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsBytes, tc.ignoreErrors)
 			if tc.expectedError != "" {
 				if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())

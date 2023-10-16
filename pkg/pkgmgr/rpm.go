@@ -7,10 +7,10 @@ package pkgmgr
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,10 +22,12 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 const (
 	rpmToolsFile        = "rpmTools"
+	rpmDBFile           = "rpmDB"
 	rpmLibPath          = "/var/lib/rpm"
 	rpmSQLLiteDB        = "rpmdb.sqlite"
 	rpmNDB              = "Packages.db"
@@ -57,6 +59,9 @@ const (
 	RPMDBSqlLite
 	RPMDBManifests
 	RPMDBMixed
+	RPMDBInvalid // must be the last in the list
+
+	RPMDBSize = RPMDBInvalid
 )
 
 func (st rpmDBType) String() string {
@@ -107,20 +112,13 @@ func getRPMImageName(manifest *unversioned.UpdateManifest) string {
 	return fmt.Sprintf("%s:%s", image, version)
 }
 
-func parseRPMTools(path string) (rpmToolPaths, error) {
-	// Open result file
-	f, err := os.Open(path)
-	if err != nil {
-		log.Errorf("%s could not be opened", path)
-		return nil, err
-	}
-	defer f.Close()
-
+func parseRPMTools(b []byte) (rpmToolPaths, error) {
+	buf := bytes.NewBuffer(b)
 	// rpmTools file is expected contain a string map in the format of:
 	// <tool name>:<tool path | `notfound`>
 	// ...
 	rpmTools := rpmToolPaths{}
-	fs := bufio.NewScanner(f)
+	fs := bufio.NewScanner(buf)
 	for fs.Scan() {
 		kv := strings.Split(fs.Text(), `:`)
 		if len(kv) != 2 {
@@ -135,28 +133,44 @@ func parseRPMTools(path string) (rpmToolPaths, error) {
 	return rpmTools, nil
 }
 
-// Check the RPM DB type given image probe output path.
-func getRPMDBType(dir string) rpmDBType {
-	out := RPMDBNone
-	rpmDBs := []rpmDBType{}
-	if utils.IsNonEmptyFile(dir, rpmBDB) {
+// Check the RPM DB type given image probe results
+func getRPMDBType(b []byte) rpmDBType {
+	buf := bytes.NewBuffer(b)
+	s := bufio.NewScanner(buf)
+
+	set := sets.New[string]()
+	for s.Scan() {
+		fullPath := s.Text()
+		base := filepath.Base(fullPath)
+		set.Insert(base)
+	}
+
+	rpmDBs := make([]rpmDBType, 0, RPMDBSize)
+
+	if set.Has(rpmBDB) {
 		rpmDBs = append(rpmDBs, RPMDBBerkley)
 	}
-	if utils.IsNonEmptyFile(dir, rpmNDB) {
+
+	if set.Has(rpmNDB) {
 		rpmDBs = append(rpmDBs, RPMDBNative)
 	}
-	if utils.IsNonEmptyFile(dir, rpmSQLLiteDB) {
+
+	if set.Has(rpmSQLLiteDB) {
 		rpmDBs = append(rpmDBs, RPMDBSqlLite)
 	}
-	if utils.IsNonEmptyFile(dir, rpmManifest1) && utils.IsNonEmptyFile(dir, rpmManifest2) {
+
+	if set.Has(rpmManifest1) && set.Has(rpmManifest2) {
 		rpmDBs = append(rpmDBs, RPMDBManifests)
 	}
-	if len(rpmDBs) == 1 {
-		out = rpmDBs[0]
-	} else if len(rpmDBs) > 1 {
-		out = RPMDBMixed
+
+	switch len(rpmDBs) {
+	case 0:
+		return RPMDBNone
+	case 1:
+		return rpmDBs[0]
+	default:
+		return RPMDBMixed
 	}
-	return out
 }
 
 func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
@@ -179,21 +193,21 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	}
 
 	var updatedImageState *llb.State
+	var resultManifestBytes []byte
 	if rm.isDistroless {
-		updatedImageState, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName)
+		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, err = rm.installUpdates(ctx, updates)
+		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
 	// Validate that the deployed packages are of the requested version or better
-	resultManifestPath := filepath.Join(rm.workingFolder, resultsPath, resultManifest)
-	errPkgs, err := validateRPMPackageVersions(updates, rpmComparer, resultManifestPath, ignoreErrors)
+	errPkgs, err := validateRPMPackageVersions(updates, rpmComparer, resultManifestBytes, ignoreErrors)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -213,19 +227,6 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	mkFolders := toolsApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
 	toolList := []string{"dnf", "microdnf", "rpm", "yum"}
-	toolStr := strings.Join(toolList, " ")
-	const probeToolsTemplate = `/usr/sbin/busybox sh -c '
-		TOOL_LIST="%s";	n=1;
-		while [ $n -le %d ];
-		do TOOL=$(echo "$TOOL_LIST" | /usr/sbin/busybox cut -d " " -f $n);
-			TOOL_PATH=$(/usr/sbin/busybox which $TOOL);
-			if [ -n "$TOOL_PATH" ];
-			then echo "$TOOL:$TOOL_PATH";
-			else echo "$TOOL:notfound";
-			fi;
-			n=$(($n+1));
-		done> %s'`
-	probeToolsCmd := fmt.Sprintf(probeToolsTemplate, toolStr, len(toolList), filepath.Join(resultsPath, rpmToolsFile))
 
 	rpmDBList := []string{
 		filepath.Join(rpmLibPath, rpmBDB),
@@ -234,28 +235,45 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		filepath.Join(rpmManifestPath, rpmManifest1),
 		filepath.Join(rpmManifestPath, rpmManifest2),
 	}
-	rpmDBStr := strings.Join(rpmDBList, " ")
-	const probeDBTemplate = `/usr/sbin/busybox sh -c '
-		DB_LIST="%s"; n=1;
-		while [ $n -le %d ];
-		do DB=$(echo "$DB_LIST" | /usr/sbin/busybox cut -d " " -f $n);
-			echo $DB;
-			if [ -f $DB ];
-			then /usr/sbin/busybox cp $DB %s;
-			fi;
-			n=$(($n+1));
-		done'`
-	probeDBCmd := fmt.Sprintf(probeDBTemplate, rpmDBStr, len(rpmDBList), resultsPath)
 
-	probed := mkFolders.Run(llb.Shlex(probeToolsCmd)).Run(llb.Shlex(probeDBCmd)).Root()
+	// probed := mkFolders.Run(llb.Shlex(probeToolsCmd)).Run(llb.Shlex(probeDBCmd)).Root()
+	toolListPath := filepath.Join(resultsPath, "tool_list")
+	dbListPath := filepath.Join(resultsPath, "rpm_db_list")
+
+	probed := buildkit.WithArrayFile(mkFolders, toolListPath, toolList)
+	probed = buildkit.WithArrayFile(probed, dbListPath, rpmDBList)
+	probed = probed.Run(llb.Args([]string{
+		`/usr/sbin/busybox`, `env`,
+		buildkit.Env("TOOL_LIST_PATH", toolListPath),
+		buildkit.Env("DB_LIST_PATH", dbListPath),
+		buildkit.Env("RESULTS_PATH", resultsPath),
+		buildkit.Env("RPM_TOOLS_OUTPUT_FILENAME", rpmToolsFile),
+		buildkit.Env("RPM_DB_LIST_OUTPUT_FILENAME", rpmDBFile),
+		buildkit.Env("BUSYBOX", "/usr/sbin/busybox"),
+		`/usr/sbin/busybox`, `sh`, `-c`, `
+            while IFS= read -r tool; do
+                tool_path="$($BUSYBOX which "$tool")"
+                echo "${tool}:${tool_path:-notfound}" >> "${RESULTS_PATH}/${RPM_TOOLS_OUTPUT_FILENAME}"
+            done < "$TOOL_LIST_PATH"
+
+            while IFS= read -r db; do
+                echo "$db"
+                if [ -f "$db" ]; then
+                    $BUSYBOX cp "$db" "$RESULTS_PATH"
+                    echo "$db" >> "${RESULTS_PATH}/${RPM_DB_LIST_OUTPUT_FILENAME}"
+                fi
+            done < "$DB_LIST_PATH"
+        `,
+	})).Root()
 	outState := llb.Diff(toolsApplied, probed)
-	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &outState, rm.workingFolder); err != nil {
-		return err
+
+	rpmDBListOutputBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, filepath.Join(resultsPath, rpmDBFile))
+	if err != nil {
+		return nil
 	}
 
 	// Check type of RPM DB on image to infer Mariner Distroless
-	outStatePath := filepath.Join(rm.workingFolder, resultsPath)
-	rpmDB := getRPMDBType(outStatePath)
+	rpmDB := getRPMDBType(rpmDBListOutputBytes)
 	log.Debugf("RPM DB Type in image is: %s", rpmDB)
 	switch rpmDB {
 	case RPMDBManifests:
@@ -269,8 +287,8 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	// Parse rpmTools File if not distroless
 	if !rm.isDistroless {
 		log.Info("Checking for available RPM tools in non-distroless image ...")
-		toolsFilePath := filepath.Join(outStatePath, rpmToolsFile)
-		rpmTools, err := parseRPMTools(toolsFilePath)
+		toolsFileBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, filepath.Join(resultsPath, rpmToolsFile))
+		rpmTools, err := parseRPMTools(toolsFileBytes)
 		if err != nil {
 			return err
 		}
@@ -302,7 +320,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 //
 // TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
-func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, error) {
+func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
 	// Format the requested updates into a space-separated string
 	pkgStrings := []string{}
 	for _, u := range updates {
@@ -324,7 +342,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
-		return nil, err
+		return nil, nil, err
 	}
 	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
@@ -334,17 +352,18 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(installed, resultsWritten)
 
-	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &resultsDiff, rm.workingFolder); err != nil {
-		return nil, err
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(rm.config.ImageState, installed)
 	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
-	return &patchMerge, nil
+	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, error) {
+func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
@@ -414,29 +433,30 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(writeResultsCmd)).Root()
 
 	resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
-	if err := buildkit.SolveToLocal(ctx, rm.config.Client, &resultsDiff, rm.workingFolder); err != nil {
-		return nil, err
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+	if err != nil {
+		return nil, nil, err
 	}
+
 	// Diff unpacked packages layers from previous and merge with target
 	manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
 	merged := llb.Merge([]llb.State{rm.config.ImageState, patchedRoot, manifestsDiff})
-	return &merged, nil
+	return &merged, resultBytes, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
 	return "rpm"
 }
 
-func rpmReadResultsManifest(path string) ([]string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		log.Errorf("%s could not be opened", path)
-		return nil, err
+func rpmReadResultsManifest(b []byte) ([]string, error) {
+	if b == nil {
+		return nil, fmt.Errorf("nil result manifest buffer")
 	}
-	defer f.Close()
+
+	buf := bytes.NewBuffer(b)
 
 	var lines []string
-	fs := bufio.NewScanner(f)
+	fs := bufio.NewScanner(buf)
 	for fs.Scan() {
 		lines = append(lines, fs.Text())
 	}
@@ -444,8 +464,8 @@ func rpmReadResultsManifest(path string) ([]string, error) {
 	return lines, nil
 }
 
-func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
-	lines, err := rpmReadResultsManifest(resultsPath)
+func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsBytes []byte, ignoreErrors bool) ([]string, error) {
+	lines, err := rpmReadResultsManifest(resultsBytes)
 	if err != nil {
 		return nil, err
 	}

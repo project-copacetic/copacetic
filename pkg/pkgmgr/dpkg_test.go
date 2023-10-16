@@ -6,15 +6,14 @@
 package pkgmgr
 
 import (
+	_ "embed"
 	"errors"
 	"fmt"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
@@ -141,51 +140,36 @@ func TestGetAPTImageName(t *testing.T) {
 
 func TestGetDPKGStatusType(t *testing.T) {
 	// Create some temporary directories with different files
-	dir1 := t.TempDir() // empty directory
-
-	dir2 := t.TempDir() // directory with status files
-	testutils.CreateTempFileWithContent(dir2, "status")
-	defer os.Remove(dir2)
-
-	dir3 := t.TempDir() // directory with status.d directory
-	testutils.CreateTempFileWithContent(dir3, "status.d")
-	defer os.Remove(dir2)
-
-	dir4 := t.TempDir() // directory with status file and status.d directory
-	testutils.CreateTempFileWithContent(dir4, "status")
-	testutils.CreateTempFileWithContent(dir4, "status.d")
-	defer os.Remove(dir4)
-
 	tests := []struct {
 		name        string
-		dir         string
+		input       []byte
 		expectedOut dpkgStatusType
 	}{
 		{
 			name:        "Empty directory",
-			dir:         dir1,
+			input:       []byte(fmt.Sprintf("%d", DPKGStatusNone)),
 			expectedOut: DPKGStatusNone,
 		},
 		{
 			name:        "Directory with status file",
-			dir:         dir2,
+			input:       []byte(fmt.Sprintf("%d", DPKGStatusFile)),
 			expectedOut: DPKGStatusFile,
 		},
 		{
 			name:        "Directory with status directory",
-			dir:         dir3,
+			input:       []byte(fmt.Sprintf("%d", DPKGStatusDirectory)),
 			expectedOut: DPKGStatusDirectory,
 		},
 		{
 			name:        "Directory with both status file and directory",
-			dir:         dir4,
+			input:       []byte(fmt.Sprintf("%d", DPKGStatusMixed)),
 			expectedOut: DPKGStatusMixed,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			out := getDPKGStatusType(test.dir)
+			out := getDPKGStatusType(test.input)
 			if out != test.expectedOut {
 				t.Errorf("Expected %v but got %v", test.expectedOut, out)
 			}
@@ -193,18 +177,26 @@ func TestGetDPKGStatusType(t *testing.T) {
 	}
 }
 
-func TestDpkgParseResultsManifest(t *testing.T) {
-	manifestPath := "testdata/dpkg_valid.txt"
-	nonExistingManifestPath := "testdata/non_existing_manifest"
-	emptyManifestPath := "testdata/empty.txt"
-	invalidManifestPath := "testdata/invalid.txt"
+var (
+	//go:embed testdata/dpkg_valid.txt
+	validDPKGManifest []byte
 
+	nonExistingManifest []byte = nil
+
+	//go:embed testdata/empty.txt
+	emptyManifest []byte
+
+	//go:embed testdata/invalid.txt
+	invalidDPKGManifest []byte
+)
+
+func TestDpkgParseResultsManifest(t *testing.T) {
 	t.Run("valid manifest", func(t *testing.T) {
 		expectedMap := map[string]string{
 			"apt":        "1.8.2.3",
 			"base-files": "10.3+deb10u13",
 		}
-		actualMap, err := dpkgParseResultsManifest(manifestPath)
+		actualMap, err := dpkgParseResultsManifest(validDPKGManifest)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -214,8 +206,8 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 	})
 
 	t.Run("non-existing manifest file", func(t *testing.T) {
-		expectedErr := fmt.Errorf("%s could not be opened", nonExistingManifestPath)
-		_, actualErr := dpkgParseResultsManifest(nonExistingManifestPath)
+		expectedErr := fmt.Errorf("%s could not be opened", nonExistingManifest)
+		_, actualErr := dpkgParseResultsManifest(nonExistingManifest)
 		if errors.Is(actualErr, expectedErr) {
 			t.Fatalf("Expected error: %v, Actual error: %v", expectedErr, actualErr)
 		}
@@ -223,7 +215,7 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 
 	t.Run("empty manifest file", func(t *testing.T) {
 		expectedMap := map[string]string{}
-		actualMap, err := dpkgParseResultsManifest(emptyManifestPath)
+		actualMap, err := dpkgParseResultsManifest(emptyManifest)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -234,7 +226,7 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 
 	t.Run("invalid manifest file", func(t *testing.T) {
 		expectedErr := fmt.Errorf("unexpected results.manifest file entry: invalid")
-		_, actualErr := dpkgParseResultsManifest(invalidManifestPath)
+		_, actualErr := dpkgParseResultsManifest(invalidDPKGManifest)
 		if errors.Is(actualErr, expectedErr) {
 			t.Fatalf("Expected error: %v, Actual error: %v", expectedErr, actualErr)
 		}
@@ -248,7 +240,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		name            string
 		updates         unversioned.UpdatePackages
 		cmp             VersionComparer
-		resultsPath     string
+		resultsBytes    []byte
 		ignoreErrors    bool
 		expectedError   string
 		expectedErrPkgs []string
@@ -257,7 +249,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 			name:         "no updates",
 			updates:      unversioned.UpdatePackages{},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 		},
 		{
@@ -266,7 +258,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "not-installed", FixedVersion: "1.0.0"},
 			},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 		},
 		{
@@ -275,9 +267,9 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "base-files", FixedVersion: "1.0.0"},
 			},
 			cmp:           dpkgComparer,
-			resultsPath:   "testdata/dpkg_invalid.txt",
+			resultsBytes:  invalidDPKGManifest,
 			ignoreErrors:  false,
-			expectedError: `invalid version`,
+			expectedError: `unexpected results.manifest file entry`,
 		},
 		{
 			name: "invalid version with ignore errors",
@@ -285,7 +277,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "base-files", FixedVersion: "1.0.0"},
 			},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: true,
 		},
 		{
@@ -294,7 +286,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "apt", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 			expectedError: `1 error occurred:
 	* downloaded package apt version 1.8.2.3 lower than required 2.0 for update`,
@@ -306,7 +298,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "apt", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: true,
 		},
 		{
@@ -315,7 +307,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "apt", FixedVersion: "1.8.2.3"},
 			},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 		},
 		{
@@ -324,14 +316,14 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 				{Name: "apt", FixedVersion: "0.9"},
 			},
 			cmp:          dpkgComparer,
-			resultsPath:  "testdata/dpkg_valid.txt",
+			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			errorPkgs, err := validateDebianPackageVersions(tc.updates, tc.cmp, tc.resultsPath, tc.ignoreErrors)
+			errorPkgs, err := validateDebianPackageVersions(tc.updates, tc.cmp, tc.resultsBytes, tc.ignoreErrors)
 			if tc.expectedError != "" {
 				if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
