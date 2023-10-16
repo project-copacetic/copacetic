@@ -35,7 +35,7 @@ const (
 	rpmManifest2        = "container-manifest-2"
 	rpmManifestWildcard = "container-manifest-*"
 
-	installToolsCmd   = "yum install busybox cpio -y"
+	installToolsCmd   = "tdnf install busybox cpio dnf-utils -y"
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
 
@@ -360,7 +360,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.U
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
-	const rpmDownloadTemplate = `yum reinstall --downloadonly --downloaddir=. --best -y %s`
+	const rpmDownloadTemplate = `yumdownloader --downloadonly --downloaddir=. --best -y %s`
 	pkgStrings := []string{}
 	for _, u := range updates {
 		pkgStrings = append(pkgStrings, u.Name)
