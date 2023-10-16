@@ -5,7 +5,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 func TestTryOutputVexDocument(t *testing.T) {
@@ -15,7 +15,7 @@ func TestTryOutputVexDocument(t *testing.T) {
 	patchedImageName := "patched"
 
 	type args struct {
-		updates          *types.UpdateManifest
+		updates          *unversioned.UpdateManifest
 		pkgmgr           pkgmgr.PackageManager
 		patchedImageName string
 		format           string
@@ -29,7 +29,7 @@ func TestTryOutputVexDocument(t *testing.T) {
 		{
 			name: "invalid format",
 			args: args{
-				updates:          &types.UpdateManifest{},
+				updates:          &unversioned.UpdateManifest{},
 				pkgmgr:           nil,
 				patchedImageName: patchedImageName,
 				format:           "fakevex",
@@ -40,7 +40,7 @@ func TestTryOutputVexDocument(t *testing.T) {
 		{
 			name: "valid format",
 			args: args{
-				updates:          &types.UpdateManifest{},
+				updates:          &unversioned.UpdateManifest{},
 				pkgmgr:           alpineManager,
 				patchedImageName: patchedImageName,
 				format:           "openvex",

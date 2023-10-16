@@ -14,7 +14,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -97,34 +97,50 @@ func TestIsLessThanRPMVersion(t *testing.T) {
 func TestGetRPMImageName(t *testing.T) {
 	// Define test cases with input manifest and expected output image name
 	testCases := []struct {
-		manifest *types.UpdateManifest
+		manifest *unversioned.UpdateManifest
 		image    string
 	}{
 		{
-			manifest: &types.UpdateManifest{
-				OSType:    "cbl-mariner",
-				OSVersion: "2.0.0",
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "cbl-mariner",
+						Version: "2.0.0",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0",
 		},
 		{
-			manifest: &types.UpdateManifest{
-				OSType:    "cbl-mariner",
-				OSVersion: "1.5",
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "cbl-mariner",
+						Version: "1.5",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:1.5",
 		},
 		{
-			manifest: &types.UpdateManifest{
-				OSType:    "cbl-mariner",
-				OSVersion: "3", // missing minor version
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "cbl-mariner",
+						Version: "3",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:3.0", // default minor version to 0
 		},
 		{
-			manifest: &types.UpdateManifest{
-				OSType:    "redhat", // not cbl-mariner
-				OSVersion: "8.4",
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "redhat",
+						Version: "8.4",
+					},
+				},
 			},
 			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0", // use default version of cbl-mariner image
 		},
@@ -258,7 +274,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 
 	testCases := []struct {
 		name            string
-		updates         types.UpdatePackages
+		updates         unversioned.UpdatePackages
 		cmp             VersionComparer
 		resultsPath     string
 		ignoreErrors    bool
@@ -267,7 +283,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 	}{
 		{
 			name: "successful validation",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
 				{Name: "openssl-libs", FixedVersion: "1.1.1k-21.cm2"},
 			},
@@ -277,7 +293,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		},
 		{
 			name: "downloaded package version lower than required",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
 				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
@@ -291,7 +307,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		},
 		{
 			name: "downloaded package version lower than required with ignore errors",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
 				{Name: "openssl-libs", FixedVersion: "3.1.1k-21.cm2"},
 			},
@@ -301,7 +317,7 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 		},
 		{
 			name: "unexpected number of installed packages",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
 			},
 			cmp:           rpmComparer,
