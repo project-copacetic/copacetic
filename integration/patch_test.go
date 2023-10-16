@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +40,6 @@ func TestPatch(t *testing.T) {
 	tmp := t.TempDir()
 	ignoreFile := filepath.Join(tmp, "ignore.rego")
 	err = os.WriteFile(ignoreFile, trivyIgnore, 0o600)
-	spew.Dump(ignoreFile)
 	require.NoError(t, err)
 
 	for _, img := range images {
