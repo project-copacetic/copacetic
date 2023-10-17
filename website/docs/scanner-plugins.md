@@ -18,7 +18,7 @@ For example, if you have a scanner plugin binary called `copa-foo` in `$PATH`, y
 copa patch --scanner foo --image $IMAGE ...
 ```
 
-# Community Scanner Plugins
+# Scanner Plugins from the Community
 
 If you have built a scanner plugin and would like to add it to this list, please submit a PR to update this section with your plugin.
 
@@ -28,18 +28,11 @@ If you have any issues with a specific plugin, please open an issue in the appli
 
 :::
 
+- Grype: https://github.com/anubhav06/copa-grype
+
 # Writing a Scanner Plugin
 
-Please see [Scanner Plugin Template](https://github.com/project-copacetic/scanner-plugin-template) for a template to write your own scanner plugin.
-
-Here are the steps to write your own scanner plugin:
-
-1. Clone [Scanner Plugin Template](https://github.com/project-copacetic/scanner-plugin-template) repo
-2. Rename the `scanner-plugin-template` repo to the name of your plugin
-3. Update applicable types for [`FakeReport`](types.go) to match your scanner's structure
-4. Update [`parse`](main.go) to parse your scanner's report format accordingly
-5. Update `CLI_BINARY` in the [`Makefile`](Makefile) to match your scanner's CLI binary name (resulting binary must be prefixed with `copa-`)
-5. Update this [`README.md`](README.md) to match your plugin's usage
+Please see instructions at [Scanner Plugin Template](https://github.com/project-copacetic/scanner-plugin-template) for a template to get started with writing a scanner plugin.
 
 # Scanner Plugin Interface
 
@@ -75,7 +68,7 @@ type OS struct {
 
 // Config contains information about the config
 type Config struct {
-    // OS Architecture (e.g. amd64)
+    // OS Architecture (e.g. amd64, arm64)
     Arch string `json:"arch"`
 }
 
