@@ -10,7 +10,7 @@ Starting with v0.5.0 and later, `copa` offers extensibility to support different
 
 # Usage
 
-Scanner plugin binaries must be in `$PATH` and should be prefixed with `copa-`. Copa will automatically detect and use the scanner plugin if it is in `$PATH`.
+Scanner plugin binaries must be in `$PATH`, and should be prefixed with `copa-` and have executable permissions. Copa will automatically detect and use the scanner plugin if it is in `$PATH`.
 
 For example, if you have a scanner plugin binary called `copa-foo` in `$PATH`, you can run `copa` with the following command:
 
@@ -22,7 +22,7 @@ copa patch --scanner foo --image $IMAGE ...
 
 If you have built a scanner plugin and would like to add it to this list, please submit a PR to update this section with your plugin.
 
-:::tip
+:::note
 
 If you have any issues with a specific plugin, please open an issue in the applicable plugin's repository.
 
@@ -35,6 +35,12 @@ If you have any issues with a specific plugin, please open an issue in the appli
 Please see instructions at [Scanner Plugin Template](https://github.com/project-copacetic/scanner-plugin-template) for a template to get started with writing a scanner plugin.
 
 # Scanner Plugin Interface
+
+:::note
+
+`alpha` versions of the API are not guarenteed to be backwards compatible. Once the API graduates to `beta` and `stable`, it will be backwards compatible.
+
+:::
 
 Scanner plugins must implement the following interface:
 
