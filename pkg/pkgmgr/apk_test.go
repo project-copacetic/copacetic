@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 // TestApkReadResultsManifest tests the apkReadResultsManifest function.
@@ -104,7 +104,7 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 	// Define some test cases with inputs and expected outputs
 	testCases := []struct {
 		name            string
-		updates         types.UpdatePackages
+		updates         unversioned.UpdatePackages
 		cmp             VersionComparer
 		resultsPath     string
 		ignoreErrors    bool
@@ -113,14 +113,14 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 	}{
 		{
 			name:         "valid updates",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}, {Name: "busybox", FixedVersion: "1.33.1-r8"}},
+			updates:      []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}, {Name: "busybox", FixedVersion: "1.33.1-r8"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: false,
 		},
 		{
 			name:         "invalid version",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
+			updates:      []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_invalid.txt",
 			ignoreErrors: false,
@@ -130,14 +130,14 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 		},
 		{
 			name:         "invalid version with ignore errors",
-			updates:      []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
+			updates:      []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "1.0"}, {Name: "busybox", FixedVersion: "2.0"}},
 			cmp:          apkComparer,
 			resultsPath:  "testdata/apk_valid.txt",
 			ignoreErrors: true,
 		},
 		{
 			name:          "expected 1 updates, installed 2",
-			updates:       []types.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}},
+			updates:       []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}},
 			cmp:           apkComparer,
 			resultsPath:   "testdata/apk_valid.txt",
 			ignoreErrors:  false,
