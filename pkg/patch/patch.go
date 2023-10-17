@@ -15,11 +15,11 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
-	ref "github.com/distribution/distribution/reference"
+	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 )
@@ -29,13 +29,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -60,16 +60,16 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := ref.ParseNamed(image)
+func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	imageName, err := reference.ParseNamed(image)
 	if err != nil {
 		return err
 	}
-	if ref.IsNameOnly(imageName) {
+	if reference.IsNameOnly(imageName) {
 		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = ref.TagNameOnly(imageName)
+		imageName = reference.TagNameOnly(imageName)
 	}
-	taggedName, ok := imageName.(ref.Tagged)
+	taggedName, ok := imageName.(reference.Tagged)
 	if !ok {
 		err := errors.New("unexpected: TagNameOnly did create Tagged ref")
 		log.Error(err)
@@ -107,7 +107,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 
 	// Parse report for update packages
-	updates, err := report.TryParseScanReport(reportFile)
+	updates, err := report.TryParseScanReport(reportFile, scanner)
 	if err != nil {
 		return err
 	}
@@ -126,7 +126,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 
 	// Create package manager helper
-	pkgmgr, err := pkgmgr.GetPackageManager(updates.OSType, config, workingFolder)
+	pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
 	if err != nil {
 		return err
 	}
@@ -143,11 +143,17 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 
 	// create a new manifest with the successfully patched packages
-	validatedManifest := &types.UpdateManifest{
-		OSType:    updates.OSType,
-		OSVersion: updates.OSVersion,
-		Arch:      updates.Arch,
-		Updates:   []types.UpdatePackage{},
+	validatedManifest := &unversioned.UpdateManifest{
+		Metadata: unversioned.Metadata{
+			OS: unversioned.OS{
+				Type:    updates.Metadata.OS.Type,
+				Version: updates.Metadata.OS.Version,
+			},
+			Config: unversioned.Config{
+				Arch: updates.Metadata.Config.Arch,
+			},
+		},
+		Updates: []unversioned.UpdatePackage{},
 	}
 	for _, update := range updates.Updates {
 		if !slices.Contains(errPkgs, update.Name) {
@@ -156,7 +162,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	// vex document must contain at least one statement
 	if output != "" && len(validatedManifest.Updates) > 0 {
-		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, format, output)
+		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output)
 	}
 	return nil
 }
