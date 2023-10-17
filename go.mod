@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/aquasecurity/trivy v0.45.1
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.7.6
+	github.com/containerd/containerd v1.7.7
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/distribution/reference v0.5.0
 	github.com/docker/buildx v0.11.2
@@ -25,21 +25,16 @@ require (
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 	golang.org/x/sync v0.4.0
-	google.golang.org/grpc v1.58.2
+	google.golang.org/grpc v1.58.3
 )
 
-require (
-	github.com/sagikazarmark/locafero v0.3.0 // indirect
-	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
-	github.com/sourcegraph/conc v0.3.0 // indirect
-	go.uber.org/multierr v1.11.0 // indirect
-)
+require github.com/containerd/log v0.1.0 // indirect
 
 require (
 	github.com/AdaLogics/go-fuzz-headers v0.0.0-20230811130428-ced1acdcaa24 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/Microsoft/go-winio v0.6.1 // indirect
-	github.com/Microsoft/hcsshim v0.11.0 // indirect
+	github.com/Microsoft/hcsshim v0.11.1 // indirect
 	github.com/Shopify/logrus-bugsnag v0.0.0-20230117174420-439a4b8ba167 // indirect
 	github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
@@ -102,9 +97,12 @@ require (
 	github.com/prometheus/client_model v0.4.0 // indirect
 	github.com/prometheus/common v0.44.0 // indirect
 	github.com/prometheus/procfs v0.10.1 // indirect
+	github.com/sagikazarmark/locafero v0.3.0 // indirect
+	github.com/sagikazarmark/slog-shim v0.1.0 // indirect
 	github.com/samber/lo v1.38.1 // indirect
 	github.com/secure-systems-lab/go-securesystemslib v0.7.0 // indirect
 	github.com/shibumi/go-pathspec v1.3.0 // indirect
+	github.com/sourcegraph/conc v0.3.0 // indirect
 	github.com/spdx/tools-golang v0.5.1 // indirect
 	github.com/spf13/afero v1.10.0 // indirect
 	github.com/spf13/cast v1.5.1 // indirect
@@ -123,12 +121,13 @@ require (
 	go.opentelemetry.io/otel/sdk v1.14.0 // indirect
 	go.opentelemetry.io/otel/trace v1.14.0 // indirect
 	go.opentelemetry.io/proto/otlp v0.19.0 // indirect
-	golang.org/x/crypto v0.13.0 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/crypto v0.14.0 // indirect
 	golang.org/x/mod v0.12.0 // indirect
-	golang.org/x/net v0.15.0 // indirect
+	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/oauth2 v0.12.0 // indirect
-	golang.org/x/sys v0.12.0 // indirect
-	golang.org/x/term v0.12.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/term v0.13.0 // indirect
 	golang.org/x/text v0.13.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	golang.org/x/tools v0.13.0 // indirect
