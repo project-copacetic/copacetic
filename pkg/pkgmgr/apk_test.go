@@ -74,13 +74,12 @@ var (
 	//go:embed testdata/empty.txt
 	apkEmpty []byte
 
-	// tests the error handling of the function
-	apkNoSuchFile []byte = nil
+	// initialized to `nil`; tests the error handling of the function.
+	apkNoSuchFile []byte
 )
 
 // TestApkReadResultsManifest tests the apkReadResultsManifest function.
 func TestApkReadResultsManifest(t *testing.T) {
-
 	type args struct {
 		path []byte
 	}

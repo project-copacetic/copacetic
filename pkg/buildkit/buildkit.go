@@ -5,12 +5,10 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 
 	"github.com/containerd/console"
-	"github.com/containerd/containerd/remotes/docker"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/client"
@@ -19,11 +17,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
-	"github.com/moby/buildkit/util/contentutil"
-	"github.com/moby/buildkit/util/imageutil"
 	"github.com/moby/buildkit/util/progress/progressui"
-	"github.com/moby/buildkit/version"
-	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -65,46 +59,6 @@ func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	go utils.LogPipe(stdout, log.InfoLevel)
 
 	return cmd.Run()
-}
-
-// Custom ResolveImageConfig implementation for using Docker default config.json credentials
-// to pull image config.
-//
-// While it would be ideal to be able to use imagemetaresolver.Default().ResolveImageConfig(),
-// there doesn't seem to be a way to configure the necessary DockerAuthorizer or RegistryHosts
-// against an ImageMetaResolver, which causes the resolve to only use anonymous tokens and fail.
-func resolveImageConfig(ctx context.Context, ref string, platform *ispec.Platform) (digest.Digest, []byte, error) {
-	auth := docker.NewDockerAuthorizer(
-		docker.WithAuthCreds(func(ref string) (string, string, error) {
-			defaultConfig := config.LoadDefaultConfigFile(os.Stderr)
-			ac, err := defaultConfig.GetAuthConfig(ref)
-			if err != nil {
-				return "", "", err
-			}
-			if ac.IdentityToken != "" {
-				return "", ac.IdentityToken, nil
-			}
-			return ac.Username, ac.Password, nil
-		}))
-	hosts := docker.ConfigureDefaultRegistries(
-		docker.WithClient(http.DefaultClient),
-		docker.WithPlainHTTP(docker.MatchLocalhost),
-		docker.WithAuthorizer(auth),
-	)
-
-	headers := http.Header{}
-	headers.Set("User-Agent", version.UserAgent())
-	resolver := docker.NewResolver(docker.ResolverOptions{
-		Client:  http.DefaultClient,
-		Headers: headers,
-		Hosts:   hosts,
-	})
-
-	_, dgst, config, err := imageutil.Config(ctx, ref, resolver, contentutil.NewBuffer(), nil, platform, nil)
-	if err != nil {
-		return "", nil, err
-	}
-	return dgst, config, nil
 }
 
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string, manifest *unversioned.UpdateManifest) (*Config, error) {
@@ -177,16 +131,16 @@ func ArrayFile(input []string) []byte {
 	return b.Bytes()
 }
 
-func WithArrayFile(s llb.State, path string, contents []string) llb.State {
+func WithArrayFile(s *llb.State, path string, contents []string) llb.State {
 	af := ArrayFile(contents)
 	return WithFileBytes(s, path, af)
 }
 
-func WithFileString(s llb.State, path, contents string) llb.State {
+func WithFileString(s *llb.State, path, contents string) llb.State {
 	return WithFileBytes(s, path, []byte(contents))
 }
 
-func WithFileBytes(s llb.State, path string, contents []byte) llb.State {
+func WithFileBytes(s *llb.State, path string, contents []byte) llb.State {
 	return s.File(llb.Mkfile(path, 0o600, contents))
 }
 

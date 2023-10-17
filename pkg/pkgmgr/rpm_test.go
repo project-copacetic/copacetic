@@ -203,10 +203,8 @@ func TestGetRPMDBType(t *testing.T) {
 	}
 }
 
-var (
-	//go:embed testdata/rpm_valid.txt
-	rpmValidManifest []byte
-)
+//go:embed testdata/rpm_valid.txt
+var rpmValidManifest []byte
 
 func TestRpmReadResultsManifest(t *testing.T) {
 	// Test cases
