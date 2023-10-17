@@ -1,8 +1,3 @@
-// ------------------------------------------------------------
-// Copyright (c) Project Copacetic authors.
-// Licensed under the MIT License.
-// ------------------------------------------------------------
-
 package report
 
 import (
@@ -13,8 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestTryParseScanReport tests the TryParseScanReport function with different scan report files.
-func TestTryParseScanReport(t *testing.T) {
+// TestDummyProvider tests the TryParseScanReport function with dummy provider & different scan report files.
+func TestDummyProvider(t *testing.T) {
 	// Define test cases with input file and expected output manifest and error
 	testCases := []struct {
 		file     string
@@ -36,29 +31,26 @@ func TestTryParseScanReport(t *testing.T) {
 				Updates: []unversioned.UpdatePackage{
 					{
 						Name:             "apk-tools",
-						VulnerabilityID:  "CVE-2021-36159",
-						FixedVersion:     "2.12.6-r0",
-						InstalledVersion: "2.12.5-r1",
+						InstalledVersion: "2.12.6-r0",
 					},
 				},
 			},
-			err: nil,
+			err: fmt.Errorf("error running scanner dummy: exec: \"copa-dummy\": executable file not found in $PATH"),
 		},
 		{
 			file:     "testdata/invalid.json",
 			manifest: nil,
-			err:      fmt.Errorf("testdata/invalid.json is not a supported scan report format"),
+			err:      fmt.Errorf("error running scanner dummy: exec: \"copa-dummy\": executable file not found in $PATH"),
 		},
 	}
 
 	// Loop over test cases and run TryParseScanReport function with each input file
 	for _, tc := range testCases {
 		t.Run(tc.file, func(t *testing.T) {
-			manifest, err := TryParseScanReport(tc.file, "trivy")
+			_, err := TryParseScanReport(tc.file, "dummy")
 
-			// Use testify package to assert that the output manifest and error match the expected ones
-			assert.Equal(t, tc.manifest, manifest)
-			assert.Equal(t, tc.err, err)
+			// We will get error from dummy provider because the binary "copa-dummy" does not exist
+			assert.EqualError(t, err, tc.err.Error())
 		})
 	}
 }

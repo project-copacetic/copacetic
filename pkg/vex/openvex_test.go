@@ -6,7 +6,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 func TestOpenVex_CreateVEXDocument(t *testing.T) {
@@ -25,7 +25,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	id = func() (string, error) { return "https://openvex.dev/test", nil }
 
 	type args struct {
-		updates          *types.UpdateManifest
+		updates          *unversioned.UpdateManifest
 		pkgmgr           pkgmgr.PackageManager
 		patchedImageName string
 	}
@@ -41,8 +41,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			o:    &OpenVex{},
 			args: args{
 				patchedImageName: patchedImageName,
-				updates: &types.UpdateManifest{
-					Updates: []types.UpdatePackage{
+				updates: &unversioned.UpdateManifest{
+					Updates: []unversioned.UpdatePackage{
 						{
 							Name:             "test1",
 							InstalledVersion: "1.0",
@@ -50,8 +50,14 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 							VulnerabilityID:  "CVE-2020-1234",
 						},
 					},
-					OSType: "alpine",
-					Arch:   "x86_64",
+					Metadata: unversioned.Metadata{
+						OS: unversioned.OS{
+							Type: "alpine",
+						},
+						Config: unversioned.Config{
+							Arch: "x86_64",
+						},
+					},
 				},
 				pkgmgr: alpineManager,
 			},
@@ -89,8 +95,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			o:    &OpenVex{},
 			args: args{
 				patchedImageName: patchedImageName,
-				updates: &types.UpdateManifest{
-					Updates: []types.UpdatePackage{
+				updates: &unversioned.UpdateManifest{
+					Updates: []unversioned.UpdatePackage{
 						{
 							Name:             "test2",
 							InstalledVersion: "1.0",
@@ -104,8 +110,14 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 							VulnerabilityID:  "CVE-2020-1235",
 						},
 					},
-					OSType: "debian",
-					Arch:   "x86_64",
+					Metadata: unversioned.Metadata{
+						OS: unversioned.OS{
+							Type: "debian",
+						},
+						Config: unversioned.Config{
+							Arch: "x86_64",
+						},
+					},
 				},
 				pkgmgr: debianManager,
 			},

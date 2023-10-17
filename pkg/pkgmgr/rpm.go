@@ -19,7 +19,7 @@ import (
 	rpmVer "github.com/knqyf263/go-rpm-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -90,14 +90,14 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getRPMImageName(manifest *types.UpdateManifest) string {
+func getRPMImageName(manifest *unversioned.UpdateManifest) string {
 	// Standardize on mariner as tooling image base as redhat/ubi does not provide
 	// static busybox binary
 	image := "mcr.microsoft.com/cbl-mariner/base/core"
 	version := "2.0"
-	if manifest.OSType == "cbl-mariner" {
+	if manifest.Metadata.OS.Type == "cbl-mariner" {
 		// Use appropriate version of cbl-mariner image if available
-		vers := strings.Split(manifest.OSVersion, ".")
+		vers := strings.Split(manifest.Metadata.OS.Version, ".")
 		if len(vers) < 2 {
 			vers = append(vers, "0")
 		}
@@ -159,7 +159,7 @@ func getRPMDBType(dir string) rpmDBType {
 	return out
 }
 
-func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update
 	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
@@ -302,7 +302,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 //
 // TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
-func (rm *rpmManager) installUpdates(ctx context.Context, updates types.UpdatePackages) (*llb.State, error) {
+func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, error) {
 	// Format the requested updates into a space-separated string
 	pkgStrings := []string{}
 	for _, u := range updates {
@@ -344,7 +344,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates types.UpdatePa
 	return &patchMerge, nil
 }
 
-func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates types.UpdatePackages, toolImage string) (*llb.State, error) {
+func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
@@ -444,7 +444,7 @@ func rpmReadResultsManifest(path string) ([]string, error) {
 	return lines, nil
 }
 
-func validateRPMPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
+func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
 	lines, err := rpmReadResultsManifest(resultsPath)
 	if err != nil {
 		return nil, err

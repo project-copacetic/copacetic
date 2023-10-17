@@ -15,7 +15,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	testutils "github.com/project-copacetic/copacetic/pkg/test_utils"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 // TestGetPackageManager tests the GetPackageManager function.
@@ -87,30 +87,42 @@ func TestGetAPTImageName(t *testing.T) {
 	// Define test cases with input and expected output
 	testCases := []struct {
 		name     string
-		manifest *types.UpdateManifest
+		manifest *unversioned.UpdateManifest
 		want     string
 	}{
 		{
 			name: "ubuntu 20.04",
-			manifest: &types.UpdateManifest{
-				OSType:    "ubuntu",
-				OSVersion: "20.04",
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "ubuntu",
+						Version: "20.04",
+					},
+				},
 			},
 			want: "ubuntu:20.04",
 		},
 		{
 			name: "debian 11.0",
-			manifest: &types.UpdateManifest{
-				OSType:    "debian",
-				OSVersion: "11.0",
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "debian",
+						Version: "11.0",
+					},
+				},
 			},
 			want: "debian:11-slim",
 		},
 		{
 			name: "debian 11.1",
-			manifest: &types.UpdateManifest{
-				OSType:    "debian",
-				OSVersion: "11.1",
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "debian",
+						Version: "11.1",
+					},
+				},
 			},
 			want: "debian:11-slim",
 		},
@@ -234,7 +246,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 
 	testCases := []struct {
 		name            string
-		updates         types.UpdatePackages
+		updates         unversioned.UpdatePackages
 		cmp             VersionComparer
 		resultsPath     string
 		ignoreErrors    bool
@@ -243,14 +255,14 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 	}{
 		{
 			name:         "no updates",
-			updates:      types.UpdatePackages{},
+			updates:      unversioned.UpdatePackages{},
 			cmp:          dpkgComparer,
 			resultsPath:  "testdata/dpkg_valid.txt",
 			ignoreErrors: false,
 		},
 		{
 			name: "package not installed",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "not-installed", FixedVersion: "1.0.0"},
 			},
 			cmp:          dpkgComparer,
@@ -259,7 +271,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		},
 		{
 			name: "invalid version",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "base-files", FixedVersion: "1.0.0"},
 			},
 			cmp:           dpkgComparer,
@@ -269,7 +281,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		},
 		{
 			name: "invalid version with ignore errors",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "base-files", FixedVersion: "1.0.0"},
 			},
 			cmp:          dpkgComparer,
@@ -278,7 +290,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		},
 		{
 			name: "version lower than requested",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "apt", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
@@ -290,7 +302,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		},
 		{
 			name: "version lower than requested with ignore errors",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "apt", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
@@ -299,7 +311,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		},
 		{
 			name: "version equal to requested",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "apt", FixedVersion: "1.8.2.3"},
 			},
 			cmp:          dpkgComparer,
@@ -308,7 +320,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		},
 		{
 			name: "version greater than requested",
-			updates: types.UpdatePackages{
+			updates: unversioned.UpdatePackages{
 				{Name: "apt", FixedVersion: "0.9"},
 			},
 			cmp:          dpkgComparer,
