@@ -17,7 +17,7 @@ import (
 	debVer "github.com/knqyf263/go-deb-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -72,15 +72,15 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getAPTImageName(manifest *types.UpdateManifest) string {
-	version := manifest.OSVersion
-	if manifest.OSType == "debian" {
-		version = strings.Split(manifest.OSVersion, ".")[0] + "-slim"
+func getAPTImageName(manifest *unversioned.UpdateManifest) string {
+	version := manifest.Metadata.OS.Version
+	if manifest.Metadata.OS.Type == "debian" {
+		version = strings.Split(manifest.Metadata.OS.Version, ".")[0] + "-slim"
 	}
 
 	// TODO: support qualifying image name with designated repository
-	log.Debugf("Using %s:%s as basis for tooling image", manifest.OSType, version)
-	return fmt.Sprintf("%s:%s", manifest.OSType, version)
+	log.Debugf("Using %s:%s as basis for tooling image", manifest.Metadata.OS.Type, version)
+	return fmt.Sprintf("%s:%s", manifest.Metadata.OS.Type, version)
 }
 
 func getDPKGStatusType(dir string) dpkgStatusType {
@@ -98,7 +98,7 @@ func getDPKGStatusType(dir string) dpkgStatusType {
 	return out
 }
 
-func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
@@ -197,7 +197,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 //
 // TODO: Support Debian images with valid dpkg status but missing tools. No current examples exist in test set
 // i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
-func (dm *dpkgManager) installUpdates(ctx context.Context, updates types.UpdatePackages) (*llb.State, error) {
+func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, error) {
 	// TODO: Add support for custom APT config and gpg key injection
 	// Since this takes place in the target container, it can interfere with install actions
 	// such as the installation of the updated debian-archive-keyring package, so it's probably best
@@ -236,7 +236,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates types.UpdateP
 	return &patchMerge, nil
 }
 
-func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates types.UpdatePackages, toolImage string) (*llb.State, error) {
+func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
@@ -369,7 +369,7 @@ func dpkgParseResultsManifest(path string) (map[string]string, error) {
 	return updateMap, nil
 }
 
-func validateDebianPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
+func validateDebianPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
 	// Load file into map[string]string for package:version lookup
 	updateMap, err := dpkgParseResultsManifest(resultsPath)
 	if err != nil {
