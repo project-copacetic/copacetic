@@ -1,7 +1,8 @@
 name: Documentation Improvement
 description: Suggest a correction or improvement in Project Copacetic documents
 title: "[DOC] <title>"
-labels: "documentation"
+labels:
+  - "documentation"
 body:
   - type: markdown
     attributes:
@@ -25,4 +26,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to suggest a documentation improvement! 
+        Thanks for taking the time to suggest a documentation improvement!
+  - type: checkboxes
+    id: idea
+    attributes:
+      label: "Are you willing to submit PRs to contribute to documentation?"
+      description: "This is absolutely not required, but we are happy to guide you in the contribution process. Join us at the `#copa` channel on the [OCI Slack](https://communityinviter.com/apps/opencontainers/join-the-oci-community) if you have any questions."
+      options:
+        - label: Yes, I am willing to implement it.
