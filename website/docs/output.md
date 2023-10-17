@@ -35,37 +35,27 @@ This will generate a VEX Document that looks like:
 ```json
 {
   "@context": "https://openvex.dev/ns",
-  "@id": "https://openvex.dev/docs/public/vex-6f15c26e0410a4d44e0af4062f4b883fbc19a98e57baf131715d942213e5002a",
+  "@id": "https://openvex.dev/docs/public/vex-a6c44ec1d79e9dd4190dc01b4ecf7527ebb26bd37c01e32e6efcd203ae00d2a5",
   "author": "Project Copacetic",
-  "timestamp": "2023-08-25T21:40:23.891230545Z",
+  "timestamp": "2023-10-11T00:15:00.114768055Z",
   "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
     {
       "vulnerability": {
-        "@id": "CVE-2021-3995"
+        "@id": "CVE-2021-22945"
       },
       "products": [
         {
-          "@id": "pkg:deb/debian/bsdutils@1:2.36.1-8?arch=amd64"
-        },
-        {
-          "@id": "pkg:deb/debian/libblkid1@2.36.1-8?arch=amd64"
-        },
-        {
-          "@id": "pkg:deb/debian/libmount1@2.36.1-8?arch=amd64"
-        },
-        {
-          "@id": "pkg:deb/debian/libsmartcols1@2.36.1-8?arch=amd64"
-        },
-        {
-          "@id": "pkg:deb/debian/libuuid1@2.36.1-8?arch=amd64"
-        },
-        {
-          "@id": "pkg:deb/debian/mount@2.36.1-8?arch=amd64"
-        },
-        {
-          "@id": "pkg:deb/debian/util-linux@2.36.1-8?arch=amd64"
+          "@id": "pkg:oci/docker.io/library/nginx:1.21.6-patched",
+          "subcomponents": [
+            {
+              "@id": "pkg:deb/debian/curl@7.74.0-1.3+deb11u2?arch=amd64"
+            },
+            {
+              "@id": "pkg:deb/debian/libcurl4@7.74.0-1.3+deb11u2?arch=amd64"
+            }
+          ]
         }
       ],
       "status": "fixed"

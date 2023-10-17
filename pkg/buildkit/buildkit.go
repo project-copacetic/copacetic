@@ -27,7 +27,7 @@ import (
 	"github.com/moby/buildkit/version"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
@@ -109,13 +109,13 @@ func resolveImageConfig(ctx context.Context, ref string, platform *ispec.Platfor
 	return dgst, config, nil
 }
 
-func InitializeBuildkitConfig(ctx context.Context, client *client.Client, image string, manifest *types.UpdateManifest) (*Config, error) {
+func InitializeBuildkitConfig(ctx context.Context, client *client.Client, image string, manifest *unversioned.UpdateManifest) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
 		Platform: ispec.Platform{
 			OS:           "linux",
-			Architecture: manifest.Arch,
+			Architecture: manifest.Metadata.Config.Arch,
 		},
 	}
 

@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -27,7 +27,7 @@ const (
 )
 
 type PackageManager interface {
-	InstallUpdates(context.Context, *types.UpdateManifest, bool) (*llb.State, []string, error)
+	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
 	GetPackageType() string
 }
 
@@ -51,7 +51,7 @@ type VersionComparer struct {
 	LessThan func(string, string) bool
 }
 
-func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (types.UpdatePackages, error) {
+func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.UpdatePackages, error) {
 	dict := make(map[string]string)
 	var allErrors *multierror.Error
 	for _, u := range updates {
@@ -73,9 +73,9 @@ func GetUniqueLatestUpdates(updates types.UpdatePackages, cmp VersionComparer, i
 		return nil, allErrors.ErrorOrNil()
 	}
 
-	out := types.UpdatePackages{}
+	out := unversioned.UpdatePackages{}
 	for k, v := range dict {
-		out = append(out, types.UpdatePackage{Name: k, FixedVersion: v})
+		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
 	}
 	return out, nil
 }
@@ -92,7 +92,7 @@ type PackageInfoReader interface {
 
 type UpdateMap map[string]*UpdatePackageInfo
 
-func GetValidatedUpdatesMap(updates types.UpdatePackages, cmp VersionComparer, reader PackageInfoReader, stagingPath string) (UpdateMap, error) {
+func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionComparer, reader PackageInfoReader, stagingPath string) (UpdateMap, error) {
 	m := make(UpdateMap)
 	for _, update := range updates {
 		m[update.Name] = &UpdatePackageInfo{Version: update.FixedVersion}

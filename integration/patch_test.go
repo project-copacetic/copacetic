@@ -90,6 +90,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 		"-i="+ref,
 		"-t="+patchedTag,
 		"-r="+path+"/scan.json",
+		"-s="+scannerPlugin,
 		"--timeout=20m",
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),

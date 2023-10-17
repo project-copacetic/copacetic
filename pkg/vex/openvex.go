@@ -7,7 +7,7 @@ import (
 
 	"github.com/openvex/go-vex/pkg/vex"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 // used for testing mock time and id.
@@ -26,7 +26,11 @@ var (
 
 type OpenVex struct{}
 
-func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr.PackageManager) (string, error) {
+func (o *OpenVex) CreateVEXDocument(
+	updates *unversioned.UpdateManifest,
+	patchedImageName string,
+	pkgmgr pkgmgr.PackageManager,
+) (string, error) {
 	t := now()
 	doc := v
 	doc.Timestamp = &t
@@ -43,12 +47,18 @@ func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr
 	}
 	doc.Metadata.ID = id
 
+	imageProduct := vex.Product{
+		Component: vex.Component{
+			ID: "pkg:oci/" + patchedImageName,
+		},
+	}
+
 	pkgType := pkgmgr.GetPackageType()
 	for _, u := range updates.Updates {
-		product := vex.Product{
+		subComponent := vex.Subcomponent{
 			Component: vex.Component{
 				// syntax is "pkg:<pkgType>/<osType>/<packageName>@<installedVersion>?arch=<arch>"
-				ID: "pkg:" + pkgType + "/" + updates.OSType + "/" + u.Name + "@" + u.FixedVersion + "?arch=" + updates.Arch,
+				ID: "pkg:" + pkgType + "/" + updates.Metadata.OS.Type + "/" + u.Name + "@" + u.FixedVersion + "?arch=" + updates.Metadata.Config.Arch,
 			},
 		}
 
@@ -57,7 +67,7 @@ func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr
 		for i := range doc.Statements {
 			if doc.Statements[i].Vulnerability.ID == u.VulnerabilityID {
 				found = true
-				doc.Statements[i].Products = append(doc.Statements[i].Products, product)
+				doc.Statements[i].Products[0].Subcomponents = append(doc.Statements[i].Products[0].Subcomponents, subComponent)
 			}
 		}
 		if found {
@@ -65,14 +75,13 @@ func (o *OpenVex) CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr
 		}
 
 		// otherwise, create new statement
+		imageProduct.Subcomponents = []vex.Subcomponent{subComponent}
 		doc.Statements = append(doc.Statements, vex.Statement{
 			Vulnerability: vex.Vulnerability{
 				ID: u.VulnerabilityID,
 			},
-			Products: []vex.Product{
-				product,
-			},
-			Status: "fixed",
+			Products: []vex.Product{imageProduct},
+			Status:   "fixed",
 		})
 	}
 
