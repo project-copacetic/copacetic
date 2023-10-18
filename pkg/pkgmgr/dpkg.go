@@ -163,18 +163,17 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 	busyBoxApplied := dm.config.ImageState.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
-	probed := mkFolders.
-		Run(llb.Args([]string{
-			`/bin/busybox`, `env`,
-			buildkit.Env("DPKG_STATUS_PATH", dpkgStatusPath),
-			buildkit.Env("RESULTS_PATH", resultsPath),
-			buildkit.Env("DPKG_STATUS_FOLDER", dpkgStatusFolder),
-			buildkit.Env("RESULT_STATUSD_PATH", filepath.Join(resultsPath, "status.d")),
-			buildkit.Env("DPKG_STATUS_IS_DIRECTORY", fmt.Sprintf("%d", DPKGStatusDirectory)),
-			buildkit.Env("DPKG_STATUS_IS_FILE", fmt.Sprintf("%d", DPKGStatusFile)),
-			buildkit.Env("DPKG_STATUS_IS_UNKNOWN", fmt.Sprintf("%d", DPKGStatusNone)),
-			buildkit.Env("STATUSD_OUTPUT_FILENAME", statusdOutputFilename),
-			`sh`, `-c`, `
+	probed := mkFolders.Run(
+		llb.AddEnv("DPKG_STATUS_PATH", dpkgStatusPath),
+		llb.AddEnv("RESULTS_PATH", resultsPath),
+		llb.AddEnv("DPKG_STATUS_FOLDER", dpkgStatusFolder),
+		llb.AddEnv("RESULT_STATUSD_PATH", filepath.Join(resultsPath, "status.d")),
+		llb.AddEnv("DPKG_STATUS_IS_DIRECTORY", fmt.Sprintf("%d", DPKGStatusDirectory)),
+		llb.AddEnv("DPKG_STATUS_IS_FILE", fmt.Sprintf("%d", DPKGStatusFile)),
+		llb.AddEnv("DPKG_STATUS_IS_UNKNOWN", fmt.Sprintf("%d", DPKGStatusNone)),
+		llb.AddEnv("STATUSD_OUTPUT_FILENAME", statusdOutputFilename),
+		llb.Args([]string{
+			`/bin/busybox`, `sh`, `-c`, `
                 status="$DPKG_STATUS_IS_UNKNOWN"
                 if [ -f "$DPKG_STATUS_PATH" ]; then
                     status="$DPKG_STATUS_IS_FILE"

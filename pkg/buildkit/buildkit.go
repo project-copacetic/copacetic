@@ -3,7 +3,6 @@ package buildkit
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -142,10 +141,6 @@ func WithFileString(s *llb.State, path, contents string) llb.State {
 
 func WithFileBytes(s *llb.State, path string, contents []byte) llb.State {
 	return s.File(llb.Mkfile(path, 0o600, contents))
-}
-
-func Env(k, v string) string {
-	return fmt.Sprintf("%s=%s", k, v)
 }
 
 func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath string) error {

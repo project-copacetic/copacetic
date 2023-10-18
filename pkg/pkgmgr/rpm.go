@@ -237,29 +237,29 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 	probed := buildkit.WithArrayFile(&mkFolders, toolListPath, toolList)
 	probed = buildkit.WithArrayFile(&probed, dbListPath, rpmDBList)
-	probed = probed.Run(llb.Args([]string{
-		`/usr/sbin/busybox`, `env`,
-		buildkit.Env("TOOL_LIST_PATH", toolListPath),
-		buildkit.Env("DB_LIST_PATH", dbListPath),
-		buildkit.Env("RESULTS_PATH", resultsPath),
-		buildkit.Env("RPM_TOOLS_OUTPUT_FILENAME", rpmToolsFile),
-		buildkit.Env("RPM_DB_LIST_OUTPUT_FILENAME", rpmDBFile),
-		buildkit.Env("BUSYBOX", "/usr/sbin/busybox"),
-		`/usr/sbin/busybox`, `sh`, `-c`, `
-            while IFS= read -r tool; do
-                tool_path="$($BUSYBOX which "$tool")"
-                echo "${tool}:${tool_path:-notfound}" >> "${RESULTS_PATH}/${RPM_TOOLS_OUTPUT_FILENAME}"
-            done < "$TOOL_LIST_PATH"
+	probed = probed.Run(
+		llb.AddEnv("TOOL_LIST_PATH", toolListPath),
+		llb.AddEnv("DB_LIST_PATH", dbListPath),
+		llb.AddEnv("RESULTS_PATH", resultsPath),
+		llb.AddEnv("RPM_TOOLS_OUTPUT_FILENAME", rpmToolsFile),
+		llb.AddEnv("RPM_DB_LIST_OUTPUT_FILENAME", rpmDBFile),
+		llb.AddEnv("BUSYBOX", "/usr/sbin/busybox"),
+		llb.Args([]string{
+			`/usr/sbin/busybox`, `sh`, `-c`, `
+                while IFS= read -r tool; do
+                    tool_path="$($BUSYBOX which "$tool")"
+                    echo "${tool}:${tool_path:-notfound}" >> "${RESULTS_PATH}/${RPM_TOOLS_OUTPUT_FILENAME}"
+                done < "$TOOL_LIST_PATH"
 
-            while IFS= read -r db; do
-                echo "$db"
-                if [ -f "$db" ]; then
-                    $BUSYBOX cp "$db" "$RESULTS_PATH"
-                    echo "$db" >> "${RESULTS_PATH}/${RPM_DB_LIST_OUTPUT_FILENAME}"
-                fi
-            done < "$DB_LIST_PATH"
-        `,
-	})).Root()
+                while IFS= read -r db; do
+                    echo "$db"
+                    if [ -f "$db" ]; then
+                        $BUSYBOX cp "$db" "$RESULTS_PATH"
+                        echo "$db" >> "${RESULTS_PATH}/${RPM_DB_LIST_OUTPUT_FILENAME}"
+                    fi
+                done < "$DB_LIST_PATH"
+            `,
+		})).Root()
 	outState := llb.Diff(toolsApplied, probed)
 
 	rpmDBListOutputBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, filepath.Join(resultsPath, rpmDBFile))
