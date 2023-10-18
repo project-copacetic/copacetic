@@ -15,6 +15,7 @@ import (
 
 const (
 	copaPrefix     = "copa-"
+	inputPath      = "/" + copaPrefix + "input"
 	resultsPath    = "/" + copaPrefix + "out"
 	downloadPath   = "/" + copaPrefix + "downloads"
 	unpackPath     = "/" + copaPrefix + "unpacked"

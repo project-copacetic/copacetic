@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -179,10 +178,9 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 	pkgs := strings.Trim(fmt.Sprintf("%s", pkgStrings), "[]")
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, pkgs, resultManifest)
 	mkFolders := apkInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
-	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-	resultsDiff := llb.Diff(apkInstalled, resultsWritten)
+	resultsDiff := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
-	resultManifestBytes, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+	resultManifestBytes, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &resultsDiff, resultManifest)
 	if err != nil {
 		return nil, nil, err
 	}

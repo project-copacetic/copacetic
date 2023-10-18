@@ -219,7 +219,9 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
-	mkFolders := toolsApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
+	mkFolders := toolsApplied.
+		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
+		File(llb.Mkdir(inputPath, 0o744, llb.WithParents(true)))
 
 	toolList := []string{"dnf", "microdnf", "rpm", "yum"}
 
@@ -232,12 +234,12 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	}
 
 	// probed := mkFolders.Run(llb.Shlex(probeToolsCmd)).Run(llb.Shlex(probeDBCmd)).Root()
-	toolListPath := filepath.Join(resultsPath, "tool_list")
-	dbListPath := filepath.Join(resultsPath, "rpm_db_list")
+	toolListPath := filepath.Join(inputPath, "tool_list")
+	dbListPath := filepath.Join(inputPath, "rpm_db_list")
 
 	probed := buildkit.WithArrayFile(&mkFolders, toolListPath, toolList)
 	probed = buildkit.WithArrayFile(&probed, dbListPath, rpmDBList)
-	probed = probed.Run(
+	outState := probed.Run(
 		llb.AddEnv("TOOL_LIST_PATH", toolListPath),
 		llb.AddEnv("DB_LIST_PATH", dbListPath),
 		llb.AddEnv("RESULTS_PATH", resultsPath),
@@ -259,10 +261,9 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
                     fi
                 done < "$DB_LIST_PATH"
             `,
-		})).Root()
-	outState := llb.Diff(toolsApplied, probed)
+		})).AddMount(resultsPath, llb.Scratch())
 
-	rpmDBListOutputBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, filepath.Join(resultsPath, rpmDBFile))
+	rpmDBListOutputBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmDBFile)
 	if err != nil {
 		return nil
 	}
@@ -283,7 +284,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	if !rm.isDistroless {
 		log.Info("Checking for available RPM tools in non-distroless image ...")
 
-		toolsFileBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, filepath.Join(resultsPath, rpmToolsFile))
+		toolsFileBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmToolsFile)
 		if err != nil {
 			return err
 		}
@@ -349,10 +350,9 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	// Write results.manifest to host for post-patch validation
 	const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
 	outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
-	resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-	resultsDiff := llb.Diff(installed, resultsWritten)
+	resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
-	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -432,8 +432,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	writeResultsCmd := fmt.Sprintf(writeResultsTemplate, filepath.Join(resultsPath, resultManifest))
 	resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(writeResultsCmd)).Root()
 
-	resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
-	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, filepath.Join(resultsPath, resultManifest))
 	if err != nil {
 		return nil, nil, err
 	}
