@@ -21,6 +21,7 @@ const sidebars = {
     'troubleshooting',
     'design',
     'faq',
+    'scanner-plugins',
     'contributing',
     'code-of-conduct',
     'github-action',
