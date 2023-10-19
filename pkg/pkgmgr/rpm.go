@@ -233,7 +233,6 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		filepath.Join(rpmManifestPath, rpmManifest2),
 	}
 
-	// probed := mkFolders.Run(llb.Shlex(probeToolsCmd)).Run(llb.Shlex(probeDBCmd)).Root()
 	toolListPath := filepath.Join(inputPath, "tool_list")
 	dbListPath := filepath.Join(inputPath, "rpm_db_list")
 
