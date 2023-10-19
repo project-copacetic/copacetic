@@ -5,21 +5,21 @@ import (
 	"os"
 
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 type Vex interface {
-	CreateVEXDocument(updates *types.UpdateManifest, pkgmgr pkgmgr.PackageManager) (string, error)
+	CreateVEXDocument(updates *unversioned.UpdateManifest, patchedImageName string, pkgmgr pkgmgr.PackageManager) (string, error)
 }
 
-func TryOutputVexDocument(updates *types.UpdateManifest, pkgmgr pkgmgr.PackageManager, format, file string) error {
+func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgmgr pkgmgr.PackageManager, patchedImageName, format, file string) error {
 	var doc string
 	var err error
 
 	switch format {
 	case "openvex":
 		ov := &OpenVex{}
-		doc, err = ov.CreateVEXDocument(updates, pkgmgr)
+		doc, err = ov.CreateVEXDocument(updates, patchedImageName, pkgmgr)
 		if err != nil {
 			return err
 		}

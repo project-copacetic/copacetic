@@ -18,7 +18,7 @@ import (
 	apkVer "github.com/knqyf263/go-apk-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
@@ -56,7 +56,7 @@ func apkReadResultsManifest(path string) ([]string, error) {
 	return lines, nil
 }
 
-func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
+func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsPath string, ignoreErrors bool) ([]string, error) {
 	lines, err := apkReadResultsManifest(resultsPath)
 	if err != nil {
 		return nil, err
@@ -124,7 +124,7 @@ func validateAPKPackageVersions(updates types.UpdatePackages, cmp VersionCompare
 	return errorPkgs, allErrors.ErrorOrNil()
 }
 
-func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update
 	apkComparer := VersionComparer{isValidAPKVersion, isLessThanAPKVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, apkComparer, ignoreErrors)
@@ -159,7 +159,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *types.Update
 // TODO: support "distroless" Alpine images (e.g. APKO images)
 // Still assumes that APK exists in the target image and is pathed, which can be addressed by
 // mounting a copy of apk-tools-static into the image and invoking apk-static directly.
-func (am *apkManager) upgradePackages(ctx context.Context, updates types.UpdatePackages) (*llb.State, error) {
+func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, error) {
 	// TODO: Add support for custom APK config
 	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy())).Root()
 
