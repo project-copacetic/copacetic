@@ -12,7 +12,6 @@ import (
 	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
@@ -187,60 +186,4 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 	}
 	log.Debugf("Wrote LLB state to %s", outPath)
 	return nil
-}
-
-func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string) error {
-	def, err := st.Marshal(ctx)
-	if err != nil {
-		log.Errorf("st.Marshal failed with %s", err)
-		return err
-	}
-
-	pipeR, pipeW := io.Pipe()
-	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
-	solveOpt := client.SolveOpt{
-		Exports: []client.ExportEntry{
-			{
-				Type: client.ExporterDocker,
-				Attrs: map[string]string{
-					"name": tag,
-					// Pass through resolved configData from original image
-					exptypes.ExporterImageConfigKey: string(configData),
-				},
-				Output: func(_ map[string]string) (io.WriteCloser, error) {
-					return pipeW, nil
-				},
-			},
-		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
-	}
-	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
-	if err != nil {
-		return err
-	}
-
-	ch := make(chan *client.SolveStatus)
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		_, err := c.Solve(ctx, def, solveOpt, ch)
-		return err
-	})
-	eg.Go(func() error {
-		var c console.Console
-		if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
-			c = cn
-		}
-		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
-		return err
-	})
-	eg.Go(func() error {
-		if err := dockerLoad(ctx, pipeR); err != nil {
-			return err
-		}
-		return pipeR.Close()
-	})
-	return eg.Wait()
 }
