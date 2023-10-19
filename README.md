@@ -12,7 +12,7 @@
 ![intro](demo/copa-demo.gif)
 
 ### Interactive Demo
-You can also try out a fully interactive `copa` demo on [Killercoda](https://killercoda.com/salaxander/scenario/try-copa)
+You can also try out a fully interactive `copa` demo on [Killercoda](https://killercoda.com/copacetic/scenario/try-copa)
 
 ## Why?
 
