@@ -196,7 +196,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 	case DPKGStatusFile:
 		return nil
 	case DPKGStatusDirectory:
-		statusdNamesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, filepath.Join(resultsPath, "status.d"))
+		statusdNamesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, "status.d")
 		if err != nil {
 			return err
 		}
