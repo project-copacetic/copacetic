@@ -163,7 +163,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 	busyBoxApplied := dm.config.ImageState.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
-	probed := mkFolders.Run(
+	resultsState := mkFolders.Run(
 		llb.AddEnv("DPKG_STATUS_PATH", dpkgStatusPath),
 		llb.AddEnv("RESULTS_PATH", resultsPath),
 		llb.AddEnv("DPKG_STATUS_FOLDER", dpkgStatusFolder),
@@ -184,10 +184,9 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
                 fi
                 echo -n "$status" > "${RESULTS_PATH}/${STATUSD_OUTPUT_FILENAME}"
         `,
-		})).Root()
+		})).AddMount(resultsPath, llb.Scratch())
 
-	outState := llb.Diff(busyBoxApplied, probed)
-	typeBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &outState, filepath.Join(resultsPath, statusdOutputFilename))
+	typeBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, statusdOutputFilename)
 	if err != nil {
 		return err
 	}
@@ -197,7 +196,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 	case DPKGStatusFile:
 		return nil
 	case DPKGStatusDirectory:
-		statusdNamesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &outState, filepath.Join(resultsPath, "status.d"))
+		statusdNamesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, filepath.Join(resultsPath, "status.d"))
 		if err != nil {
 			return err
 		}
