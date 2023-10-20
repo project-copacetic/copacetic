@@ -1,7 +1,8 @@
 name: Bug Report
 description: Report a bug in Project Copacetic
 title: "[BUG] <title>"
-labels: "bug"
+labels:
+  - "bug"
 body:
   - type: markdown
     attributes:
@@ -32,4 +33,11 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for taking the time to fill out a bug report! 
+        Thanks for taking the time to fill out a bug report!
+  - type: checkboxes
+    id: idea
+    attributes:
+      label: "Are you willing to submit PRs to contribute to this bug fix?"
+      description: "This is absolutely not required, but we are happy to guide you in the contribution process especially when you already have a good proposal or understanding of how to implement it. Join us at the `#copa` channel on the [OCI Slack](https://communityinviter.com/apps/opencontainers/join-the-oci-community) if you have any questions."
+      options:
+        - label: Yes, I am willing to implement it.
