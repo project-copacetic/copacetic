@@ -46,7 +46,7 @@ Scanner plugins must implement the following interface:
 
 ## v1alpha1
 
-```golang
+```go
 type UpdateManifest struct {
     // API version of the interface (e.g. v1alpha1)
     APIVersion string         `json:"apiVersion"`
