@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/containerd/console"
@@ -17,6 +18,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/distribution/reference"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -34,6 +36,8 @@ import (
 const (
 	defaultPatchedTagSuffix = "patched"
 	copaProduct             = "copa"
+	defaultRegistry         = "docker.io"
+	defaultTag              = "latest"
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
@@ -69,7 +73,12 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := reference.ParseNamed(image)
+	ref, err := normalizeRef(image)
+	if err != nil {
+		return err
+	}
+
+	imageName, err := reference.ParseNamed(ref)
 	if err != nil {
 		return err
 	}
@@ -155,7 +164,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	eg.Go(func() error {
 		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, updates)
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, ref, updates)
 			if err != nil {
 				return nil, err
 			}
@@ -237,6 +246,28 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	})
 
 	return eg.Wait()
+}
+
+func normalizeRef(image string) (string, error) {
+	// Prevents parsing library from prefixing `index.docker.io` instead of
+	// `docker.io`. `.test` is not a valid domain suffix, so the only way this
+	// could backfire is if someone is intentionally using docker.io.test to
+	// refer to a local image.
+	modifiedRegistry := fmt.Sprintf("%s.test", defaultRegistry)
+	calculatedDefault := modifiedRegistry
+
+	s := strings.Split(image, "/")
+	if len(s) < 2 {
+		calculatedDefault = fmt.Sprintf("%s/library", modifiedRegistry)
+	}
+
+	r, err := name.ParseReference(image, name.WithDefaultRegistry(calculatedDefault), name.WithDefaultTag(defaultTag))
+	if err != nil {
+		return "", err
+	}
+
+	ref := strings.Replace(r.Name(), modifiedRegistry, defaultRegistry, 1) // undo the modification
+	return ref, nil
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
