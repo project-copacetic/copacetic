@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,7 @@ var (
 type testImage struct {
 	Image        string        `json:"image"`
 	Tag          string        `json:"tag"`
+	LocalName    string        `json:"localName,omitempty"`
 	Distro       string        `json:"distro"`
 	Digest       digest.Digest `json:"digest"`
 	Description  string        `json:"description"`
@@ -49,9 +51,19 @@ func TestPatch(t *testing.T) {
 
 			dir := t.TempDir()
 			scanResults := filepath.Join(dir, "scan.json")
+
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
+			if img.LocalName != "" {
+				dockerPull(t, ref)
+				dockerTag(t, ref, img.LocalName)
+				ref = img.LocalName
+			}
+
+			r, err := reference.ParseNormalizedNamed(ref)
+			require.NoError(t, err, err)
+
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", img.Image, tagPatched)
+			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
 			t.Log("scanning original image")
 			scanner().
@@ -75,6 +87,24 @@ func TestPatch(t *testing.T) {
 			validVEXJSON(t, dir)
 		})
 	}
+}
+
+func dockerPull(t *testing.T, ref string) {
+	cmd := exec.Command(
+		`docker`, `pull`, ref,
+	)
+
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
+func dockerTag(t *testing.T, ref, newRef string) {
+	cmd := exec.Command(
+		`docker`, `tag`, ref, newRef,
+	)
+
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
 
 func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
