@@ -73,12 +73,7 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	ref, err := normalizeRef(image)
-	if err != nil {
-		return err
-	}
-
-	imageName, err := reference.ParseNamed(ref)
+	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
 	}
@@ -164,7 +159,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	eg.Go(func() error {
 		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, ref, updates)
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String(), updates)
 			if err != nil {
 				return nil, err
 			}
