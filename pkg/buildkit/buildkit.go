@@ -3,24 +3,11 @@ package buildkit
 import (
 	"bytes"
 	"context"
-	"io"
-	"os"
-	"os/exec"
 
-	"github.com/containerd/console"
-	"github.com/docker/buildx/build"
-	"github.com/docker/cli/cli/config"
-	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/session/auth/authprovider"
-	"github.com/moby/buildkit/util/progress/progressui"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
-	"github.com/project-copacetic/copacetic/pkg/utils"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/sync/errgroup"
 )
 
 type Config struct {
@@ -36,27 +23,6 @@ type Opts struct {
 	CACertPath string
 	CertPath   string
 	KeyPath    string
-}
-
-func dockerLoad(ctx context.Context, pipeR io.Reader) error {
-	cmd := exec.CommandContext(ctx, "docker", "load")
-	cmd.Stdin = pipeR
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	// Pipe run errors to WarnLevel since execution continues asynchronously
-	// Caller should log a separate ErrorLevel on completion based on err
-	go utils.LogPipe(stderr, log.WarnLevel)
-	go utils.LogPipe(stdout, log.InfoLevel)
-
-	return cmd.Run()
 }
 
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string, manifest *unversioned.UpdateManifest) (*Config, error) {
@@ -140,50 +106,4 @@ func WithFileString(s *llb.State, path, contents string) llb.State {
 
 func WithFileBytes(s *llb.State, path string, contents []byte) llb.State {
 	return s.File(llb.Mkfile(path, 0o600, contents))
-}
-
-func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath string) error {
-	def, err := st.Marshal(ctx)
-	if err != nil {
-		log.Errorf("st.Marshal failed with %s", err)
-		return err
-	}
-
-	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
-	solveOpt := client.SolveOpt{
-		Exports: []client.ExportEntry{
-			{
-				Type:      client.ExporterLocal,
-				OutputDir: outPath,
-			},
-		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
-	}
-	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
-	if err != nil {
-		return err
-	}
-
-	ch := make(chan *client.SolveStatus)
-	eg, ctx := errgroup.WithContext(ctx)
-	eg.Go(func() error {
-		_, err := c.Solve(ctx, def, solveOpt, ch)
-		return err
-	})
-	eg.Go(func() error {
-		var c console.Console
-		if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
-			c = cn
-		}
-		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
-		return err
-	})
-	if err := eg.Wait(); err != nil {
-		return err
-	}
-	log.Debugf("Wrote LLB state to %s", outPath)
-	return nil
 }

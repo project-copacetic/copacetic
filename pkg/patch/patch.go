@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 
 	"github.com/containerd/console"
@@ -18,7 +17,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/distribution/reference"
-	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -241,28 +239,6 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	})
 
 	return eg.Wait()
-}
-
-func normalizeRef(image string) (string, error) {
-	// Prevents parsing library from prefixing `index.docker.io` instead of
-	// `docker.io`. `.test` is not a valid domain suffix, so the only way this
-	// could backfire is if someone is intentionally using docker.io.test to
-	// refer to a local image.
-	modifiedRegistry := fmt.Sprintf("%s.test", defaultRegistry)
-	calculatedDefault := modifiedRegistry
-
-	s := strings.Split(image, "/")
-	if len(s) < 2 {
-		calculatedDefault = fmt.Sprintf("%s/library", modifiedRegistry)
-	}
-
-	r, err := name.ParseReference(image, name.WithDefaultRegistry(calculatedDefault), name.WithDefaultTag(defaultTag))
-	if err != nil {
-		return "", err
-	}
-
-	ref := strings.Replace(r.Name(), modifiedRegistry, defaultRegistry, 1) // undo the modification
-	return ref, nil
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
