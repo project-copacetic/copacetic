@@ -1,7 +1,8 @@
 name: Question
 description: Ask a question about Project Copacetic
 title: "[QUESTION] <title>"
-labels: "question"
+labels:
+  - "question"
 body:
   - type: markdown
     attributes:
