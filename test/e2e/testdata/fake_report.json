@@ -1,0 +1,25 @@
+{
+    "OSType": "FakeOS",
+    "OSVersion": "42",
+    "Arch": "amd64",
+    "Packages": [
+        {
+            "Name": "foo",
+            "InstalledVersion": "1.0.0",
+            "FixedVersion": "1.0.1",
+            "VulnerabilityID": "VULN001"
+        },
+        {
+            "Name": "bar",
+            "InstalledVersion": "2.0.0",
+            "FixedVersion": "2.0.1",
+            "VulnerabilityID": "VULN002"
+        },
+        {
+            "Name": "baz",
+            "InstalledVersion": "3.0.0",
+            "FixedVersion": "",
+            "VulnerabilityID": "VULN003"
+        }
+    ]
+}
