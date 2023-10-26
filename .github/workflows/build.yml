@@ -139,8 +139,20 @@ jobs:
       - name: Install scanner-plugin-template
         shell: bash
         run: |
+          mkdir ~/go
+          mkdir ~/go/bin
           go install github.com/project-copacetic/scanner-plugin-template@latest
-          mv scanner-plugin-template copa-fake
+          mv $(go env GOPATH)/bin/scanner-plugin-template $(go env GOPATH)/bin/copa-fake
+          mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a # v3.0.2
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
       - name: Run e2e tests
         shell: bash
         run: go test -v ./test/e2e --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
