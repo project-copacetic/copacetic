@@ -3,7 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.20
 
 require (
-	github.com/aquasecurity/trivy v0.45.1
+	github.com/aquasecurity/trivy v0.46.1
 	github.com/containerd/console v1.0.3
 	github.com/containerd/containerd v1.7.7
 	github.com/cpuguy83/dockercfg v0.3.1
@@ -38,7 +38,7 @@ require (
 	github.com/Shopify/logrus-bugsnag v0.0.0-20230117174420-439a4b8ba167 // indirect
 	github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
-	github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917 // indirect
+	github.com/aquasecurity/trivy-db v0.0.0-20231005141211-4fc651f7ac8d // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/containerd/continuity v0.4.2 // indirect
@@ -123,7 +123,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.14.0 // indirect
-	golang.org/x/mod v0.12.0 // indirect
+	golang.org/x/mod v0.13.0 // indirect
 	golang.org/x/net v0.17.0 // indirect
 	golang.org/x/oauth2 v0.12.0 // indirect
 	golang.org/x/sys v0.13.0 // indirect
