@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/aquasecurity/trivy v0.45.1
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.7.7
+	github.com/containerd/containerd v1.7.8
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/distribution/reference v0.5.0
 	github.com/docker/buildx v0.11.2
