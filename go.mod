@@ -5,7 +5,7 @@ go 1.20
 require (
 	github.com/aquasecurity/trivy v0.46.1
 	github.com/containerd/console v1.0.3
-	github.com/containerd/containerd v1.7.7
+	github.com/containerd/containerd v1.7.8
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/distribution/reference v0.5.0
 	github.com/docker/buildx v0.11.2
@@ -47,7 +47,7 @@ require (
 	github.com/cpuguy83/go-docker v0.2.1
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
-	github.com/docker/docker v24.0.5+incompatible // indirect
+	github.com/docker/docker v24.0.7+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.7.0 // indirect
 	github.com/docker/go v1.5.1-1.0.20160303222718-d30aec9fd63c // indirect
 	github.com/docker/go-connections v0.4.0 // indirect
