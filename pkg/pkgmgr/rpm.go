@@ -1,8 +1,3 @@
-// ------------------------------------------------------------
-// Copyright (c) Project Copacetic authors.
-// Licensed under the MIT License.
-// ------------------------------------------------------------
-
 package pkgmgr
 
 import (
