@@ -71,15 +71,15 @@ func TestPatchedImageTarget(t *testing.T) {
 		{
 			name:       "tag passed but without registry or repo",
 			image:      "docker.io/library/nginx:1.21.3",
-			patchedTag: "my.registry/nginx:1.21.3-patched",
+			patchedTag: "myregistry.azurecr.io/nginx:1.21.3-patched",
 			want:       "",
 			wantErr:    true,
 		},
 		{
 			name:       "tag passed contains registry, repo and image",
 			image:      "docker.io/library/nginx:1.21.3",
-			patchedTag: "my.registry.io/myrepo/nginx:1.21.3-patched",
-			want:       "my.registry.io/myrepo/nginx:1.21.3-patched",
+			patchedTag: "myregistry.azurecr.io/myrepo/nginx:1.21.3-patched",
+			want:       "myregistry.azurecr.io/myrepo/nginx:1.21.3-patched",
 			wantErr:    false,
 		},
 	}

@@ -155,7 +155,7 @@ func patchedImageTarget(image, patchedTag string) (*string, error) {
 		return nil, err
 	}
 	if ref.IsNameOnly(imageName) {
-		log.Warnf("Image name has no tag or digest, using latest as tag")
+		log.Warn("Image name has no tag or digest, using latest as tag")
 		imageName = ref.TagNameOnly(imageName)
 	}
 	taggedName, ok := imageName.(ref.Tagged)
@@ -179,7 +179,6 @@ func patchedImageTarget(image, patchedTag string) (*string, error) {
 	if slashCount > 0 {
 		if slashCount < 2 {
 			err := fmt.Errorf("invalid tag %s, must be in the form <registry>/<image>:<tag>", patchedTag)
-			log.Error(err)
 			return nil, err
 		}
 		// this implies user has passed a destination image name, not just a tag
