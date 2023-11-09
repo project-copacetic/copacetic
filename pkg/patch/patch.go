@@ -5,12 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	ref "github.com/distribution/reference"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
-	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -24,13 +25,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError, push bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -55,31 +56,11 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := reference.ParseNamed(image)
+func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError, push bool, bkOpts buildkit.Opts) error {
+	patchedImageName, err := patchedImageTarget(image, patchedTag)
 	if err != nil {
 		return err
 	}
-	if reference.IsNameOnly(imageName) {
-		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = reference.TagNameOnly(imageName)
-	}
-	taggedName, ok := imageName.(reference.Tagged)
-	if !ok {
-		err := errors.New("unexpected: TagNameOnly did create Tagged ref")
-		log.Error(err)
-		return err
-	}
-	tag := taggedName.Tag()
-	if patchedTag == "" {
-		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
-		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		}
-	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -133,12 +114,12 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 		return err
 	}
 
-	if pushDest != "" {
-		if err = buildkit.SolveToRegistry(ctx, config.Client, patchedImageState, config.ConfigData, pushDest); err != nil {
+	if push {
+		if err = buildkit.SolveToRegistry(ctx, config.Client, patchedImageState, config.ConfigData, *patchedImageName); err != nil {
 			return err
 		}
 	} else {
-		if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
+		if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, *patchedImageName); err != nil {
 			return err
 		}
 	}
@@ -163,7 +144,49 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	// vex document must contain at least one statement
 	if output != "" && len(validatedManifest.Updates) > 0 {
-		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output)
+		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, *patchedImageName, format, output)
 	}
 	return nil
+}
+
+func patchedImageTarget(image, patchedTag string) (*string, error) {
+	imageName, err := ref.ParseNamed(image)
+	if err != nil {
+		return nil, err
+	}
+	if ref.IsNameOnly(imageName) {
+		log.Warnf("Image name has no tag or digest, using latest as tag")
+		imageName = ref.TagNameOnly(imageName)
+	}
+	taggedName, ok := imageName.(ref.Tagged)
+	if !ok {
+		err := errors.New("unexpected: TagNameOnly did create Tagged ref")
+		log.Error(err)
+		return nil, err
+	}
+	tag := taggedName.Tag()
+	var patchedImageName string
+	if patchedTag == "" {
+		if tag == "" {
+			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+			patchedTag = defaultPatchedTagSuffix
+		} else {
+			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
+		}
+	}
+
+	slashCount := strings.Count(patchedTag, "/")
+	if slashCount > 0 {
+		if slashCount < 2 {
+			err := fmt.Errorf("invalid tag %s, must be in the form <registry>/<image>:<tag>", patchedTag)
+			log.Error(err)
+			return nil, err
+		}
+		// this implies user has passed a destination image name, not just a tag
+		patchedImageName = patchedTag
+	} else {
+		patchedImageName = fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	}
+
+	return &patchedImageName, nil
 }
