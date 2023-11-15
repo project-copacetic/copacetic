@@ -182,7 +182,7 @@ func SolveToLocal(ctx context.Context, c *client.Client, st *llb.State, outPath 
 	return nil
 }
 
-func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string) error {
+func Solve(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string, push bool) error {
 	def, err := st.Marshal(ctx)
 	if err != nil {
 		log.Errorf("st.Marshal failed with %s", err)
@@ -192,23 +192,7 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
-	solveOpt := client.SolveOpt{
-		Exports: []client.ExportEntry{
-			{
-				Type: client.ExporterDocker,
-				Attrs: map[string]string{
-					"name": tag,
-					// Pass through resolved configData from original image
-					exptypes.ExporterImageConfigKey: string(configData),
-				},
-				Output: func(_ map[string]string) (io.WriteCloser, error) {
-					return pipeW, nil
-				},
-			},
-		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
-	}
+	solveOpt := generateSolveOpts(push, tag, configData, attachable, pipeW)
 	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
 	if err != nil {
 		return err
@@ -229,11 +213,50 @@ func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configD
 		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
 		return err
 	})
-	eg.Go(func() error {
-		if err := dockerLoad(ctx, pipeR); err != nil {
-			return err
-		}
-		return pipeR.Close()
-	})
+	if !push {
+		eg.Go(func() error {
+			if err := dockerLoad(ctx, pipeR); err != nil {
+				return err
+			}
+			return pipeR.Close()
+		})
+	}
 	return eg.Wait()
+}
+
+func generateSolveOpts(push bool, tag string, configData []byte, attachable []session.Attachable, pipeW *io.PipeWriter) client.SolveOpt {
+	if push {
+		return client.SolveOpt{
+			Exports: []client.ExportEntry{
+				{
+					Type: client.ExporterImage,
+					Attrs: map[string]string{
+						"name": tag,
+						"push": "true",
+						// Pass through resolved configData from original image
+						exptypes.ExporterImageConfigKey: string(configData),
+					},
+				},
+			},
+			Frontend: "",         // i.e. we are passing in the llb.Definition directly
+			Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+		}
+	}
+	return client.SolveOpt{
+		Exports: []client.ExportEntry{
+			{
+				Type: client.ExporterDocker,
+				Attrs: map[string]string{
+					"name": tag,
+					// Pass through resolved configData from original image
+					exptypes.ExporterImageConfigKey: string(configData),
+				},
+				Output: func(_ map[string]string) (io.WriteCloser, error) {
+					return pipeW, nil
+				},
+			},
+		},
+		Frontend: "",         // i.e. we are passing in the llb.Definition directly
+		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+	}
 }
