@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/distribution/reference"
@@ -98,7 +99,28 @@ func dockerTag(t *testing.T, ref, newRef string) {
 	dockerCmd(t, `tag`, ref, newRef)
 }
 
-var dockerDINDAddress *string
+type addrWrapper struct {
+	m       sync.Mutex
+	address *string
+}
+
+func (w *addrWrapper) addr() string {
+	w.m.Lock()
+	defer w.m.Unlock()
+
+	if w.address != nil {
+		return *w.address
+	}
+
+	w.address = new(string)
+	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
+		*w.address = strings.TrimPrefix(addr, "docker://")
+	}
+
+	return *w.address
+}
+
+var dockerDINDAddress addrWrapper
 
 func dockerCmd(t *testing.T, args ...string) {
 	var err error
@@ -109,20 +131,7 @@ func dockerCmd(t *testing.T, args ...string) {
 
 	a := []string{}
 
-	getDINDAddress := func() string {
-		if dockerDINDAddress != nil {
-			return *dockerDINDAddress
-		}
-
-		dockerDINDAddress = new(string)
-		if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-			*dockerDINDAddress = strings.TrimPrefix(addr, "docker://")
-		}
-
-		return *dockerDINDAddress
-	}
-
-	if addr := getDINDAddress(); addr != "" {
+	if addr := dockerDINDAddress.addr(); addr != "" {
 		a = append(a, "-H", addr)
 	}
 
@@ -190,8 +199,13 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	}
 
 	args = append(args, ref)
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 
-	out, err := exec.Command(args[0], args[1:]...).CombinedOutput() //#nosec G204
+	if addr := dockerDINDAddress.addr(); addr != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("DOCKER_HOST=%s", addr))
+	}
+
+	out, err := cmd.CombinedOutput()
 	assert.NoError(t, err, string(out))
 }
 
