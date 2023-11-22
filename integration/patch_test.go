@@ -67,12 +67,17 @@ func TestPatch(t *testing.T) {
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
+			scanAddr := ""
+			if a := dockerDINDAddress.addr(); a != "" && img.LocalName != "" {
+				scanAddr = a
+			}
+
 			t.Log("scanning original image")
 			scanner().
 				withIgnoreFile(ignoreFile).
 				withOutput(scanResults).
 				// Do not set a non-zero exit code because we are expecting vulnerabilities.
-				scan(t, ref, img.IgnoreErrors)
+				scan(t, ref, img.IgnoreErrors, scanAddr)
 
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors)
@@ -83,7 +88,7 @@ func TestPatch(t *testing.T) {
 				withSkipDBUpdate().
 				// here we want a non-zero exit code because we are expecting no vulnerabilities.
 				withExitCode(1).
-				scan(t, patchedRef, img.IgnoreErrors)
+				scan(t, patchedRef, img.IgnoreErrors, scanAddr)
 
 			t.Log("verifying the vex output")
 			validVEXJSON(t, dir)
@@ -176,7 +181,7 @@ type scannerCmd struct {
 	exitCode     int
 }
 
-func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
+func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool, addr string) {
 	args := []string{
 		"trivy",
 		"image",
@@ -201,7 +206,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args = append(args, ref)
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 
-	if addr := dockerDINDAddress.addr(); addr != "" {
+	if addr != "" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("DOCKER_HOST=%s", addr))
 	}
 
