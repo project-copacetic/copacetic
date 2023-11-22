@@ -118,6 +118,8 @@ type addrWrapper struct {
 	address *string
 }
 
+var dockerDINDAddress addrWrapper
+
 func (w *addrWrapper) addr() string {
 	w.m.Lock()
 	defer w.m.Unlock()
@@ -133,8 +135,6 @@ func (w *addrWrapper) addr() string {
 
 	return *w.address
 }
-
-var dockerDINDAddress addrWrapper
 
 func dockerCmd(t *testing.T, args ...string) {
 	var err error
