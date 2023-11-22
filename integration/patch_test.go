@@ -54,7 +54,7 @@ func TestPatch(t *testing.T) {
 		// for local-only images when the daemon in question is not docker itself.
 		// i.e., don't test local images in buildx or with stock buildkit.
 		if img.LocalName != "" && !strings.HasPrefix(os.Getenv(`COPA_BUILDKIT_ADDR`), "docker://") {
-			continue
+			t.Skip()
 		}
 
 		t.Run(img.Description, func(t *testing.T) {
