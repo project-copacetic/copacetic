@@ -48,17 +48,16 @@ func TestPatch(t *testing.T) {
 
 	for _, img := range images {
 		img := img
-
-		// Only the buildkit instance running within the docker daemon can work
-		// with locally-built or locally-tagged images. As a result, skip tests
-		// for local-only images when the daemon in question is not docker itself.
-		// i.e., don't test local images in buildx or with stock buildkit.
-		if img.LocalName != "" && !strings.HasPrefix(os.Getenv(`COPA_BUILDKIT_ADDR`), "docker://") {
-			t.Skip()
-		}
-
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
+
+			// Only the buildkit instance running within the docker daemon can work
+			// with locally-built or locally-tagged images. As a result, skip tests
+			// for local-only images when the daemon in question is not docker itself.
+			// i.e., don't test local images in buildx or with stock buildkit.
+			if img.LocalName != "" && !strings.HasPrefix(os.Getenv(`COPA_BUILDKIT_ADDR`), "docker://") {
+				t.Skip()
+			}
 
 			dir := t.TempDir()
 			scanResults := filepath.Join(dir, "scan.json")
