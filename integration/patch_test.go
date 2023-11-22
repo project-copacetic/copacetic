@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/distribution/reference"
@@ -90,19 +91,44 @@ func TestPatch(t *testing.T) {
 }
 
 func dockerPull(t *testing.T, ref string) {
-	cmd := exec.Command(
-		`docker`, `pull`, ref,
-	)
-
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
+	dockerCmd(t, `pull`, ref)
 }
 
 func dockerTag(t *testing.T, ref, newRef string) {
-	cmd := exec.Command(
-		`docker`, `tag`, ref, newRef,
-	)
+	dockerCmd(t, `tag`, ref, newRef)
+}
 
+var dockerDINDAddress *string
+
+func dockerCmd(t *testing.T, args ...string) {
+	var err error
+	if len(args) == 0 {
+		err = fmt.Errorf("no args provided")
+	}
+	require.NoError(t, err, "no args provided")
+
+	a := []string{}
+
+	getDINDAddress := func() string {
+		if dockerDINDAddress != nil {
+			return *dockerDINDAddress
+		}
+
+		dockerDINDAddress = new(string)
+		if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
+			*dockerDINDAddress = addr
+		}
+
+		return *dockerDINDAddress
+	}
+
+	if addr := getDINDAddress(); addr != "" {
+		a = append(a, "-H", addr)
+	}
+
+	a = append(a, args...)
+
+	cmd := exec.Command(`docker`, a...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }
