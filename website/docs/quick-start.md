@@ -11,7 +11,7 @@ This sample illustrates how to patch containers using vulnerability reports with
   * [buildkit](https://github.com/moby/buildkit/#quick-start) daemon installed & pathed. [Examples](#buildkit-connection-examples)
     * The `docker` daemon runs a buildkit service in-process. If you are using this for your buildkit instance, Docker must have the
       [containerd snapshotter feature](https://docs.docker.com/storage/containerd/) enabled.
-    * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd snapshotter.
+    * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd image store. However, only images in a remote registry can be patched using these methods.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
   * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.
 
