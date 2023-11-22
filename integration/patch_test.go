@@ -116,7 +116,7 @@ func dockerCmd(t *testing.T, args ...string) {
 
 		dockerDINDAddress = new(string)
 		if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-			*dockerDINDAddress = addr
+			*dockerDINDAddress = strings.TrimPrefix(addr, "docker://")
 		}
 
 		return *dockerDINDAddress
