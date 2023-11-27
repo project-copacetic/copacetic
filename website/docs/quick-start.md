@@ -101,8 +101,13 @@ This sample illustrates how to patch containers using vulnerability reports with
     > ensure that the credentials are configured in the default Docker config.json before running `copa patch`,
     > for example, via `sudo docker login -u <user> -p <password> <registry>`.
 
-> [!NOTE]
-> if you're scanning and patching an image that is local-only (i.e. built or tagged locally but not pushed to a registry), `copa` is limited to using `docker`'s built-in buildkit service, and must use [`containerd image store`](https://docs.docker.com/storage/containerd/) feature. See [Prerequisites][#prerequisites] for more information.
+    > [!NOTE]
+    > if you're scanning and patching an image that is local-only (i.e. built or
+    > tagged locally but not pushed to a registry), `copa` is limited to using
+    > `docker`'s built-in buildkit service, and must use the [`containerd image
+    > store`](https://docs.docker.com/storage/containerd/) feature. This is because
+    > only `docker`'s built-in buildkit service has access to the docker image
+    > store (see [Prerequisites][#prerequisites] for more information.)
 
 3. Scan the patched image and verify that the vulnerabilities have been patched:
 
