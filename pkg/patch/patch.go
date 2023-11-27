@@ -4,13 +4,25 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"time"
 
+	"github.com/containerd/console"
+	"github.com/docker/buildx/build"
+	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/session"
+	"github.com/moby/buildkit/session/auth/authprovider"
+	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -21,6 +33,9 @@ import (
 
 const (
 	defaultPatchedTagSuffix = "patched"
+	copaProduct             = "copa"
+	defaultRegistry         = "docker.io"
+	defaultTag              = "latest"
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
@@ -56,7 +71,7 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := reference.ParseNamed(image)
+	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
 	}
@@ -108,56 +123,141 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	log.Debugf("updates to apply: %v", updates)
 
-	client, err := buildkit.NewClient(ctx, bkOpts)
+	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer bkClient.Close()
 
-	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, client, image, updates)
-	if err != nil {
-		return err
-	}
-
-	// Create package manager helper
-	pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
-	if err != nil {
-		return err
-	}
-
-	// Export the patched image state to Docker
-	// TODO: Add support for other output modes as buildctl does.
-	patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
-	if err != nil {
-		return err
-	}
-
-	if err = buildkit.SolveToDocker(ctx, config.Client, patchedImageState, config.ConfigData, patchedImageName); err != nil {
-		return err
-	}
-
-	// create a new manifest with the successfully patched packages
-	validatedManifest := &unversioned.UpdateManifest{
-		Metadata: unversioned.Metadata{
-			OS: unversioned.OS{
-				Type:    updates.Metadata.OS.Type,
-				Version: updates.Metadata.OS.Version,
-			},
-			Config: unversioned.Config{
-				Arch: updates.Metadata.Config.Arch,
+	pipeR, pipeW := io.Pipe()
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
+	solveOpt := client.SolveOpt{
+		Exports: []client.ExportEntry{
+			{
+				Type: client.ExporterDocker,
+				Attrs: map[string]string{
+					"name": patchedImageName,
+				},
+				Output: func(_ map[string]string) (io.WriteCloser, error) {
+					return pipeW, nil
+				},
 			},
 		},
-		Updates: []unversioned.UpdatePackage{},
+		Frontend: "",         // i.e. we are passing in the llb.Definition directly
+		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
 	}
-	for _, update := range updates.Updates {
-		if !slices.Contains(errPkgs, update.Name) {
-			validatedManifest.Updates = append(validatedManifest.Updates, update)
+	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
+	if err != nil {
+		return err
+	}
+
+	ch := make(chan *client.SolveStatus)
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+			// Configure buildctl/client for use by package manager
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String(), updates)
+			if err != nil {
+				return nil, err
+			}
+
+			// Create package manager helper
+			pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+			if err != nil {
+				return nil, err
+			}
+
+			// Export the patched image state to Docker
+			// TODO: Add support for other output modes as buildctl does.
+			patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
+			if err != nil {
+				return nil, err
+			}
+
+			def, err := patchedImageState.Marshal(ctx)
+			if err != nil {
+				return nil, err
+			}
+
+			res, err := c.Solve(ctx, gwclient.SolveRequest{
+				Definition: def.ToPB(),
+				Evaluate:   true,
+			})
+
+			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
+			if err != nil {
+				return nil, err
+			}
+
+			// create a new manifest with the successfully patched packages
+			validatedManifest := &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    updates.Metadata.OS.Type,
+						Version: updates.Metadata.OS.Version,
+					},
+					Config: unversioned.Config{
+						Arch: updates.Metadata.Config.Arch,
+					},
+				},
+				Updates: []unversioned.UpdatePackage{},
+			}
+			for _, update := range updates.Updates {
+				if !slices.Contains(errPkgs, update.Name) {
+					validatedManifest.Updates = append(validatedManifest.Updates, update)
+				}
+			}
+			// vex document must contain at least one statement
+			if output != "" && len(validatedManifest.Updates) > 0 {
+				if err := vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output); err != nil {
+					return nil, err
+				}
+			}
+
+			return res, nil
+		}, ch)
+
+		return err
+	})
+
+	eg.Go(func() error {
+		var c console.Console
+		if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
+			c = cn
 		}
+		// not using shared context to not disrupt display but let us finish reporting errors
+		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
+		return err
+	})
+
+	eg.Go(func() error {
+		if err := dockerLoad(ctx, pipeR); err != nil {
+			return err
+		}
+		return pipeR.Close()
+	})
+
+	return eg.Wait()
+}
+
+func dockerLoad(ctx context.Context, pipeR io.Reader) error {
+	cmd := exec.CommandContext(ctx, "docker", "load")
+	cmd.Stdin = pipeR
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
 	}
-	// vex document must contain at least one statement
-	if output != "" && len(validatedManifest.Updates) > 0 {
-		return vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
 	}
-	return nil
+
+	// Pipe run errors to WarnLevel since execution continues asynchronously
+	// Caller should log a separate ErrorLevel on completion based on err
+	go utils.LogPipe(stderr, log.WarnLevel)
+	go utils.LogPipe(stdout, log.InfoLevel)
+
+	return cmd.Run()
 }
