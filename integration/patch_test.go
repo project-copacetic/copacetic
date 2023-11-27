@@ -8,8 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,6 +29,7 @@ var (
 type testImage struct {
 	Image        string        `json:"image"`
 	Tag          string        `json:"tag"`
+	LocalName    string        `json:"localName,omitempty"`
 	Distro       string        `json:"distro"`
 	Digest       digest.Digest `json:"digest"`
 	Description  string        `json:"description"`
@@ -47,11 +51,29 @@ func TestPatch(t *testing.T) {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
+			// Only the buildkit instance running within the docker daemon can work
+			// with locally-built or locally-tagged images. As a result, skip tests
+			// for local-only images when the daemon in question is not docker itself.
+			// i.e., don't test local images in buildx or with stock buildkit.
+			if img.LocalName != "" && !strings.HasPrefix(os.Getenv(`COPA_BUILDKIT_ADDR`), "docker://") {
+				t.Skip()
+			}
+
 			dir := t.TempDir()
 			scanResults := filepath.Join(dir, "scan.json")
+
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
+			if img.LocalName != "" {
+				dockerPull(t, ref)
+				dockerTag(t, ref, img.LocalName)
+				ref = img.LocalName
+			}
+
+			r, err := reference.ParseNormalizedNamed(ref)
+			require.NoError(t, err, err)
+
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", img.Image, tagPatched)
+			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
 			t.Log("scanning original image")
 			scanner().
@@ -77,6 +99,66 @@ func TestPatch(t *testing.T) {
 	}
 }
 
+func dockerPull(t *testing.T, ref string) {
+	dockerCmd(t, `pull`, ref)
+}
+
+func dockerTag(t *testing.T, ref, newRef string) {
+	dockerCmd(t, `tag`, ref, newRef)
+}
+
+type addrWrapper struct {
+	m       sync.Mutex
+	address *string
+}
+
+var dockerDINDAddress addrWrapper
+
+func (w *addrWrapper) addr() string {
+	w.m.Lock()
+	defer w.m.Unlock()
+
+	if w.address != nil {
+		return *w.address
+	}
+
+	w.address = new(string)
+	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
+		*w.address = strings.TrimPrefix(addr, "docker://")
+	}
+
+	return *w.address
+}
+
+func (w *addrWrapper) env() []string {
+	a := dockerDINDAddress.addr()
+	if a == "" {
+		return []string{}
+	}
+
+	return []string{fmt.Sprintf("DOCKER_HOST=%s", a)}
+}
+
+func dockerCmd(t *testing.T, args ...string) {
+	var err error
+	if len(args) == 0 {
+		err = fmt.Errorf("no args provided")
+	}
+	require.NoError(t, err, "no args provided")
+
+	a := []string{}
+
+	if addr := dockerDINDAddress.addr(); addr != "" {
+		a = append(a, "-H", addr)
+	}
+
+	a = append(a, args...)
+
+	cmd := exec.Command(`docker`, a...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
 func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 	var addrFl string
 	if buildkitAddr != "" {
@@ -96,6 +178,10 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
 	)
+
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }
@@ -134,8 +220,10 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	}
 
 	args = append(args, ref)
-
-	out, err := exec.Command(args[0], args[1:]...).CombinedOutput() //#nosec G204
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+	out, err := cmd.CombinedOutput()
 	assert.NoError(t, err, string(out))
 }
 
