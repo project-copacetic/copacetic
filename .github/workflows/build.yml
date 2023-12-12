@@ -39,6 +39,10 @@ jobs:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe # v4.1.0
+        with:
+          go-version: "1.21"
+          check-latest: true
       - name: Unit test
         shell: bash
         env:
@@ -61,8 +65,11 @@ jobs:
         uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.3.1
         with:
           egress-policy: audit
-      - name: Check out code
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe # v4.1.0
+        with:
+          go-version: "1.21"
+          check-latest: true
       - name: Build copa
         shell: bash
         run: |
@@ -97,6 +104,10 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - name: Check out code
         uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-go@93397bea11091df50f3d7e59dc26a7711a8bcfbe # v4.1.0
+        with:
+          go-version: "1.21"
+          check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
