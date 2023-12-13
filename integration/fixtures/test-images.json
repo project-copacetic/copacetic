@@ -8,11 +8,29 @@
         "ignoreErrors": false
     },
     {
+        "image": "docker.io/grafana/grafana",
+        "tag": "8.5.0",
+        "localName": "registry.copacetic.test/repo/image:tag",
+        "digest": "sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present, locally tagged with fully-qualified name",
+        "ignoreErrors": false
+    },
+    {
         "image": "docker.io/library/nginx",
         "tag": "1.21.6",
         "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present",
+        "ignoreErrors": false
+    },
+    {
+        "image": "docker.io/library/nginx",
+        "tag": "1.21.6",
+        "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
+        "localName": "local/image:tag",
+        "distro": "Debian",
+        "description": "Valid dpkg/status, apt present, locally tagged with repo and image name",
         "ignoreErrors": false
     },
     {
@@ -37,6 +55,15 @@
         "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with base64 names, no apt",
+        "ignoreErrors": false
+    },
+    {
+        "image": "docker.io/fluent/fluent-bit",
+        "tag": "1.8.4",
+        "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
+        "localName": "localimage:tag",
+        "distro": "Google Distroless",
+        "description": "Custom dpkg/status.d with base64 names, no apt, locally tagged with image name only",
         "ignoreErrors": false
     },
     {
