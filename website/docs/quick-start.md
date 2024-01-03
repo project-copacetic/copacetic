@@ -9,6 +9,9 @@ This sample illustrates how to patch containers using vulnerability reports with
 * An Ubuntu 22.04 VM configured through the [setup instructions](./installation.md). This includes:
   * `copa` tool [built & pathed](./installation.md).
   * [buildkit](https://github.com/moby/buildkit/#quick-start) daemon installed & pathed. [Examples](#buildkit-connection-examples)
+    * The `docker` daemon runs a buildkit service in-process. If you are using this for your buildkit instance, Docker must have the
+      [containerd image store feature](https://docs.docker.com/storage/containerd/) enabled.
+    * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd image store. However, only images in a remote registry can be patched using these methods.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
   * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.
 
@@ -97,6 +100,14 @@ This sample illustrates how to patch containers using vulnerability reports with
     > **NOTE:** if you're running this sample against an image from a private registry instead,
     > ensure that the credentials are configured in the default Docker config.json before running `copa patch`,
     > for example, via `sudo docker login -u <user> -p <password> <registry>`.
+
+    > [!NOTE]
+    > if you're scanning and patching an image that is local-only (i.e. built or
+    > tagged locally but not pushed to a registry), `copa` is limited to using
+    > `docker`'s built-in buildkit service, and must use the [`containerd image
+    > store`](https://docs.docker.com/storage/containerd/) feature. This is because
+    > only `docker`'s built-in buildkit service has access to the docker image
+    > store (see [Prerequisites][#prerequisites] for more information.)
 
 3. Scan the patched image and verify that the vulnerabilities have been patched:
 

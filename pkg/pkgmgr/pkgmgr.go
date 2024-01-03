@@ -1,8 +1,3 @@
-// ------------------------------------------------------------
-// Copyright (c) Project Copacetic authors.
-// Licensed under the MIT License.
-// ------------------------------------------------------------
-
 package pkgmgr
 
 import (
@@ -20,6 +15,7 @@ import (
 
 const (
 	copaPrefix     = "copa-"
+	inputPath      = "/" + copaPrefix + "input"
 	resultsPath    = "/" + copaPrefix + "out"
 	downloadPath   = "/" + copaPrefix + "downloads"
 	unpackPath     = "/" + copaPrefix + "unpacked"
