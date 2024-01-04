@@ -14,6 +14,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd image store. However, only images in a remote registry can be patched using these methods.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
   * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.
+    * Alternatively, see [scanner plugins](#scanner-plugins) for custom scanner support.
 
 ## Sample Steps
 
@@ -97,17 +98,13 @@ This sample illustrates how to patch containers using vulnerability reports with
 
     In either case, `copa` is non-destructive and exports a new image with the specified `1.21.6-patched` label to the local Docker daemon.
 
-    > **NOTE:** if you're running this sample against an image from a private registry instead,
-    > ensure that the credentials are configured in the default Docker config.json before running `copa patch`,
-    > for example, via `sudo docker login -u <user> -p <password> <registry>`.
+    :::note
+    If you're running this sample against an image from a private registry instead,ensure that the credentials are configured in the default Docker config.json before running `copa patch`, for example, via `sudo docker login -u <user> -p <password> <registry>`.
+    :::
 
-    > [!NOTE]
-    > if you're scanning and patching an image that is local-only (i.e. built or
-    > tagged locally but not pushed to a registry), `copa` is limited to using
-    > `docker`'s built-in buildkit service, and must use the [`containerd image
-    > store`](https://docs.docker.com/storage/containerd/) feature. This is because
-    > only `docker`'s built-in buildkit service has access to the docker image
-    > store (see [Prerequisites][#prerequisites] for more information.)
+    :::note
+    If you're scanning and patching an image that is local-only (i.e. built or tagged locally but not pushed to a registry), `copa` is limited to using `docker`'s built-in buildkit service, and must use the [`containerd image store`](https://docs.docker.com/storage/containerd/) feature. This is because only `docker`'s built-in buildkit service has access to the docker image store (see [Prerequisites](#prerequisites) for more information.)
+    :::
 
 3. Scan the patched image and verify that the vulnerabilities have been patched:
 
