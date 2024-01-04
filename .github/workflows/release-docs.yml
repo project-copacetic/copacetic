@@ -40,3 +40,4 @@ jobs:
           title: "chore: Generate ${{ env.NEWVERSION }} docs"
           branch: "release-${{ env.NEWVERSION }}"
           base: "main"
+          signoff: true
