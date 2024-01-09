@@ -235,7 +235,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
-	const aptInstallTemplate = `sh -c "apt install --no-install-recommends --allow-change-held-packages -y %s && apt clean -y"`
+	const aptInstallTemplate = `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
 	pkgStrings := []string{}
 	for _, u := range updates {
 		pkgStrings = append(pkgStrings, u.Name)
