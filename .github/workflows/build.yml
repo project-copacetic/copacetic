@@ -163,4 +163,6 @@ jobs:
           ./copa --version
       - name: Run e2e tests
         shell: bash
-        run: go test -v ./test/e2e --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+        run: |
+          copa-fake ./test/e2e/testdata/valid_report.json
+          go test -v ./test/e2e --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
