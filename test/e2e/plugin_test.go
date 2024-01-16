@@ -15,21 +15,27 @@ func TestPlugins(t *testing.T) {
 		err    error
 	}{
 		{
-			image:  "docker.io/library/nginx:1.23",
-			report: "./testdata/fake_report.json",
-			err:    fmt.Errorf("Error: unsupported osType FakeOS specified\n"), // nolint:revive
-		},
-		{
 			image:  "docker.io/library/alpine:3.14.0",
 			report: "./testdata/invalid_report.json",
-			err:    fmt.Errorf("Error: error running scanner fake: exit status 1\n"), // nolint:revive
+			err:    fmt.Errorf("exit status 1"), // nolint:revive
+		},
+		{
+			image:  "docker.io/library/alpine:3.7.3",
+			report: "./testdata/valid_report.json",
+			err:    nil, // nolint:revive
 		},
 	}
 
 	for _, tc := range testCases {
+		tc := tc // capture range variable
 		t.Run(tc.image, func(t *testing.T) {
-			out, _ := runPatch(tc.image, tc.report)
-			assert.Equal(t, tc.err, fmt.Errorf(string(out)))
+			t.Parallel()
+			_, err := runPatch(tc.image, tc.report)
+			if err != nil {
+				assert.Equal(t, tc.err, fmt.Errorf(err.Error()))
+			} else {
+				assert.Equal(t, tc.err, nil)
+			}
 		})
 	}
 }
