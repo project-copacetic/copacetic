@@ -130,7 +130,7 @@ jobs:
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
   test-plugin:
-    needs: test-patch
+    needs: build
     name: Test plugin
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -152,6 +152,9 @@ jobs:
           go install github.com/project-copacetic/scanner-plugin-template@latest
           mv $(go env GOPATH)/bin/scanner-plugin-template $(go env GOPATH)/bin/copa-fake
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@f44cd7b40bfd40b6aa1cc1b9b5b7bf03d3c67110 # v4.1.0
         with:
@@ -161,6 +164,8 @@ jobs:
         run: |
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
       - name: Run e2e tests
         shell: bash
         run: |
