@@ -153,7 +153,7 @@ jobs:
           mv $(go env GOPATH)/bin/scanner-plugin-template $(go env GOPATH)/bin/copa-fake
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@f44cd7b40bfd40b6aa1cc1b9b5b7bf03d3c67110 # v3.0.2
+        uses: actions/download-artifact@f44cd7b40bfd40b6aa1cc1b9b5b7bf03d3c67110 # v4.1.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
