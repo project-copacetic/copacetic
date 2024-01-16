@@ -130,7 +130,7 @@ jobs:
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
   test-plugin:
-    needs: build
+    needs: test-patch
     name: Test plugin
     runs-on: ubuntu-latest
     timeout-minutes: 5
