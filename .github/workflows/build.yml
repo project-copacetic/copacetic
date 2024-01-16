@@ -165,5 +165,5 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          . .github/workflows/scripts/buildkitenvs/direct
+          . .github/workflows/scripts/buildkitenvs/direct/tcp
           go test -v ./test/e2e --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
