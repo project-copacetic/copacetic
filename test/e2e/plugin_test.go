@@ -51,6 +51,5 @@ func runPatch(image, report string) ([]byte, error) {
 		"-a="+buildkitAddr,
 	)
 	out, err := cmd.CombinedOutput()
-	fmt.Println("out: ", string(out))
 	return out, err
 }
