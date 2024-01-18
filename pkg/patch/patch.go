@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -121,7 +122,11 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	if err != nil {
 		return err
 	}
-	log.Debugf("updates to apply: %v", updates)
+	data, err := json.Marshal(updates)
+	if err != nil {
+		return err
+	}
+	log.Debugf("updates to apply: %s", string(data))
 
 	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
