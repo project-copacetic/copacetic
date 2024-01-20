@@ -37,7 +37,7 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	result := trivyTypes.Result{}
 	for i := range report.Results {
 		r := &report.Results[i]
-		if r.Class == "os-pkgs" {
+		if r.Class == trivyTypes.ClassOSPkg {
 			if result.Class != "" {
 				return nil, errors.New("unexpected multiple results for os-pkgs")
 			}
