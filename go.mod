@@ -10,14 +10,14 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.5.0
-	github.com/docker/buildx v0.11.2
+	github.com/docker/buildx v0.12.1
 	github.com/docker/cli v24.0.7+incompatible
 	github.com/google/go-containerregistry v0.17.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20230223133812-3ed183d23422
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.12.4
+	github.com/moby/buildkit v0.13.0-beta1.0.20231023114302-d5c1d785b042
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.0-rc6
 	github.com/openvex/go-vex v0.2.5
@@ -37,9 +37,20 @@ require (
 	github.com/Microsoft/go-winio v0.6.1 // indirect
 	github.com/Microsoft/hcsshim v0.11.4 // indirect
 	github.com/Shopify/logrus-bugsnag v0.0.0-20230117174420-439a4b8ba167 // indirect
-	github.com/agl/ed25519 v0.0.0-20170116200512-5312a6153412 // indirect
 	github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20230831170347-f732860d4917 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.21.0 // indirect
+	github.com/aws/aws-sdk-go-v2/config v1.18.38 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.13.36 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.13.11 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.41 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.35 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.42 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.35 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.13.6 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.15.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.21.5 // indirect
+	github.com/aws/smithy-go v1.14.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/containerd/containerd v1.7.11 // indirect
@@ -70,8 +81,9 @@ require (
 	github.com/grpc-ecosystem/go-grpc-middleware v1.3.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
-	github.com/imdario/mergo v0.3.15 // indirect
+	github.com/imdario/mergo v0.3.16 // indirect
 	github.com/in-toto/in-toto-golang v0.9.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
@@ -81,7 +93,7 @@ require (
 	github.com/miekg/pkcs11 v1.1.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/moby/locker v1.0.1 // indirect
-	github.com/moby/patternmatcher v0.5.0 // indirect
+	github.com/moby/patternmatcher v0.6.0 // indirect
 	github.com/moby/sys/mountinfo v0.6.2 // indirect
 	github.com/moby/sys/sequential v0.5.0 // indirect
 	github.com/moby/sys/signal v0.7.0 // indirect
@@ -109,7 +121,7 @@ require (
 	github.com/spf13/cast v1.6.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/theupdateframework/notary v0.6.1 // indirect
+	github.com/theupdateframework/notary v0.7.0 // indirect
 	github.com/tonistiigi/fsutil v0.0.0-20230629203738-36ef4d8c0dbb // indirect
 	github.com/tonistiigi/units v0.0.0-20180711220420-6950e57a87ea // indirect
 	github.com/tonistiigi/vt100 v0.0.0-20230623042737-f9a4f7ef6531 // indirect
