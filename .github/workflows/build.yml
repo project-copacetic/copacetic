@@ -70,6 +70,11 @@ jobs:
         with:
           go-version: "1.21"
           check-latest: true
+      - name: install coreutils
+        if: matrix.os == 'macos-14'
+        run: |
+          brew install coreutils
+          echo "/usr/local/opt/coreutils/libexec/gnubin" >> $GITHUB_PATH
       - name: Build copa
         shell: bash
         run: |
