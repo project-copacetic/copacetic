@@ -94,6 +94,10 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
 		}
 	}
+	_, err = reference.WithTag(imageName, patchedTag)
+	if err != nil {
+		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
+	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
 	// Ensure working folder exists for call to InstallUpdates
