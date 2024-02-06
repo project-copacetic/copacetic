@@ -34,7 +34,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.3.1
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -49,7 +49,7 @@ jobs:
           CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@eaaf4bedf32dbdc6b720b63067d99c4d77d6047d # v3.1.4
+        uses: codecov/codecov-action@e0b68c6749509c5f83f984dd99a76a1c1a231044 # v4.0.1
   build:
     name: Build
     runs-on: ${{ matrix.os }}
@@ -62,7 +62,7 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.3.1
+        uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
@@ -76,7 +76,7 @@ jobs:
           make build
           make archive
       - name: Upload copa to build artifacts
-        uses: actions/upload-artifact@1eb3cb2b3e0f29609092a73eb033bb759a334595 # v4.1.0
+        uses: actions/upload-artifact@26f96dfa697d77e81fd5907df203aa23a56210a8 # v4.3.0
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz

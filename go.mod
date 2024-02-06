@@ -11,15 +11,15 @@ require (
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.5.0
 	github.com/docker/buildx v0.11.2
-	github.com/docker/cli v24.0.7+incompatible
-	github.com/google/go-containerregistry v0.17.0
+	github.com/docker/cli v24.0.8+incompatible
+	github.com/google/go-containerregistry v0.19.0
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20230223133812-3ed183d23422
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.12.4
+	github.com/moby/buildkit v0.12.5
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.1.0-rc5
+	github.com/opencontainers/image-spec v1.1.0-rc6
 	github.com/openvex/go-vex v0.2.5
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.8.0
@@ -27,8 +27,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 	golang.org/x/sync v0.6.0
-	google.golang.org/grpc v1.60.1
-	k8s.io/apimachinery v0.29.0
+	google.golang.org/grpc v1.61.0
+	k8s.io/apimachinery v0.29.1
 )
 
 require (
@@ -131,7 +131,7 @@ require (
 	golang.org/x/term v0.15.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
-	golang.org/x/tools v0.15.0 // indirect
+	golang.org/x/tools v0.16.1 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20231106174013-bbf56f31fb17 // indirect
