@@ -17,12 +17,12 @@ func TestPlugins(t *testing.T) {
 		{
 			image:  "docker.io/library/alpine:3.14.0",
 			report: "./testdata/invalid_report.json",
-			err:    fmt.Errorf("exit status 1"), // nolint:revive
+			err:    fmt.Errorf("exit status 1"),
 		},
 		{
 			image:  "docker.io/library/alpine:3.7.3",
 			report: "./testdata/valid_report.json",
-			err:    nil, // nolint:revive
+			err:    nil,
 		},
 	}
 
