@@ -22,6 +22,7 @@ const sidebars = {
         'introduction',
         'installation',
         'quick-start',
+        'best-practices',
         'troubleshooting',
         'faq',
       ],
