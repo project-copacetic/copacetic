@@ -128,3 +128,47 @@ jobs:
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+
+  test-plugin:
+    needs: build
+    name: Test plugin
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: read-all
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@1b05615854632b887b69ae1be8cbefe72d3ae423 # v2.3.1
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+        with:
+          go-version: "1.21"
+          check-latest: true
+      - name: Install scanner-plugin-template
+        shell: bash
+        run: |
+          go install github.com/project-copacetic/scanner-plugin-template@latest
+          mv $(go env GOPATH)/bin/scanner-plugin-template $(go env GOPATH)/bin/copa-fake
+          mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@f44cd7b40bfd40b6aa1cc1b9b5b7bf03d3c67110 # v4.1.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+      - name: Run e2e tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/direct/tcp
+          go test -v ./test/e2e --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
