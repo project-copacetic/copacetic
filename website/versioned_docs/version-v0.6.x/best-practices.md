@@ -4,8 +4,8 @@ title: Tagging Guidelines
 
 There are some patterns and practices you may want to consider when using Copa to patch images. Remember that these are suggestions that may not fit into your workflow, but we think that staying as close as possible to these practices offers the best experience with Copa.
 
-## Patch from the Base Image
-When patching vulnerabilities in an image, it helps to always work from the initial unmodified image. For example, say you have an image tagged `nginx:1.24.0` that contains a vulnerability. You run Copa to patch the image and produce a new image tagged `nginx:1.24.0-1`. Then if another vulnerability shows up in your `nginx:1.24.0-1` image, you should again patch from the unmodified `nginx:1.24.0` image. This will help prevent the buildup of patch layers (ignoring subsequent patch layers is a potential future enhancement).
+## Patch from Unmodified image
+When patching vulnerabilities in an image, it helps to always work from the initial unmodified image. For example, say you have an image tagged `nginx:1.24.0` that contains a vulnerability. You run Copa to patch the image and produce a new image tagged `nginx:1.24.0-1`. Then if another vulnerability shows up in your `nginx:1.24.0-1` image, you should again patch from the unmodified `nginx:1.24.0` image. This will help prevent the buildup of patch layers ([discarding subsequent patch layers](https://github.com/project-copacetic/copacetic/issues/389) is a potential future enhancement).
 
 ## Tagging
 There are a couple possible patterns that you could follow when tagging patched images.
