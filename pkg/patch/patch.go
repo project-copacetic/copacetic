@@ -163,12 +163,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			// Configure buildctl/client for use by package manager
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String(), updates)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
 			// Create package manager helper
 			pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
@@ -218,6 +220,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			// vex document must contain at least one statement
 			if output != "" && len(validatedManifest.Updates) > 0 {
 				if err := vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output); err != nil {
+					ch <- err
 					return nil, err
 				}
 			}
