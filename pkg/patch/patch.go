@@ -45,7 +45,7 @@ func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patche
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -70,7 +70,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	taggedName, ok := imageName.(reference.Tagged)
 	if !ok {
-		err := errors.New("unexpected: TagNameOnly did create Tagged ref")
+		err := errors.New("unexpected: TagNameOnly did not create Tagged ref")
 		log.Error(err)
 		return err
 	}
@@ -156,7 +156,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 		return err
 	}
 
-	ch := make(chan *client.SolveStatus)
+	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
@@ -176,11 +176,13 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			// TODO: Add support for other output modes as buildctl does.
 			patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
 			def, err := patchedImageState.Marshal(ctx)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
@@ -191,6 +193,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
@@ -220,7 +223,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			}
 
 			return res, nil
-		}, ch)
+		}, buildChannel)
 
 		return err
 	})
@@ -231,7 +234,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			c = cn
 		}
 		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
+		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, buildChannel)
 		return err
 	})
 
