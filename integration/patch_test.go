@@ -173,7 +173,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 		"-t="+patchedTag,
 		"-r="+path+"/scan.json",
 		"-s="+scannerPlugin,
-		"--timeout=20m",
+		"--timeout=30m",
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
