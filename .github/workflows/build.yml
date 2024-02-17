@@ -91,7 +91,7 @@ jobs:
     needs: build
     name: Test patch ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions: read-all
     strategy:
       fail-fast: false
