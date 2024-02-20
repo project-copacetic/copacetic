@@ -6,7 +6,7 @@ toolchain go1.21.5
 
 require (
 	github.com/aquasecurity/trivy v0.45.1
-	github.com/containerd/console v1.0.3
+	github.com/containerd/console v1.0.4
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.5.0
