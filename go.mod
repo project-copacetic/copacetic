@@ -6,7 +6,7 @@ toolchain go1.21.5
 
 require (
 	github.com/aquasecurity/trivy v0.45.1
-	github.com/containerd/console v1.0.3
+	github.com/containerd/console v1.0.4
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.5.0
@@ -27,7 +27,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9
 	golang.org/x/sync v0.6.0
-	google.golang.org/grpc v1.61.0
+	google.golang.org/grpc v1.61.1
 	k8s.io/apimachinery v0.29.1
 )
 
