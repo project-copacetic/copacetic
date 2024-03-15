@@ -84,16 +84,16 @@
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
-        "tag": "2.0.20221203",
-        "digest": "sha256:48e4cf16ab7d74cff82202b9ef9c097b6a51af15591135de7359186a98112b3f",
+        "tag": "2.0.20240112",
+        "digest": "sha256:60323975ec3aabe1840920a65237950a54c5fef6ffc811a5d26bb6bd130f1cc3",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present",
         "ignoreErrors": false
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
-        "tag": "2.0.20221203-arm64",
-        "digest": "sha256:601f94680041ccfc40396d347522ccd922c118d7a4e63183a4a3b74f21268187",
+        "tag": "2.0.20240112-arm64",
+        "digest": "sha256:c85680df0ddccfd5bf0cd60ff7d0c07b0ea783bcee9ce5dc748b68c0d36e280a",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present, arm64 cross-arch",
         "ignoreErrors": false
