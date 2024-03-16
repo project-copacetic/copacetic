@@ -135,7 +135,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
@@ -231,13 +231,24 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return err
 	})
 
+	var c console.Console
+	if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
+		c = cn
+	}
+
+	mode := progressui.AutoMode
+	if log.GetLevel() >= log.DebugLevel {
+		mode = progressui.PlainMode
+	}
+
+	display, err := progressui.NewDisplay(c, mode, progressui.WithPhase(c.Name()))
+	if err != nil {
+		return err
+	}
+
 	eg.Go(func() error {
-		var c console.Console
-		if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
-			c = cn
-		}
 		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, buildChannel)
+		_, err := display.UpdateFrom(ctx, buildChannel)
 		return err
 	})
 
@@ -250,6 +261,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	return eg.Wait()
 }
+
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	cmd := exec.CommandContext(ctx, "docker", "load")
