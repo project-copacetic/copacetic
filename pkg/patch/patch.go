@@ -235,13 +235,11 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
 		c = cn
 	}
-
 	mode := progressui.AutoMode
 	if log.GetLevel() >= log.DebugLevel {
 		mode = progressui.PlainMode
 	}
-
-	display, err := progressui.NewDisplay(c, mode, progressui.WithPhase(c.Name()))
+	display, err := progressui.NewDisplay(c, mode)
 	if err != nil {
 		return err
 	}
