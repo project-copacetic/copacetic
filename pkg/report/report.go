@@ -60,9 +60,8 @@ func defaultParseScanReport(file string) (*unversioned.UpdateManifest, error) {
 			return manifest, nil
 		} else if _, ok := err.(*ErrorUnsupported); ok {
 			continue
-		} else {
-			return nil, err
 		}
+		return nil, err
 	}
 	return nil, fmt.Errorf("%s is not a supported scan report format", file)
 }

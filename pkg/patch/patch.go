@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/containerd/console"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
@@ -45,7 +44,7 @@ func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patche
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -70,7 +69,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -81,7 +80,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 	}
 	taggedName, ok := imageName.(reference.Tagged)
 	if !ok {
-		err := errors.New("unexpected: TagNameOnly did create Tagged ref")
+		err := errors.New("unexpected: TagNameOnly did not create Tagged ref")
 		log.Error(err)
 		return err
 	}
@@ -93,6 +92,10 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 		} else {
 			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
 		}
+	}
+	_, err = reference.WithTag(imageName, patchedTag)
+	if err != nil {
+		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
@@ -131,7 +134,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig)}
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
@@ -152,19 +155,21 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 		return err
 	}
 
-	ch := make(chan *client.SolveStatus)
+	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
 		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String(), updates)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
 			// Create package manager helper
 			pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
@@ -172,11 +177,13 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			// TODO: Add support for other output modes as buildctl does.
 			patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
 			def, err := patchedImageState.Marshal(ctx)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
@@ -187,6 +194,7 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 			if err != nil {
+				ch <- err
 				return nil, err
 			}
 
@@ -211,23 +219,29 @@ func patchWithContext(ctx context.Context, image, reportFile, patchedTag, workin
 			// vex document must contain at least one statement
 			if output != "" && len(validatedManifest.Updates) > 0 {
 				if err := vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output); err != nil {
+					ch <- err
 					return nil, err
 				}
 			}
 
 			return res, nil
-		}, ch)
+		}, buildChannel)
 
 		return err
 	})
 
 	eg.Go(func() error {
-		var c console.Console
-		if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
-			c = cn
-		}
 		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err = progressui.DisplaySolveStatus(context.TODO(), c, os.Stdout, ch)
+		mode := progressui.AutoMode
+		if log.GetLevel() >= log.DebugLevel {
+			mode = progressui.PlainMode
+		}
+		display, err := progressui.NewDisplay(os.Stderr, mode)
+		if err != nil {
+			return err
+		}
+
+		_, err = display.UpdateFrom(ctx, buildChannel)
 		return err
 	})
 

@@ -1,9 +1,11 @@
 package pkgmgr
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -81,4 +83,145 @@ func TestGetPackageManager(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, manager)
 	})
+}
+
+func IsValid(version string) bool {
+	return version != "invalid"
+}
+
+func LessThan(v1, v2 string) bool {
+	// Simplistic comparison for testing
+	return v1 < v2
+}
+
+// isEqualIgnoreOrder compares two slices of UpdatePackage without considering order.
+func isEqualIgnoreOrder(a, b unversioned.UpdatePackages) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	// Use a map to count occurrences
+	counts := make(map[unversioned.UpdatePackage]int)
+	for _, v := range a {
+		counts[v]++
+	}
+
+	for _, v := range b {
+		counts[v]--
+		if counts[v] < 0 {
+			return false // Found more of v in b than in a
+		}
+	}
+
+	return true
+}
+
+func TestGetUniqueLatestUpdates(t *testing.T) {
+	cmp := VersionComparer{IsValid, LessThan}
+
+	tests := []struct {
+		name          string
+		updates       unversioned.UpdatePackages
+		ignoreErrors  bool
+		want          unversioned.UpdatePackages
+		expectedError string
+	}{
+		{
+			name:          "empty updates",
+			updates:       unversioned.UpdatePackages{},
+			ignoreErrors:  false,
+			want:          nil,
+			expectedError: "no patchable vulnerabilities found",
+		},
+		{
+			name: "valid updates",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "1.0"},
+				{Name: "pkg1", FixedVersion: "2.0"},
+			},
+			ignoreErrors: false,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "2.0"},
+			},
+			expectedError: "",
+		},
+		{
+			name: "updates with invalid version",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "invalid"},
+			},
+			ignoreErrors:  false,
+			want:          nil,
+			expectedError: "invalid version invalid found for package pkg1",
+		},
+		{
+			name: "ignore errors",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "invalid"},
+			},
+			ignoreErrors:  true,
+			want:          unversioned.UpdatePackages{},
+			expectedError: "",
+		},
+		{
+			name: "Updates with the same highest version",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg2", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.0"},
+				{Name: "pkg2", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.0"},
+			},
+			ignoreErrors: false,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg2", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.0"},
+			},
+			expectedError: "",
+		},
+		{
+			name: "Invalid versions with ignoreErrors true",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "invalid"},
+				{Name: "pkg2", FixedVersion: "3.0"},
+				{Name: "pkg3", FixedVersion: "invalid"},
+			},
+			ignoreErrors: true,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg2", FixedVersion: "3.0"},
+			},
+			expectedError: "",
+		},
+		{
+			name: "Updates with decreasing versions",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.5"},
+				{Name: "pkg1", FixedVersion: "3.0"},
+			},
+			ignoreErrors: false,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "3.0"},
+			},
+			expectedError: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetUniqueLatestUpdates(tt.updates, cmp, tt.ignoreErrors)
+			if err != nil {
+				if tt.expectedError == "" {
+					t.Errorf("GetUniqueLatestUpdates() unexpected error = %v", err)
+				} else if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("GetUniqueLatestUpdates() error = %v, wantErrMsg %v", err, tt.expectedError)
+				}
+			} else if tt.expectedError != "" {
+				t.Errorf("GetUniqueLatestUpdates() expected error %v, got none", tt.expectedError)
+			}
+
+			if !isEqualIgnoreOrder(got, tt.want) {
+				t.Errorf("%s: got = %v, want %v (order ignored)", tt.name, got, tt.want)
+			}
+		})
+	}
 }
