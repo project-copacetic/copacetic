@@ -129,13 +129,13 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        run: .github/workflows/scripts/download-tooling.sh
+        run: .github/workflows/scripts/download-tooling.sh ${{ matrix.os }}
       - name: Extract copa
         shell: bash
         run: |
           if [ "${{ matrix.os }}" == "ubuntu-22.04" ]; then
             tar xzf copa_edge_linux_amd64.tar.gz
-          else
+          else if [ "${{ matrix.os }}" == "macos-14" ]; then
             tar xzf copa_edge_darwin_arm64.tar.gz
           fi
           ./copa --version
