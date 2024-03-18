@@ -5,6 +5,7 @@ import (
 	"context"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -36,8 +37,10 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	}
 
 	// Resolve and pull the config for the target image
-	_, _, configData, err := c.ResolveImageConfig(ctx, image, llb.ResolveImageConfigOpt{
-		ResolveMode: llb.ResolveModePreferLocal.String(),
+	_, _, configData, err := c.ResolveImageConfig(ctx, image, sourceresolver.Opt{
+		ImageOpt: &sourceresolver.ResolveImageOpt{
+			ResolveMode: llb.ResolveModePreferLocal.String(),
+		},
 	})
 	if err != nil {
 		return nil, err
