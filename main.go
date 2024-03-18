@@ -21,12 +21,12 @@ func newRootCmd() *cobra.Command {
 		Use:   "copa",
 		Short: "Copacetic",
 		Long:  "Project Copacetic: container patching tool",
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRun: func(_ *cobra.Command, _ []string) {
 			if debug {
 				log.SetLevel(log.DebugLevel)
 			}
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Usage()
 		},
 		SilenceUsage: true,
