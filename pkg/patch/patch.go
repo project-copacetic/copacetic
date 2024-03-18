@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/containerd/console"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
@@ -231,22 +230,18 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return err
 	})
 
-	var c console.Console
-	if cn, err := console.ConsoleFromFile(os.Stderr); err == nil {
-		c = cn
-	}
-	mode := progressui.AutoMode
-	if log.GetLevel() >= log.DebugLevel {
-		mode = progressui.PlainMode
-	}
-	display, err := progressui.NewDisplay(c, mode)
-	if err != nil {
-		return err
-	}
-
 	eg.Go(func() error {
 		// not using shared context to not disrupt display but let us finish reporting errors
-		_, err := display.UpdateFrom(ctx, buildChannel)
+		mode := progressui.AutoMode
+		if log.GetLevel() >= log.DebugLevel {
+			mode = progressui.PlainMode
+		}
+		display, err := progressui.NewDisplay(os.Stderr, mode)
+		if err != nil {
+			return err
+		}
+
+		_, err = display.UpdateFrom(ctx, buildChannel)
 		return err
 	})
 
