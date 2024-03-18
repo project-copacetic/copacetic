@@ -20,7 +20,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      - uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
         with:
           fetch-depth: 0
 
@@ -29,7 +29,7 @@ jobs:
           go-version: "1.21"
           check-latest: true
 
-      - uses: anchore/sbom-action/download-syft@b6a39da80722a2cb0ef5d197531764a89b5d48c3 # v0.15.8
+      - uses: anchore/sbom-action/download-syft@9fece9e20048ca9590af301449208b2b8861333b # v0.15.9
 
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@7ec5c2b0c6cdda6e8bbb49444bc797dd33d74dd8 # v5.0.0
@@ -40,16 +40,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout copa-action repository
-        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
         with:
           repository: project-copacetic/copa-action
           ref: main
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@0d103c3126aa41d772a8362f6aa67afac040f80c # v3.1.0
+        uses: docker/setup-buildx-action@2b51285047da1547ffb1b2203d8be4c0af6b1f20 # v3.2.0
 
       - name: Login to ghcr
-        uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
+        uses: docker/login-action@e92390c5fb421da1463c202d546fed0ec5c39f20 # v3.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
