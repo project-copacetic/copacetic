@@ -42,7 +42,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 			ResolveMode: llb.ResolveModePreferLocal.String(),
 		},
 	})
-
 	if err != nil {
 		return nil, err
 	}

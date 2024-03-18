@@ -34,7 +34,7 @@ func NewPatchCmd() *cobra.Command {
 		Use:     "patch",
 		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
 		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(_ *cobra.Command, _ []string) error {
 			bkopts := buildkit.Opts{
 				Addr:       ua.bkOpts.Addr,
 				CACertPath: ua.bkOpts.CACertPath,

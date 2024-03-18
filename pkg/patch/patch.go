@@ -255,7 +255,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	return eg.Wait()
 }
 
-
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	cmd := exec.CommandContext(ctx, "docker", "load")
 	cmd.Stdin = pipeR
