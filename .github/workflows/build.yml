@@ -135,7 +135,7 @@ jobs:
         run: |
           if [ "${{ matrix.os }}" == "ubuntu-22.04" ]; then
             tar xzf copa_edge_linux_amd64.tar.gz
-          else if [ "${{ matrix.os }}" == "macos-14" ]; then
+          elif [ "${{ matrix.os }}" == "macos-14" ]; then
             tar xzf copa_edge_darwin_arm64.tar.gz
           fi
           ./copa --version
