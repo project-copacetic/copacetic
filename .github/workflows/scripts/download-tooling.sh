@@ -18,7 +18,7 @@ if [ "$runner" == "ubuntu-22.04" ]; then
     sudo tar -zxvf buildkit.tar.gz -C /usr/local/
     rm buildkit.tar.gz
 
-    elif [ "$runner" == "macos-14" ]; then
+    elif [ "$runner" == "macos-13" ]; then
     curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_macOS-ARM64.tar.gz -o trivy_${TRIVY_VERSION}_macOS-ARM64.tar.gz
     tar -xvf trivy_${TRIVY_VERSION}_macOS-ARM64.tar.gz
     sudo mv trivy /usr/local/bin
