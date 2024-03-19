@@ -59,7 +59,7 @@ jobs:
       contents: read
     strategy:
       matrix:
-        # due to the lack of support for docker in m1/amd64 runners because of nested virt
+        # due to the lack of support for docker in m1/arm64 runners because of nested virt
         # we are using macos-13 which runs on amd64
         os: [ubuntu-22.04, macos-13]
     steps:
@@ -119,7 +119,9 @@ jobs:
         with:
           go-version: "1.21"
           check-latest: true
-      - run: echo "$HOME/.local/bin" >> $GITHUB_PATH
+      - run: |
+          mkdir -p $HOME/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh ${{ matrix.os }}
