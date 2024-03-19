@@ -29,7 +29,7 @@ if [ "$runner" == "ubuntu-22.04" ]; then
 
     echo "$HOME/.local/bin" >> $GITHUB_PATH
 
-    brew install colima docker
+    HOMEBREW_NO_AUTO_UPDATE=1 brew install colima docker
     colima start
 else
     echo "runner type is not supported"

@@ -75,7 +75,7 @@ jobs:
       - name: install coreutils for make
         if: matrix.os == 'macos-13'
         run: |
-          brew install coreutils
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
           echo "/usr/local/opt/coreutils/libexec/gnubin" >> $GITHUB_PATH
       - name: Build copa
         shell: bash
