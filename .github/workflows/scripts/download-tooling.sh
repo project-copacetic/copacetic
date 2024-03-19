@@ -26,7 +26,7 @@ if [ "$runner" == "ubuntu-22.04" ]; then
     curl -sfL https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.darwin-arm64.tar.gz -o buildkit.tar.gz
     sudo tar -zxvf buildkit.tar.gz -C $HOME/.local/bin
     rm buildkit.tar.gz
-    
+
     echo "$HOME/.local/bin" >> $GITHUB_PATH
 
     # HOMEBREW_NO_AUTO_UPDATE=1 brew install colima docker

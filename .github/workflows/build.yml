@@ -149,6 +149,11 @@ jobs:
       - name: Install Docker for macOS
         if: matrix.os == 'macos-13'
         uses: douglascamata/setup-docker-macos-action@c79edf628598b41022bc5eb67676d026dd1008cf # v1-alpha.13
+      - run: |
+          export HOMEBREW_NO_AUTO_UPDATE="1"
+          export HOMEBREW_NO_INSTALL_UPGRADE="1"
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK="1"
+          brew install docker-buildx
       - name: Set up QEMU
         uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
         if: matrix.os == 'ubuntu-22.04'
