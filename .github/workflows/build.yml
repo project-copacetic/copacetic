@@ -72,7 +72,7 @@ jobs:
         with:
           go-version: "1.21"
           check-latest: true
-      - name: install coreutils
+      - name: install coreutils for make
         if: matrix.os == 'macos-13'
         run: |
           brew install coreutils

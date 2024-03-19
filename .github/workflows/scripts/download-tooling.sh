@@ -21,10 +21,10 @@ if [ "$runner" == "ubuntu-22.04" ]; then
     elif [ "$runner" == "macos-13" ]; then
     curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_macOS-ARM64.tar.gz -o trivy_${TRIVY_VERSION}_macOS-ARM64.tar.gz
     tar -xvf trivy_${TRIVY_VERSION}_macOS-ARM64.tar.gz
-    sudo mv trivy /usr/.local/bin
+    sudo mv trivy $HOME/.local/bin
 
     curl -sfL https://github.com/moby/buildkit/releases/download/v${BUILDKIT_VERSION}/buildkit-v${BUILDKIT_VERSION}.darwin-arm64.tar.gz -o buildkit.tar.gz
-    sudo tar -zxvf buildkit.tar.gz -C /usr/.local/
+    sudo tar -zxvf buildkit.tar.gz -C $HOME/.local/bin
     rm buildkit.tar.gz
 
     echo "$HOME/.local/bin" >> $GITHUB_PATH
