@@ -133,6 +133,8 @@ jobs:
       - name: Extract copa
         shell: bash
         run: |
+          echo $GITHUB_PATH
+
           if [ "${{ matrix.os }}" == "ubuntu-22.04" ]; then
             tar xzf copa_edge_linux_amd64.tar.gz
           elif [ "${{ matrix.os }}" == "macos-13" ]; then
@@ -152,7 +154,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     permissions: read-all
     steps:
@@ -174,7 +176,7 @@ jobs:
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Install required tools
         shell: bash
-        run: .github/workflows/scripts/download-tooling.sh
+        run: .github/workflows/scripts/download-tooling.sh ubuntu-22.04
       - name: Download copa from build artifacts
         uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
