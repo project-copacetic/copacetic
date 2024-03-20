@@ -12,11 +12,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"github.com/cpuguy83/dockercfg"
 	"github.com/cpuguy83/go-docker"
 	"github.com/cpuguy83/go-docker/container"
 	"github.com/cpuguy83/go-docker/errdefs"
+	"github.com/cpuguy83/go-docker/transport"
 	"github.com/moby/buildkit/client/connhelper"
 	log "github.com/sirupsen/logrus"
 )
@@ -117,11 +119,17 @@ func buildxContextDialer(builder string) func(context.Context, string) (net.Conn
 	}
 }
 
-func containerContextDialer(ctx context.Context, host, name string) (net.Conn, error) {
+func containerContextDialer(ctx context.Context, host, name string) (_ net.Conn, retErr error) {
 	tr, err := getDockerTransport(host)
 	if err != nil {
 		return nil, err
 	}
+
+	defer func() {
+		if retErr == nil {
+			setDockerBridgeTransport(tr)
+		}
+	}()
 
 	cli := docker.NewClient(docker.WithTransport(tr))
 	c := cli.ContainerService().NewContainer(ctx, name)
@@ -155,4 +163,23 @@ func containerContextDialer(ctx context.Context, host, name string) (net.Conn, e
 	}
 
 	return conn2, nil
+}
+
+// GetDockerTransport returns the configured transport for connecting to a docker daemon.
+// This may be nil if no transport has been configured.
+func GetDockerBridgeTransport() transport.Doer {
+	dockerTransportMu.Lock()
+	defer dockerTransportMu.Unlock()
+	return dockerTransport
+}
+
+var (
+	dockerTransportMu sync.Mutex
+	dockerTransport   transport.Doer
+)
+
+func setDockerBridgeTransport(t transport.Doer) {
+	dockerTransportMu.Lock()
+	dockerTransport = t
+	dockerTransportMu.Unlock()
 }

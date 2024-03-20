@@ -25,11 +25,13 @@ func Docker(u *url.URL) (*connhelper.ConnectionHelper, error) {
 			if err != nil {
 				return nil, err
 			}
+
 			return tr.DoRaw(ctx, http.MethodPost, version.Join(ctx, "/grpc"), transport.WithUpgrade("h2c"))
 		},
 	}, nil
 }
 
+// GetDockerTransport returns a transport for connecting to a docker daemon.
 func getDockerTransport(addr string) (transport.Doer, error) {
 	if addr == "" {
 		addr = os.Getenv("DOCKER_HOST")

@@ -150,7 +150,6 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
 		llb.Platform(dm.config.Platform),
-		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(
 		llb.Shlex("apt update"),
@@ -265,7 +264,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
 		llb.Platform(dm.config.Platform),
-		llb.ResolveModeDefault,
 	)
 
 	// Run apt update && apt download list of updates to target folder

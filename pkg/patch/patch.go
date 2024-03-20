@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"time"
 
 	"github.com/docker/buildx/build"
@@ -126,7 +125,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 	log.Debugf("updates to apply: %v", updates)
 
-	bkClient, err := buildkit.NewClient(ctx, bkOpts)
+	bkClient, dockerTr, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
 		return err
 	}
@@ -155,11 +154,32 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return err
 	}
 
+	gwcWrap := func(gwc gwclient.Client) gwclient.Client {
+		// no-op
+		return gwc
+	}
+
+	if dockerTr != nil {
+		log.Info("Using docker bridge")
+		layout, wrap, err := fetchImageFromDocker(ctx, &solveOpt, dockerTr, image, imageName)
+		if err != nil {
+			return err
+		}
+		gwcWrap = wrap
+		defer func() {
+			if err := os.RemoveAll(layout); err != nil {
+				log.WithError(err).WithField("layout", layout).Warn("Failed to remove temporary image layout")
+			}
+		}()
+	}
+
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
+
 	eg.Go(func() error {
 		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
+			c = gwcWrap(c)
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String(), updates)
 			if err != nil {
 				ch <- err
@@ -253,25 +273,4 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	})
 
 	return eg.Wait()
-}
-
-func dockerLoad(ctx context.Context, pipeR io.Reader) error {
-	cmd := exec.CommandContext(ctx, "docker", "load")
-	cmd.Stdin = pipeR
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-
-	// Pipe run errors to WarnLevel since execution continues asynchronously
-	// Caller should log a separate ErrorLevel on completion based on err
-	go utils.LogPipe(stderr, log.WarnLevel)
-	go utils.LogPipe(stdout, log.InfoLevel)
-
-	return cmd.Run()
 }

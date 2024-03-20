@@ -214,7 +214,6 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
 		llb.Platform(rm.config.Platform),
-		llb.ResolveModeDefault,
 	)
 
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
@@ -367,7 +366,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
 		llb.Platform(rm.config.Platform),
-		llb.ResolveModeDefault,
 	)
 
 	// Install busybox. This should reuse the layer cached from probeRPMStatus.

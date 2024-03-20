@@ -187,7 +187,7 @@ func TestNewClient(t *testing.T) {
 			bkOpts := Opts{
 				Addr: "unix://" + addr,
 			}
-			client, err := NewClient(ctxT, bkOpts)
+			client, _, err := NewClient(ctxT, bkOpts)
 			cancel()
 			assert.NoError(t, err)
 			defer client.Close()
@@ -206,7 +206,7 @@ func TestNewClient(t *testing.T) {
 			bkOpts := Opts{
 				Addr: "unix://" + addr,
 			}
-			client, err := NewClient(ctxT, bkOpts)
+			client, _, err := NewClient(ctxT, bkOpts)
 			assert.NoError(t, err)
 			defer client.Close()
 

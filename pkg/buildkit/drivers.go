@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 
+	"github.com/cpuguy83/go-docker/transport"
 	"github.com/moby/buildkit/client"
 	gateway "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
@@ -27,16 +28,25 @@ var (
 
 // NewClient returns a new buildkit client with the given addr.
 // If addr is empty it will first try to connect to docker's buildkit instance and then fallback to DefaultAddr.
-func NewClient(ctx context.Context, bkOpts Opts) (*client.Client, error) {
+//
+// Whent he returned boolean is true, that denotes that the client is using the buildkit instance embedded in dockerd.
+func NewClient(ctx context.Context, bkOpts Opts) (*client.Client, transport.Doer, error) {
 	if bkOpts.Addr == "" {
 		return autoClient(ctx)
 	}
 	opts := getCredentialOptions(bkOpts)
 	client, err := client.New(ctx, bkOpts.Addr, opts...)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return client, nil
+
+	// Make sure the docker bridge transport is set (if needed)
+	if _, err := client.Info(ctx); err != nil {
+		client.Close()
+		return nil, nil, err
+	}
+
+	return client, connhelpers.GetDockerBridgeTransport(), nil
 }
 
 func getCredentialOptions(bkOpts Opts) []client.ClientOpt {
@@ -76,7 +86,7 @@ func ValidateClient(ctx context.Context, c *client.Client) error {
 	return err
 }
 
-func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, error) {
+func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, transport.Doer, error) {
 	var retErr error
 
 	newClient := func(ctx context.Context, dialer func(context.Context, string) (net.Conn, error)) (*client.Client, error) {
@@ -94,11 +104,12 @@ func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, 
 	log.Debug("Trying docker driver")
 	h, err := connhelpers.Docker(&url.URL{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
 	c, err := newClient(ctx, h.ContextDialer)
 	if err == nil {
-		return c, nil
+		return c, nil, nil
 	}
 	log.WithError(err).Debug("Could not use docker driver")
 	retErr = errors.Join(retErr, fmt.Errorf("could not use docker driver: %w", err))
@@ -106,12 +117,12 @@ func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, 
 	log.Debug("Trying buildx driver")
 	h, err = connhelpers.Buildx(&url.URL{})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	c, err = newClient(ctx, h.ContextDialer)
 	if err == nil {
-		return c, nil
+		return c, connhelpers.GetDockerBridgeTransport(), nil
 	}
 	log.WithError(err).Debug("Could not use buildx driver")
 	retErr = errors.Join(retErr, fmt.Errorf("could not use buildx driver: %w", err))
@@ -120,10 +131,14 @@ func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, 
 	c, err = client.New(ctx, DefaultAddr, opts...)
 	if err == nil {
 		if err := ValidateClient(ctx, c); err == nil {
-			return c, nil
+			tr, err := transport.DefaultTransport()
+			if err != nil {
+				log.WithError(err).Warn("Could not setup docker bridge transport")
+			}
+			return c, tr, nil
 		}
 		c.Close()
 	}
 	log.WithError(err).Debug("Could not use buildkitd driver")
-	return nil, errors.Join(retErr, fmt.Errorf("could not use buildkitd driver: %w", err))
+	return nil, nil, errors.Join(retErr, fmt.Errorf("could not use buildkitd driver: %w", err))
 }
