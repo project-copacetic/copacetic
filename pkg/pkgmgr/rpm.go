@@ -293,18 +293,13 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 		toolsFileBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmToolsFile)
 		if err != nil {
-			// getting Error: failed to load cache key: no match for platform in manifest: not found
-			log.Error("HERE 1")
 			return err
 		}
 
 		rpmTools, err := parseRPMTools(toolsFileBytes)
 		if err != nil {
-			// log.Error("HERE 2")
 			return err
 		}
-
-		// log.Error("HERE 3 - ", rpmTools)
 
 		var allErrors *multierror.Error
 		if rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
@@ -342,7 +337,8 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		}
 		pkgs = strings.Join(pkgStrings, " ")
 	} else {
-		// set rpm manager
+		// means we are updating all
+		// set rpmTools by checking for yum, dnf, microdnf?
 	}
 
 	// Install patches using available rpm managers in order of preference
