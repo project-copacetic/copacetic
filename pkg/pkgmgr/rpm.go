@@ -95,7 +95,7 @@ func getRPMImageName(manifest *unversioned.UpdateManifest) string {
 	// static busybox binary
 	image := "mcr.microsoft.com/cbl-mariner/base/core"
 	version := "2.0"
-	if manifest.Metadata.OS.Type == "cbl-mariner" {
+	if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
 		// Use appropriate version of cbl-mariner image if available
 		vers := strings.Split(manifest.Metadata.OS.Version, ".")
 		if len(vers) < 2 {
@@ -170,18 +170,22 @@ func getRPMDBType(b []byte) rpmDBType {
 
 func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update
-	rpmComparer := VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
-	if err != nil {
-		return nil, nil, err
+	var updates unversioned.UpdatePackages
+	var rpmComparer VersionComparer
+	var err error
+	if manifest != nil {
+		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
+		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(updates) == 0 {
+			log.Warn("No update packages were specified to apply")
+			return &rm.config.ImageState, nil, nil
+		}
+		log.Debugf("latest unique RPMs: %v", updates)
 	}
-	if len(updates) == 0 {
-		log.Warn("No update packages were specified to apply")
-		return &rm.config.ImageState, nil, nil
-	}
-	log.Debugf("latest unique RPMs: %v", updates)
 
-	// Probe RPM status for available tooling on the target image
 	toolImageName := getRPMImageName(manifest)
 	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
@@ -201,10 +205,13 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		}
 	}
 
-	// Validate that the deployed packages are of the requested version or better
-	errPkgs, err := validateRPMPackageVersions(updates, rpmComparer, resultManifestBytes, ignoreErrors)
-	if err != nil {
-		return nil, nil, err
+	var errPkgs []string
+	if manifest != nil {
+		// Validate that the deployed packages are of the requested version or better
+		errPkgs, err = validateRPMPackageVersions(updates, rpmComparer, resultManifestBytes, ignoreErrors)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	return updatedImageState, errPkgs, nil
@@ -264,7 +271,8 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 	rpmDBListOutputBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmDBFile)
 	if err != nil {
-		return nil
+		log.Error("HERE extract file from state")
+		return err
 	}
 
 	// Check type of RPM DB on image to infer Mariner Distroless
@@ -285,14 +293,18 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 		toolsFileBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmToolsFile)
 		if err != nil {
+			// getting Error: failed to load cache key: no match for platform in manifest: not found
+			log.Error("HERE 1")
 			return err
 		}
 
 		rpmTools, err := parseRPMTools(toolsFileBytes)
 		if err != nil {
+			log.Error("HERE 2")
 			return err
 		}
-		log.Debugf("RPM tools probe results: %v", rpmTools)
+
+		log.Error("HERE 3 - ", rpmTools)
 
 		var allErrors *multierror.Error
 		if rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
@@ -321,12 +333,17 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 // TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
 func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
-	// Format the requested updates into a space-separated string
-	pkgStrings := []string{}
-	for _, u := range updates {
-		pkgStrings = append(pkgStrings, u.Name)
+	pkgs := ""
+	if updates != nil {
+		// Format the requested updates into a space-separated string
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		pkgs = strings.Join(pkgStrings, " ")
+	} else {
+		// set rpm manager
 	}
-	pkgs := strings.Join(pkgStrings, " ")
 
 	// Install patches using available rpm managers in order of preference
 	var installCmd string
@@ -347,13 +364,17 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
-	const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
-	outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
-	resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
+	var resultBytes []byte
+	var err error
+	if updates != nil {
+		const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
+		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
+		resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
-	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
-	if err != nil {
-		return nil, nil, err
+		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// Diff the installed updates and merge that into the target image
