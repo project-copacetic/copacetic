@@ -300,11 +300,11 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 		rpmTools, err := parseRPMTools(toolsFileBytes)
 		if err != nil {
-			log.Error("HERE 2")
+			// log.Error("HERE 2")
 			return err
 		}
 
-		log.Error("HERE 3 - ", rpmTools)
+		// log.Error("HERE 3 - ", rpmTools)
 
 		var allErrors *multierror.Error
 		if rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
