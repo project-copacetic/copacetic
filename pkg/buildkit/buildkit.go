@@ -30,9 +30,12 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	config := Config{
 		ImageName: image,
 		Platform: ispec.Platform{
-			OS:           "linux",
-			Architecture: manifest.Metadata.Config.Arch,
+			OS: "linux",
 		},
+	}
+
+	if manifest != nil {
+		config.Platform.Architecture = manifest.Metadata.Config.Arch
 	}
 
 	// Resolve and pull the config for the target image

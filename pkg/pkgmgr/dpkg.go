@@ -103,6 +103,16 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 }
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+	// Update all packages (non-distroless right now)
+	if manifest == nil {
+		updatedImageState, _, err := dm.installUpdates(ctx, nil)
+		if err != nil {
+			return updatedImageState, nil, err
+		}
+		// add validation in the future
+		return updatedImageState, nil, nil
+	}
+
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
@@ -235,12 +245,20 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
-	const aptInstallTemplate = `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
-	pkgStrings := []string{}
-	for _, u := range updates {
-		pkgStrings = append(pkgStrings, u.Name)
+
+	var installCmd string
+	if updates != nil {
+		aptInstallTemplate := `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
+	} else {
+		installCmd = `sh -c "apt upgrade -y"`
+		fmt.Print(installCmd)
 	}
-	installCmd := fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
+
 	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation

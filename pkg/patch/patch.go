@@ -1,12 +1,14 @@
 package patch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 
 	"github.com/containerd/console"
@@ -29,6 +31,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
+	"github.com/quay/claircore/osrelease"
 )
 
 const (
@@ -120,12 +123,15 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		}
 	}
 
-	// Parse report for update packages
-	updates, err := report.TryParseScanReport(reportFile, scanner)
-	if err != nil {
-		return err
+	var updates *unversioned.UpdateManifest
+	// Parse report for update packages //change to if --update-all
+	if scanner != "all" {
+		updates, err = report.TryParseScanReport(reportFile, scanner)
+		if err != nil {
+			return err
+		}
+		log.Debugf("updates to apply: %v", updates)
 	}
-	log.Debugf("updates to apply: %v", updates)
 
 	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
@@ -168,15 +174,33 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			}
 
 			// Create package manager helper
-			pkgmgr, err := pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
-			if err != nil {
-				ch <- err
-				return nil, err
+			var manager pkgmgr.PackageManager
+			if scanner != "all" {
+				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+			} else {
+				// determine OS family
+				osType, err := getOSType(ctx, c, config)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+
+				// get package manager based on os family type
+				manager, err = pkgmgr.GetPackageManager(osType, config, workingFolder)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+				updates = nil
 			}
 
 			// Export the patched image state to Docker
 			// TODO: Add support for other output modes as buildctl does.
-			patchedImageState, errPkgs, err := pkgmgr.InstallUpdates(ctx, updates, ignoreError)
+			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
 				ch <- err
 				return nil, err
@@ -199,29 +223,31 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				return nil, err
 			}
 
-			// create a new manifest with the successfully patched packages
-			validatedManifest := &unversioned.UpdateManifest{
-				Metadata: unversioned.Metadata{
-					OS: unversioned.OS{
-						Type:    updates.Metadata.OS.Type,
-						Version: updates.Metadata.OS.Version,
+			if updates != nil {
+				// create a new manifest with the successfully patched packages
+				validatedManifest := &unversioned.UpdateManifest{
+					Metadata: unversioned.Metadata{
+						OS: unversioned.OS{
+							Type:    updates.Metadata.OS.Type,
+							Version: updates.Metadata.OS.Version,
+						},
+						Config: unversioned.Config{
+							Arch: updates.Metadata.Config.Arch,
+						},
 					},
-					Config: unversioned.Config{
-						Arch: updates.Metadata.Config.Arch,
-					},
-				},
-				Updates: []unversioned.UpdatePackage{},
-			}
-			for _, update := range updates.Updates {
-				if !slices.Contains(errPkgs, update.Name) {
-					validatedManifest.Updates = append(validatedManifest.Updates, update)
+					Updates: []unversioned.UpdatePackage{},
 				}
-			}
-			// vex document must contain at least one statement
-			if output != "" && len(validatedManifest.Updates) > 0 {
-				if err := vex.TryOutputVexDocument(validatedManifest, pkgmgr, patchedImageName, format, output); err != nil {
-					ch <- err
-					return nil, err
+				for _, update := range updates.Updates {
+					if !slices.Contains(errPkgs, update.Name) {
+						validatedManifest.Updates = append(validatedManifest.Updates, update)
+					}
+				}
+				// vex document must contain at least one statement
+				if output != "" && len(validatedManifest.Updates) > 0 {
+					if err := vex.TryOutputVexDocument(validatedManifest, manager, patchedImageName, format, output); err != nil {
+						ch <- err
+						return nil, err
+					}
 				}
 			}
 
@@ -249,6 +275,42 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	})
 
 	return eg.Wait()
+}
+
+func getOSType(ctx context.Context, c gwclient.Client, config *buildkit.Config) (string, error) {
+	fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+	if err != nil {
+		log.Error("unable to extract /etc/os-release file from state")
+		return "", err
+	}
+
+	r := bytes.NewReader(fileBytes)
+	osData, err := osrelease.Parse(ctx, r)
+	if err != nil {
+		log.Error("unable to pare os-release data")
+		return "", err
+	}
+
+	osType := strings.ToLower(osData["NAME"])
+	switch {
+	case strings.Contains(osType, "alpine"):
+		return "alpine", nil
+	case strings.Contains(osType, "debian"):
+		return "debian", nil
+	case strings.Contains(osType, "ubuntu"):
+		return "ubuntu", nil
+	case strings.Contains(osType, "amazon"):
+		return "amazon", nil
+	case strings.Contains(osType, "centos"):
+		return "centos", nil
+	case strings.Contains(osType, "mariner"):
+		return "cbl-mariner", nil
+	case strings.Contains(osType, "red hat"):
+		return "redhat", nil
+	default:
+		log.Error("unsupported osType", osType)
+		return "", errors.ErrUnsupported
+	}
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
