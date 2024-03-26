@@ -124,7 +124,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 
 	var updates *unversioned.UpdateManifest
-	// Parse report for update packages //change to if --update-all
+	// Parse report for update packages
+	// change to if --update-all
 	if scanner != "all" {
 		updates, err = report.TryParseScanReport(reportFile, scanner)
 		if err != nil {
@@ -175,6 +176,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 			// Create package manager helper
 			var manager pkgmgr.PackageManager
+			// change to if --update-all
 			if scanner != "all" {
 				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
 				if err != nil {
@@ -195,6 +197,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					ch <- err
 					return nil, err
 				}
+				// do not specify updates, will update all
 				updates = nil
 			}
 
@@ -223,6 +226,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				return nil, err
 			}
 
+			// Currently can only validate updates if updating via scanner
 			if updates != nil {
 				// create a new manifest with the successfully patched packages
 				validatedManifest := &unversioned.UpdateManifest{
