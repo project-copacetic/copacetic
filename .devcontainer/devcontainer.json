@@ -1,0 +1,21 @@
+{
+	"name": "copacetic",
+	"image": "mcr.microsoft.com/devcontainers/base:jammy",
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	"features": {
+		"ghcr.io/devcontainers/features/docker-in-docker:2": "latest",
+		"ghcr.io/devcontainers/features/go:1": "latest"
+	},
+	"postCreateCommand": "bash .devcontainer/post-create.sh",
+	"remoteUser": "vscode",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"golang.go",
+				"ms-azuretools.vscode-docker",
+				"ms-vscode.makefile-tools",
+				"DavidAnson.vscode-markdownlint"
+			]
+		}
+	}
+}
