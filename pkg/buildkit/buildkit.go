@@ -8,7 +8,6 @@ import (
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 type Config struct {
@@ -26,7 +25,7 @@ type Opts struct {
 	KeyPath    string
 }
 
-func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string, manifest *unversioned.UpdateManifest) (*Config, error) {
+func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
