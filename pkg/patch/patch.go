@@ -41,13 +41,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts, updateAll bool) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts, updateAll)
 	}()
 
 	select {
@@ -72,7 +72,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts, updateAll bool) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -124,8 +124,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	var updates *unversioned.UpdateManifest
 	// Parse report for update packages
-	// change to if --update-all
-	if scanner != "all" {
+	if !updateAll {
 		updates, err = report.TryParseScanReport(reportFile, scanner)
 		if err != nil {
 			return err
@@ -175,14 +174,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 			// Create package manager helper
 			var manager pkgmgr.PackageManager
-			// change to if --update-all
-			if scanner != "all" {
-				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-			} else {
+			if updateAll {
 				// determine OS family
 				osType, err := getOSType(ctx, c, config)
 				if err != nil {
@@ -198,6 +190,13 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				}
 				// do not specify updates, will update all
 				updates = nil
+			} else {
+				// get package manager based on os family type
+				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
 			}
 
 			// Export the patched image state to Docker
@@ -224,13 +223,9 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			}
 
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
 
 			// Currently can only validate updates if updating via scanner
-			if updates != nil {
+			if !updateAll {
 				// create a new manifest with the successfully patched packages
 				validatedManifest := &unversioned.UpdateManifest{
 					Metadata: unversioned.Metadata{

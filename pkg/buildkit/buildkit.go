@@ -33,10 +33,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 		Platform:  nil,
 	}
 
-	if manifest != nil {
-		config.Platform.Architecture = manifest.Metadata.Config.Arch
-	}
-
 	// Resolve and pull the config for the target image
 	_, _, configData, err := c.ResolveImageConfig(ctx, image, sourceresolver.Opt{
 		ImageOpt: &sourceresolver.ResolveImageOpt{

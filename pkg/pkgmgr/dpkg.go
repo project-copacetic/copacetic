@@ -103,7 +103,7 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 }
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
-	// Update all packages (non-distroless right now)
+	// If manifest nil, update all packages (non-distroless right now)
 	if manifest == nil {
 		updatedImageState, _, err := dm.installUpdates(ctx, nil)
 		if err != nil {
