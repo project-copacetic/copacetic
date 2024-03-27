@@ -59,7 +59,9 @@ jobs:
       contents: read
     strategy:
       matrix:
-        os: [ubuntu-latest]
+        # due to the lack of support for docker in m1/arm64 runners because of nested virt
+        # we are using macos-13 which runs on amd64
+        os: [ubuntu-22.04, macos-13]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@63c24ba6bd7ba022e95695ff85de572c04a18142 # v2.3.1
@@ -70,6 +72,11 @@ jobs:
         with:
           go-version: "1.22"
           check-latest: true
+      - name: install coreutils for make
+        if: matrix.os == 'macos-13'
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install coreutils
+          echo "/usr/local/opt/coreutils/libexec/gnubin" >> $GITHUB_PATH
       - name: Build copa
         shell: bash
         run: |
@@ -77,9 +84,16 @@ jobs:
           make archive
       - name: Upload copa to build artifacts
         uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: matrix.os == 'ubuntu-22.04'
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
+      - name: Upload copa to build artifacts
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: matrix.os == 'macos-13'
+        with:
+          name: copa_edge_darwin_amd64.tar.gz
+          path: dist/darwin_amd64/release/copa_edge_darwin_amd64.tar.gz
       - name: Load test cases for patch testing
         id: load-test-envs-matrix
         shell: bash
@@ -89,39 +103,60 @@ jobs:
 
   test-patch:
     needs: build
-    name: Test patch ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest
+    name: Test patch ${{ matrix.buildkit_mode }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions: read-all
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-22.04, macos-13]
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
-      - name: Download copa from build artifacts
-        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
-        with:
-          name: copa_edge_linux_amd64.tar.gz
       - name: Check out code
         uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
       - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
         with:
           go-version: "1.22"
           check-latest: true
+      - run: |
+          mkdir -p $HOME/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Install required tools
         shell: bash
-        run: .github/workflows/scripts/download-tooling.sh
-      - name: Download copa from build artifacts
+        run: .github/workflows/scripts/download-tooling.sh ${{ matrix.os }}
+      - name: Download copa from build artifacts ${{ matrix.os }}
+        if: matrix.os == 'ubuntu-22.04'
         uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
           name: copa_edge_linux_amd64.tar.gz
+      - name: Download copa from build artifacts ${{ matrix.os }}
+        if: matrix.os == 'macos-13'
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: copa_edge_darwin_amd64.tar.gz
       - name: Extract copa
         shell: bash
         run: |
-          tar xzf copa_edge_linux_amd64.tar.gz
+          echo $GITHUB_PATH
+
+          if [ "${{ matrix.os }}" == "ubuntu-22.04" ]; then
+            tar xzf copa_edge_linux_amd64.tar.gz
+          elif [ "${{ matrix.os }}" == "macos-13" ]; then
+            tar xzf copa_edge_darwin_amd64.tar.gz
+          fi
           ./copa --version
+      - name: Install Docker for macOS
+        if: matrix.os == 'macos-13'
+        uses: douglascamata/setup-docker-macos-action@c79edf628598b41022bc5eb67676d026dd1008cf # v1-alpha.13
+      - run: |
+          export HOMEBREW_NO_AUTO_UPDATE="1"
+          export HOMEBREW_NO_INSTALL_UPGRADE="1"
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK="1"
+          brew install docker-buildx
       - name: Set up QEMU
         uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+        if: matrix.os == 'ubuntu-22.04'
       - name: Run functional test
         shell: bash
         run: |
@@ -132,7 +167,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
     permissions: read-all
     steps:
@@ -154,7 +189,7 @@ jobs:
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Install required tools
         shell: bash
-        run: .github/workflows/scripts/download-tooling.sh
+        run: .github/workflows/scripts/download-tooling.sh ubuntu-22.04
       - name: Download copa from build artifacts
         uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
         with:
