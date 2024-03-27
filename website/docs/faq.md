@@ -48,3 +48,18 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 > Tooling image for Debian-based images are `docker.io/library/debian:11-slim` and RPM-based repos are `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
+
+## I am getting "downloaded package <name> version <version> lower than required <version> for update" error when trying to patch an image. What does this mean?
+
+This error means that the package manager is trying to install a version of the package that is lower than the version that was required from the scanner report. This can happen for a few reasons:
+
+- Package repositories are not updated to the latest version of the package. For example, sometimes there is a lag between when a CVE is detected by Trivy using Red Hat vulnerability database and when it is available in the package repositories for CentOS.
+
+- Scanner reports are not up to date. Make sure to run the scanner with the latest vulnerability database.
+
+To verify the package version discrepency, you can compare the package version provided by the package repositories and the scanner reports.
+
+If you are continuing to see this and the package repositories and vulnerability databases are not updated, you can either use copa's `--ignore-errors` flag or [filter the applicable vulnerability in the scanner](troubleshooting.md#filtering-vulnerabilities).
+
+
+
