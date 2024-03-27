@@ -218,9 +218,15 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 }
 
 func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
+	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		log.Error("unable to get image platform")
+		return err
+	}
+
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(rm.config.Platform),
+		llb.Platform(*imagePlatform),
 		llb.ResolveModeDefault,
 	)
 
@@ -271,7 +277,6 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 	rpmDBListOutputBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmDBFile)
 	if err != nil {
-		log.Error("HERE extract file from state")
 		return err
 	}
 
@@ -383,7 +388,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(rm.config.Platform),
 		llb.ResolveModeDefault,
 	)
 

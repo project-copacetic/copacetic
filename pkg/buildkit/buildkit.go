@@ -14,7 +14,7 @@ type Config struct {
 	ImageName  string
 	Client     gwclient.Client
 	ConfigData []byte
-	Platform   ispec.Platform
+	Platform   *ispec.Platform
 	ImageState llb.State
 }
 
@@ -29,9 +29,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
-		Platform: ispec.Platform{
-			OS: "linux",
-		},
+		Platform:  nil,
 	}
 
 	if manifest != nil {
@@ -51,7 +49,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
 	config.ImageState, err = llb.Image(image,
-		llb.Platform(config.Platform),
 		llb.ResolveModePreferLocal,
 		llb.WithMetaResolver(c),
 	).WithImageConfig(config.ConfigData)

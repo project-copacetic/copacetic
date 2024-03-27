@@ -159,7 +159,6 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(dm.config.Platform),
 		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(
@@ -282,7 +281,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(dm.config.Platform),
 		llb.ResolveModeDefault,
 	)
 

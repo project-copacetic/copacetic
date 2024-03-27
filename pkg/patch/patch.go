@@ -219,6 +219,10 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				Definition: def.ToPB(),
 				Evaluate:   true,
 			})
+			if err != nil {
+				ch <- err
+				return nil, err
+			}
 
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 			if err != nil {
