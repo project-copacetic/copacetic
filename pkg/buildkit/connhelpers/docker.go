@@ -20,7 +20,7 @@ func init() {
 // Docker returns a buildkit connection helper for connecting to a docker daemon.
 func Docker(u *url.URL) (*connhelper.ConnectionHelper, error) {
 	return &connhelper.ConnectionHelper{
-		ContextDialer: func(ctx context.Context, addr string) (net.Conn, error) {
+		ContextDialer: func(ctx context.Context, _ string) (net.Conn, error) {
 			tr, err := getDockerTransport(path.Join(u.Host, u.Path))
 			if err != nil {
 				return nil, err

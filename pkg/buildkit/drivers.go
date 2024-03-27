@@ -62,7 +62,7 @@ func getServerNameFromAddr(addr string) string {
 
 // ValidateClient checks to ensure the connected buildkit instance supports the features required by copa.
 func ValidateClient(ctx context.Context, c *client.Client) error {
-	_, err := c.Build(ctx, client.SolveOpt{}, "", func(ctx context.Context, client gateway.Client) (*gateway.Result, error) {
+	_, err := c.Build(ctx, client.SolveOpt{}, "", func(_ context.Context, client gateway.Client) (*gateway.Result, error) {
 		capset := client.BuildOpts().LLBCaps
 		var err error
 		for _, cap := range requiredCaps {
