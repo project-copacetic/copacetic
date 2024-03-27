@@ -103,7 +103,7 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 }
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
-	// If manifest nil, update all packages (non-distroless right now)
+	// If manifest nil, update all packages (only for non-distroless right now)
 	if manifest == nil {
 		updatedImageState, _, err := dm.installUpdates(ctx, nil)
 		if err != nil {
@@ -254,6 +254,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		}
 		installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
 	} else {
+		// if updates is not specified, update all packages
 		installCmd = `sh -c "apt upgrade -y"`
 		fmt.Print(installCmd)
 	}

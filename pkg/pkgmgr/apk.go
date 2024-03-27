@@ -199,6 +199,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 			return nil, nil, err
 		}
 	} else {
+		// if updates is not specified, update all packages
 		installCmd := `apk upgrade --no-cache`
 		apkInstalled = apkUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 		fmt.Print(installCmd)

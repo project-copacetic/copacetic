@@ -334,6 +334,8 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
 func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
 	pkgs := ""
+
+	// If specific updates, provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
 		pkgStrings := []string{}
@@ -341,9 +343,6 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 		pkgs = strings.Join(pkgStrings, " ")
-	} else {
-		// means we are updating all
-		// set rpmTools by checking for yum, dnf, microdnf?
 	}
 
 	// Install patches using available rpm managers in order of preference
