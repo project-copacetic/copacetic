@@ -159,8 +159,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
-		log.Error("unable to get image platform")
-		return err
+		return fmt.Errorf("unable to get image platform %w", err)
 	}
 
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
@@ -287,8 +286,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
-		log.Error("unable to get image platform")
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
 	}
 
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.

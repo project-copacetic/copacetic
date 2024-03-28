@@ -178,9 +178,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				// determine OS family
 				fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
 				if err != nil {
-					log.Error("unable to extract /etc/os-release file from state")
 					ch <- err
-					return nil, err
+					return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
 				}
 
 				osType, err := getOSType(ctx, fileBytes)
@@ -295,8 +294,7 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 	r := bytes.NewReader(osreleaseBytes)
 	osData, err := osrelease.Parse(ctx, r)
 	if err != nil {
-		log.Error("unable to pare os-release data")
-		return "", err
+		return "", fmt.Errorf("unable to parse os-release data %w", err)
 	}
 
 	osType := strings.ToLower(osData["NAME"])
