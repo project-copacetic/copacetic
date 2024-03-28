@@ -1,10 +1,13 @@
 package patch
 
 import (
+	"context"
+	"errors"
 	"os"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestRemoveIfNotDebug(t *testing.T) {
@@ -43,4 +46,41 @@ func TestRemoveIfNotDebug(t *testing.T) {
 		// Clean up the working folder manually
 		os.RemoveAll(workingFolder)
 	})
+}
+
+func TestGetOSType(t *testing.T) {
+	testCases := []struct {
+		osRelease []byte
+		err       error
+		osType    string
+	}{
+		{
+			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
+			NAME="Debian GNU/Linux"
+			VERSION_ID="11"
+			VERSION="11 (bullseye)"
+			VERSION_CODENAME=bullseye
+			ID=debian
+			HOME_URL="https://www.debian.org/"
+			SUPPORT_URL="https://www.debian.org/support"
+			BUG_REPORT_URL="https://bugs.debian.org/"`),
+			err:    nil,
+			osType: "debian",
+		},
+		{
+			osRelease: nil,
+			err:       errors.ErrUnsupported,
+			osType:    "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run("TestGetOSType", func(t *testing.T) {
+			osType, err := getOSType(context.TODO(), tc.osRelease)
+
+			// Use testify package to assert that the output manifest and error match the expected ones
+			assert.Equal(t, tc.osType, osType)
+			assert.Equal(t, tc.err, err)
+		})
+	}
 }

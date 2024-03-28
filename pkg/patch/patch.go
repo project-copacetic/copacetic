@@ -176,7 +176,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			var manager pkgmgr.PackageManager
 			if updateAll {
 				// determine OS family
-				osType, err := getOSType(ctx, c, config)
+				fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+				if err != nil {
+					log.Error("unable to extract /etc/os-release file from state")
+					ch <- err
+					return nil, err
+				}
+
+				osType, err := getOSType(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -284,14 +291,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	return eg.Wait()
 }
 
-func getOSType(ctx context.Context, c gwclient.Client, config *buildkit.Config) (string, error) {
-	fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
-	if err != nil {
-		log.Error("unable to extract /etc/os-release file from state")
-		return "", err
-	}
-
-	r := bytes.NewReader(fileBytes)
+func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
+	r := bytes.NewReader(osreleaseBytes)
 	osData, err := osrelease.Parse(ctx, r)
 	if err != nil {
 		log.Error("unable to pare os-release data")
