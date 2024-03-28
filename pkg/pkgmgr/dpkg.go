@@ -157,8 +157,15 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
 func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
+	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		log.Error("unable to get image platform")
+		return err
+	}
+
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
+		llb.Platform(*imagePlatform),
 		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(
@@ -279,9 +286,16 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 }
 
 func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
+	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		log.Error("unable to get image platform")
+		return nil, nil, err
+	}
+
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
+		llb.Platform(*imagePlatform),
 		llb.ResolveModeDefault,
 	)
 
