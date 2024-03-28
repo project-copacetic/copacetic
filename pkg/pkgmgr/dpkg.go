@@ -263,7 +263,6 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	} else {
 		// if updates is not specified, update all packages
 		installCmd = `sh -c "apt upgrade -y"`
-		fmt.Print(installCmd)
 	}
 
 	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()

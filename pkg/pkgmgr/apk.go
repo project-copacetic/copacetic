@@ -202,7 +202,6 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		// if updates is not specified, update all packages
 		installCmd := `apk upgrade --no-cache`
 		apkInstalled = apkUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
-		fmt.Print(installCmd)
 	}
 
 	// Diff the installed updates and merge that into the target image
