@@ -176,7 +176,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		"patch",
 		"-i="+ref,
 		"-t="+patchedTag,
-		"-r="+reportPath,
+		reportPath,
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,
