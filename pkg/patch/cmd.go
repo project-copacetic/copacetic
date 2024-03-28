@@ -26,7 +26,6 @@ type patchArgs struct {
 	format        string
 	output        string
 	bkOpts        buildkit.Opts
-	updateAll     bool
 }
 
 func NewPatchCmd() *cobra.Command {
