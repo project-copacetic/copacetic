@@ -29,7 +29,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
-		Platform:  nil,
 	}
 
 	// Resolve and pull the config for the target image
