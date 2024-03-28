@@ -166,10 +166,8 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	}
 
 	var reportPath string
-	if !reportFile {
-		reportPath = ""
-	} else {
-		reportPath = path + " / scan.json"
+	if reportFile {
+		reportPath = "-r=" + path + "/scan.json"
 	}
 
 	//#nosec G204
