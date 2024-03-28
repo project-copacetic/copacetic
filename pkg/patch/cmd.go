@@ -52,8 +52,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.format,
 				ua.output,
 				ua.ignoreError,
-				bkopts,
-				ua.updateAll)
+				bkopts)
 		},
 	}
 	flags := patchCmd.Flags()
@@ -70,7 +69,6 @@ func NewPatchCmd() *cobra.Command {
 	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
-	flags.BoolVar(&ua.updateAll, "update-all", false, "Update all packages without scanner input")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

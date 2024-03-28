@@ -11,7 +11,7 @@ var (
 	copaPath      string
 	ignoreErrors  bool
 	scannerPlugin string
-	updateAll     bool
+	reportFile    bool
 )
 
 func TestMain(m *testing.M) {
@@ -19,7 +19,7 @@ func TestMain(m *testing.M) {
 	flag.StringVar(&copaPath, "copa", "./copa", "path to copa binary")
 	flag.StringVar(&scannerPlugin, "scanner", "trivy", "Scanner used to generate the report")
 	flag.BoolVar(&ignoreErrors, "ignore-errors", false, "Ignore errors and continue patching")
-	flag.BoolVar(&updateAll, "update-all", false, "Update all packages without scanner report")
+	flag.BoolVar(&reportFile, "report-file", true, "report file")
 	flag.Parse()
 
 	if copaPath == "" {

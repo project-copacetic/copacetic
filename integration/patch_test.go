@@ -83,7 +83,7 @@ func TestPatch(t *testing.T) {
 				scan(t, ref, img.IgnoreErrors)
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors)
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
 			t.Log("scanning patched image")
 			scanner().
@@ -159,10 +159,17 @@ func dockerCmd(t *testing.T, args ...string) {
 	require.NoError(t, err, string(out))
 }
 
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
+func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
+	}
+
+	var reportPath string
+	if !reportFile {
+		reportPath = ""
+	} else {
+		reportPath = path + " / scan.json"
 	}
 
 	//#nosec G204
@@ -171,7 +178,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 		"patch",
 		"-i="+ref,
 		"-t="+patchedTag,
-		"-r="+path+"/scan.json",
+		"-r="+reportPath,
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,

@@ -41,13 +41,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts, updateAll bool) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts, updateAll)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -72,7 +72,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts, updateAll bool) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -124,7 +124,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	var updates *unversioned.UpdateManifest
 	// Parse report for update packages
-	if !updateAll {
+	if reportFile != "" {
 		updates, err = report.TryParseScanReport(reportFile, scanner)
 		if err != nil {
 			return err
@@ -174,7 +174,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 			// Create package manager helper
 			var manager pkgmgr.PackageManager
-			if updateAll {
+			if reportFile == "" {
 				// determine OS family
 				fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
 				if err != nil {
@@ -231,7 +231,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 
 			// Currently can only validate updates if updating via scanner
-			if !updateAll {
+			if reportFile != "" {
 				// create a new manifest with the successfully patched packages
 				validatedManifest := &unversioned.UpdateManifest{
 					Metadata: unversioned.Metadata{

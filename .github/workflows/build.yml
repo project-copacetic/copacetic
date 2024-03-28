@@ -129,9 +129,9 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
-  test-patch-update-all:
+  test-patch-no-report:
     needs: build
-    name: Test patch --update-all ${{ matrix.buildkit_mode }}
+    name: Test patch no report ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: read-all
@@ -169,7 +169,7 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --update-all
+          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file false
 
   test-plugin:
     needs: build
