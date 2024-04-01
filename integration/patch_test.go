@@ -60,7 +60,6 @@ func TestPatch(t *testing.T) {
 			}
 
 			dir := t.TempDir()
-			scanResults := filepath.Join(dir, "scan.json")
 
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 			if img.LocalName != "" {
@@ -69,18 +68,22 @@ func TestPatch(t *testing.T) {
 				ref = img.LocalName
 			}
 
+			var scanResults string
+			if reportFile {
+				scanResults = filepath.Join(dir, "scan.json")
+				t.Log("scanning original image")
+				scanner().
+					withIgnoreFile(ignoreFile).
+					withOutput(scanResults).
+					// Do not set a non-zero exit code because we are expecting vulnerabilities.
+					scan(t, ref, img.IgnoreErrors)
+			}
+
 			r, err := reference.ParseNormalizedNamed(ref)
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
-
-			t.Log("scanning original image")
-			scanner().
-				withIgnoreFile(ignoreFile).
-				withOutput(scanResults).
-				// Do not set a non-zero exit code because we are expecting vulnerabilities.
-				scan(t, ref, img.IgnoreErrors)
 
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
@@ -93,8 +96,11 @@ func TestPatch(t *testing.T) {
 				withExitCode(1).
 				scan(t, patchedRef, img.IgnoreErrors)
 
+			// currently validation is only present when patching with a scan report
 			t.Log("verifying the vex output")
-			validVEXJSON(t, dir)
+			if reportFile {
+				validVEXJSON(t, dir)
+			}
 		})
 	}
 }
