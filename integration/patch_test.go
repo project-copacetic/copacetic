@@ -19,9 +19,6 @@ import (
 )
 
 var (
-	//go:embed fixtures/test-images.json
-	testImages []byte
-
 	//go:embed fixtures/trivy_ignore.rego
 	trivyIgnore []byte
 )
@@ -37,8 +34,25 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
+	var file []byte
+	var err error
+
+	// test distroless and non-distroelsss
+	if reportFile {
+		file, err = os.ReadFile("fixtures/test-images.json")
+		if err != nil {
+			t.Error("Unable to read test-images", err)
+		}
+	} else {
+		// only test distroless
+		file, err = os.ReadFile("fixtures/test-images-non-distroless.json")
+		if err != nil {
+			t.Error("Unable to read test-images", err)
+		}
+	}
+
 	var images []testImage
-	err := json.Unmarshal(testImages, &images)
+	err = json.Unmarshal(file, &images)
 	require.NoError(t, err)
 
 	tmp := t.TempDir()
