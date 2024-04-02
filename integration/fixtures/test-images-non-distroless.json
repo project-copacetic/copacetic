@@ -87,6 +87,6 @@
         "digest": "sha256:205a39f5b58f96b9ff81a0b523a60c26c86e88e76575696fcd6debde9de02197",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present, fail to patch libssl/libcryto",
-        "ignoreErrors": true
+        "ignoreErrors": false
     }
 ]

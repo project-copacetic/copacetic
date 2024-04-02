@@ -118,8 +118,8 @@ func TestPatch(t *testing.T) {
 			}
 
 			// currently validation is only present when patching with a scan report
-			t.Log("verifying the vex output")
 			if reportFile {
+				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
 			}
 		})
