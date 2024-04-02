@@ -100,13 +100,22 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
-			t.Log("scanning patched image")
-			scanner().
-				withIgnoreFile(ignoreFile).
-				withSkipDBUpdate().
-				// here we want a non-zero exit code because we are expecting no vulnerabilities.
-				withExitCode(1).
-				scan(t, patchedRef, img.IgnoreErrors)
+			if reportFile {
+				t.Log("scanning patched image")
+				scanner().
+					withIgnoreFile(ignoreFile).
+					withSkipDBUpdate().
+					// here we want a non-zero exit code because we are expecting no vulnerabilities.
+					withExitCode(1).
+					scan(t, patchedRef, img.IgnoreErrors)
+			} else {
+				t.Log("scanning patched image")
+				scanner().
+					withIgnoreFile(ignoreFile).
+					// here we want a non-zero exit code because we are expecting no vulnerabilities.
+					withExitCode(1).
+					scan(t, patchedRef, img.IgnoreErrors)
+			}
 
 			// currently validation is only present when patching with a scan report
 			t.Log("verifying the vex output")
