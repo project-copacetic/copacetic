@@ -118,6 +118,16 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 }
 
 func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+	// If manifest is nil, update all packages
+	if manifest == nil {
+		updatedImageState, _, err := am.upgradePackages(ctx, nil)
+		if err != nil {
+			return updatedImageState, nil, err
+		}
+		// add validation in the future
+		return updatedImageState, nil, nil
+	}
+
 	// Resolve set of unique packages to update
 	apkComparer := VersionComparer{isValidAPKVersion, isLessThanAPKVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, apkComparer, ignoreErrors)
@@ -155,34 +165,43 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 	// TODO: Add support for custom APK config
 	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy())).Root()
 
-	// Add all requested update packages
-	// This works around cases where some packages (for example, tiff) require other packages in it's dependency tree to be updated
-	const apkAddTemplate = `apk add --no-cache %s`
-	pkgStrings := []string{}
-	for _, u := range updates {
-		pkgStrings = append(pkgStrings, u.Name)
-	}
-	addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
-	apkAdded := apkUpdated.Run(llb.Shlex(addCmd), llb.WithProxy(utils.GetProxy())).Root()
+	var apkInstalled llb.State
+	var resultManifestBytes []byte
+	var err error
+	if updates != nil {
+		// Add all requested update packages
+		// This works around cases where some packages (for example, tiff) require other packages in it's dependency tree to be updated
+		const apkAddTemplate = `apk add --no-cache %s`
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
+		apkAdded := apkUpdated.Run(llb.Shlex(addCmd), llb.WithProxy(utils.GetProxy())).Root()
 
-	// Install all requested update packages without specifying the version. This works around:
-	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
-	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
-	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
-	const apkInstallTemplate = `apk upgrade --no-cache %s`
-	installCmd := fmt.Sprintf(apkInstallTemplate, strings.Join(pkgStrings, " "))
-	apkInstalled := apkAdded.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+		// Install all requested update packages without specifying the version. This works around:
+		//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
+		//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
+		// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
+		const apkInstallTemplate = `apk upgrade --no-cache %s`
+		installCmd := fmt.Sprintf(apkInstallTemplate, strings.Join(pkgStrings, " "))
+		apkInstalled = apkAdded.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
-	// Write updates-manifest to host for post-patch validation
-	const outputResultsTemplate = `sh -c 'apk info --installed -v %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: apk info --installed returned $?"; fi'`
-	pkgs := strings.Trim(fmt.Sprintf("%s", pkgStrings), "[]")
-	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, pkgs, resultManifest)
-	mkFolders := apkInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
-	resultsDiff := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
+		// Write updates-manifest to host for post-patch validation
+		const outputResultsTemplate = `sh -c 'apk info --installed -v %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: apk info --installed returned $?"; fi'`
+		pkgs := strings.Trim(fmt.Sprintf("%s", pkgStrings), "[]")
+		outputResultsCmd := fmt.Sprintf(outputResultsTemplate, pkgs, resultManifest)
+		mkFolders := apkInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
+		resultsDiff := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
-	resultManifestBytes, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &resultsDiff, resultManifest)
-	if err != nil {
-		return nil, nil, err
+		resultManifestBytes, err = buildkit.ExtractFileFromState(ctx, am.config.Client, &resultsDiff, resultManifest)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		// if updates is not specified, update all packages
+		installCmd := `apk upgrade --no-cache`
+		apkInstalled = apkUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 	}
 
 	// Diff the installed updates and merge that into the target image

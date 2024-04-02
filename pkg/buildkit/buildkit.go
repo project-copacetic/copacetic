@@ -8,14 +8,13 @@ import (
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 type Config struct {
 	ImageName  string
 	Client     gwclient.Client
 	ConfigData []byte
-	Platform   ispec.Platform
+	Platform   *ispec.Platform
 	ImageState llb.State
 }
 
@@ -26,14 +25,10 @@ type Opts struct {
 	KeyPath    string
 }
 
-func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string, manifest *unversioned.UpdateManifest) (*Config, error) {
+func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
-		Platform: ispec.Platform{
-			OS:           "linux",
-			Architecture: manifest.Metadata.Config.Arch,
-		},
 	}
 
 	// Resolve and pull the config for the target image
@@ -51,7 +46,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
 	config.ImageState, err = llb.Image(image,
-		llb.Platform(config.Platform),
 		llb.ResolveModePreferLocal,
 		llb.WithMetaResolver(c),
 	).WithImageConfig(config.ConfigData)

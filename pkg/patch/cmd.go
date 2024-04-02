@@ -72,9 +72,6 @@ func NewPatchCmd() *cobra.Command {
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
 	}
-	if err := patchCmd.MarkFlagRequired("report"); err != nil {
-		panic(err)
-	}
 
 	return patchCmd
 }

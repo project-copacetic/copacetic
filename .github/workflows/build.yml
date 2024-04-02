@@ -87,9 +87,51 @@ jobs:
     outputs:
       buildkitenvs: ${{ steps.load-test-envs-matrix.outputs.buildkitenvs }}
 
-  test-patch:
+  test-patch-trivy:
     needs: build
-    name: Test patch ${{ matrix.buildkit_mode }}
+    name: Test patch with trivy ${{ matrix.buildkit_mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: read-all
+    strategy:
+      fail-fast: false
+      matrix:
+        buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
+    steps:
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Check out code
+        uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      - uses: actions/setup-go@0c52d547c9bc32b1aa3301fd7a9cb496313a4491 # v5.0.0
+        with:
+          go-version: "1.22"
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+      - name: Run functional test
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
+
+  test-patch-no-report:
+    needs: build
+    name: Test patch no report ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: read-all

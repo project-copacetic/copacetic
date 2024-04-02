@@ -103,6 +103,16 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 }
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+	// If manifest nil, update all packages (only for non-distroless right now)
+	if manifest == nil {
+		updatedImageState, _, err := dm.installUpdates(ctx, nil)
+		if err != nil {
+			return updatedImageState, nil, err
+		}
+		// add validation in the future
+		return updatedImageState, nil, nil
+	}
+
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
 	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
@@ -147,9 +157,14 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
 func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
+	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		return fmt.Errorf("unable to get image platform %w", err)
+	}
+
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(dm.config.Platform),
+		llb.Platform(*imagePlatform),
 		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(
@@ -235,12 +250,20 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
-	const aptInstallTemplate = `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
-	pkgStrings := []string{}
-	for _, u := range updates {
-		pkgStrings = append(pkgStrings, u.Name)
+
+	var installCmd string
+	if updates != nil {
+		aptInstallTemplate := `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
+	} else {
+		// if updates is not specified, update all packages
+		installCmd = `sh -c "apt upgrade -y && apt clean -y && apt autoremove"`
 	}
-	installCmd := fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
+
 	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
@@ -261,10 +284,15 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 }
 
 func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
+	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
+	}
+
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(dm.config.Platform),
+		llb.Platform(*imagePlatform),
 		llb.ResolveModeDefault,
 	)
 

@@ -18,13 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	//go:embed fixtures/test-images.json
-	testImages []byte
-
-	//go:embed fixtures/trivy_ignore.rego
-	trivyIgnore []byte
-)
+//go:embed fixtures/trivy_ignore.rego
+var trivyIgnore []byte
 
 type testImage struct {
 	Image        string        `json:"image"`
@@ -37,8 +32,25 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
+	var file []byte
+	var err error
+
+	// test distroless and non-distroless
+	if reportFile {
+		file, err = os.ReadFile("fixtures/test-images.json")
+		if err != nil {
+			t.Error("Unable to read test-images", err)
+		}
+	} else {
+		// only test non-distroless
+		file, err = os.ReadFile("fixtures/test-images-non-distroless.json")
+		if err != nil {
+			t.Error("Unable to read test-images", err)
+		}
+	}
+
 	var images []testImage
-	err := json.Unmarshal(testImages, &images)
+	err = json.Unmarshal(file, &images)
 	require.NoError(t, err)
 
 	tmp := t.TempDir()
@@ -60,7 +72,6 @@ func TestPatch(t *testing.T) {
 			}
 
 			dir := t.TempDir()
-			scanResults := filepath.Join(dir, "scan.json")
 
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 			if img.LocalName != "" {
@@ -69,32 +80,48 @@ func TestPatch(t *testing.T) {
 				ref = img.LocalName
 			}
 
+			var scanResults string
+			if reportFile {
+				scanResults = filepath.Join(dir, "scan.json")
+				t.Log("scanning original image")
+				scanner().
+					withIgnoreFile(ignoreFile).
+					withOutput(scanResults).
+					// Do not set a non-zero exit code because we are expecting vulnerabilities.
+					scan(t, ref, img.IgnoreErrors)
+			}
+
 			r, err := reference.ParseNormalizedNamed(ref)
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
-			t.Log("scanning original image")
-			scanner().
-				withIgnoreFile(ignoreFile).
-				withOutput(scanResults).
-				// Do not set a non-zero exit code because we are expecting vulnerabilities.
-				scan(t, ref, img.IgnoreErrors)
-
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors)
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
-			t.Log("scanning patched image")
-			scanner().
-				withIgnoreFile(ignoreFile).
-				withSkipDBUpdate().
-				// here we want a non-zero exit code because we are expecting no vulnerabilities.
-				withExitCode(1).
-				scan(t, patchedRef, img.IgnoreErrors)
+			if reportFile {
+				t.Log("scanning patched image")
+				scanner().
+					withIgnoreFile(ignoreFile).
+					withSkipDBUpdate().
+					// here we want a non-zero exit code because we are expecting no vulnerabilities.
+					withExitCode(1).
+					scan(t, patchedRef, img.IgnoreErrors)
+			} else {
+				t.Log("scanning patched image")
+				scanner().
+					withIgnoreFile(ignoreFile).
+					// here we want a non-zero exit code because we are expecting no vulnerabilities.
+					withExitCode(1).
+					scan(t, patchedRef, img.IgnoreErrors)
+			}
 
-			t.Log("verifying the vex output")
-			validVEXJSON(t, dir)
+			// currently validation is only present when patching with a scan report
+			if reportFile {
+				t.Log("verifying the vex output")
+				validVEXJSON(t, dir)
+			}
 		})
 	}
 }
@@ -159,10 +186,15 @@ func dockerCmd(t *testing.T, args ...string) {
 	require.NoError(t, err, string(out))
 }
 
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
+func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
+	}
+
+	var reportPath string
+	if reportFile {
+		reportPath = "-r=" + path + "/scan.json"
 	}
 
 	//#nosec G204
@@ -171,7 +203,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool) {
 		"patch",
 		"-i="+ref,
 		"-t="+patchedTag,
-		"-r="+path+"/scan.json",
+		reportPath,
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,
