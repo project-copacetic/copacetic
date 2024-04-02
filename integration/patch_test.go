@@ -18,10 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	//go:embed fixtures/trivy_ignore.rego
-	trivyIgnore []byte
-)
+//go:embed fixtures/trivy_ignore.rego
+var trivyIgnore []byte
 
 type testImage struct {
 	Image        string        `json:"image"`
