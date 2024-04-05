@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -30,7 +31,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
-		Platform:  nil,
 	}
 
 	// Resolve and pull the config for the target image
@@ -68,8 +68,9 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 	}
 
 	def, err := st.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: platform.Architecture}))
+	spew.Dump("DEF", def)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("ONE %w", err)
 	}
 
 	resp, err := c.Solve(ctx, gwclient.SolveRequest{
@@ -77,12 +78,12 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 		Definition: def.ToPB(),
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("TWO %w", err)
 	}
 
 	ref, err := resp.SingleRef()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("THREE %w", err)
 	}
 
 	return ref.ReadFile(ctx, gwclient.ReadRequest{
