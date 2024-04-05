@@ -3,6 +3,7 @@ package buildkit
 import (
 	"bytes"
 	"context"
+	"fmt"
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -29,6 +30,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: image,
+		Platform:  nil,
 	}
 
 	// Resolve and pull the config for the target image
@@ -60,7 +62,12 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 
 // Extracts the bytes of the file denoted by `path` from the state `st`.
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
-	def, err := st.Marshal(ctx)
+	platform, err := st.GetPlatform(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
+	}
+
+	def, err := st.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: platform.Architecture}))
 	if err != nil {
 		return nil, err
 	}
