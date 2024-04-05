@@ -195,8 +195,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					return nil, err
 				}
 
-				// do not specify updates, will update all
-				updates = nil
 			} else {
 				// get package manager based on os family type
 				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
