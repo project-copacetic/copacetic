@@ -11,7 +11,7 @@ import (
 func TestTryOutputVexDocument(t *testing.T) {
 	config := &buildkit.Config{}
 	workingFolder := "/tmp"
-	alpineManager, _ := pkgmgr.GetPackageManager("alpine", config, workingFolder)
+	alpineManager, _ := pkgmgr.GetPackageManager("alpine", "", config, workingFolder)
 	patchedImageName := "patched"
 
 	type args struct {
