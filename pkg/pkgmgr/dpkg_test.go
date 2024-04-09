@@ -125,7 +125,7 @@ func TestGetAPTImageName(t *testing.T) {
 	// Run test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getAPTImageName(tc.manifest)
+			got := getAPTImageName(tc.manifest, "")
 			if got != tc.want {
 				t.Errorf("getAPTImageName() = %v, want %v", got, tc.want)
 			}
