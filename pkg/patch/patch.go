@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
@@ -19,11 +20,13 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -188,8 +191,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					return nil, err
 				}
 
+				osVersion, err := getOSVersion(ctx, fileBytes)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+
 				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(osType, config, workingFolder)
+				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -197,7 +206,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 			} else {
 				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -212,11 +221,30 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				return nil, err
 			}
 
-			def, err := patchedImageState.Marshal(ctx)
+			spew.Dump("Installed with patched image")
+
+			platform, err := patchedImageState.GetPlatform(ctx)
 			if err != nil {
-				ch <- err
-				return nil, err
+				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
 			}
+
+			var def *llb.Definition
+			if platform != nil {
+				def, err = patchedImageState.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: platform.Architecture}))
+				if err != nil {
+					ch <- err
+					return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
+				}
+			} else {
+				// TO DO remove this
+				def, err = patchedImageState.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: "arm64"}))
+				if err != nil {
+					ch <- err
+					return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
+				}
+			}
+
+			spew.Dump("Marshalled patched image state")
 
 			res, err := c.Solve(ctx, gwclient.SolveRequest{
 				Definition: def.ToPB(),
@@ -316,6 +344,16 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		log.Error("unsupported osType", osType)
 		return "", errors.ErrUnsupported
 	}
+}
+
+func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
+	r := bytes.NewReader(osreleaseBytes)
+	osData, err := osrelease.Parse(ctx, r)
+	if err != nil {
+		return "", fmt.Errorf("unable to parse os-release data %w", err)
+	}
+
+	return osData["VERSION_ID"], nil
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
