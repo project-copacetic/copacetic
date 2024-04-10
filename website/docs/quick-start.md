@@ -38,7 +38,7 @@ This sample illustrates how to patch containers using vulnerability reports with
 
     If an instance doesn't exist or that instance doesn't support all the features copa needs the next will be attempted. Please see [custom buildkit addresses](custom-address.md) for more information.
 
-    After setup the buildkit instance, run the following command to patch the image:
+    After setting up the buildkit instance, run the following command to patch the image:
 
     ```bash
     copa patch -r nginx.1.21.6.json -i docker.io/library/nginx:1.21.6
