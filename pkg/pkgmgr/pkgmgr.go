@@ -15,6 +15,7 @@ import (
 
 const (
 	copaPrefix     = "copa-"
+	inputPath      = "/" + copaPrefix + "input"
 	resultsPath    = "/" + copaPrefix + "out"
 	downloadPath   = "/" + copaPrefix + "downloads"
 	unpackPath     = "/" + copaPrefix + "unpacked"
@@ -47,6 +48,10 @@ type VersionComparer struct {
 }
 
 func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.UpdatePackages, error) {
+	if len(updates) == 0 {
+		return nil, fmt.Errorf("no patchable vulnerabilities found")
+	}
+
 	dict := make(map[string]string)
 	var allErrors *multierror.Error
 	for _, u := range updates {

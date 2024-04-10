@@ -14,19 +14,44 @@
 /** @type {import('@docusaurus/plugin-content-docs').SidebarsConfig} */
 const sidebars = {
   sidebar: [
-    'introduction',
-    'installation',
-    'quick-start',
-    'output',
-    'troubleshooting',
-    'design',
-    'faq',
-    'scanner-plugins',
-    'contributing',
-    'code-of-conduct',
-    'github-action',
-    'release'
-  ]
+    {
+      type: 'category',
+      label: 'Getting Started',
+      collapsed: false,
+      items: [
+        'introduction',
+        'installation',
+        'quick-start',
+        'best-practices',
+        'troubleshooting',
+        'faq',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Features',
+      collapsed: false,
+      items: [
+        'github-action',
+        'custom-address',
+        'output',
+        'scanner-plugins',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Contributing',
+      collapsed: false,
+      items: [
+        'contributing',
+        'code-of-conduct',
+        'design',
+        'development-tips',
+        'maintainer-guidelines',
+        'release',
+      ],
+    },
+  ],
 };
 
 module.exports = sidebars;

@@ -218,3 +218,37 @@ func TestNewClient(t *testing.T) {
 	// TODO: Test with defaults, but then we need to control those socket paths.
 	// I considered doing this in a chroot, but it is fairly complicated to do so and requires root privileges anyway (or CAP_SYS_CHROOT).
 }
+
+func TestArrayFile(t *testing.T) {
+	type spec struct {
+		desc     string
+		input    []string
+		expected string
+	}
+
+	tests := []spec{
+		{
+			desc:     "single element, must have newline at the end of the file",
+			input:    []string{"line"},
+			expected: "line\n",
+		},
+		{
+			desc:     "multiple elements, must have newline at the end of the file",
+			input:    []string{"line", "another"},
+			expected: "line\nanother\n",
+		},
+		{
+			desc:     "empty array produces empty file",
+			input:    []string{},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.desc, func(t *testing.T) {
+			b := ArrayFile(tt.input)
+			assert.Equal(t, tt.expected, string(b))
+		})
+	}
+}

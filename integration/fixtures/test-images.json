@@ -8,11 +8,29 @@
         "ignoreErrors": false
     },
     {
+        "image": "docker.io/grafana/grafana",
+        "tag": "8.5.0",
+        "localName": "registry.copacetic.test/repo/image:tag",
+        "digest": "sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present, locally tagged with fully-qualified name",
+        "ignoreErrors": false
+    },
+    {
         "image": "docker.io/library/nginx",
         "tag": "1.21.6",
         "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present",
+        "ignoreErrors": false
+    },
+    {
+        "image": "docker.io/library/nginx",
+        "tag": "1.21.6",
+        "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
+        "localName": "local/image:tag",
+        "distro": "Debian",
+        "description": "Valid dpkg/status, apt present, locally tagged with repo and image name",
         "ignoreErrors": false
     },
     {
@@ -40,6 +58,15 @@
         "ignoreErrors": false
     },
     {
+        "image": "docker.io/fluent/fluent-bit",
+        "tag": "1.8.4",
+        "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
+        "localName": "localimage:tag",
+        "distro": "Google Distroless",
+        "description": "Custom dpkg/status.d with base64 names, no apt, locally tagged with image name only",
+        "ignoreErrors": false
+    },
+    {
         "image": "docker.io/openpolicyagent/opa",
         "tag": "0.46.0",
         "digest": "sha256:c4b11c9b86eaba41276ae682bb6875332316242010b7523efe30f365ad0c3cb8",
@@ -57,16 +84,16 @@
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
-        "tag": "1.0.20220218",
-        "digest": "sha256:830120b2cbfb7489c6f3270e1c74f3db0de84a4d33fecfffd427890b94d2f236",
+        "tag": "2.0.20240112",
+        "digest": "sha256:60323975ec3aabe1840920a65237950a54c5fef6ffc811a5d26bb6bd130f1cc3",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present",
         "ignoreErrors": false
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
-        "tag": "1.0.20220218-arm64",
-        "digest": "sha256:f97ccb4565f8985c28c6dbc7f13cfea0877652b70545f844eb0b83e4475954d1",
+        "tag": "2.0.20240112-arm64",
+        "digest": "sha256:c85680df0ddccfd5bf0cd60ff7d0c07b0ea783bcee9ce5dc748b68c0d36e280a",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present, arm64 cross-arch",
         "ignoreErrors": false

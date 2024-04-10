@@ -20,9 +20,6 @@ go.work
 # Dependency directories (remove the comment below to include it)
 vendor/
 
-# Local images
-images/
-
 # Distribution folder
 dist/
 

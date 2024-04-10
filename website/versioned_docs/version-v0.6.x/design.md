@@ -1,8 +1,8 @@
-# Design Overview
+---
+title: Design
+---
 
 ## Design Tenets
-
-Expanding on the motivations and principles mentioned in the [README](../README.md):
 
 - **Copa is intended to accelerate container patching by eliminating waiting on base image dependency chains to update.** This is a raison d’etre for the Copa project, so if we figured out a different way to patch containers that still relied on waiting for base images to be rebuilt and republished, we would consider spinning that off into a different project instead of making it part of Copa.
 
@@ -28,7 +28,7 @@ The design of copa arises from the application of those tenets to the observed i
 
 ## Architecture
 
-![scanning driven patching](./imgs/vulnerability-patch.png)
+<img title="report-driven vulnerability patching" src="/copacetic/website/img/vulnerability-patch.png" />
 
 The requirements presented encourage an extensible model in order to support broad applicability. Specifically, there are two areas that the tool will need to accommodate multiple implementations to support more use cases:
 
@@ -61,7 +61,7 @@ type PackageManager interface {
 
 ## Implementation
 
-![buildkit graph execution](./imgs/graph-execution.png)
+<img title="buildkit graph execution" src="/copacetic/website/img/graph-execution.png" />
 
 `copa` is a pseudo-frontend to [buildkit](https://github.com/moby/buildkit) implemented as a CLI tool. Effectively, instead of taking a container definition to create from scratch, it takes the reference to the target image to patch and a container scan report and builds a series of [LLB graphs](https://github.com/moby/buildkit/tree/99f6199fa6f0c34dbb3acfa57e00b7189a6a79d4#exploring-llb) for buildkit to execute:
 

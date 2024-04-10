@@ -25,7 +25,7 @@ _check_docker_dind() {
 }
 
 while ! _check_docker_dind; do
-    check_docker_dind || sleep 1
+    _check_docker_dind || sleep 1
 done
 
 export COPA_BUILDKIT_ADDR="docker://unix://${sock_dir}/docker.sock"

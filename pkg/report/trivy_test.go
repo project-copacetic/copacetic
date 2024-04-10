@@ -37,7 +37,7 @@ func TestParseTrivyReport(t *testing.T) {
 				Results: []trivyTypes.Result{
 					{
 						Target: "alpine:3.14.0 (alpine 3.14.0)",
-						Class:  "os-pkgs",
+						Class:  trivyTypes.ClassOSPkg,
 						Type:   "alpine",
 						Vulnerabilities: []trivyTypes.DetectedVulnerability{
 							{
