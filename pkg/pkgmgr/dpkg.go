@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/go-multierror"
 	debVer "github.com/knqyf263/go-deb-version"
 	"github.com/moby/buildkit/client/llb"
@@ -31,6 +34,7 @@ type dpkgManager struct {
 	workingFolder string
 	isDistroless  bool
 	statusdNames  string
+	packageInfo   map[string]string
 	osVersion     string
 }
 
@@ -110,7 +114,7 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Probe for additional information to execute the appropriate update install graphs
 	toolImageName := getAPTImageName(manifest, dm.osVersion)
-	if err := dm.probeDPKGStatus(ctx, toolImageName); err != nil {
+	if err := dm.probeDPKGStatus(ctx, toolImageName, (manifest == nil)); err != nil {
 		return nil, nil, err
 	}
 
@@ -171,7 +175,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // Probe the target image for:
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
-func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
+func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, updateAll bool) error {
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get image platform %w", err)
@@ -211,6 +215,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
                 elif [ -d "$DPKG_STATUS_FOLDER" ]; then
                     status="$DPKG_STATUS_IS_DIRECTORY"
                     ls -1 "$DPKG_STATUS_FOLDER" > "$RESULT_STATUSD_PATH"
+					mv "$DPKG_STATUS_FOLDER"/*  "$RESULTS_PATH"
                 fi
                 echo -n "$status" > "${RESULTS_PATH}/${STATUSD_OUTPUT_FILENAME}"
         `,
@@ -230,8 +235,30 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		if err != nil {
 			return err
 		}
+
 		dm.statusdNames = strings.ReplaceAll(string(statusdNamesBytes), "\n", " ")
 		dm.statusdNames = strings.TrimSpace(dm.statusdNames)
+
+		// In the case of updating all packages, save package names and versions
+		if updateAll {
+			namesList := strings.Fields(dm.statusdNames)
+			packageInfo := make(map[string]string)
+			for _, name := range namesList {
+				fileBtyes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
+				if err != nil {
+					return err
+				}
+				pkgName, pkgVersion, err := getPackageInfo(string(fileBtyes))
+				if err != nil {
+					return err
+				}
+
+				packageInfo[pkgName] = pkgVersion
+			}
+
+			dm.packageInfo = packageInfo
+		}
+
 		log.Infof("Processed status.d: %s", dm.statusdNames)
 		dm.isDistroless = true
 		return nil
@@ -240,6 +267,30 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		log.Error(err)
 		return err
 	}
+}
+
+func getPackageInfo(file string) (string, string, error) {
+	var packageName string
+	var packageVersion string
+
+	packagePattern := regexp.MustCompile(`^Package:\s*(.*)`)
+	match := packagePattern.FindStringSubmatch(file)
+	if len(match) > 1 {
+		packageName = match[1]
+	} else {
+		return "", "", fmt.Errorf("no package name found for package")
+	}
+
+	versionPattern := regexp.MustCompile(`Version:\s*(.*)`)
+	match = versionPattern.FindStringSubmatch(file)
+	if len(match) > 1 {
+		packageVersion = match[1]
+	} else {
+		spew.Dump(file)
+		return "", "", fmt.Errorf("no version found for package")
+	}
+
+	return packageName, packageVersion, nil
 }
 
 // Patch a regular debian image with:
@@ -318,20 +369,50 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.IgnoreCache,
 	).Root()
 
+	// In the case of update all packages, only update packages that are not latest version
+	if updates == nil {
+		jsonPackageData, err := json.Marshal(dm.packageInfo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
+		}
+
+		updated = updated.Run(
+			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
+			llb.Args([]string{
+				`bash`, `-c`, `
+							json_str=$PACKAGES_PRESENT
+							update_packages=""
+	
+							while IFS=':' read -r package version; do
+								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+								installed_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+	
+								if [ "$installed_version" != "$pkg_version" ]; then
+									update_packages="$update_packages $pkg_name"
+								fi
+							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+	
+							# export UPDATE_PACKAGES=$update_packages
+							# or
+							echo "$update_packages" > packages.txt
+					`,
+			})).Root()
+	}
+
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
-
 	var downloadCmd string
+	pkgStrings := []string{}
 	if updates != nil {
 		aptDownloadTemplate := "apt download --no-install-recommends %s"
-		pkgStrings := []string{}
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 		downloadCmd = fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
-		downloadCmd = `sh -c "apt upgrade --download-only -y"`
+		downloadCmd = "apt download --no-install-recommends $UPDATE_PACKAGES"
 	}
 
 	downloadPath := "/var/cache/apt/archives"
