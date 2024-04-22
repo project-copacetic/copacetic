@@ -122,8 +122,8 @@ github.com/distribution/reference v0.5.0 h1:/FUIFXtfc/x2gpa5/VGfiGLuOIdYa1t65IKK
 github.com/distribution/reference v0.5.0/go.mod h1:BbU0aIcezP1/5jX/8MP0YiH4SdvB5Y4f/wlDRiLyi3E=
 github.com/docker/buildx v0.13.1 h1:uZjBcb477zh02tnHk0rqNV/DZOxbf/OiHw6Mc8OhDYU=
 github.com/docker/buildx v0.13.1/go.mod h1:f2n6vggoX4sNNZ0XoRZ0Wtv6J1/rbDTabgdHtpW9NNM=
-github.com/docker/cli v26.0.0-rc1+incompatible h1:PVxv2ySd8iZHoNfoAoKcnWSC/hKP2qMb806PWM34v50=
-github.com/docker/cli v26.0.0-rc1+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
+github.com/docker/cli v26.0.2+incompatible h1:4C4U8ZqrlNDe/R1U1zFFX+YsCFiVUicJqo4WVdInJas=
+github.com/docker/cli v26.0.2+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
 github.com/docker/distribution v2.7.1+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
 github.com/docker/distribution v2.8.2+incompatible h1:T3de5rq0dB1j30rp0sA2rER+m322EBzniBPB6ZIzuh8=
 github.com/docker/distribution v2.8.2+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
