@@ -292,6 +292,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		if err != nil {
 			return err
 		}
+		// parse container-manifest-2 to get installed package names and versions
 		pkgInfo, err := parseManifestFile(string(rpmManifest2File))
 		if err != nil {
 			return err
@@ -355,7 +356,7 @@ func parseManifestFile(file string) (map[string]string, error) {
 			version := strings.TrimSuffix(columns[1], ".cm2")
 			resultMap[name] = version
 		} else {
-			return nil, errors.New("unable to parse rpm manifest file")
+			return nil, errors.New("unexpected format when parsing rpm manifest file")
 		}
 	}
 	return resultMap, nil

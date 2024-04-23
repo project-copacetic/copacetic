@@ -238,7 +238,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 		dm.statusdNames = strings.ReplaceAll(string(statusdNamesBytes), "\n", " ")
 		dm.statusdNames = strings.TrimSpace(dm.statusdNames)
 
-		// In the case of updating all packages, save package names and versions
+		// In the case of updating all packages, read each file to save package names and versions
 		if updateAll {
 			namesList := strings.Fields(dm.statusdNames)
 			packageInfo := make(map[string]string)
@@ -367,7 +367,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.IgnoreCache,
 	).Root()
 
-	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
+	// In the case of update all packages, only update packages that are not already latest version. Store these packages in packages.txt.
 	if updates == nil {
 		jsonPackageData, err := json.Marshal(dm.packageInfo)
 		if err != nil {
