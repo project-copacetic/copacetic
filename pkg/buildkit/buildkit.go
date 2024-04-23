@@ -3,9 +3,8 @@ package buildkit
 import (
 	"bytes"
 	"context"
-	"fmt"
 
-	"github.com/davecgh/go-spew/spew"
+	"github.com/containerd/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -62,15 +61,14 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 
 // Extracts the bytes of the file denoted by `path` from the state `st`.
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
-	platform, err := st.GetPlatform(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
+	platform := platforms.Normalize(platforms.DefaultSpec())
+	if platform.OS != "linux" {
+		platform.OS = "linux"
 	}
 
-	def, err := st.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: platform.Architecture}))
-	spew.Dump("DEF", def)
+	def, err := st.Marshal(ctx, llb.Platform(platform))
 	if err != nil {
-		return nil, fmt.Errorf("ONE %w", err)
+		return nil, err
 	}
 
 	resp, err := c.Solve(ctx, gwclient.SolveRequest{
@@ -78,12 +76,12 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 		Definition: def.ToPB(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("TWO %w", err)
+		return nil, err
 	}
 
 	ref, err := resp.SingleRef()
 	if err != nil {
-		return nil, fmt.Errorf("THREE %w", err)
+		return nil, err
 	}
 
 	return ref.ReadFile(ctx, gwclient.ReadRequest{

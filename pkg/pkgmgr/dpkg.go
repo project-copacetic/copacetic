@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/hashicorp/go-multierror"
 	debVer "github.com/knqyf263/go-deb-version"
 	"github.com/moby/buildkit/client/llb"
@@ -286,7 +285,6 @@ func getPackageInfo(file string) (string, string, error) {
 	if len(match) > 1 {
 		packageVersion = match[1]
 	} else {
-		spew.Dump(file)
 		return "", "", fmt.Errorf("no version found for package")
 	}
 

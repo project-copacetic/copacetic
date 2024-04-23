@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
+	"github.com/containerd/containerd/platforms"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
@@ -26,7 +26,6 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
-	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -221,30 +220,16 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				return nil, err
 			}
 
-			spew.Dump("Installed with patched image")
+			platform := platforms.Normalize(platforms.DefaultSpec())
+			if platform.OS != "linux" {
+				platform.OS = "linux"
+			}
 
-			platform, err := patchedImageState.GetPlatform(ctx)
+			def, err := patchedImageState.Marshal(ctx, llb.Platform(platform))
 			if err != nil {
+				ch <- err
 				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
 			}
-
-			var def *llb.Definition
-			if platform != nil {
-				def, err = patchedImageState.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: platform.Architecture}))
-				if err != nil {
-					ch <- err
-					return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
-				}
-			} else {
-				// TO DO remove this
-				def, err = patchedImageState.Marshal(ctx, llb.Platform(ispec.Platform{OS: "linux", Architecture: "arm64"}))
-				if err != nil {
-					ch <- err
-					return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
-				}
-			}
-
-			spew.Dump("Marshalled patched image state")
 
 			res, err := c.Solve(ctx, gwclient.SolveRequest{
 				Definition: def.ToPB(),
