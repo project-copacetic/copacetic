@@ -392,9 +392,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 									update_packages="$update_packages $pkg_name"
 								fi
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
-	
-							# export UPDATE_PACKAGES=$update_packages
-							# or
+
+							mkdir /var/cache/apt/archives
+							cd /var/cache/apt/archives
 							echo "$update_packages" > packages.txt
 					`,
 			})).Root()
@@ -412,11 +412,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		}
 		downloadCmd = fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
-		downloadCmd = "apt download --no-install-recommends $UPDATE_PACKAGES"
+		downloadCmd = "xargs -a packages.txt -n 1 apt download --no-install-recommends"
 	}
 
 	downloadPath := "/var/cache/apt/archives"
-	downloaded := updated.Dir(downloadPath).Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := updated.Dir(downloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 	diffState := llb.Diff(updated, downloaded)
 
 	// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
