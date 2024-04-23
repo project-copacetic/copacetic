@@ -443,7 +443,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 								json_str=$PACKAGES_PRESENT
 								update_packages=""
 
-								echo "TESTING"
 								while IFS=':' read -r package version; do
 									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
