@@ -369,7 +369,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.IgnoreCache,
 	).Root()
 
-	// In the case of update all packages, only update packages that are not latest version
+	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
 	if updates == nil {
 		jsonPackageData, err := json.Marshal(dm.packageInfo)
 		if err != nil {
@@ -386,9 +386,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-								installed_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+								latest_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
 	
-								if [ "$installed_version" != "$pkg_version" ]; then
+								if [ "$latest_version" != "$pkg_version" ]; then
 									update_packages="$update_packages $pkg_name"
 								fi
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
@@ -412,6 +412,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		}
 		downloadCmd = fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
+		// only updated the outdated pacakges from packages.txt
 		downloadCmd = "xargs -a packages.txt -n 1 apt download --no-install-recommends"
 	}
 
