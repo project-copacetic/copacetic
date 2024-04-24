@@ -24,6 +24,7 @@ const (
 	dpkgLibPath      = "/var/lib/dpkg"
 	dpkgStatusPath   = dpkgLibPath + "/status"
 	dpkgStatusFolder = dpkgLibPath + "/status.d"
+	dpkgDownloadPath = "/var/cache/apt/archives"
 
 	statusdOutputFilename = "statusd_type"
 )
@@ -415,14 +416,13 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		downloadCmd = "xargs -a packages.txt -n 1 apt download --no-install-recommends"
 	}
 
-	downloadPath := "/var/cache/apt/archives"
-	downloaded := updated.Dir(downloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := updated.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 	diffState := llb.Diff(updated, downloaded)
 
 	// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
 	const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' %s \;`
-	extractCmd := fmt.Sprintf(extractTemplate, downloadPath, unpackPath)
-	unpacked := downloaded.Run(llb.AddMount(downloadPath, diffState), llb.Shlex(extractCmd)).Root()
+	extractCmd := fmt.Sprintf(extractTemplate, dpkgDownloadPath, unpackPath)
+	unpacked := downloaded.Run(llb.AddMount(dpkgDownloadPath, diffState), llb.Shlex(extractCmd)).Root()
 	unpackedToRoot := llb.Scratch().File(llb.Copy(unpacked, unpackPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
 	// Scripted extraction of all debinfo for version checking to separate layer into local mount
@@ -430,7 +430,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	mkFolders := downloaded.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).File(llb.Mkdir(dpkgStatusFolder, 0o744, llb.WithParents(true)))
 	const writeFieldsTemplate = `find . -name '*.deb' -exec sh -c "dpkg-deb -f {} > %s" \;`
 	writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, filepath.Join(resultsPath, "{}.fields"))
-	fieldsWritten := mkFolders.Dir(downloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
+	fieldsWritten := mkFolders.Dir(dpkgDownloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
 
 	// Write the name and version of the packages applied to the results.manifest file for the host
 	const outputResultsTemplate = `find . -name '*.fields' -exec sh -c 'grep "^Package:\|^Version:" {} >> %s' \;`
