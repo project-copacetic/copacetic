@@ -249,12 +249,15 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 				if err != nil {
 					return err
 				}
-				pkgName, pkgVersion, err := getPackageInfo(string(fileBtyes))
-				if err != nil {
-					return err
-				}
 
-				packageInfo[pkgName] = pkgVersion
+				if !strings.HasSuffix(name, ".md5sums") {
+					pkgName, pkgVersion, err := getPackageInfo(string(fileBtyes))
+					if err != nil {
+						return err
+					}
+
+					packageInfo[pkgName] = pkgVersion
+				}
 			}
 
 			dm.packageInfo = packageInfo
