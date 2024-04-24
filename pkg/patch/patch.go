@@ -202,7 +202,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					ch <- err
 					return nil, err
 				}
-
 			} else {
 				// get package manager based on os family type
 				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)

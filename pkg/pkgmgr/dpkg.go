@@ -46,6 +46,7 @@ const (
 	DPKGStatusMixed
 
 	DPKGStatusInvalid // must always be the last listed
+	Debian            = "debian"
 )
 
 func (st dpkgStatusType) String() string {
@@ -78,9 +79,9 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 // Map the target image OSType & OSVersion to an appropriate tooling image.
 func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) string {
 	version := osVersion
-	osType := "debian"
+	osType := Debian
 
-	if manifest == nil || manifest.Metadata.OS.Type == "debian" {
+	if manifest == nil || manifest.Metadata.OS.Type == Debian {
 		version = strings.Split(version, ".")[0] + "-slim"
 	} else {
 		osType = manifest.Metadata.OS.Type
@@ -126,14 +127,14 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 			}
 			// add validation in the future
 			return updatedImageState, nil, nil
-		} else {
-			updatedImageState, _, err := dm.installUpdates(ctx, nil)
-			if err != nil {
-				return updatedImageState, nil, err
-			}
-			// add validation in the future
-			return updatedImageState, nil, nil
 		}
+
+		updatedImageState, _, err := dm.installUpdates(ctx, nil)
+		if err != nil {
+			return updatedImageState, nil, err
+		}
+		// add validation in the future
+		return updatedImageState, nil, nil
 	}
 
 	// Else update according to specified updates
