@@ -35,15 +35,14 @@ func TestPatch(t *testing.T) {
 	var file []byte
 	var err error
 
-	// test distroless and non-distroless
 	if reportFile {
 		file, err = os.ReadFile("fixtures/test-images.json")
 		if err != nil {
 			t.Error("Unable to read test-images", err)
 		}
 	} else {
-		// only test non-distroless
-		file, err = os.ReadFile("fixtures/test-images-non-distroless.json")
+		// test all images besides custom dpkg/status.d
+		file, err = os.ReadFile("fixtures/test-images-update-all.json")
 		if err != nil {
 			t.Error("Unable to read test-images", err)
 		}
