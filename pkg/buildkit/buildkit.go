@@ -61,6 +61,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 
 // Extracts the bytes of the file denoted by `path` from the state `st`.
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
+	// since platform is obtained from host, override it in the case of Darwin
 	platform := platforms.Normalize(platforms.DefaultSpec())
 	if platform.OS != "linux" {
 		platform.OS = "linux"
