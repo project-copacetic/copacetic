@@ -8,7 +8,7 @@ require (
 	github.com/aquasecurity/trivy v0.45.1
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/cpuguy83/go-docker v0.3.0
-	github.com/distribution/reference v0.5.0
+	github.com/distribution/reference v0.6.0
 	github.com/docker/buildx v0.13.1
 	github.com/docker/cli v26.0.0-rc1+incompatible
 	github.com/google/go-containerregistry v0.19.1
