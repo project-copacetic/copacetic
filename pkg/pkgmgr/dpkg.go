@@ -216,7 +216,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
                 elif [ -d "$DPKG_STATUS_FOLDER" ]; then
                     status="$DPKG_STATUS_IS_DIRECTORY"
                     ls -1 "$DPKG_STATUS_FOLDER" > "$RESULT_STATUSD_PATH"
-					mv "$DPKG_STATUS_FOLDER"/*  "$RESULTS_PATH"
+                    mv "$DPKG_STATUS_FOLDER"/* "$RESULTS_PATH"
                 fi
                 echo -n "$status" > "${RESULTS_PATH}/${STATUSD_OUTPUT_FILENAME}"
         `,
