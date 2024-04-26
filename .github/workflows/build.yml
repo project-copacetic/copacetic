@@ -1,4 +1,4 @@
-name: Build
+name: "[Blocking] Build"
 on:
   push:
     branches:
