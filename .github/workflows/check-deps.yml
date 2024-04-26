@@ -1,4 +1,4 @@
-name: Check dependencies
+name: "[Informing] Check dependencies"
 on:
   push:
     branches:
