@@ -251,7 +251,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 				}
 
 				if !strings.HasSuffix(name, ".md5sums") {
-					pkgName, pkgVersion, err := getPackageInfo(string(fileBtyes))
+					pkgName, pkgVersion, err := GetPackageInfo(string(fileBtyes))
 					if err != nil {
 						return err
 					}
@@ -273,7 +273,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 	}
 }
 
-func getPackageInfo(file string) (string, string, error) {
+func GetPackageInfo(file string) (string, string, error) {
 	var packageName string
 	var packageVersion string
 
