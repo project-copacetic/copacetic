@@ -1,4 +1,4 @@
-name: Run golangci-lint
+name: "[Blocking] Run golangci-lint"
 on:
   push:
     paths:
