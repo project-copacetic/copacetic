@@ -36,7 +36,6 @@ const sidebars = {
         'custom-address',
         'output',
         'scanner-plugins',
-        'update-all',
       ],
     },
     {
