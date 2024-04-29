@@ -163,7 +163,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 // mounting a copy of apk-tools-static into the image and invoking apk-static directly.
 func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
 	// TODO: Add support for custom APK config
-	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy())).Root()
+	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
 
 	var apkInstalled llb.State
 	var resultManifestBytes []byte
