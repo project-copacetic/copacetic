@@ -183,6 +183,8 @@ func TestGetOSType(t *testing.T) {
 			ROCKY_SUPPORT_PRODUCT_VERSION="9.3"
 			REDHAT_SUPPORT_PRODUCT="Rocky Linux"
 			REDHAT_SUPPORT_PRODUCT_VERSION="9.3"`),
+			err:            nil,
+			expectedOSType: "rocky",
 		},
 		{
 			osRelease:      nil,
