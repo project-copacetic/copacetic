@@ -82,6 +82,14 @@
         "ignoreErrors": false
     },
     {
+        "image": "docker.io/library/rockylinux",
+        "tag": "9.3.20231119",
+        "digest": "sha256:45cc42828cc5ceeffa3a9b4f6363fb582fac3ab91f77bf403daa067f8f049f96",
+        "distro": "Rocky Linux",
+        "description": "valid rpm DB, dnf present",
+        "ignoreErrors": false
+    },
+    {
         "image": "docker.io/grafana/grafana-image-renderer",
         "tag" : "3.4.0",
         "digest": "sha256:205a39f5b58f96b9ff81a0b523a60c26c86e88e76575696fcd6debde9de02197",
