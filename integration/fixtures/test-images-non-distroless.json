@@ -83,10 +83,10 @@
     },
     {
         "image": "docker.io/library/rockylinux",
-        "tag": "9.3.20231119",
-        "digest": "sha256:45cc42828cc5ceeffa3a9b4f6363fb582fac3ab91f77bf403daa067f8f049f96",
+        "tag": "8.9.20231119",
+        "digest": "sha256:69cecc7163282ad83e27b739fe8473b7c56e280e83827dcda60e5d37102457f1",
         "distro": "Rocky Linux",
-        "description": "Valid rpm DB, microdnf & rpm present",
+        "description": "Valid rpm DB",
         "ignoreErrors": false
     },
     {
