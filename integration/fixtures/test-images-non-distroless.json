@@ -86,7 +86,7 @@
         "tag": "9.3.20231119",
         "digest": "sha256:45cc42828cc5ceeffa3a9b4f6363fb582fac3ab91f77bf403daa067f8f049f96",
         "distro": "Rocky Linux",
-        "description": "valid rpm DB, dnf present",
+        "description": "Valid rpm DB, microdnf & rpm present",
         "ignoreErrors": false
     },
     {
