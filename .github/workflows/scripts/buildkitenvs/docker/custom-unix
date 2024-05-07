@@ -11,7 +11,7 @@ EOF
 
 sock_dir="$(mktemp -d)"
 
-docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
+docker_custom_unix_id="$(docker run --wait -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
 
 _cleanup() {
     docker rm -f "$docker_custom_unix_id"
