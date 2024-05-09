@@ -17,8 +17,6 @@ until [ "$(docker inspect -f '{{.State.Status}}' $docker_custom_unix_id)" == "ru
     sleep 0.1
 done
 
-docker logs "$docker_custom_unix_id"
-
 _cleanup() {
     docker rm -f "$docker_custom_unix_id"
     sudo rm -rf "${sock_dir}"
