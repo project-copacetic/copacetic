@@ -2,7 +2,7 @@
 
 # dockerd requires containerd snapshotter support to be enabled otherwise required features for buildkit are disabled.
 docker build -t dind -<<EOF
-FROM docker:24.0-dind
+FROM docker:26.1.1-dind
 RUN mkdir -p /etc/docker && echo '{"features": { "containerd-snapshotter": true }}' > /etc/docker/daemon.json
 ENTRYPOINT ["dockerd"]
 EOF
