@@ -38,6 +38,6 @@ body:
     id: idea
     attributes:
       label: "Are you willing to submit PRs to contribute to this bug fix?"
-      description: "This is absolutely not required, but we are happy to guide you in the contribution process especially when you already have a good proposal or understanding of how to implement it. Join us at the `#copa` channel on the [OCI Slack](https://communityinviter.com/apps/opencontainers/join-the-oci-community) if you have any questions."
+      description: "This is absolutely not required, but we are happy to guide you in the contribution process especially when you already have a good proposal or understanding of how to implement it. Join us at the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf) if you have any questions."
       options:
         - label: Yes, I am willing to implement it.

@@ -8,7 +8,7 @@ Welcome! We are very happy to accept community contributions to the project, whe
 A great way to get started is to join our bi-weekly community meeting. The meeting is held every other Monday from 1:30pm PT - 2:15pm PT. You can find the agenda and links to join [here](https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit?usp=sharing)
 
 ## Slack
-To discuss issues with Copa, features, or development, you can join the `#copa` channel on the [OCI Slack](https://communityinviter.com/apps/opencontainers/join-the-oci-community).
+To discuss issues with Copa, features, or development, you can join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf).
 
 ## Contributing Issues
 
