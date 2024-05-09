@@ -217,7 +217,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 
 	cmd2 := exec.Command("docker", "images")
 	out2, err := cmd2.CombinedOutput()
-	spew.Dump("DOCKER IMAGES", out2, err)
+	spew.Dump("DOCKER IMAGES", string(out2), err)
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
