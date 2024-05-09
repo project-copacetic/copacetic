@@ -215,9 +215,9 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, os.Environ()...)
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
-	cmd2 := exec.Command("docker", "images")
+	cmd2 := exec.Command("docker", "info")
 	out2, err := cmd2.CombinedOutput()
-	spew.Dump("DOCKER IMAGES", string(out2), err)
+	spew.Dump("DOCKER INFO", string(out2), err)
 
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
