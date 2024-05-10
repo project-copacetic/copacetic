@@ -45,6 +45,6 @@ EOF
 export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 ```
 
-> Tooling image for Debian-based images are `docker.io/library/debian:11-slim` and RPM-based repos are `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
+> The tooling image for Debian-based images can be `docker.io/library/debian:11-slim` or `docker.io/library/debian:12-slim` depending on the target image version. RPM-based repos use `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
