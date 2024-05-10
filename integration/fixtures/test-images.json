@@ -50,11 +50,19 @@
         "ignoreErrors": false
     },
     {
+        "image": "registry.k8s.io/kube-proxy",
+        "tag": "v1.26.1",
+        "digest": "sha256:1e4f13f5f5c215813fb9c9c6f56da1c0354363f2a69bd12732658f79d585864f",
+        "distro": "Custom Google Distroless",
+        "description": "Custom dpkg/status.d with text names, with both libssl1.1 and libssl1",
+        "ignoreErrors": false
+    },
+    {
         "image": "docker.io/fluent/fluent-bit",
         "tag": "1.8.4",
         "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with base64 names, no apt",
+        "description": "Custom dpkg/status.d with base64 names",
         "ignoreErrors": false
     },
     {
@@ -63,7 +71,7 @@
         "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
         "localName": "localimage:tag",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with base64 names, no apt, locally tagged with image name only",
+        "description": "Custom dpkg/status.d with base64 names, locally tagged with image name only",
         "ignoreErrors": false
     },
     {

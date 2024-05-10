@@ -125,7 +125,7 @@ func TestGetAPTImageName(t *testing.T) {
 	// Run test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getAPTImageName(tc.manifest)
+			got := getAPTImageName(tc.manifest, tc.manifest.Metadata.OS.Version)
 			if got != tc.want {
 				t.Errorf("getAPTImageName() = %v, want %v", got, tc.want)
 			}
@@ -339,7 +339,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 	}
 }
 
-func Test_dpkgManager_GetPackageType(t *testing.T) {
+func TestGetPackageType(t *testing.T) {
 	type fields struct {
 		config        *buildkit.Config
 		workingFolder string
@@ -372,6 +372,69 @@ func Test_dpkgManager_GetPackageType(t *testing.T) {
 			}
 			if got := dm.GetPackageType(); got != tt.want {
 				t.Errorf("dpkgManager.GetPackageType() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_GetPackageInfo(t *testing.T) {
+	type fields struct {
+		name    string
+		version string
+		errMsg  string
+	}
+	tests := []struct {
+		name string
+		file string
+		want fields
+	}{
+		{
+			name: "valid package file format",
+			file: `Package: tzdata
+			Version: 2021a-1+deb11u8
+			Architecture: all
+			Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>
+			Installed-Size: 3393
+			Depends: debconf (>= 0.5) | debconf-2.0
+			Provides: tzdata-bullseye
+			Section: localization
+			Priority: required
+			Multi-Arch: foreign
+			Homepage: https://www.iana.org/time-zones
+			Description: time zone and daylight-saving time data
+			 This package contains data required for the implementation of
+			 standard local time for many representative locations around the
+			 globe. It is updated periodically to reflect changes made by
+			 political bodies to time zone boundaries, UTC offsets, and
+			 daylight-saving rules.`,
+			want: fields{
+				name:    "tzdata",
+				version: "2021a-1+deb11u8",
+				errMsg:  "",
+			},
+		},
+		{
+			name: "invalid package file format",
+			file: "PackageVersion",
+			want: fields{
+				name:    "",
+				version: "",
+				errMsg:  "no package name found for package",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, version, err := GetPackageInfo(tt.file)
+			var errMsg string
+			if err == nil {
+				errMsg = ""
+			} else {
+				errMsg = err.Error()
+			}
+
+			if name != tt.want.name || version != tt.want.version || errMsg != tt.want.errMsg {
+				t.Errorf("GetPackageInfo() = Name: %v, Version: %v Error: %v, want Name: %v, Version: %v, Error: %v", name, version, err, tt.want.name, tt.want.version, tt.want.errMsg)
 			}
 		})
 	}

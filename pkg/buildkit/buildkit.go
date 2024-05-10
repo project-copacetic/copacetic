@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 
+	"github.com/containerd/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -60,7 +61,13 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 
 // Extracts the bytes of the file denoted by `path` from the state `st`.
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
-	def, err := st.Marshal(ctx)
+	// since platform is obtained from host, override it in the case of Darwin
+	platform := platforms.Normalize(platforms.DefaultSpec())
+	if platform.OS != "linux" {
+		platform.OS = "linux"
+	}
+
+	def, err := st.Marshal(ctx, llb.Platform(platform))
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -43,6 +44,7 @@ type rpmManager struct {
 	workingFolder string
 	rpmTools      rpmToolPaths
 	isDistroless  bool
+	packageInfo   map[string]string
 }
 
 type rpmDBType uint
@@ -286,6 +288,16 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	switch rpmDB {
 	case RPMDBManifests:
 		rm.isDistroless = true
+		rpmManifest2File, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmManifest2)
+		if err != nil {
+			return err
+		}
+		// parse container-manifest-2 to get installed package names and versions
+		pkgInfo, err := parseManifestFile(string(rpmManifest2File))
+		if err != nil {
+			return err
+		}
+		rm.packageInfo = pkgInfo
 	case RPMDBNone, RPMDBMixed:
 		err := fmt.Errorf("could not find determine RPM DB type of target image: %v", rpmDB)
 		log.Error(err)
@@ -324,6 +336,30 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		rm.rpmTools = rpmTools
 	}
 	return nil
+}
+
+func parseManifestFile(file string) (map[string]string, error) {
+	// split into lines
+	file = strings.TrimSuffix(file, "\n")
+	lines := strings.Split(file, "\n")
+
+	resultMap := make(map[string]string)
+
+	// iterate over lines
+	for _, line := range lines {
+		// split line into columns
+		columns := strings.Split(line, "\t")
+
+		if len(columns) >= 2 {
+			// get package name and version
+			name := columns[0]
+			version := strings.TrimSuffix(columns[1], ".cm2")
+			resultMap[name] = version
+		} else {
+			return nil, errors.New("unexpected format when parsing rpm manifest file")
+		}
+	}
+	return resultMap, nil
 }
 
 // Patch a regular RPM-based image with:
@@ -394,16 +430,53 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
 
+	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
+	if updates == nil {
+		jsonPackageData, err := json.Marshal(rm.packageInfo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
+		}
+
+		busyboxCopied = busyboxCopied.Run(
+			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
+			llb.Args([]string{
+				`bash`, `-c`, `
+								json_str=$PACKAGES_PRESENT
+								update_packages=""
+
+								while IFS=':' read -r package version; do
+									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+
+									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+									latest_version=$(yum info $pkg_name 2>/dev/null | grep "Version" | sed -n '$s/Version *: //p')
+
+									if [ "$latest_version" != "$pkg_version" ]; then
+										update_packages="$update_packages $pkg_name"
+									fi
+								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+								echo "$update_packages" > packages.txt
+						`,
+			})).Root()
+	}
+
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
-	const rpmDownloadTemplate = `yumdownloader --downloadonly --downloaddir=. --best -y %s`
-	pkgStrings := []string{}
-	for _, u := range updates {
-		pkgStrings = append(pkgStrings, u.Name)
+	var downloadCmd string
+	if updates != nil {
+		const rpmDownloadTemplate = `yumdownloader --downloadonly --downloaddir=. --best -y %s`
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
+	} else {
+		// only updated the outdated pacakges from packages.txt
+		downloadCmd = `xargs -a packages.txt -n 1 yumdownloader --downloadonly --downloaddir=. --best -y`
 	}
-	downloadCmd := fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
+
 	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root

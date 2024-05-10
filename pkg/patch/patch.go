@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/containerd/platforms"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
@@ -188,17 +190,21 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					return nil, err
 				}
 
-				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(osType, config, workingFolder)
+				osVersion, err := getOSVersion(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
 				}
-				// do not specify updates, will update all
-				updates = nil
+
+				// get package manager based on os family type
+				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
 			} else {
 				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -213,10 +219,15 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 				return nil, err
 			}
 
-			def, err := patchedImageState.Marshal(ctx)
+			platform := platforms.Normalize(platforms.DefaultSpec())
+			if platform.OS != "linux" {
+				platform.OS = "linux"
+			}
+
+			def, err := patchedImageState.Marshal(ctx, llb.Platform(platform))
 			if err != nil {
 				ch <- err
-				return nil, err
+				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
 			}
 
 			res, err := c.Solve(ctx, gwclient.SolveRequest{
@@ -319,6 +330,16 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		log.Error("unsupported osType", osType)
 		return "", errors.ErrUnsupported
 	}
+}
+
+func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
+	r := bytes.NewReader(osreleaseBytes)
+	osData, err := osrelease.Parse(ctx, r)
+	if err != nil {
+		return "", fmt.Errorf("unable to parse os-release data %w", err)
+	}
+
+	return osData["VERSION_ID"], nil
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {

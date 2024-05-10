@@ -203,3 +203,48 @@ func TestGetOSType(t *testing.T) {
 		})
 	}
 }
+
+func TestGetOSVersion(t *testing.T) {
+	testCases := []struct {
+		osRelease         []byte
+		errMsg            string
+		expectedOSVersion string
+	}{
+		{
+			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
+			NAME="Debian GNU/Linux"
+			VERSION_ID="11"
+			VERSION="11 (bullseye)"
+			VERSION_CODENAME=bullseye
+			ID=debian
+			HOME_URL="https://www.debian.org/"
+			SUPPORT_URL="https://www.debian.org/support"
+			BUG_REPORT_URL="https://bugs.debian.org/"
+			`),
+			errMsg:            "",
+			expectedOSVersion: "11",
+		},
+		{
+			osRelease:         []byte("Cannot Parse Version_ID"),
+			errMsg:            "unable to parse os-release data osrelease: malformed line \"Cannot Parse Version_ID\"",
+			expectedOSVersion: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run("TestGetOSVersion", func(t *testing.T) {
+			osVersion, err := getOSVersion(context.TODO(), tc.osRelease)
+
+			var errMsg string
+			if err == nil {
+				errMsg = ""
+			} else {
+				errMsg = err.Error()
+			}
+
+			// Use testify package to assert that the output manifest and error match the expected ones
+			assert.Equal(t, tc.expectedOSVersion, osVersion)
+			assert.Equal(t, tc.errMsg, errMsg)
+		})
+	}
+}
