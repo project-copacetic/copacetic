@@ -205,7 +205,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 		// Validate no errors were encountered if updating all
 		if !ignoreErrors {
-			apkInstalled = apkInstalled.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
+			apkInstalled = apkInstalled.Run(llb.Args([]string{"sh", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
 		}
 	}
 
