@@ -13,9 +13,12 @@ sock_dir="$(mktemp -d)"
 
 docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
 
-until [ "$(docker inspect -f '{{.State.Status}}' $docker_custom_unix_id)" == "running" ]; do
+
+timeout 5m bash -c '
+until [ "$(docker inspect -f "{{.State.Status}}" $docker_custom_unix_id)" == "running" ]; do
     sleep 0.1
 done
+'
 
 _cleanup() {
     docker rm -f "$docker_custom_unix_id"
