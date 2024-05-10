@@ -63,3 +63,32 @@ copa patch \
     -t 1.21.6-patched \
     -a tcp://0.0.0.0:$BUILDKIT_PORT
 ```
+
+### Option 5: Buildkit over TCP with mTLS
+
+```bash
+export BUILDKIT_VERSION=v0.12.4
+export BUILDKIT_PORT=8888
+docker run \
+    --detach \
+    --rm \
+    --privileged \
+    -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
+    --name buildkitd \
+    --entrypoint buildkitd \
+    -v $PWD/.certs:/etc/buildkit/certs \
+    "moby/buildkit:$BUILDKIT_VERSION" \
+    --addr tcp://0.0.0.0:$BUILDKIT_PORT \
+    --tlscacert /etc/buildkit/certs/daemon/ca.pem \
+    --tlscert /etc/buildkit/certs/daemon/cert.pem \
+    --tlskey /etc/buildkit/certs/daemon/key.pem
+
+copa patch \
+    -i docker.io/library/nginx:1.21.6 \
+    -r nginx.1.21.6.json \
+    -t 1.21.6-patched \
+    -a tcp://0.0.0.0:$BUILDKIT_PORT
+    --cacert /path/to/ca-certificate \
+    --cert  /path/to/buildkit/client/cert \
+    --key /path/to/buildkit/key
+```
