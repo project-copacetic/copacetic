@@ -385,13 +385,13 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
-		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all 2>>error_log.txt'`
+		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1; if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
-		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all 2>>error_log.txt'`
+		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1; if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all 2>>error_log.txt'`
+		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all 2>&1; if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
@@ -482,7 +482,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		downloadCmd = `
 		packages=$(<packages.txt)
 		for package in $packages; do
-			yumdownloader --downloadonly --downloaddir=. --best -y "$package" 2>>error_log.txt
+			output=$(yumdownloader --downloadonly --downloaddir=. --best -y "$package" 2>&1)
+			if [ $? -ne 0 ]; then
+				echo "$output" >>error_log.txt
+			fi
 		done
 		`
 	}
