@@ -264,6 +264,14 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		installCmd = `sh -c "apt upgrade -y && apt clean -y && apt autoremove"`
 	}
 
+	const heldCmd = `sh -c "apt-mark showhold"`
+	aptHeld := aptUpdated.Dir(resultsPath).Run(llb.Shlex(heldCmd)).Root()
+	heldPackagesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptHeld, resultsPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	log.Info("These packages could not be patched because they were held by apt:", string(heldPackagesBytes))
+
 	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
