@@ -391,7 +391,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		const yumInstallTemplate = `sh -c 'output=$(%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		const microdnfInstallTemplate = `output=$(sh -c '%[1]s update %[2]s && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
+		const microdnfInstallTemplate = `sh -c 'output=$(%[1]s update %[2]s && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
