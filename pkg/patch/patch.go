@@ -313,6 +313,8 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "cbl-mariner", nil
 	case strings.Contains(osType, "red hat"):
 		return "redhat", nil
+	case strings.Contains(osType, "rocky"):
+		return "rocky", nil
 	default:
 		log.Error("unsupported osType", osType)
 		return "", errors.ErrUnsupported
