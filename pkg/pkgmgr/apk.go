@@ -200,12 +200,15 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		}
 	} else {
 		// if updates is not specified, update all packages
-		installCmd := `apk upgrade --no-cache 2>&1; if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi`
+		//installCmd := `apk upgrade --no-cache 2>&1; if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi`
+		installCmd := `apk upgrade --no-cache`
 		apkInstalled = apkUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
-		// Validate no errors were encountered if updating all
-		if !ignoreErrors {
-			apkInstalled = apkInstalled.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
-		}
+		/*
+			// Validate no errors were encountered if updating all
+			if !ignoreErrors {
+				apkInstalled = apkInstalled.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
+			}
+		*/
 	}
 
 	// Diff the installed updates and merge that into the target image
