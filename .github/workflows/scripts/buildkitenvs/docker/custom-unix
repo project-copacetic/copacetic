@@ -15,10 +15,11 @@ docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${
 
 
 timeout 5m bash -c '
+docker_custom_unix_id="$1"
 until [ "$(docker inspect -f "{{.State.Status}}" $docker_custom_unix_id)" == "running" ]; do
     sleep 0.1
 done
-'
+' -- "$docker_custom_unix_id"
 
 _cleanup() {
     docker rm -f "$docker_custom_unix_id"
