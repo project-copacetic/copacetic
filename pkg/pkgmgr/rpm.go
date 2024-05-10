@@ -490,7 +490,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		`
 	}
 
-	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := busyboxCopied.Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates != nil && !ignoreErrors {
