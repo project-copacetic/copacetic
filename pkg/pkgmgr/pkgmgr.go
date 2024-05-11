@@ -27,13 +27,13 @@ type PackageManager interface {
 	GetPackageType() string
 }
 
-func GetPackageManager(osType string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
+func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
 	switch osType {
 	case "alpine":
 		return &apkManager{config: config, workingFolder: workingFolder}, nil
 	case "debian", "ubuntu":
-		return &dpkgManager{config: config, workingFolder: workingFolder}, nil
-	case "cbl-mariner", "centos", "redhat", "amazon":
+		return &dpkgManager{config: config, workingFolder: workingFolder, osVersion: osVersion}, nil
+	case "cbl-mariner", "centos", "redhat", "rocky", "amazon":
 		return &rpmManager{config: config, workingFolder: workingFolder}, nil
 	default:
 		return nil, fmt.Errorf("unsupported osType %s specified", osType)
