@@ -92,7 +92,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	tag := taggedName.Tag()
 	if patchedTag == "" {
 		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+			log.Warnf("No output tag specified for digest-referenced image, defaulting to %s", defaultPatchedTagSuffix)
 			patchedTag = defaultPatchedTagSuffix
 		} else {
 			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
@@ -184,13 +184,13 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
 				}
 
-				osType, err := getOSType(ctx, fileBytes)
+				osType, osVersion, err := getOSType(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
 				}
 
-				osVersion, err := getOSVersion(ctx, fileBytes)
+				osVersion, err = getOSVersion(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -301,34 +301,40 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	return eg.Wait()
 }
 
-func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
+func getOSType(ctx context.Context, osreleaseBytes []byte) (string, string, error) {
 	r := bytes.NewReader(osreleaseBytes)
 	osData, err := osrelease.Parse(ctx, r)
 	if err != nil {
-		return "", fmt.Errorf("unable to parse os-release data %w", err)
+		return "", "", fmt.Errorf("unable to parse os-release data %w", err)
 	}
 
 	osType := strings.ToLower(osData["NAME"])
 	switch {
 	case strings.Contains(osType, "alpine"):
-		return "alpine", nil
+		return "alpine", "", nil
 	case strings.Contains(osType, "debian"):
-		return "debian", nil
+		return "debian", osData["VERSION_ID"], nil
 	case strings.Contains(osType, "ubuntu"):
-		return "ubuntu", nil
+		// For Ubuntu, extract the major and minor version (e.g., 22.04)
+		versionParts := strings.Split(osData["VERSION_ID"], ".")
+		if len(versionParts) >= 2 {
+			osVersion := strings.Join(versionParts[:2], ".")
+			return "ubuntu", osVersion, nil
+		}
+		return "", "", fmt.Errorf("invalid Ubuntu version format: %s", osData["VERSION_ID"])
 	case strings.Contains(osType, "amazon"):
-		return "amazon", nil
+		return "amazon", osData["VERSION_ID"], nil
 	case strings.Contains(osType, "centos"):
-		return "centos", nil
+		return "centos", osData["VERSION_ID"], nil
 	case strings.Contains(osType, "mariner"):
-		return "cbl-mariner", nil
+		return "cbl-mariner", osData["VERSION_ID"], nil
 	case strings.Contains(osType, "red hat"):
-		return "redhat", nil
+		return "redhat", osData["VERSION_ID"], nil
 	case strings.Contains(osType, "rocky"):
-		return "rocky", nil
+		return "rocky", osData["VERSION_ID"], nil
 	default:
 		log.Error("unsupported osType", osType)
-		return "", errors.ErrUnsupported
+		return "", "", errors.ErrUnsupported
 	}
 }
 
