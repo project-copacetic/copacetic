@@ -184,13 +184,13 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
 				}
 
-				osType, osVersion, err := getOSType(ctx, fileBytes)
+				osType, _, err := getOSType(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
 				}
 
-				osVersion, err = getOSVersion(ctx, fileBytes)
+				osVersion, err := getOSVersion(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
