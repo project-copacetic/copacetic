@@ -264,9 +264,10 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		installCmd = `sh -c "apt upgrade -y && apt clean -y && apt autoremove"`
 	}
 
-	const heldCmd = `sh -c "apt-mark showhold"`
-	aptHeld := aptUpdated.Dir(resultsPath).Run(llb.Shlex(heldCmd)).Root()
-	heldPackagesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptHeld, resultsPath)
+	heldCmd := `sh -c "apt-mark showhold > %s"`
+	heldCmd = fmt.Sprintf(heldCmd, statusdOutputFilename)
+	aptHeld := aptUpdated.Run(llb.Shlex(heldCmd)).Root()
+	heldPackagesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptHeld, statusdOutputFilename)
 	if err != nil {
 		return nil, nil, err
 	}
