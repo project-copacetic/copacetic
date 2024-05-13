@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -43,13 +44,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output, outputFormat string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, outputFormat, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -74,7 +75,13 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+type nopWriteCloser struct {
+    io.Writer
+}
+
+func (nopWriteCloser) Close() error { return nil }
+
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output, outputFormat string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -92,7 +99,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	tag := taggedName.Tag()
 	if patchedTag == "" {
 		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+			log.Warnf("No output tag specified for digest-referenced image, defaulting to %s", defaultPatchedTagSuffix)
 			patchedTag = defaultPatchedTagSuffix
 		} else {
 			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
@@ -144,20 +151,56 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
 	solveOpt := client.SolveOpt{
-		Exports: []client.ExportEntry{
-			{
-				Type: client.ExporterDocker,
-				Attrs: map[string]string{
-					"name": patchedImageName,
-				},
-				Output: func(_ map[string]string) (io.WriteCloser, error) {
-					return pipeW, nil
-				},
-			},
-		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+		Exports:  []client.ExportEntry{},
+		Frontend: "",
+		Session:  attachable,
 	}
+
+	if outputFormat == "docker" {
+        solveOpt.Exports = append(solveOpt.Exports, client.ExportEntry{
+            Type: client.ExporterDocker,
+            Attrs: map[string]string{
+                "name": patchedImageName,
+            },
+            Output: func(_ map[string]string) (io.WriteCloser, error) {
+                return pipeW, nil
+            },
+        })
+    } else if outputFormat == "oci" {
+		var ociOutput io.Writer
+		if output == "" {
+			// Create a temporary file for OCI output if no path is specified
+			tmpFile, err := os.CreateTemp("", "copa-oci-*.tar")
+			if err != nil {
+				return err
+			}
+			defer os.Remove(tmpFile.Name()) // Clean up the temporary file
+			output = tmpFile.Name()         // Use the temporary file's path
+			ociOutput = tmpFile
+		} else {
+			ociFile, err := os.Create(output)
+			if err != nil {
+				return err
+			}
+			defer ociFile.Close()
+			ociOutput = ociFile
+		}
+	
+		// Use a buffered writer for better performance
+		bufWriter := bufio.NewWriter(ociOutput)
+		defer bufWriter.Flush() // Ensure all data is written
+	
+		solveOpt.Exports = append(solveOpt.Exports, client.ExportEntry{
+			Type:   client.ExporterOCI,
+			Attrs:  map[string]string{},
+			Output: func(_ map[string]string) (io.WriteCloser, error) {
+				return nopWriteCloser{bufWriter}, nil
+			},
+		})
+    } else {
+        return fmt.Errorf("invalid output format '%s'", outputFormat)
+    }
+	
 	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
 	if err != nil {
 		return err
@@ -212,7 +255,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			}
 
 			// Export the patched image state to Docker
-			// TODO: Add support for other output modes as buildctl does.
 			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
 				ch <- err
@@ -298,7 +340,19 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return pipeR.Close()
 	})
 
-	return eg.Wait()
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+	
+	if outputFormat == "oci" {
+		// After the Patch function completes successfully
+		cmd := exec.Command("tar", "-xvf", output, "-C", ".")
+		err := cmd.Run()
+		if err != nil {
+          return err		
+		}
+	}
+	return nil
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
