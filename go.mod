@@ -6,7 +6,7 @@ toolchain go1.21.5
 
 require (
 	github.com/aquasecurity/trivy v0.45.1
-	github.com/containerd/containerd v1.7.13
+	github.com/containerd/containerd v1.7.16
 	github.com/cpuguy83/dockercfg v0.3.1
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.6.0
@@ -60,7 +60,7 @@ require (
 	github.com/containerd/console v1.0.4 // indirect
 	github.com/containerd/continuity v0.4.3 // indirect
 	github.com/containerd/log v0.1.0 // indirect
-	github.com/containerd/ttrpc v1.2.2 // indirect
+	github.com/containerd/ttrpc v1.2.3 // indirect
 	github.com/containerd/typeurl/v2 v2.1.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/docker/distribution v2.8.2+incompatible // indirect
