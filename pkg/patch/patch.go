@@ -85,7 +85,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 	taggedName, ok := imageName.(reference.Tagged)
 	if !ok {
-		err := errors.New("unexpected: TagNameOnly did not create Tagged ref")
+		err := errors.New("Unrecognized docker repository format. Please use one of the following: image-registry/imagename:imageversion or image-registry/imagename:imageversion@indexdigest")
 		log.Error(err)
 		return err
 	}
