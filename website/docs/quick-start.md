@@ -51,6 +51,12 @@ The update all functionality allows you to address discrepancies that may arise 
     ```bash
     copa patch -r nginx.1.21.6.json -i docker.io/library/nginx:1.21.6
     ```
+   
+    If you want to patch an image using the digest, run the following command instead:
+3. 
+    ```bash
+    copa patch -r nginx.1.21.6.json -i docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+    ```
 
     In any of these cases, `copa` is non-destructive and exports a new image with the specified `1.21.6-patched` label to the local Docker daemon.
 
