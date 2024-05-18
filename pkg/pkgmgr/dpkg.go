@@ -89,7 +89,7 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 		osType = manifest.Metadata.OS.Type
 	}
 
-git 	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
+	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
 	return fmt.Sprintf("%s:%s", osType, version)
 }
 
@@ -315,7 +315,7 @@ func GetPackageInfo(file string) (string, string, error) {
 // i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
 	// TODO: Add support for custom APT config and gpg key injection
-	// Since this takes place in the target container, it can interfxere with install actions
+	// Since this takes place in the target container, it can interfere with install actions
 	// such as the installation of the updated debian-archive-keyring package, so it's probably best
 	// to separate it out to an explicit container edit command or opt-in before patching.
 	aptUpdated := dm.config.ImageState.Run(
