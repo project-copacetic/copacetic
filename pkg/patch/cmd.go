@@ -17,6 +17,7 @@ import (
 
 type patchArgs struct {
 	appImage      string
+	toolingRepo   string
 	reportFile    string
 	patchedTag    string
 	workingFolder string
@@ -44,6 +45,7 @@ func NewPatchCmd() *cobra.Command {
 			return Patch(context.Background(),
 				ua.timeout,
 				ua.appImage,
+				ua.toolingRepo,
 				ua.reportFile,
 				ua.patchedTag,
 				ua.workingFolder,
@@ -56,6 +58,7 @@ func NewPatchCmd() *cobra.Command {
 	}
 	flags := patchCmd.Flags()
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
+	flags.StringVarP(&ua.toolingRepo, "tooling-repo", "", "", "Tooling repository name")
 	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")

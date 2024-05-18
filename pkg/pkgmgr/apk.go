@@ -117,8 +117,9 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	return errorPkgs, allErrors.ErrorOrNil()
 }
 
-func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, config RuntimeConfig) (*llb.State, []string, error) {
 	// If manifest is nil, update all packages
+	ignoreErrors := config.IgnoreErrors
 	if manifest == nil {
 		updatedImageState, _, err := am.upgradePackages(ctx, nil)
 		if err != nil {

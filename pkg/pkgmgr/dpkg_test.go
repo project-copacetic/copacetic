@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"reflect"
 	"strings"
 	"testing"
@@ -438,4 +439,12 @@ func Test_GetPackageInfo(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_GetToolingRepo_WhenToolingRepoSupplied_ReturnsConfiguredRepo(t *testing.T) {
+	require.Equal(t, getToolingRepo("foobar"), "foobar")
+}
+
+func Test_GetToolingRepo_WhenNoToolingRepoSupplied_ReturnsDefaultRepo(t *testing.T) {
+	require.Equal(t, getToolingRepo(""), defaultToolingRepo)
 }

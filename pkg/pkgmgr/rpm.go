@@ -170,11 +170,12 @@ func getRPMDBType(b []byte) rpmDBType {
 	}
 }
 
-func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, config RuntimeConfig) (*llb.State, []string, error) {
 	// Resolve set of unique packages to update if UpdateManifest provided, else update all
 	var updates unversioned.UpdatePackages
 	var rpmComparer VersionComparer
 	var err error
+	ignoreErrors := config.IgnoreErrors
 	if manifest != nil {
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)

@@ -43,13 +43,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, toolingRepo, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, toolingRepo, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -74,7 +74,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, toolingRepo, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -212,8 +212,12 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			}
 
 			// Export the patched image state to Docker
-			// TODO: Add support for other output modes as buildctl does.
-			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
+			// TODO: Add support for other output modes as buildctl does
+			runtimeConfig := pkgmgr.RuntimeConfig{
+				IgnoreErrors: ignoreError,
+				ToolingRepo:  toolingRepo,
+			}
+			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, runtimeConfig)
 			if err != nil {
 				ch <- err
 				return nil, err

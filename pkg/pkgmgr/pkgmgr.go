@@ -22,8 +22,13 @@ const (
 	resultManifest = "results.manifest"
 )
 
+type RuntimeConfig struct {
+	ToolingRepo  string
+	IgnoreErrors bool
+}
+
 type PackageManager interface {
-	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
+	InstallUpdates(context.Context, *unversioned.UpdateManifest, RuntimeConfig) (*llb.State, []string, error)
 	GetPackageType() string
 }
 

@@ -27,6 +27,7 @@ const (
 	dpkgDownloadPath = "/var/cache/apt/archives"
 
 	statusdOutputFilename = "statusd_type"
+	defaultToolingRepo    = "docker.io"
 )
 
 type dpkgManager struct {
@@ -88,8 +89,7 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 		osType = manifest.Metadata.OS.Type
 	}
 
-	// TODO: support qualifying image name with designated repository
-	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
+git 	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
 	return fmt.Sprintf("%s:%s", osType, version)
 }
 
@@ -112,10 +112,19 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 	return statusType
 }
 
-func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func getToolingRepo(toolingRepo string) string {
+	if toolingRepo != "" {
+		return toolingRepo
+	}
+	return defaultToolingRepo
+}
+
+func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, config RuntimeConfig) (*llb.State, []string, error) {
 	// Probe for additional information to execute the appropriate update install graphs
+	ignoreErrors := config.IgnoreErrors
+	toolRepo := getToolingRepo(config.ToolingRepo)
 	toolImageName := getAPTImageName(manifest, dm.osVersion)
-	if err := dm.probeDPKGStatus(ctx, toolImageName, (manifest == nil)); err != nil {
+	if err := dm.probeDPKGStatus(ctx, fmt.Sprintf("%s/%s", toolRepo, toolImageName), (manifest == nil)); err != nil {
 		return nil, nil, err
 	}
 
@@ -306,7 +315,7 @@ func GetPackageInfo(file string) (string, string, error) {
 // i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
 	// TODO: Add support for custom APT config and gpg key injection
-	// Since this takes place in the target container, it can interfere with install actions
+	// Since this takes place in the target container, it can interfxere with install actions
 	// such as the installation of the updated debian-archive-keyring package, so it's probably best
 	// to separate it out to an explicit container edit command or opt-in before patching.
 	aptUpdated := dm.config.ImageState.Run(
