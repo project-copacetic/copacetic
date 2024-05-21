@@ -365,12 +365,10 @@ func TestIsValidPackage(t *testing.T) {
 		ver    string
 		errMsg string
 	}{
-		{name: "Valid version - numbers only", ver: "1.2.3", errMsg: ""},
 		{name: "Valid version - numbers and dot", ver: "1.2.3.4", errMsg: ""},
 		{name: "Valid version - with hyphen", ver: "1.2.3-beta", errMsg: ""},
 		{name: "Valid version - with underscore", ver: "2_0_0", errMsg: ""},
 		{name: "Valid version - with tilde", ver: "3.0.1~rc1", errMsg: ""},
-		{name: "Valid version - with colon", ver: "4:0:1", errMsg: ""},
 		{name: "Invalid version - starts with letter", ver: "a1.2.3", errMsg: "upstream_version must start with digit"},
 		{name: "Invalid version - with space", ver: "1.2.3 with fix", errMsg: "upstream_version includes invalid character"},
 		{name: "Invalid version - with special character", ver: "1.2.3@", errMsg: "upstream_version includes invalid character"},

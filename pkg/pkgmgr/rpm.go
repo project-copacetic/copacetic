@@ -91,7 +91,7 @@ func isValidPackage(ver string) error {
 		return errors.New("upstream_version must start with digit")
 	}
 
-	allowedSymbols := ".-+~:_"
+	allowedSymbols := ".-+~_"
 	for _, s := range ver {
 		if !unicode.IsDigit(s) && !unicode.IsLetter(s) && !strings.ContainsRune(allowedSymbols, s) {
 			return errors.New("upstream_version includes invalid character")
