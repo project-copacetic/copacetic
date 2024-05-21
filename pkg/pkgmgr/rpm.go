@@ -83,10 +83,7 @@ func (st rpmDBType) String() string {
 // Depending on go-rpm-version lib for RPM version comparison rules.
 func isValidRPMVersion(v string) bool { // nolint:revive
 	err := isValidPackage(v)
-	if err != nil {
-		return false
-	}
-	return true
+	return err == nil
 }
 
 func isValidPackage(ver string) error {
