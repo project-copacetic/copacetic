@@ -400,7 +400,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
-	if updates != nil && !ignoreErrors {
+	if updates == nil && !ignoreErrors {
 		installed = installed.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
 	}
 
@@ -493,7 +493,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	downloaded := busyboxCopied.Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
-	if updates != nil && !ignoreErrors {
+	if updates == nil && !ignoreErrors {
 		downloaded = downloaded.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
 	}
 

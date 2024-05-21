@@ -334,7 +334,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
-	if updates != nil && !ignoreErrors {
+	if updates == nil && !ignoreErrors {
 		aptInstalled = aptInstalled.Run(llb.Args([]string{"sh", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
 	}
 
@@ -433,7 +433,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	downloaded := updated.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
-	if updates != nil && !ignoreErrors {
+	if updates == nil && !ignoreErrors {
 		downloaded = downloaded.Run(llb.Args([]string{"sh", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
 	}
 
