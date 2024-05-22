@@ -358,3 +358,61 @@ func Test_rpmManager_GetPackageType(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidVersion(t *testing.T) {
+	tests := []struct {
+		testName    string
+		pkgVersion  string
+		expectedErr string
+	}{
+		{
+			testName:    "Valid version, numbers and dot",
+			pkgVersion:  "1.2.3.4",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with hyphen",
+			pkgVersion:  "1.2.3-beta",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with underscore",
+			pkgVersion:  "2_0_0",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with tilde",
+			pkgVersion:  "3.0.1~rc1",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with colon",
+			pkgVersion:  "2:9.0.1314-1.amzn2.0.1",
+			expectedErr: "",
+		},
+		{
+			testName:    "Invalid version, starts with letter",
+			pkgVersion:  "a1.2.3",
+			expectedErr: "upstream_version must start with digit",
+		},
+		{
+			testName:    "Invalid version, has spaces",
+			pkgVersion:  "1.2.3 with fix",
+			expectedErr: "upstream_version 1.2.3 with fix includes invalid character ' '",
+		},
+		{
+			testName:    "Invalid version, has special character",
+			pkgVersion:  "1.2.3@",
+			expectedErr: "upstream_version 1.2.3@ includes invalid character '@'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.testName, func(t *testing.T) {
+			err := isValidVersion(tt.pkgVersion)
+			if (err != nil && err.Error() != tt.expectedErr) || (err == nil && tt.expectedErr != "") {
+				t.Errorf("isValidPackage(%q) error = %v, want %v", tt.pkgVersion, err, tt.expectedErr)
+			}
+		})
+	}
+}
