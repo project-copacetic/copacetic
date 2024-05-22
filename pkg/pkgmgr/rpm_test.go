@@ -359,27 +359,59 @@ func Test_rpmManager_GetPackageType(t *testing.T) {
 	}
 }
 
-func TestIsValidPackage(t *testing.T) {
+func TestIsValidVersion(t *testing.T) {
 	tests := []struct {
-		name   string
-		ver    string
-		errMsg string
+		testName    string
+		pkgVersion  string
+		expectedErr string
 	}{
-		{name: "Valid version - numbers and dot", ver: "1.2.3.4", errMsg: ""},
-		{name: "Valid version - with hyphen", ver: "1.2.3-beta", errMsg: ""},
-		{name: "Valid version - with underscore", ver: "2_0_0", errMsg: ""},
-		{name: "Valid version - with tilde", ver: "3.0.1~rc1", errMsg: ""},
-		{name: "Valid version - with colon", ver: "2:9.0.1314-1.amzn2.0.1", errMsg: ""},
-		{name: "Invalid version - starts with letter", ver: "a1.2.3", errMsg: "upstream_version must start with digit"},
-		{name: "Invalid version - with space", ver: "1.2.3 with fix", errMsg: "upstream_version includes invalid character"},
-		{name: "Invalid version - with special character", ver: "1.2.3@", errMsg: "upstream_version includes invalid character"},
+		{
+			testName:    "Valid version, numbers and dot",
+			pkgVersion:  "1.2.3.4",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with hyphen",
+			pkgVersion:  "1.2.3-beta",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with underscore",
+			pkgVersion:  "2_0_0",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with tilde",
+			pkgVersion:  "3.0.1~rc1",
+			expectedErr: "",
+		},
+		{
+			testName:    "Valid version, with colon",
+			pkgVersion:  "2:9.0.1314-1.amzn2.0.1",
+			expectedErr: "",
+		},
+		{
+			testName:    "Invalid version, starts with letter",
+			pkgVersion:  "a1.2.3",
+			expectedErr: "upstream_version must start with digit",
+		},
+		{
+			testName:    "Invalid version, has spaces",
+			pkgVersion:  "1.2.3 with fix",
+			expectedErr: "upstream_version 1.2.3 with fix includes invalid character ' '",
+		},
+		{
+			testName:    "Invalid version, has special character",
+			pkgVersion:  "1.2.3@",
+			expectedErr: "upstream_version 1.2.3@ includes invalid character '@'",
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := isValidPackage(tt.ver)
-			if (err != nil && err.Error() != tt.errMsg) || (err == nil && tt.errMsg != "") {
-				t.Errorf("isValidPackage(%q) error = %v, want %v", tt.ver, err, tt.errMsg)
+		t.Run(tt.testName, func(t *testing.T) {
+			err := isValidVersion(tt.pkgVersion)
+			if (err != nil && err.Error() != tt.expectedErr) || (err == nil && tt.expectedErr != "") {
+				t.Errorf("isValidPackage(%q) error = %v, want %v", tt.pkgVersion, err, tt.expectedErr)
 			}
 		})
 	}

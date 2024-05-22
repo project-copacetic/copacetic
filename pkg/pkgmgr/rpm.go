@@ -82,11 +82,11 @@ func (st rpmDBType) String() string {
 
 // Depending on go-rpm-version lib for RPM version comparison rules.
 func isValidRPMVersion(v string) bool { // nolint:revive
-	err := isValidPackage(v)
+	err := isValidVersion(v)
 	return err == nil
 }
 
-func isValidPackage(ver string) error {
+func isValidVersion(ver string) error {
 	if !unicode.IsDigit(rune(ver[0])) {
 		return errors.New("upstream_version must start with digit")
 	}
@@ -94,7 +94,7 @@ func isValidPackage(ver string) error {
 	allowedSymbols := ".-+~:_"
 	for _, s := range ver {
 		if !unicode.IsDigit(s) && !unicode.IsLetter(s) && !strings.ContainsRune(allowedSymbols, s) {
-			return errors.New("upstream_version includes invalid character")
+			return fmt.Errorf("upstream_version %s includes invalid character %q", ver, s)
 		}
 	}
 	return nil
