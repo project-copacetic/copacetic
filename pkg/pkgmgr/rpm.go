@@ -449,7 +449,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	if updates == nil {
 		jsonPackageData, err := json.Marshal(rm.packageInfo)
 		if err != nil {
-			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
+			return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
 		}
 
 		busyboxCopied = busyboxCopied.Run(
@@ -463,12 +463,17 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
 									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-									latest_version=$(yum info $pkg_name 2>/dev/null | grep "Version" | sed -n '$s/Version *: //p')
+									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2 | sed 's/\.cm2//')
 
 									if [ "$latest_version" != "$pkg_version" ]; then
 										update_packages="$update_packages $pkg_name"
 									fi
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+								if [ -z "$update_packages" ]; then
+									echo "No packages to update"
+									exit 1
+								fi
 
 								echo "$update_packages" > packages.txt
 						`,
