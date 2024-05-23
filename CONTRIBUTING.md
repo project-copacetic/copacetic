@@ -19,9 +19,48 @@ When opening an issue, please select the most appropriate template for what you'
 
 ### Getting Started
 
-Follow the instructions to [setup your dev environment to build copa](./docs/tutorials/dev-setup.md).
+Follow the instructions to [set up your dev environment to build Copacetic](#IDE-setup).
 
-For an overview of the project components, refer to the [copa design](./docs/vulnerability-driven-patching.md) document.
+For an overview of the project components, refer to the [Copa design](./website/docs/design.md) document.
+
+### IDE Setup
+
+We recommend using Goland as the dev environment to simplify the setup process and have access to various debugging tools.
+
+* Download and install [Jetbrains Toolbox](https://www.jetbrains.com/toolbox-app/). 
+* In Jetbrains Toolbox, find and download GoLand. If you do not have a license, a 30-day free trial is available to you. If you are unable to afford the licensing fee for Jetbrains IDEs, Jetbrains makes all IDEs available for free through their [early access program](https://www.jetbrains.com/resources/eap/). 
+* Fork Copacetic on GitHub and import your fork via VCS. 
+* GoLand might prompt you that you're missing tooling such as Go. If this happens, follow the prompts and let GoLand install the latest version of Go for you. 
+* Let the IDE index the project
+
+The IDE should now be ready to use! If you'd like to use the run and debug buttons at the top of the IDE, follow the steps below
+
+* Click the three dots beside the run and debug button
+* Click edit configuration
+* Beside `Program Arguments`, add the following command `patch -r nginx.1.21.6.json -i docker.io/library/nginx:1.21.6`
+
+Copacetic requires all code to be formatted with `gofumpt`. We can automate this by doing the following:
+
+* Download and install `gofumpt` with `go install mvdan.cc/gofumpt@latest`
+* Open Goland settings (File -> Settings)
+* Open the tools section
+* Find the File-Watchers subsection
+* Click on the + on the right side to add a new file watcher
+* Choose custom template
+
+When a window asks for your settings, enter the following:
+
+* Files Types: Select Go Files
+* Scope: Project Files
+* Program: Select your `gofumpt` executable - common directories include `~/go/bin`, `~/sdk/go*/bin` and `/usr/local/go/bin`
+* Arguments: `-w $FilePath$`
+* Output path to refresh: `$FilePath$`
+* Working Directory: `$ProjectFileDir$`
+* Environment Variables: `GOROOT=$GOROOT$;GOPATH=$GOPATH$;PATH=$GoBinDirs$`
+
+Under Advanced Options, disable everything.
+
+After adding the file-watcher configuration, `gofumpt` will automatically run every time a file saves and reformat the code as necessary.
 
 ### Tests
 
@@ -29,6 +68,7 @@ Once you can successfully `make` the project, any code contributions should also
 
 * Pass unit tests via `make test`.
 * Lint cleanly via `make lint`.
+* Be formatted with `gofumpt`.
 
 Pull requests will also be expected to pass the PR functional tests specified by `.github/workflows/build.yml`.
 
@@ -43,7 +83,7 @@ If you'd like to start contributing code to the project, you can search for [iss
 
 For any changes that may involve significant refactoring or development effort, we suggest that you file an issue to discuss the proposal with the maintainers first as it is unlikely that we will accept large PRs without prior discussion that have:
 
-* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./docs/vulnerability-driven-patching.md#design-tenets)).
+* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./website/docs/design.md#design-tenets)).
 * Unsolicited features that significantly expand the functional scope of the tool.
 
 Pull requests should be submitted from your fork of the project with the PR template filled out. This project uses the [Angular commit message format](https://github.com/angular/angular/blob/main/CONTRIBUTING.md#-commit-message-format) for automated changelog generation, so it's helpful to be familiar with it as the maintainers will need to ensure adherence to it on accepting PRs.
