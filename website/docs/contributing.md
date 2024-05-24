@@ -25,35 +25,38 @@ When opening an issue, please select the most appropriate template for what you'
 
 ### Getting Started
 
-Follow the instructions to either:
+Follow the instructions to set up your dev environment to build Copacetic.
 
-* [Setup your dev environment to build copa](./installation.md).
-* [Use the copa development container](#visual-studio-code-development-container) in [Visual Studio Code](https://code.visualstudio.com/).
+For an overview of the project components, refer to the [Copa design](./design.md) document.
 
-For an overview of the project components, refer to the [copa design](./design.md) document.
+### IDE Setup
 
-### Visual Studio Code Development Container
+Copacetic is written in Go, so any IDE that supports Go may be used. If you have an IDE you prefer, simply search for a guide to set it up with Go. If you don't have a preferred IDE or if you're a new developer, some popular options are listed below:
 
-[VSCode](https://code.visualstudio.com/) supports development in a containerized environment through its [Remote - Container extension](https://code.visualstudio.com/docs/remote/containers). This folder provides a development container which encapsulates the dependencies specified in the [instructions to build and run copa](./installation.md).
+* [GoLand](https://www.jetbrains.com/help/go/quick-start-guide-goland.html)
+* [VSCode](https://code.visualstudio.com/docs/languages/go)
+* [Vim](https://github.com/fatih/vim-go)
+* [Zed](https://zed.dev/docs/languages/go)
 
-#### Prerequisites
+After choosing your IDE, we should install [gofumpt](https://github.com/mvdan/gofumpt). It's a stricter formatter than `gofmt` which Copacetic requires to pass all tests. Once installed, you may optionally set it up to run in your IDE of choice by following the instructions about halfway down the page.
 
-1. [Docker](https://docs.docker.com/get-docker/)
-   > For Windows users, enabling [WSL2 back-end integration with Docker](https://docs.docker.com/docker-for-windows/wsl/) is recommended.
-2. [Visual Studio Code](https://code.visualstudio.com/)
-3. [Visual Studio Code Remote - Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+### Docker Setup
 
-> **⚠ If running via Docker Desktop for Windows**
->
-> Note that the [mounted workspace files appear owned by `root`](https://code.visualstudio.com/remote/advancedcontainers/add-nonroot-user) in the dev container, which will cause `git` commands to fail with a `fatal: detected dubious ownership in a repository` error due to [safe.directory](https://git-scm.com/docs/git-config/2.35.2#Documentation/git-config.txt-safedirectory) checks. This can be addressed by changing the mapped ownership of the workspace files in the dev container to the `vscode` user:
->
-> ```bash
-> sudo chown -R vscode:vscode /workspace/copacetic
-> ```
+Copacetic requires Docker for patching some images. To install Docker, follow the [Docker installation guide](https://docs.docker.com/engine/install/).
 
-#### Personalizing user settings in a dev container
+If running Copa gives you the following error:
 
-VSCode supports applying your user settings, such as your `.gitconfig`, to a dev container through the use of [dotfiles repositories](https://code.visualstudio.com/docs/remote/containers#_personalizing-with-dotfile-repositories). This can be done through your own VSCode `settings.json` file without changing the dev container image or configuration.
+```bash
+Error: could not use docker driver: failed to solve: requested experimental feature mergeop  has been disabled on the build server: only enabled with containerd image store backend
+requested experimental feature diffop  has been disabled on the build server: only enabled with containerd image store backend
+missing required buildkit functionality
+could not use buildx driver: listing workers for Build: failed to list workers: Unavailable: connection error: desc = "transport: Error while dialing: open /home/gitpod/.docker/buildx/current: no such file or directory"
+could not use buildkitd driver: %!w(<nil>)
+```
+
+You will need to [enable containerd image store support](https://docs.docker.com/storage/containerd/) within Docker Engine.
+
+> Note: Docker can eat up your disk space. If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. Running this command will not break anything. This is an issue with Docker, not with Copa.
 
 ### Tests
 
@@ -61,6 +64,7 @@ Once you can successfully `make` the project, any code contributions should also
 
 * Pass unit tests via `make test`.
 * Lint cleanly via `make lint`.
+* Be formatted with `gofumpt`.
 
 Pull requests will also be expected to pass the PR functional tests specified by `.github/workflows/build.yml`.
 
@@ -75,7 +79,7 @@ If you'd like to start contributing code to the project, you can search for [iss
 
 For any changes that may involve significant refactoring or development effort, we suggest that you file an issue to discuss the proposal with the maintainers first as it is unlikely that we will accept large PRs without prior discussion that have:
 
-* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./design.md)).
+* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./design.md#design-tenets)).
 * Unsolicited features that significantly expand the functional scope of the tool.
 
 Pull requests should be submitted from your fork of the project with the PR template filled out. This project uses the [Angular commit message format](https://github.com/angular/angular/blob/main/CONTRIBUTING.md#-commit-message-format) for automated changelog generation, so it's helpful to be familiar with it as the maintainers will need to ensure adherence to it on accepting PRs.
@@ -150,4 +154,4 @@ git push --force-with-lease <remote-name> <branch-name>
 
 ## Code of Conduct
 
-This project has adopted the [Contributor Covenant Code of Conduct](./code-of-conduct.md).
+This project has adopted the [CNCF Code of Conduct](../../CODE_OF_CONDUCT)

@@ -19,48 +19,38 @@ When opening an issue, please select the most appropriate template for what you'
 
 ### Getting Started
 
-Follow the instructions to [set up your dev environment to build Copacetic](#IDE-setup).
+Follow the instructions to set up your dev environment to build Copacetic.
 
 For an overview of the project components, refer to the [Copa design](./website/docs/design.md) document.
 
 ### IDE Setup
 
-We recommend using Goland as the dev environment to simplify the setup process and have access to various debugging tools.
+Copacetic is written in Go, so any IDE that supports Go may be used. If you have an IDE you prefer, simply search for a guide to set it up with Go. If you don't have a preferred IDE or if you're a new developer, some popular options are listed below:
 
-* Download and install [Jetbrains Toolbox](https://www.jetbrains.com/toolbox-app/). 
-* In Jetbrains Toolbox, find and download GoLand. If you do not have a license, a 30-day free trial is available to you. If you are unable to afford the licensing fee for Jetbrains IDEs, Jetbrains makes all IDEs available for free through their [early access program](https://www.jetbrains.com/resources/eap/). 
-* Fork Copacetic on GitHub and import your fork via VCS. 
-* GoLand might prompt you that you're missing tooling such as Go. If this happens, follow the prompts and let GoLand install the latest version of Go for you. 
-* Let the IDE index the project
+* [GoLand](https://www.jetbrains.com/help/go/quick-start-guide-goland.html)
+* [VSCode](https://code.visualstudio.com/docs/languages/go)
+* [Vim](https://github.com/fatih/vim-go)
+* [Zed](https://zed.dev/docs/languages/go)
 
-The IDE should now be ready to use! If you'd like to use the run and debug buttons at the top of the IDE, follow the steps below
+After choosing your IDE, we should install [gofumpt](https://github.com/mvdan/gofumpt). It's a stricter formatter than `gofmt` which Copacetic requires to pass all tests. Once installed, you may optionally set it up to run in your IDE of choice by following the instructions about halfway down the page.
 
-* Click the three dots beside the run and debug button
-* Click edit configuration
-* Beside `Program Arguments`, add the following command `patch -r nginx.1.21.6.json -i docker.io/library/nginx:1.21.6`
+### Docker Setup
 
-Copacetic requires all code to be formatted with `gofumpt`. We can automate this by doing the following:
+Copacetic requires Docker for patching some images. To install Docker, follow the [Docker installation guide](https://docs.docker.com/engine/install/).
 
-* Download and install `gofumpt` with `go install mvdan.cc/gofumpt@latest`
-* Open Goland settings (File -> Settings)
-* Open the tools section
-* Find the File-Watchers subsection
-* Click on the + on the right side to add a new file watcher
-* Choose custom template
+If running Copa gives you the following error:
 
-When a window asks for your settings, enter the following:
+```bash
+Error: could not use docker driver: failed to solve: requested experimental feature mergeop  has been disabled on the build server: only enabled with containerd image store backend
+requested experimental feature diffop  has been disabled on the build server: only enabled with containerd image store backend
+missing required buildkit functionality
+could not use buildx driver: listing workers for Build: failed to list workers: Unavailable: connection error: desc = "transport: Error while dialing: open /home/gitpod/.docker/buildx/current: no such file or directory"
+could not use buildkitd driver: %!w(<nil>)
+```
 
-* Files Types: Select Go Files
-* Scope: Project Files
-* Program: Select your `gofumpt` executable - common directories include `~/go/bin`, `~/sdk/go*/bin` and `/usr/local/go/bin`
-* Arguments: `-w $FilePath$`
-* Output path to refresh: `$FilePath$`
-* Working Directory: `$ProjectFileDir$`
-* Environment Variables: `GOROOT=$GOROOT$;GOPATH=$GOPATH$;PATH=$GoBinDirs$`
+You will need to [enable containerd image store support](https://docs.docker.com/storage/containerd/) within Docker Engine.
 
-Under Advanced Options, disable everything.
-
-After adding the file-watcher configuration, `gofumpt` will automatically run every time a file saves and reformat the code as necessary.
+> Note: Docker can eat up your disk space. If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. Running this command will not break anything. This is an issue with Docker, not with Copa.
 
 ### Tests
 
@@ -158,6 +148,4 @@ git push --force-with-lease <remote-name> <branch-name>
 
 ## Code of Conduct
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+This project has adopted the [CNCF Code of Conduct](./CODE_OF_CONDUCT)
