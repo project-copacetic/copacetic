@@ -36,10 +36,9 @@ import (
 )
 
 const (
-	defaultPatchedTagSuffix = "patched"
-	copaProduct             = "copa"
-	defaultRegistry         = "docker.io"
-	defaultTag              = "latest"
+	copaProduct     = "copa"
+	defaultRegistry = "docker.io"
+	defaultTag      = "latest"
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
@@ -92,10 +91,9 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	tag := taggedName.Tag()
 	if patchedTag == "" {
 		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
+			log.Warnf("No output tag specified for digest-referenced image, defaulting to none")
 		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
+			patchedTag = fmt.Sprintf("%s", tag)
 		}
 	}
 	_, err = reference.WithTag(imageName, patchedTag)
