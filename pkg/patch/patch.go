@@ -93,7 +93,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		if tag == "" {
 			log.Warnf("No output tag specified for digest-referenced image, defaulting to none")
 		} else {
-			patchedTag = fmt.Sprintf("%s", tag)
+			patchedTag = tag
 		}
 	}
 	_, err = reference.WithTag(imageName, patchedTag)
