@@ -396,23 +396,46 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		pkgs = strings.Join(pkgStrings, " ")
 	}
 
+	imageState := rm.config.ImageState
+
 	// Install patches using available rpm managers in order of preference
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
+		// Check for upgradable packages
+		if updates == nil {
+			checkUpdateTemplate := `sh -c "%[1]s check-update; if [ $? -eq 0 ]; then exit 1; fi"`
+			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["dnf"])
+			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+		}
+
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
+		// Check for upgradable packages
+		if updates == nil {
+			checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -eq 0 ]; then exit 1; fi'`
+			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["yum"])
+			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+		}
+
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
+		// Check for upgradable packages
+		if updates == nil {
+			checkUpdateTemplate := `sh -c "%[1]s upgrade --assumeno; echo $?"`
+			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["microdnf"])
+			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+		}
+
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
 	}
-	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	installed := imageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
 	var resultBytes []byte
