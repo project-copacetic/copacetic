@@ -13,6 +13,10 @@ Copa is not capable of patching vulnerabilities for compiled languages, like Go,
 
 To patch vulnerabilities for applications, you can package these applications and consume them from package repositories, like `http://archive.ubuntu.com/ubuntu/` for Ubuntu, and ensure Trivy can scan and report vulnerabilities for these packages. This way, Copa can patch the applications as a whole, though it cannot patch specific modules within the applications.
 
+## My disk space is being filled up after using Copa. How can I fix this?
+
+This is due to Copa's reliance on Docker, which can eat up your disk space. If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. Running this command will not break anything. This is an issue with Docker, not with Copa.
+
 ## Can I replace the package repositories in the image with my own?
 
 :::caution
