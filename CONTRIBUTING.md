@@ -36,7 +36,7 @@ After choosing your IDE, we should install [gofumpt](https://github.com/mvdan/go
 
 ### Docker Setup
 
-Copacetic requires Docker for patching some images. To install Docker, follow the [Docker installation guide](https://docs.docker.com/engine/install/).
+Copacetic requires Docker for patching images. To install Docker, follow the [Docker installation guide](https://docs.docker.com/engine/install/).
 
 If running Copa gives you the following error:
 
