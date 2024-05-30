@@ -424,9 +424,12 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	case rm.rpmTools["microdnf"] != "":
 		// Check for upgradable packages
 		if updates == nil {
-			checkUpdateTemplate := `sh -c "%[1]s upgrade --assumeno; echo $?"`
+			// since microdnf doesn't support check-update, install dnf to check
+			checkUpdateTemplate := `sh -c "%[1]s install dnf; dnf check-update; if [ $? -eq 0 ]; then exit 1; fi"`
 			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["microdnf"])
 			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+			// remove dnf
+			imageState = imageState.Run(llb.Shlex(`sh -c "rpm -e dnf"`)).Root()
 		}
 
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
