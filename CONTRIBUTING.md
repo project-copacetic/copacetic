@@ -38,20 +38,6 @@ After choosing your IDE, we should install [gofumpt](https://github.com/mvdan/go
 
 Copacetic requires Docker for patching images. To install Docker, follow the [Docker installation guide](https://docs.docker.com/engine/install/).
 
-If running Copa gives you the following error:
-
-```bash
-Error: could not use docker driver: failed to solve: requested experimental feature mergeop  has been disabled on the build server: only enabled with containerd image store backend
-requested experimental feature diffop  has been disabled on the build server: only enabled with containerd image store backend
-missing required buildkit functionality
-could not use buildx driver: listing workers for Build: failed to list workers: Unavailable: connection error: desc = "transport: Error while dialing: open /home/gitpod/.docker/buildx/current: no such file or directory"
-could not use buildkitd driver: %!w(<nil>)
-```
-
-You will need to [enable containerd image store support](https://docs.docker.com/storage/containerd/) within Docker Engine.
-
-> Note: Docker can eat up your disk space. If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. Running this command will not break anything. This is an issue with Docker, not with Copa.
-
 ### Tests
 
 Once you can successfully `make` the project, any code contributions should also successfully:
