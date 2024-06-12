@@ -46,6 +46,7 @@ type rpmManager struct {
 	rpmTools      rpmToolPaths
 	isDistroless  bool
 	packageInfo   map[string]string
+	osVersion     string
 }
 
 type rpmDBType uint
@@ -216,7 +217,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates)
+		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates, toolImageName)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -383,7 +384,7 @@ func parseManifestFile(file string) (map[string]string, error) {
 //
 // TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
-func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
+func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolingImage string) (*llb.State, []byte, error) {
 	pkgs := ""
 
 	// If specific updates, provided, parse into pkg names, else will update all
@@ -396,49 +397,31 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		pkgs = strings.Join(pkgStrings, " ")
 	}
 
-	imageState := rm.config.ImageState
+	// Check for upgradable packages
+	// Mount filesystem of image to tooling image to run dnf check-update
+	tool := llb.Image(toolingImage, llb.ResolveModeDefault).Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy()))
+	busyboxCopied := tool.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
+	dnfCheckCmd := fmt.Sprintf("dnf install ca-certificates -y; dnf --refresh --installroot=/tmp/rootfs --releasever %s check-update -y; if [ $? -eq 0 ]; then exit 1; fi;", rm.osVersion)
+
+	rm.config.ImageState = busyboxCopied.Run(llb.Args([]string{"sh", "-c", dnfCheckCmd})).AddMount("/tmp/rootfs", rm.config.ImageState)
 
 	// Install patches using available rpm managers in order of preference
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
-		// Check for upgradable packages
-		if updates == nil {
-			checkUpdateTemplate := `sh -c "%[1]s check-update; if [ $? -eq 0 ]; then exit 1; fi"`
-			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["dnf"])
-			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
-		}
-
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
-		// Check for upgradable packages
-		if updates == nil {
-			checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -eq 0 ]; then exit 1; fi'`
-			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["yum"])
-			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
-		}
-
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		// Check for upgradable packages
-		if updates == nil {
-			// since microdnf doesn't support check-update, install dnf to check
-			checkUpdateTemplate := `sh -c "%[1]s install dnf; dnf check-update; if [ $? -eq 0 ]; then exit 1; fi"`
-			checkUpdate := fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["microdnf"])
-			imageState = rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
-			// remove dnf
-			imageState = imageState.Run(llb.Shlex(`sh -c "rpm -e dnf"`)).Root()
-		}
-
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
 	}
-	installed := imageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write results.manifest to host for post-patch validation
 	var resultBytes []byte
