@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
@@ -81,8 +82,22 @@ func (st rpmDBType) String() string {
 
 // Depending on go-rpm-version lib for RPM version comparison rules.
 func isValidRPMVersion(v string) bool { // nolint:revive
-	// TODO: Verify if there are format correctness check that need to be added given lack of support in rpmVer lib
-	return true
+	err := isValidVersion(v)
+	return err == nil
+}
+
+func isValidVersion(ver string) error {
+	if !unicode.IsDigit(rune(ver[0])) {
+		return errors.New("upstream_version must start with digit")
+	}
+
+	allowedSymbols := ".-+~:_"
+	for _, s := range ver {
+		if !unicode.IsDigit(s) && !unicode.IsLetter(s) && !strings.ContainsRune(allowedSymbols, s) {
+			return fmt.Errorf("upstream_version %s includes invalid character %q", ver, s)
+		}
+	}
+	return nil
 }
 
 func isLessThanRPMVersion(v1, v2 string) bool {
