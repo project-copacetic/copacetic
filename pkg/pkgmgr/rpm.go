@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -35,6 +36,7 @@ const (
 	rpmManifestWildcard = "container-manifest-*"
 
 	installToolsCmd   = "tdnf install busybox cpio dnf-utils -y"
+	isBinariesCmd     = "sh -c 'ls /usr/sbin/busybox /usr/bin/rpm /usr/bin/yum /usr/bin/dnf /usr/bin/microdnf'"
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
 
@@ -247,13 +249,30 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		llb.ResolveModeDefault,
 	)
 
-	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
-	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
+	toolList := []string{"dnf", "microdnf", "rpm", "yum"}
+	missingTools := make([]string, 0)
+
+	// Check if required tools are already present in the image
+	for _, tool := range toolList {
+		toolPath, err := exec.LookPath(tool)
+		if err != nil || toolPath == "" {
+			missingTools = append(missingTools, tool)
+		}
+	}
+
+	var toolsApplied llb.State
+	if len(missingTools) > 0 {
+		log.Info("Required tools are missing, proceeding with tool installation...")
+		toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
+		toolsApplied = rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
+	} else {
+		log.Info("All required tools are present, skipping tool installation.")
+		toolsApplied = rm.config.ImageState
+	}
+
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
 		File(llb.Mkdir(inputPath, 0o744, llb.WithParents(true)))
-
-	toolList := []string{"dnf", "microdnf", "rpm", "yum"}
 
 	rpmDBList := []string{
 		filepath.Join(rpmLibPath, rpmBDB),
@@ -352,6 +371,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	}
 	return nil
 }
+
 
 func parseManifestFile(file string) (map[string]string, error) {
 	// split into lines
