@@ -217,7 +217,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates, toolImageName)
+		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -384,7 +384,7 @@ func parseManifestFile(file string) (map[string]string, error) {
 //
 // TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
-func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolingImage string) (*llb.State, []byte, error) {
+func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
 	pkgs := ""
 
 	// If specific updates, provided, parse into pkg names, else will update all
@@ -397,24 +397,28 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		pkgs = strings.Join(pkgStrings, " ")
 	}
 
-	// Check for upgradable packages
-	// Mount filesystem of image to tooling image to run dnf check-update
-	tool := llb.Image(toolingImage, llb.ResolveModeDefault).Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy()))
-	busyboxCopied := tool.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
-	dnfCheckCmd := fmt.Sprintf("dnf install ca-certificates -y; dnf --refresh --installroot=/tmp/rootfs --releasever %s check-update -y; if [ $? -eq 0 ]; then exit 1; fi;", rm.osVersion)
-
-	rm.config.ImageState = busyboxCopied.Run(llb.Args([]string{"sh", "-c", dnfCheckCmd})).AddMount("/tmp/rootfs", rm.config.ImageState)
-
 	// Install patches using available rpm managers in order of preference
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
+		if rm.checkForUpgrades(ctx, rm.rpmTools["dnf"]) != nil {
+			return nil, nil, errors.New("no upgradable packages")
+		}
+
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
+		if rm.checkForUpgrades(ctx, rm.rpmTools["yum"]) != nil {
+			return nil, nil, errors.New("no upgradable packages")
+		}
+
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
+		if rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"]) != nil {
+			return nil, nil, errors.New("no upgradable packages")
+		}
+
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
@@ -425,12 +429,12 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 
 	// Write results.manifest to host for post-patch validation
 	var resultBytes []byte
-	var err error
 	if updates != nil {
 		const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
 		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
 		resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
+		var err error
 		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
 		if err != nil {
 			return nil, nil, err
@@ -441,6 +445,23 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	patchDiff := llb.Diff(rm.config.ImageState, installed)
 	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
 	return &patchMerge, resultBytes, nil
+}
+
+func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath string) error {
+	checkUpdateTemplate := `sh -c "%[1]s install dnf; dnf check-update; if [ $? -ne 0 ]; then echo >> updates.txt; fi;"`
+	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
+
+	stateWithDnf := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+
+	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithDnf, "updates.txt")
+
+	// if error in extracting file, that means updates.txt does not exist and there are no updates
+	if err != nil {
+		log.Error(err)
+		return err
+	}
+
+	return nil
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
