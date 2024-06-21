@@ -448,7 +448,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 }
 
 func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath string) error {
-	checkUpdateTemplate := `sh -c "set -x; %[1]s install dnf; dnf check-update; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+	checkUpdateTemplate := `sh -c "%[1]s install dnf; dnf check-update; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
 
 	stateWithDnf := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
