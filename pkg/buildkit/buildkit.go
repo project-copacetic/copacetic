@@ -59,22 +59,6 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	return &config, nil
 }
 
-func FetchRef(client gwclient.Client, st llb.State, ctx context.Context, opts ...llb.ConstraintsOpt) (*gwclient.Result, error) {
-	def, err := st.Marshal(ctx, opts...)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
-}
-
 // Extracts the bytes of the file denoted by `path` from the state `st`.
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
 	// since platform is obtained from host, override it in the case of Darwin

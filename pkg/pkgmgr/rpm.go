@@ -448,14 +448,18 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 }
 
 func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath string) error {
-	checkUpdateTemplate := `sh -c "%[1]s install dnf; dnf check-update; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+	checkUpdateTemplate := `sh -c "set -x; %[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
 
 	stateWithDnf := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
 
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithDnf, "/updates.txt")
+	if err != nil {
+		log.Error(err)
+		return err
+	}
 
-	// if error in extracting file, that means updates.txt does not exist and there are no updates
+	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	if err != nil {
 		log.Error(err)
 		return err
