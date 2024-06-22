@@ -3,6 +3,7 @@ package patch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,20 +12,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd/platforms"
-	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
-	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
+
+	"github.com/docker/buildx/build"
+	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/session"
+	"github.com/moby/buildkit/session/auth/authprovider"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/containerd/containerd/platforms"
 	"github.com/distribution/reference"
-	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/moby/buildkit/session"
-	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
@@ -33,6 +33,8 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 	"github.com/quay/claircore/osrelease"
+	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 )
 
 const (
@@ -41,6 +43,18 @@ const (
 	defaultRegistry         = "docker.io"
 	defaultTag              = "latest"
 )
+
+type Config struct {
+	Cmd          []string            `json:"Cmd"`
+	WorkingDir   string              `json:"WorkingDir"`
+	ExposedPorts map[string]struct{} `json:"ExposedPorts"`
+	Env          []string            `json:"Env"`
+	Labels       map[string]string   `json:"Labels"`
+}
+
+type ImgConfig struct {
+	Config Config `json:"Config"`
+}
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
@@ -140,6 +154,16 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 	defer bkClient.Close()
 
+	mockConfig := Config{
+		Labels: map[string]string{"org.opencontainers.image.base.name": "test"},
+	}
+
+	imgConfig := ImgConfig{
+		Config: mockConfig,
+	}
+
+	configStr, _ := json.Marshal(imgConfig)
+
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
@@ -148,7 +172,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			{
 				Type: client.ExporterDocker,
 				Attrs: map[string]string{
-					"name": patchedImageName,
+					"name":                  patchedImageName,
+					"containerimage.config": string(configStr),
 				},
 				Output: func(_ map[string]string) (io.WriteCloser, error) {
 					return pipeW, nil
