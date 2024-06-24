@@ -3,6 +3,7 @@ package buildkit
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -43,6 +44,30 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	}
 
 	config.ConfigData = configData
+
+	// Unmarshal ConfigData so we can work with the data structure
+	// The unmarshalled format is stored in userImageMetadata
+	var userImageMetadata map[string]interface{}
+	unmarshalErr := json.Unmarshal(config.ConfigData, &userImageMetadata)
+	if unmarshalErr != nil {
+		return nil, unmarshalErr
+	}
+
+	// configMap is set specifically to the data stored within the "config" directive
+	configMap := userImageMetadata["config"].(map[string]interface{})
+	if labels, ok := configMap["labels"]; ok {
+		// If labels already exists, add BaseImage metadata
+		labels.(map[string]string)["BaseImage"] = image
+	} else {
+		// If labels do not exist, create labels and add BaseImage metadata
+		labels = make(map[string]string)
+		configMap["Labels"] = labels
+		labels.(map[string]string)["BaseImage"] = image
+	}
+
+	// We need to marshal the data back into a byte array and assign the modified user image metadata into config.ConfigData
+	configMapBytes, err := json.Marshal(userImageMetadata)
+	config.ConfigData = configMapBytes
 
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
