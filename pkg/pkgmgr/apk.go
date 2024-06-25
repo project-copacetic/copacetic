@@ -201,7 +201,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 	} else {
 		// if updates is not specified, update all packages
 		installCmd := `output=$(apk upgrade --no-cache 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi`
-		apkInstalled = apkUpdated.Run(llb.Args([]string{"sh", "-c", installCmd}), llb.WithProxy(utils.GetProxy())).Root()
+		apkInstalled = apkUpdated.Run(buildkit.Sh(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 		// Validate no errors were encountered if updating all
 		if !ignoreErrors {
