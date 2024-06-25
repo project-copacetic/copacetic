@@ -14,7 +14,7 @@ This project uses [go-semantic-release](https://github.com/go-semantic-release/s
 
 For contributor PRs, instead of trying to ensure adherence in every commit message, it's easiest to adopt a [squash and merge](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/configuring-commit-squashing-for-pull-requests) strategy so that the PR description is used as the final commit description with the appropriate semantic release format.
 
-In addition to the semantic release types called out in the [contributor pull request guidelines](../CONTRIBUTING.md#pull-requests), there are several other categories supported by the [default changelog generator](https://github.com/go-semantic-release/changelog-generator-default) that maintainers should be aware of:
+In addition to the semantic release types called out in the [contributor pull request guidelines](./contributing.md#pull-requests), there are several other categories supported by the [default changelog generator](https://github.com/go-semantic-release/changelog-generator-default) that maintainers should be aware of:
 
 - **chore:** Reserved for automated maintenance changes, such as minor version go dependency updates initiated by Dependabot.
 - **revert:** Maintainers should use this to mark commits that revert a previous commit, followed by the header of the reverted commit. The message body should include the SHA of the reverted commit, as well as a clear description of the reason for the revert.
