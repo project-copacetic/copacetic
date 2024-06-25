@@ -13,11 +13,13 @@ import (
 )
 
 type Config struct {
-	ImageName  string
-	Client     gwclient.Client
-	ConfigData []byte
-	Platform   *ispec.Platform
-	ImageState llb.State
+	ImageName         string
+	Client            gwclient.Client
+	ConfigData        []byte
+	PatchedConfigData []byte
+	Platform          *ispec.Platform
+	ImageState        llb.State
+	PatchedImageState llb.State
 }
 
 type Opts struct {
@@ -27,14 +29,14 @@ type Opts struct {
 	KeyPath    string
 }
 
-func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image string) (*Config, error) {
+func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
-		ImageName: image,
+		ImageName: userImage,
 	}
 
 	// Resolve and pull the config for the target image
-	_, _, configData, err := c.ResolveImageConfig(ctx, image, sourceresolver.Opt{
+	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, sourceresolver.Opt{
 		ImageOpt: &sourceresolver.ResolveImageOpt{
 			ResolveMode: llb.ResolveModePreferLocal.String(),
 		},
@@ -43,14 +45,15 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 		return nil, err
 	}
 
-	config.ConfigData, err = updateImageMetadata(ctx, c, configData, image)
+	var baseImage string
+	config.ConfigData, config.PatchedConfigData, baseImage, err = updateImageMetadata(ctx, c, configData, userImage)
 	if err != nil {
 		return nil, err
 	}
 
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
-	config.ImageState, err = llb.Image(image,
+	config.ImageState, err = llb.Image(baseImage,
 		llb.ResolveModePreferLocal,
 		llb.WithMetaResolver(c),
 	).WithImageConfig(config.ConfigData)
@@ -58,31 +61,47 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 		return nil, err
 	}
 
+	// Only set PatchedConfigData if the user supplied a patched image
+	// image in this case should always refer to the patched image (if it exists)
+	if config.PatchedConfigData != nil {
+		config.PatchedImageState, err = llb.Image(userImage,
+			llb.ResolveModePreferLocal,
+			llb.WithMetaResolver(c),
+		).WithImageConfig(config.PatchedConfigData)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	config.Client = c
 
 	return &config, nil
 }
 
-func updateImageMetadata(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, error) {
+func updateImageMetadata(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
+	var patchedImageMetadata []byte
 	baseImage, userImageMetadata := setupLabels(configData, image)
 
 	if baseImage == "" {
 		configData = userImageMetadata
 	} else {
-		_, _, baseImageConfigData, err := c.ResolveImageConfig(ctx, image, sourceresolver.Opt{
+		patchedImageMetadata = userImageMetadata
+		_, _, baseImageMetadata, err := c.ResolveImageConfig(ctx, baseImage, sourceresolver.Opt{
 			ImageOpt: &sourceresolver.ResolveImageOpt{
 				ResolveMode: llb.ResolveModePreferLocal.String(),
 			},
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, "", err
 		}
 		// Pass this into setupLabels so that labels can properly be applied to an already patched image
-		_, baseImageWithLabels := setupLabels(baseImageConfigData, baseImage)
+		_, baseImageWithLabels := setupLabels(baseImageMetadata, baseImage)
 		configData = baseImageWithLabels
+
+		return configData, patchedImageMetadata, baseImage, nil
 	}
 
-	return configData, nil
+	return configData, nil, baseImage, nil
 }
 
 // Sets up labels for the image based on the provided configuration data and image name.
