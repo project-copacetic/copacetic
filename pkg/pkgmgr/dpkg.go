@@ -335,7 +335,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		aptInstalled = aptInstalled.Run(llb.Args([]string{"sh", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
+		aptInstalled = aptInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
 	// Write results.manifest to host for post-patch validation
@@ -434,7 +434,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		downloaded = downloaded.Run(llb.Args([]string{"sh", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
+		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
 	diffState := llb.Diff(updated, downloaded)

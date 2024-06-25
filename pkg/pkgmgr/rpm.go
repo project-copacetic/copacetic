@@ -416,7 +416,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		installed = installed.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
+		installed = installed.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
 	// Write results.manifest to host for post-patch validation
@@ -505,11 +505,11 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		`
 	}
 
-	downloaded := busyboxCopied.Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := busyboxCopied.Run(buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		downloaded = downloaded.Run(llb.Args([]string{"bash", "-c", "if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"})).Root()
+		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
 	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
