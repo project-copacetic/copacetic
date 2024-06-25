@@ -401,22 +401,25 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
-		if rm.checkForUpgrades(ctx, rm.rpmTools["dnf"]) != nil {
-			return nil, nil, errors.New("no upgradable packages")
+		checkUpdateTemplate := `sh -c "%[1]s check-update; if [ $? -ne 0 ]; then echo >> /updates.txt; fi"`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["dnf"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
-		if rm.checkForUpgrades(ctx, rm.rpmTools["yum"]) != nil {
-			return nil, nil, errors.New("no upgradable packages")
+		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		if rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"]) != nil {
-			return nil, nil, errors.New("no upgradable packages")
+		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
@@ -447,25 +450,18 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath string) error {
-	checkUpdateTemplate := `sh -c "set -x; %[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) bool {
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
+	stateWithCheck := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
 
-	stateWithDnf := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
-
-	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithDnf, "/updates.txt")
-	if err != nil {
-		log.Error(err)
-		return err
-	}
+	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
 
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	if err != nil {
-		log.Error(err)
-		return err
+		return false
 	}
 
-	return nil
+	return true
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
