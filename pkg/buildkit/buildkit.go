@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -43,31 +44,10 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 		return nil, err
 	}
 
-	config.ConfigData = configData
-
-	// Unmarshal ConfigData so we can work with the data structure
-	// The unmarshalled format is stored in userImageMetadata
-	var userImageMetadata map[string]interface{}
-	unmarshalErr := json.Unmarshal(config.ConfigData, &userImageMetadata)
-	if unmarshalErr != nil {
-		return nil, unmarshalErr
+	config.ConfigData, err = updateImageMetadata(configData, image)
+	if err != nil {
+		return nil, err
 	}
-
-	// configMap is set specifically to the data stored within the "config" directive
-	configMap := userImageMetadata["config"].(map[string]interface{})
-	if labels, ok := configMap["labels"]; ok {
-		// If labels already exists, add BaseImage metadata
-		labels.(map[string]string)["BaseImage"] = image
-	} else {
-		// If labels do not exist, create labels and add BaseImage metadata
-		labels = make(map[string]string)
-		configMap["Labels"] = labels
-		labels.(map[string]string)["BaseImage"] = image
-	}
-
-	// We need to marshal the data back into a byte array and assign the modified user image metadata into config.ConfigData
-	configMapBytes, err := json.Marshal(userImageMetadata)
-	config.ConfigData = configMapBytes
 
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
@@ -82,6 +62,44 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, image stri
 	config.Client = c
 
 	return &config, nil
+}
+
+func updateImageMetadata(configData []byte, image string) ([]byte, error) {
+	var userImageMetadata map[string]interface{}
+	if err := json.Unmarshal(configData, &userImageMetadata); err != nil {
+		return nil, err
+	}
+
+	configMap := userImageMetadata["config"].(map[string]interface{})
+	baseImage := setupLabels(configMap, image)
+
+	if baseImage == "" {
+		configMapBytes, err := json.Marshal(userImageMetadata)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal image metadata: %v", err)
+		}
+		configData = configMapBytes
+	}
+
+	// This return does not currently return the metadata of the baseImage if one is found
+	// If baseImage is not empty, we need to resolve the baseImage and return its metadata
+	return configData, nil
+}
+
+func setupLabels(configMap map[string]interface{}, image string) string {
+	var baseImage string
+	labels := configMap["labels"]
+	if labels == nil {
+		labels = make(map[string]interface{})
+		configMap["labels"] = labels
+	}
+	labelsMap := labels.(map[string]interface{})
+	if _, ok := labelsMap["BaseImage"]; ok {
+		baseImage = labelsMap["BaseImage"].(string)
+	} else {
+		labelsMap["BaseImage"] = image
+	}
+	return baseImage
 }
 
 // Extracts the bytes of the file denoted by `path` from the state `st`.
