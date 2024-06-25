@@ -454,14 +454,10 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
 	stateWithCheck := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
 
+	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
 
-	// if error in extracting file, that means updates.txt does not exist and there are no updates.
-	if err != nil {
-		return false
-	}
-
-	return true
+	return err == nil
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
