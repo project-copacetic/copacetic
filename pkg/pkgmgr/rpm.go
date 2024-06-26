@@ -431,6 +431,19 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(rm.config.ImageState, installed)
 	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
+
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	var prevPatchMerge, combinedPatchMerge llb.State
+	if rm.config.PatchedConfigData != nil {
+		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+		prevPatchMerge = llb.Merge([]llb.State{rm.config.PatchedImageState, prevPatchDiff})
+
+		// Merge the old patch diffs and new patch diffs
+		combinedPatchMerge = llb.Merge([]llb.State{prevPatchMerge, patchMerge})
+
+		return &combinedPatchMerge, resultBytes, nil
+	}
+
 	return &patchMerge, resultBytes, nil
 }
 

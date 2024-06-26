@@ -207,6 +207,19 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(apkUpdated, apkInstalled)
 	patchMerge := llb.Merge([]llb.State{am.config.ImageState, patchDiff})
+
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	var prevPatchMerge, combinedPatchMerge llb.State
+	if am.config.PatchedConfigData != nil {
+		prevPatchDiff := llb.Diff(am.config.ImageState, am.config.PatchedImageState)
+		prevPatchMerge = llb.Merge([]llb.State{am.config.PatchedImageState, prevPatchDiff})
+
+		// Merge the old patch diffs and new patch diffs
+		combinedPatchMerge = llb.Merge([]llb.State{prevPatchMerge, patchMerge})
+
+		return &combinedPatchMerge, resultManifestBytes, nil
+	}
+
 	return &patchMerge, resultManifestBytes, nil
 }
 
