@@ -43,7 +43,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	}
 
 	var baseImage string
-	config.ConfigData, config.PatchedConfigData, baseImage, err = updateImageMetadata(ctx, c, configData, userImage)
+	config.ConfigData, config.PatchedConfigData, baseImage, err = updateImageConfigData(ctx, c, configData, userImage)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func updateImageMetadata(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
+func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
 	var patchedImageConfig []byte
 	baseImage, userImageConfig := setupLabels(image, configData)
 
@@ -92,7 +92,7 @@ func updateImageMetadata(ctx context.Context, c gwclient.Client, configData []by
 		if err != nil {
 			return nil, nil, "", err
 		}
-		// Pass this into setupLabels so that labels can properly be applied to an already patched image
+
 		_, baseImageWithLabels := setupLabels(baseImage, baseImageConfig)
 		configData = baseImageWithLabels
 
@@ -118,8 +118,8 @@ func setupLabels(image string, configData []byte) (string, []byte) {
 		configMap["labels"] = labels
 	}
 	labelsMap := labels.(map[string]interface{})
-	if _, ok := labelsMap["BaseImage"]; ok {
-		baseImage = labelsMap["BaseImage"].(string)
+	if baseImageValue, ok := labelsMap["BaseImage"]; ok {
+		baseImage = baseImageValue.(string)
 	} else {
 		labelsMap["BaseImage"] = image
 	}

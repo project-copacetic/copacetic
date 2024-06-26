@@ -255,31 +255,43 @@ func TestArrayFile(t *testing.T) {
 }
 
 func TestSetupLabels(t *testing.T) {
-	image := "test_image"
-	configData := []byte(`{"config": {"labels": {}}}`)
+	tests := []struct {
+		testName      string
+		configData    []byte
+		expectBaseImg string
+		expectImage   string
+	}{
+		{
+			"No labels",
+			[]byte(`{"config": {}}`),
+			"",
+			"test_image",
+		},
+		{
+			"Labels no base",
+			[]byte(`{"config": {"labels": {}}}`),
+			"",
+			"test_image",
+		},
+		{
+			"Labels with base image",
+			[]byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}}}`),
+			"existing_base_image",
+			"existing_base_image",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.testName, func(t *testing.T) {
+			image := "test_image"
+			baseImage, updatedConfigData := setupLabels(image, test.configData)
+			assert.Equal(t, test.expectBaseImg, baseImage)
 
-	baseImage, updatedConfigData := setupLabels(image, configData)
-	assert.Empty(t, baseImage)
+			var updatedConfig map[string]interface{}
+			err := json.Unmarshal(updatedConfigData, &updatedConfig)
+			assert.NoError(t, err)
 
-	var updatedConfig map[string]interface{}
-	err := json.Unmarshal(updatedConfigData, &updatedConfig)
-	assert.NoError(t, err)
-
-	labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
-	assert.Equal(t, image, labels["BaseImage"])
-}
-
-func TestSetupLabelsWithBaseImage(t *testing.T) {
-	image := "test_image"
-	configData := []byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}}}`)
-
-	baseImage, updatedConfigData := setupLabels(image, configData)
-	assert.Equal(t, "existing_base_image", baseImage)
-
-	var updatedConfig map[string]interface{}
-	err := json.Unmarshal(updatedConfigData, &updatedConfig)
-	assert.NoError(t, err)
-
-	labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
-	assert.Equal(t, "existing_base_image", labels["BaseImage"])
+			labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+			assert.Equal(t, test.expectImage, labels["BaseImage"])
+		})
+	}
 }
