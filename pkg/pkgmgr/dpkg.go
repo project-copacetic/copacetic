@@ -122,19 +122,17 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 	// If manifest nil, update all packages
 	if manifest == nil {
 		if dm.isDistroless {
-			updatedImageState, _, err := dm.unpackAndMergeUpdates(ctx, nil, toolImageName)
+			updatedImageState, _, err := dm.unpackAndMergeUpdates(ctx, nil, toolImageName, ignoreErrors)
 			if err != nil {
 				return updatedImageState, nil, err
 			}
-			// add validation in the future
 			return updatedImageState, nil, nil
 		}
 
-		updatedImageState, _, err := dm.installUpdates(ctx, nil)
+		updatedImageState, _, err := dm.installUpdates(ctx, nil, ignoreErrors)
 		if err != nil {
 			return updatedImageState, nil, err
 		}
-		// add validation in the future
 		return updatedImageState, nil, nil
 	}
 
@@ -153,12 +151,12 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 	var updatedImageState *llb.State
 	var resultManifestBytes []byte
 	if dm.isDistroless {
-		updatedImageState, resultManifestBytes, err = dm.unpackAndMergeUpdates(ctx, updates, toolImageName)
+		updatedImageState, resultManifestBytes, err = dm.unpackAndMergeUpdates(ctx, updates, toolImageName, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, resultManifestBytes, err = dm.installUpdates(ctx, updates)
+		updatedImageState, resultManifestBytes, err = dm.installUpdates(ctx, updates, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -304,7 +302,7 @@ func GetPackageInfo(file string) (string, string, error) {
 //
 // TODO: Support Debian images with valid dpkg status but missing tools. No current examples exist in test set
 // i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
-func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
+func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	// TODO: Add support for custom APT config and gpg key injection
 	// Since this takes place in the target container, it can interfere with install actions
 	// such as the installation of the updated debian-archive-keyring package, so it's probably best
@@ -330,10 +328,15 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// if updates is not specified, update all packages
-		installCmd = `sh -c "apt upgrade -y && apt clean -y && apt autoremove"`
+		installCmd = `sh -c "output=$(apt upgrade -y && apt clean -y && apt autoremove 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
 	}
 
 	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		aptInstalled = aptInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
 
 	// Write results.manifest to host for post-patch validation
 	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
@@ -352,7 +355,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	return &patchMerge, resultsBytes, nil
 }
 
-func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
+func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
@@ -415,11 +418,25 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		}
 		downloadCmd = fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
-		// only updated the outdated pacakges from packages.txt
-		downloadCmd = "xargs -a packages.txt -n 1 apt download --no-install-recommends"
+		// only update the outdated pacakges from packages.txt
+		downloadCmd = `
+		packages=$(<packages.txt)
+		for package in $packages; do
+			output=$(apt download --no-install-recommends "$package" 2>&1)
+			if [ $? -ne 0 ]; then
+				echo "$output" >>error_log.txt
+			fi
+		done
+		`
 	}
 
 	downloaded := updated.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
+
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
+
 	diffState := llb.Diff(updated, downloaded)
 
 	// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
