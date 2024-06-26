@@ -90,6 +90,10 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 	})
 }
 
+func Sh(cmd string) llb.RunOption {
+	return llb.Args([]string{"/bin/sh", "-c", cmd})
+}
+
 func ArrayFile(input []string) []byte {
 	var b bytes.Buffer
 	for _, s := range input {
