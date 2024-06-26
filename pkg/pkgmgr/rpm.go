@@ -211,12 +211,12 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var updatedImageState *llb.State
 	var resultManifestBytes []byte
 	if rm.isDistroless {
-		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName)
+		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates)
+		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -383,7 +383,7 @@ func parseManifestFile(file string) (map[string]string, error) {
 //
 // TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
 // i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
-func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
+func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	pkgs := ""
 
 	// If specific updates, provided, parse into pkg names, else will update all
@@ -400,19 +400,24 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
-		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
+		const dnfInstallTemplate = `sh -c 'output=$(%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
-		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
+		const yumInstallTemplate = `sh -c 'output=$(%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
+		const microdnfInstallTemplate = `sh -c 'output=$(%[1]s update %[2]s && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
 	}
 	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		installed = installed.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
 
 	// Write results.manifest to host for post-patch validation
 	var resultBytes []byte
@@ -434,7 +439,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
+func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
@@ -489,10 +494,23 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// only updated the outdated pacakges from packages.txt
-		downloadCmd = `xargs -a packages.txt -n 1 yumdownloader --downloadonly --downloaddir=. --best -y`
+		downloadCmd = `
+		packages=$(<packages.txt)
+		for package in $packages; do
+			output=$(yumdownloader --downloadonly --downloaddir=. --best -y "$package" 2>&1)
+			if [ $? -ne 0 ]; then
+				echo "$output" >>error_log.txt
+			fi
+		done
+		`
 	}
 
-	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := busyboxCopied.Run(buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
 
 	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
 	const extractTemplate = `sh -c 'for f in %[1]s/*.rpm ; do rpm2cpio "$f" | cpio -idmv -D %[1]s ; done'`
