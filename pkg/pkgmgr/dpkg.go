@@ -490,6 +490,19 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Diff unpacked packages layers from previous and merge with target
 	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
 	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
+
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	var prevPatchMerge, combinedPatchMerge llb.State
+	if dm.config.PatchedConfigData != nil {
+		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
+		prevPatchMerge = llb.Merge([]llb.State{dm.config.PatchedImageState, prevPatchDiff})
+
+		// Merge the old patch diffs and new patch diffs
+		combinedPatchMerge = llb.Merge([]llb.State{prevPatchMerge, merged})
+
+		return &combinedPatchMerge, resultsBytes, nil
+	}
+
 	return &merged, resultsBytes, nil
 }
 

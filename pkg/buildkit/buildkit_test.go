@@ -2,6 +2,7 @@ package buildkit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"path/filepath"
@@ -251,4 +252,34 @@ func TestArrayFile(t *testing.T) {
 			assert.Equal(t, tt.expected, string(b))
 		})
 	}
+}
+
+func TestSetupLabels(t *testing.T) {
+	image := "test_image"
+	configData := []byte(`{"config": {"labels": {}}}`)
+
+	baseImage, updatedConfigData := setupLabels(image, configData)
+	assert.Empty(t, baseImage)
+
+	var updatedConfig map[string]interface{}
+	err := json.Unmarshal(updatedConfigData, &updatedConfig)
+	assert.NoError(t, err)
+
+	labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+	assert.Equal(t, image, labels["BaseImage"])
+}
+
+func TestSetupLabelsWithBaseImage(t *testing.T) {
+	image := "test_image"
+	configData := []byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}}}`)
+
+	baseImage, updatedConfigData := setupLabels(image, configData)
+	assert.Equal(t, "existing_base_image", baseImage)
+
+	var updatedConfig map[string]interface{}
+	err := json.Unmarshal(updatedConfigData, &updatedConfig)
+	assert.NoError(t, err)
+
+	labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+	assert.Equal(t, "existing_base_image", labels["BaseImage"])
 }
