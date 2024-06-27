@@ -260,38 +260,55 @@ func TestSetupLabels(t *testing.T) {
 		configData    []byte
 		expectBaseImg string
 		expectImage   string
+		expectError   bool
 	}{
 		{
 			"No labels",
 			[]byte(`{"config": {}}`),
 			"",
 			"test_image",
+			false,
 		},
 		{
 			"Labels no base",
 			[]byte(`{"config": {"labels": {}}}`),
 			"",
 			"test_image",
+			false,
 		},
 		{
 			"Labels with base image",
 			[]byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}}}`),
 			"existing_base_image",
 			"existing_base_image",
+			false,
+		},
+		{
+			"Invalid JSON",
+			[]byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}`),
+			"",
+			"",
+			true,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.testName, func(t *testing.T) {
 			image := "test_image"
 			baseImage, updatedConfigData := setupLabels(image, test.configData)
-			assert.Equal(t, test.expectBaseImg, baseImage)
 
-			var updatedConfig map[string]interface{}
-			err := json.Unmarshal(updatedConfigData, &updatedConfig)
-			assert.NoError(t, err)
+			if test.expectError {
+				assert.Equal(t, "", baseImage)
+				assert.Nil(t, updatedConfigData)
+			} else {
+				assert.Equal(t, test.expectBaseImg, baseImage)
 
-			labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
-			assert.Equal(t, test.expectImage, labels["BaseImage"])
+				var updatedConfig map[string]interface{}
+				err := json.Unmarshal(updatedConfigData, &updatedConfig)
+				assert.NoError(t, err)
+
+				labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+				assert.Equal(t, test.expectImage, labels["BaseImage"])
+			}
 		})
 	}
 }
