@@ -120,7 +120,7 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// If manifest is nil, update all packages
 	if manifest == nil {
-		updatedImageState, _, err := am.upgradePackages(ctx, nil)
+		updatedImageState, _, err := am.upgradePackages(ctx, nil, ignoreErrors)
 		if err != nil {
 			return updatedImageState, nil, err
 		}
@@ -140,7 +140,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	}
 	log.Debugf("latest unique APKs: %v", updates)
 
-	updatedImageState, resultsBytes, err := am.upgradePackages(ctx, updates)
+	updatedImageState, resultsBytes, err := am.upgradePackages(ctx, updates, ignoreErrors)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -161,7 +161,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 // TODO: support "distroless" Alpine images (e.g. APKO images)
 // Still assumes that APK exists in the target image and is pathed, which can be addressed by
 // mounting a copy of apk-tools-static into the image and invoking apk-static directly.
-func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
+func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	// TODO: Add support for custom APK config
 	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
 
@@ -200,8 +200,13 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		}
 	} else {
 		// if updates is not specified, update all packages
-		installCmd := `apk upgrade --no-cache`
-		apkInstalled = apkUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+		installCmd := `output=$(apk upgrade --no-cache 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi`
+		apkInstalled = apkUpdated.Run(buildkit.Sh(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+
+		// Validate no errors were encountered if updating all
+		if !ignoreErrors {
+			apkInstalled = apkInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+		}
 	}
 
 	// Diff the installed updates and merge that into the target image
