@@ -197,6 +197,18 @@ func TestNewClient(t *testing.T) {
 			cancel()
 			checkMissingCapsError(t, err, requiredCaps...)
 		})
+		t.Run("faulty addr", func(t *testing.T) {
+			t.Parallel()
+			addr := newMockBuildkitAPI(t) // this should return a faulty addr
+			ctxT, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			bkOpts := Opts{
+				Addr:    `invalid-address:\\` + addr,
+				KeyPath: `No-Keys-Exist/Here`,
+			}
+			_, err := NewClient(ctxT, bkOpts)
+			assert.Error(t, err)
+		})
 		t.Run("with caps", func(t *testing.T) {
 			t.Parallel()
 			addr := newMockBuildkitAPI(t, requiredCaps...)
@@ -213,10 +225,18 @@ func TestNewClient(t *testing.T) {
 			err = ValidateClient(ctxT, client)
 			assert.NoError(t, err)
 		})
+		t.Run("default buildkit addr", func(t *testing.T) {
+			t.Parallel()
+			bkOpts := Opts{} // Initialize with default values
+			ctxT, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			client, err := NewClient(ctxT, bkOpts)
+			assert.NoError(t, err)
+			defer client.Close()
+			err = ValidateClient(ctxT, client)
+			assert.NoError(t, err)
+		})
 	})
-
-	// TODO: Test with defaults, but then we need to control those socket paths.
-	// I considered doing this in a chroot, but it is fairly complicated to do so and requires root privileges anyway (or CAP_SYS_CHROOT).
 }
 
 func TestArrayFile(t *testing.T) {
