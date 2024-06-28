@@ -19,9 +19,24 @@ When opening an issue, please select the most appropriate template for what you'
 
 ### Getting Started
 
-Follow the instructions to [setup your dev environment to build copa](./docs/tutorials/dev-setup.md).
+Follow the instructions to set up your dev environment to build Copacetic.
 
-For an overview of the project components, refer to the [copa design](./docs/vulnerability-driven-patching.md) document.
+For an overview of the project components, refer to the [Copa design](./website/docs/design.md) document.
+
+### IDE Setup
+
+Copacetic is written in Go, so any IDE that supports Go may be used. If you have an IDE you prefer, simply search for a guide to set it up with Go. If you don't have a preferred IDE or if you're a new developer, some popular options are listed below:
+
+* [GoLand](https://www.jetbrains.com/help/go/quick-start-guide-goland.html)
+* [VSCode](https://code.visualstudio.com/docs/languages/go)
+* [Vim](https://github.com/fatih/vim-go)
+* [Zed](https://zed.dev/docs/languages/go)
+
+After choosing your IDE, we should install [gofumpt](https://github.com/mvdan/gofumpt). It's a stricter formatter than `gofmt` which Copacetic requires to pass all tests. Once installed, you may optionally set it up to run in your IDE of choice by following the instructions about halfway down the page.
+
+### Docker Setup
+
+Copacetic requires Docker for patching images. To install Docker, follow the [Docker installation guide](https://docs.docker.com/engine/install/).
 
 ### Tests
 
@@ -29,6 +44,7 @@ Once you can successfully `make` the project, any code contributions should also
 
 * Pass unit tests via `make test`.
 * Lint cleanly via `make lint`.
+* Be formatted with `gofumpt`.
 
 Pull requests will also be expected to pass the PR functional tests specified by `.github/workflows/build.yml`.
 
@@ -43,7 +59,7 @@ If you'd like to start contributing code to the project, you can search for [iss
 
 For any changes that may involve significant refactoring or development effort, we suggest that you file an issue to discuss the proposal with the maintainers first as it is unlikely that we will accept large PRs without prior discussion that have:
 
-* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./docs/vulnerability-driven-patching.md#design-tenets)).
+* Architectural changes (e.g. breaking interfaces or violations of [this project's design tenets](./website/docs/design.md#design-tenets)).
 * Unsolicited features that significantly expand the functional scope of the tool.
 
 Pull requests should be submitted from your fork of the project with the PR template filled out. This project uses the [Angular commit message format](https://github.com/angular/angular/blob/main/CONTRIBUTING.md#-commit-message-format) for automated changelog generation, so it's helpful to be familiar with it as the maintainers will need to ensure adherence to it on accepting PRs.
@@ -118,6 +134,4 @@ git push --force-with-lease <remote-name> <branch-name>
 
 ## Code of Conduct
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+This project has adopted the [CNCF Code of Conduct](./CODE_OF_CONDUCT)
