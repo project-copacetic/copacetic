@@ -349,21 +349,30 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		return nil, nil, err
 	}
 
-	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(aptUpdated, aptInstalled)
-	patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
-
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
-	var prevPatchMerge, combinedPatchMerge llb.State
 	if dm.config.PatchedConfigData != nil {
+		// Diff the base image and new patches
+		patchDiff := llb.Diff(dm.config.ImageState, aptInstalled)
+
+		// Diff the base image and patched image to get previous patches
 		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
-		prevPatchMerge = llb.Merge([]llb.State{dm.config.PatchedImageState, prevPatchDiff})
 
 		// Merge the old patch diffs and new patch diffs
-		combinedPatchMerge = llb.Merge([]llb.State{prevPatchMerge, patchMerge})
+		prevAndNewPatch := llb.Merge([]llb.State{prevPatchDiff, patchDiff})
+
+		// This additional diff ensures previous patch layers are discarded
+		// While ensuring all previous and new patches are properly applied to the base image
+		combinedPatch := llb.Diff(dm.config.ImageState, prevAndNewPatch)
+
+		// Merge previous and new patches into the base image
+		combinedPatchMerge := llb.Merge([]llb.State{dm.config.ImageState, combinedPatch})
 
 		return &combinedPatchMerge, resultsBytes, nil
 	}
+
+	// Diff the installed updates and merge that into the target image
+	patchDiff := llb.Diff(dm.config.ImageState, aptInstalled)
+	patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
 
 	return &patchMerge, resultsBytes, nil
 }
@@ -504,21 +513,30 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
 	statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
 
-	// Diff unpacked packages layers from previous and merge with target
-	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
-	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
-
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
-	var prevPatchMerge, combinedPatchMerge llb.State
 	if dm.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
 		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
-		prevPatchMerge = llb.Merge([]llb.State{dm.config.PatchedImageState, prevPatchDiff})
+
+		// Diff the manifests for the latest updates
+		manifestsDiff := llb.Diff(fieldsWritten, statusUpdated)
 
 		// Merge the old patch diffs and new patch diffs
-		combinedPatchMerge = llb.Merge([]llb.State{prevPatchMerge, merged})
+		prevAndNewPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
+
+		// This additional diff ensures previous patch layers are discarded
+		// While ensuring all previous and new patches are properly applied to the base image
+		combinedPatch := llb.Diff(dm.config.ImageState, prevAndNewPatch)
+
+		// Merge previous and new patches into the base image
+		combinedPatchMerge := llb.Merge([]llb.State{dm.config.ImageState, combinedPatch})
 
 		return &combinedPatchMerge, resultsBytes, nil
 	}
+
+	// Diff unpacked packages layers from previous and merge with target
+	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
+	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
 
 	return &merged, resultsBytes, nil
 }
