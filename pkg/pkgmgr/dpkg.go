@@ -313,6 +313,9 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
+	checkUpgradable := `sh -c "apt list --upgradable 2>/dev/null | grep -q "upgradable" || exit 1"`
+	aptUpdated = aptUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
@@ -398,6 +401,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 									update_packages="$update_packages $pkg_name"
 								fi
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+							if [ -z "$update_packages" ]; then
+								echo "No packages to update"
+								exit 1
+							fi
 
 							mkdir /var/cache/apt/archives
 							cd /var/cache/apt/archives

@@ -46,6 +46,7 @@ type rpmManager struct {
 	rpmTools      rpmToolPaths
 	isDistroless  bool
 	packageInfo   map[string]string
+	osVersion     string
 }
 
 type rpmDBType uint
@@ -400,13 +401,28 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	var installCmd string
 	switch {
 	case rm.rpmTools["dnf"] != "":
-		const dnfInstallTemplate = `sh -c 'output=$(%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
+		checkUpdateTemplate := `sh -c "%[1]s check-update; if [ $? -ne 0 ]; then echo >> /updates.txt; fi"`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["dnf"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
+
+		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
 	case rm.rpmTools["yum"] != "":
-		const yumInstallTemplate = `sh -c 'output=$(%[1]s upgrade %[2]s -y && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
+		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
+
+		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		const microdnfInstallTemplate = `sh -c 'output=$(%[1]s update %[2]s && %[1]s clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`
+		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
+
+		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
@@ -421,12 +437,12 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 
 	// Write results.manifest to host for post-patch validation
 	var resultBytes []byte
-	var err error
 	if updates != nil {
 		const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
 		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
 		resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
+		var err error
 		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
 		if err != nil {
 			return nil, nil, err
@@ -437,6 +453,16 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	patchDiff := llb.Diff(rm.config.ImageState, installed)
 	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
 	return &patchMerge, resultBytes, nil
+}
+
+func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) bool {
+	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
+	stateWithCheck := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+
+	// if error in extracting file, that means updates.txt does not exist and there are no updates.
+	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
+
+	return err == nil
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
@@ -454,7 +480,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	if updates == nil {
 		jsonPackageData, err := json.Marshal(rm.packageInfo)
 		if err != nil {
-			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
+			return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
 		}
 
 		busyboxCopied = busyboxCopied.Run(
@@ -468,12 +494,17 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
 									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-									latest_version=$(yum info $pkg_name 2>/dev/null | grep "Version" | sed -n '$s/Version *: //p')
+									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2 | sed 's/\.cm2//')
 
 									if [ "$latest_version" != "$pkg_version" ]; then
 										update_packages="$update_packages $pkg_name"
 									fi
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+								if [ -z "$update_packages" ]; then
+									echo "No packages to update"
+									exit 1
+								fi
 
 								echo "$update_packages" > packages.txt
 						`,
