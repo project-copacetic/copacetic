@@ -17,6 +17,9 @@ For more details and how to get started, please refer to [full documentation](ht
 
 ![intro](demo/copa-demo.gif)
 
+### Interactive Demo
+You can also try out a fully interactive `copa` demo on [Killercoda](https://killercoda.com/copacetic/scenario/try-copa)
+
 ## Why?
 
 We needed the ability to patch containers quickly without going upstream for a full rebuild. As the window between [vulnerability disclosure and active exploitation continues to narrow](https://www.bleepingcomputer.com/news/security/hackers-scan-for-vulnerabilities-within-15-minutes-of-disclosure/), there is a growing operational need to patch critical security vulnerabilities in container images so they can be quickly redeployed into production. The need is especially acute when those vulnerabilities are:
