@@ -43,6 +43,8 @@ jobs:
         with:
           go-version: "1.22"
           check-latest: true
+      - name: Create .docker/buildx/current file
+        run: echo '{"Key":"unix:///var/run/docker.sock","Name":"","Global":false}' | tee ~/.docker/buildx/current
       - name: Unit test
         shell: bash
         env:
