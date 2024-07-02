@@ -43,9 +43,9 @@ jobs:
         with:
           go-version: "1.22"
           check-latest: true
-      - name: Create /home/runner/.docker/buildx/current
+      - name: Add containerd-snapshotter to docker daemon
         run: |
-          echo '{"features": { "containerd-snapshotter": true }}' > /etc/docker/daemon.json
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Unit test
         shell: bash
