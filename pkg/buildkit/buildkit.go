@@ -77,13 +77,12 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
-	var patchedImageConfig []byte
 	baseImage, userImageConfig := setupLabels(image, configData)
 
 	if baseImage == "" {
 		configData = userImageConfig
 	} else {
-		patchedImageConfig = userImageConfig
+		patchedImageConfig := userImageConfig
 		_, _, baseImageConfig, err := c.ResolveImageConfig(ctx, baseImage, sourceresolver.Opt{
 			ImageOpt: &sourceresolver.ResolveImageOpt{
 				ResolveMode: llb.ResolveModePreferLocal.String(),
