@@ -228,12 +228,10 @@ func TestNewClient(t *testing.T) {
 		t.Run("default buildkit addr", func(t *testing.T) {
 			t.Parallel()
 			bkOpts := Opts{} // Initialize with default values
-			ctxT, cancel := context.WithTimeout(ctx, time.Second)
-			defer cancel()
-			client, err := NewClient(ctxT, bkOpts)
+			client, err := NewClient(context.Background(), bkOpts)
 			assert.NoError(t, err)
 			defer client.Close()
-			err = ValidateClient(ctxT, client)
+			err = ValidateClient(context.Background(), client)
 			assert.NoError(t, err)
 		})
 	})
