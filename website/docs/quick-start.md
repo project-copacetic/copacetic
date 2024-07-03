@@ -12,14 +12,16 @@ This sample illustrates how to patch outdated containers with `copa`.
     * The `docker` daemon runs a buildkit service in-process. If you are using this for your buildkit instance, Docker must have the [containerd image store feature](https://docs.docker.com/storage/containerd/) enabled.
     * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd image store. However, only images in a remote registry can be patched using these methods.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
+ * Optional:
+   * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.  
 
 ## Sample Steps
 
-The following steps will update all outdated packages in an image to the latest available version:
+The following steps will update all outdated packages in an image to the latest available versions:
 
 :::note
 
-Upgrading all packages may introduce compatibility issues or break existing functionality. Test the patched image to ensure stability.
+Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. If you are interested in targeted updates for vulnerabilities only, please see [Patch with an optional scanner report](#patch-with-an-optional-scanner-report) section.
 
 :::
 
@@ -35,14 +37,19 @@ Upgrading all packages may introduce compatibility issues or break existing func
 2. After setting up the buildkit instance, run the following Copa command to patch the supplied image:
 
     ```bash
-    copa patch -i docker.io/library/nginx:1.21.6
+    export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+    copa patch -i $IMAGE
     ```
-   
+ 
+ :::tip 
     If you want to patch an image using the digest, run the following command instead: 
-
-    ```bash
-    copa patch -i docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+    
+        ```bash
+        export IMAGE=docker.io/library/nginx:1.21.6
+        copa patch -i $IMAGE
     ```
+    
+:::
 
     In any of these cases, `copa` is non-destructive and exports a new image with the specified `1.21.6-patched` label to the local Docker daemon.
 
@@ -109,23 +116,38 @@ This example walks through the steps using a Trivy report to patch only packages
 2. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
 
     ```bash
-    trivy image --vuln-type os --ignore-unfixed -f json -o nginx.1.21.6.json docker.io/library/nginx:1.21.6
+    export IMAGE=docker.io/library/nginx:1.21.6
+    trivy image --vuln-type os --ignore-unfixed -f json -o $(basename $IMAGE).json $IMAGE
     ```
 
     You can also see the existing patchable vulnerabilities in table form on the shell with:
 
     ```bash
-    trivy image --vuln-type os --ignore-unfixed docker.io/library/nginx:1.21.6
+    trivy image --vuln-type os --ignore-unfixed $IMAGE
     ```
 
-3. To patch the image, supply the Trivy report as an additional argument to the Copa command.
+3. To patch the image, supply the Trivy report as an additional argument to the Copa command. By default, this will produce a tag with a `-patched` suffix.
 
     ```bash
-    copa patch -r nginx.1.21.6.json -i docker.io/library/nginx:1.21.6
+    copa patch -r $(basename $IMAGE).json -i $IMAGE
     ```
 
 4. Scan the patched image and verify that the vulnerabilities have been patched:
 
     ```bash
-    trivy image --vuln-type os --ignore-unfixed docker.io/library/nginx:1.21.6-patched
+    $ trivy image --vuln-type os --ignore-unfixed $IMAGE-patched
+    2024-07-03T14:11:26.908-0700	INFO	Need to update DB
+    2024-07-03T14:11:26.908-0700	INFO	DB Repository: ghcr.io/aquasecurity/trivy-db
+    2024-07-03T14:11:26.908-0700	INFO	Downloading DB...
+    49.57 MiB / 49.57 MiB [-------------------------------------------------------------------------] 100.00% 26.35 MiB p/s 2.1s
+    2024-07-03T14:11:29.864-0700	INFO	Vulnerability scanning is enabled
+    2024-07-03T14:11:29.864-0700	INFO	Secret scanning is enabled
+    2024-07-03T14:11:29.864-0700	INFO	If your scanning is slow, please try '--scanners vuln' to disable secret scanning
+    2024-07-03T14:11:29.864-0700	INFO	Please see also https://aquasecurity.github.io/trivy/v0.44/docs/scanner/secret/#recommendation for faster secret detection
+    2024-07-03T14:11:32.197-0700	INFO	Detected OS: debian
+    2024-07-03T14:11:32.197-0700	INFO	Detecting Debian vulnerabilities...
+
+    nginx:1.21.6-patched (debian 11.10)
+    ===================================
+    Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
     ```
