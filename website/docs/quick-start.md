@@ -45,10 +45,16 @@ This sample illustrates how to patch outdated containers with `copa`.
 
 3. Patch the supplied image with Copa:
 
+   ###### 3.1 Update all outdated packages
+    By default, Copa will update all outdated packages in an image to the latest available versions. 
+    :::note
+    Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. 
+    :::
+
     ```bash
-    copa patch -i $IMAGE
+     copa patch -i $IMAGE
     ```
- 
+
     :::tip 
     If you want to patch an image using the digest, run the following command instead: 
     
@@ -57,31 +63,27 @@ This sample illustrates how to patch outdated containers with `copa`.
         copa patch -i $IMAGE
     ```
     :::
-    
-    By default, Copa will update all outdated packages in an image to the latest available versions. 
-    
-    :::note
-    Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. 
-    :::
-    
+
+   ###### 3.2 Update only targeted packages
     Alternatively, you can chose to have a targeted patching of your image by providing an optional vulnerability report. In the following commands, we are only updating packages marked vulnerable by Trivy:
-    
-    3.1. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
+
+    1. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
     ```bash
     trivy image --vuln-type os --ignore-unfixed -f json -o $(basename $IMAGE).json $IMAGE
     ```
-    3.2. To patch the image, supply the Trivy report as an additional argument to the Copa command.
+    
+    2. Supply the Trivy report as an additional argument to the Copa command to patch image.
 
     ```bash
     copa patch -r $(basename $IMAGE).json -i $IMAGE
     ```
     
     In both cases by default, Copa will produce a tag with a `-patched` suffix and export a new image with the specified `1.21.6-patched` label to the local Docker daemon. 
-    
+
     :::note
     If you're running this sample against an image from a private registry instead,ensure that the credentials are configured in the default Docker config.json before running `copa patch`, for example, via `docker login -u <user> -p <password> <registry>`.
     :::
-    
+
     :::note
     If you're patching an image that is local-only (i.e. built or tagged locally but not pushed to a registry), `copa` is limited to using `docker`'s built-in buildkit service, and must use the [`containerd image store`](https://docs.docker.com/storage/containerd/) feature. This is because only `docker`'s built-in buildkit service has access to the docker image store (see [Prerequisites](#prerequisites) for more information.)
     :::
