@@ -12,18 +12,10 @@ This sample illustrates how to patch outdated containers with `copa`.
     * The `docker` daemon runs a buildkit service in-process. If you are using this for your buildkit instance, Docker must have the [containerd image store feature](https://docs.docker.com/storage/containerd/) enabled.
     * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd image store. However, only images in a remote registry can be patched using these methods.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
- * Optional:
-   * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.  
+  * Optional:
+    * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.  
 
 ## Sample Steps
-
-The following steps will update all outdated packages in an image to the latest available versions:
-
-:::note
-
-Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. If you are interested in targeted updates for vulnerabilities only, please see [Patch with an optional scanner report](#patch-with-an-optional-scanner-report) section.
-
-:::
 
 1. Before patching your image, specify a buildkit instance to connect to:
 
@@ -34,57 +26,87 @@ Upgrading all packages may introduce compatibility issues or break existing func
 
     If an instance doesn't exist or that instance doesn't support all the features copa needs the next will be attempted. Please see [custom buildkit addresses](custom-address.md) for more information.
 
-2. After setting up the buildkit instance, run the following Copa command to patch the supplied image:
+2.  Scan the container image to check for patchable OS vulnerabilities:
+    ```bash
+    $ export IMAGE=docker.io/library/nginx:1.21.6
+    $ trivy image --vuln-type os --ignore-unfixed $IMAGE
+    2024-07-03T14:30:26.167-0700	INFO	Vulnerability scanning is enabled
+    2024-07-03T14:30:26.167-0700	INFO	Secret scanning is enabled
+    2024-07-03T14:30:26.167-0700	INFO	If your scanning is slow, please try '--scanners vuln' to disable secret scanning
+    2024-07-03T14:30:26.167-0700	INFO	Please see also https://aquasecurity.github.io/trivy/v0.44/docs/scanner/secret/#recommendation for faster secret detection
+    2024-07-03T14:30:27.980-0700	INFO	Detected OS: debian
+    2024-07-03T14:30:27.980-0700	INFO	Detecting Debian vulnerabilities...
+    
+    nginx:1.21.6 (debian 11.3)
+    ==========================
+    Total: 207 (UNKNOWN: 0, LOW: 12, MEDIUM: 104, HIGH: 76, CRITICAL: 15)
+    ...
+    ```
+
+3. Patch the supplied image with Copa:
 
     ```bash
-    export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
     copa patch -i $IMAGE
     ```
  
- :::tip 
+    :::tip 
     If you want to patch an image using the digest, run the following command instead: 
     
-        ```bash
-        export IMAGE=docker.io/library/nginx:1.21.6
+    ```bash
+        export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
         copa patch -i $IMAGE
     ```
+    :::
     
-:::
+    By default, Copa will update all outdated packages in an image to the latest available versions. 
+    
+    :::note
+    Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. 
+    :::
+    
+    Alternatively, you can chose to have a targeted patching of your image by providing an optional vulnerability report. In the following commands, we are only updating packages marked vulnerable by Trivy:
+    
+    3.1. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
+    ```bash
+    trivy image --vuln-type os --ignore-unfixed -f json -o $(basename $IMAGE).json $IMAGE
+    ```
+    3.2. To patch the image, supply the Trivy report as an additional argument to the Copa command.
 
-    In any of these cases, `copa` is non-destructive and exports a new image with the specified `1.21.6-patched` label to the local Docker daemon.
-
+    ```bash
+    copa patch -r $(basename $IMAGE).json -i $IMAGE
+    ```
+    
+    In both cases by default, Copa will produce a tag with a `-patched` suffix and export a new image with the specified `1.21.6-patched` label to the local Docker daemon. 
+    
     :::note
     If you're running this sample against an image from a private registry instead,ensure that the credentials are configured in the default Docker config.json before running `copa patch`, for example, via `docker login -u <user> -p <password> <registry>`.
     :::
-
+    
     :::note
     If you're patching an image that is local-only (i.e. built or tagged locally but not pushed to a registry), `copa` is limited to using `docker`'s built-in buildkit service, and must use the [`containerd image store`](https://docs.docker.com/storage/containerd/) feature. This is because only `docker`'s built-in buildkit service has access to the docker image store (see [Prerequisites](#prerequisites) for more information.)
     :::
-
-3. You can inspect the structure of the patched image with `docker history` to see the new patch layer appended to the image:
+    
+4. Scan the patched image again and verify that the vulnerabilities have been patched:
 
     ```bash
-    $ docker history docker.io/library/nginx:1.21.6-patched
-    IMAGE          CREATED              CREATED BY                                      SIZE      COMMENT
-    262dacfeb193   About a minute ago   mount / from exec sh -c apt install --no-ins…   41.1MB    buildkit.exporter.image.v0
-    <missing>      20 months ago        /bin/sh -c #(nop)  CMD ["nginx" "-g" "daemon…   0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  STOPSIGNAL SIGQUIT           0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  EXPOSE 80                    0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  ENTRYPOINT ["/docker-entr…   0B
-    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:09a214a3e07c919a…   16.4kB
-    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:0fd5fca330dcd6a7…   12.3kB
-    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:0b866ff3fc1ef5b0…   12.3kB
-    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:65504f71f5855ca0…   8.19kB
-    <missing>      20 months ago        /bin/sh -c set -x     && addgroup --system -…   64.5MB
-    <missing>      20 months ago        /bin/sh -c #(nop)  ENV PKG_RELEASE=1~bullseye   0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  ENV NJS_VERSION=0.7.3        0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  ENV NGINX_VERSION=1.21.6     0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  LABEL maintainer=NGINX Do…   0B
-    <missing>      20 months ago        /bin/sh -c #(nop)  CMD ["bash"]                 0B
-    <missing>      20 months ago        /bin/sh -c #(nop) ADD file:134f25aec8adf83cb…   91.8MB
-    ```
+    $ trivy image --vuln-type os --ignore-unfixed $IMAGE-patched
+    2024-07-03T14:11:26.908-0700	INFO	Need to update DB
+    2024-07-03T14:11:26.908-0700	INFO	DB Repository: ghcr.io/aquasecurity/trivy-db
+    2024-07-03T14:11:26.908-0700	INFO	Downloading DB...
+    49.57 MiB / 49.57 MiB [-------------------------------------------------------------------------] 100.00% 26.35 MiB p/s 2.1s
+    2024-07-03T14:11:29.864-0700	INFO	Vulnerability scanning is enabled
+    2024-07-03T14:11:29.864-0700	INFO	Secret scanning is enabled
+    2024-07-03T14:11:29.864-0700	INFO	If your scanning is slow, please try '--scanners vuln' to disable secret scanning
+    2024-07-03T14:11:29.864-0700	INFO	Please see also https://aquasecurity.github.io/trivy/v0.44/docs/scanner/secret/#recommendation for faster secret detection
+    2024-07-03T14:11:32.197-0700	INFO	Detected OS: debian
+    2024-07-03T14:11:32.197-0700	INFO	Detecting Debian vulnerabilities...
 
-4. Run the container to verify that the image has no regressions:
+    nginx:1.21.6-patched (debian 11.10)
+    ===================================
+    Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
+    ```
+    
+5. Run the container to verify that the image has no regressions:
 
     ```bash
     $ docker run -it --rm --name nginx-test docker.io/library/nginx:1.21.6-patched
@@ -105,49 +127,25 @@ Upgrading all packages may introduce compatibility issues or break existing func
     ```
    You can stop the container by opening a new shell instance and running: `docker stop nginx-test`
 
-### Patch with an optional scanner report
-
-By default, Copa updates all oudated packages. However, you can chose to have a targeted patching of your image by providing an optional vulnerability report.
-
-This example walks through the steps using a Trivy report to patch only packages found vulnerable:
-
-1. Ensure buildkit connection is set up as shown above.
-
-2. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
+6. You can inspect the structure of the patched image with `docker history` to see the new patch layer appended to the image:
 
     ```bash
-    export IMAGE=docker.io/library/nginx:1.21.6
-    trivy image --vuln-type os --ignore-unfixed -f json -o $(basename $IMAGE).json $IMAGE
-    ```
-
-    You can also see the existing patchable vulnerabilities in table form on the shell with:
-
-    ```bash
-    trivy image --vuln-type os --ignore-unfixed $IMAGE
-    ```
-
-3. To patch the image, supply the Trivy report as an additional argument to the Copa command. By default, this will produce a tag with a `-patched` suffix.
-
-    ```bash
-    copa patch -r $(basename $IMAGE).json -i $IMAGE
-    ```
-
-4. Scan the patched image and verify that the vulnerabilities have been patched:
-
-    ```bash
-    $ trivy image --vuln-type os --ignore-unfixed $IMAGE-patched
-    2024-07-03T14:11:26.908-0700	INFO	Need to update DB
-    2024-07-03T14:11:26.908-0700	INFO	DB Repository: ghcr.io/aquasecurity/trivy-db
-    2024-07-03T14:11:26.908-0700	INFO	Downloading DB...
-    49.57 MiB / 49.57 MiB [-------------------------------------------------------------------------] 100.00% 26.35 MiB p/s 2.1s
-    2024-07-03T14:11:29.864-0700	INFO	Vulnerability scanning is enabled
-    2024-07-03T14:11:29.864-0700	INFO	Secret scanning is enabled
-    2024-07-03T14:11:29.864-0700	INFO	If your scanning is slow, please try '--scanners vuln' to disable secret scanning
-    2024-07-03T14:11:29.864-0700	INFO	Please see also https://aquasecurity.github.io/trivy/v0.44/docs/scanner/secret/#recommendation for faster secret detection
-    2024-07-03T14:11:32.197-0700	INFO	Detected OS: debian
-    2024-07-03T14:11:32.197-0700	INFO	Detecting Debian vulnerabilities...
-
-    nginx:1.21.6-patched (debian 11.10)
-    ===================================
-    Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
+    $ docker history docker.io/library/nginx:1.21.6-patched
+    IMAGE          CREATED              CREATED BY                                      SIZE      COMMENT
+    262dacfeb193   About a minute ago   mount / from exec sh -c apt install --no-ins…   41.1MB    buildkit.exporter.image.v0
+    <missing>      20 months ago        /bin/sh -c #(nop)  CMD ["nginx" "-g" "daemon…   0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  STOPSIGNAL SIGQUIT           0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  EXPOSE 80                    0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  ENTRYPOINT ["/docker-entr…   0B
+    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:09a214a3e07c919a…   16.4kB
+    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:0fd5fca330dcd6a7…   12.3kB
+    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:0b866ff3fc1ef5b0…   12.3kB
+    <missing>      20 months ago        /bin/sh -c #(nop) COPY file:65504f71f5855ca0…   8.19kB
+    <missing>      20 months ago        /bin/sh -c set -x     && addgroup --system -…   64.5MB
+    <missing>      20 months ago        /bin/sh -c #(nop)  ENV PKG_RELEASE=1~bullseye   0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  ENV NJS_VERSION=0.7.3        0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  ENV NGINX_VERSION=1.21.6     0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  LABEL maintainer=NGINX Do…   0B
+    <missing>      20 months ago        /bin/sh -c #(nop)  CMD ["bash"]                 0B
+    <missing>      20 months ago        /bin/sh -c #(nop) ADD file:134f25aec8adf83cb…   91.8MB
     ```
