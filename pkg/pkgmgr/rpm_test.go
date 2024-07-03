@@ -464,13 +464,14 @@ func Test_installUpdates_RPM(t *testing.T) {
 		{
 			name: "Update specific packages",
 			mockSetup: func(mr *mocks.MockReference) {
+				// To pass all test assertions, the mock for "Solve" needs to be moved in here
+				// mgwc.On("Solve", mock.Anything, mock.Anything).Return(&gwclient.Result{}, nil)
 				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
 			},
 			updates: unversioned.UpdatePackages{
 				{Name: "package1", FixedVersion: "1.0.1"},
 				{Name: "package2", FixedVersion: "2.0.1"},
 			},
-
 			rpmTools: rpmToolPaths{
 				"dnf": "/usr/bin/dnf",
 			},
@@ -519,6 +520,10 @@ func Test_installUpdates_RPM(t *testing.T) {
 				assert.NotNil(t, updatedState)
 				assert.Equal(t, test.expectedResult, resultBytes)
 			}
+
+			mockClient.AssertExpectations(t)
+			// See comment in "update specific packages" for why this is commented out
+			// mockRef.AssertExpectations(t)
 		})
 	}
 }
@@ -573,8 +578,8 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
 			mockClient := new(mocks.MockGWClient)
 			mockRef := new(mocks.MockReference)
 
@@ -582,6 +587,10 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 			mockResult.SetRef(mockRef)
 
 			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if test.mockSetup != nil {
+				test.mockSetup(mockRef)
+			}
 
 			rm := &rpmManager{
 				config: &buildkit.Config{
@@ -591,32 +600,21 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 				workingFolder: "/tmp",
 			}
 
-			if tt.mockSetup != nil {
-				tt.mockSetup(mockRef)
-			}
-
-			// Mock expectations
-			//if tt.expectedError {
-			//	mockClient.On("Solve", mock.Anything, mock.Anything, mock.Anything).Return(mockResult, assert.AnError)
-			//} else {
-			//	mockClient.On("Solve", mock.Anything, mock.Anything, mock.Anything).Return(mockResult, nil)
-			//}
-
-			// Execute
-			result, resultBytes, err := rm.unpackAndMergeUpdates(context.Background(), tt.updates, tt.toolImage, tt.ignoreErrors)
+			result, resultBytes, err := rm.unpackAndMergeUpdates(context.Background(), test.updates, test.toolImage, test.ignoreErrors)
 
 			// Assert
-			if tt.expectedError {
+			if test.expectedError {
 				assert.Error(t, err)
 				assert.Nil(t, result)
 				assert.Nil(t, resultBytes)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
-				assert.Equal(t, tt.expectedResult, resultBytes)
+				assert.Equal(t, test.expectedResult, resultBytes)
 			}
 
 			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
 		})
 	}
 }
