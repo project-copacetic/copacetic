@@ -109,7 +109,7 @@ This sample illustrates how to patch outdated containers with `copa`.
 5. Run the container to verify that the image has no regressions:
 
     ```bash
-    $ docker run -it --rm --name nginx-test docker.io/library/nginx:1.21.6-patched
+    $ docker run -it --rm --name test $IMAGE-patched
     /docker-entrypoint.sh: /docker-entrypoint.d/ is not empty, will attempt to perform configuration
     /docker-entrypoint.sh: Looking for shell scripts in /docker-entrypoint.d/
     /docker-entrypoint.sh: Launching /docker-entrypoint.d/10-listen-on-ipv6-by-default.sh
@@ -125,12 +125,12 @@ This sample illustrates how to patch outdated containers with `copa`.
     2024/01/22 23:32:54 [notice] 1#1: getrlimit(RLIMIT_NOFILE): 1048576:1048576
     2024/01/22 23:32:54 [notice] 1#1: start worker processes
     ```
-   You can stop the container by opening a new shell instance and running: `docker stop nginx-test`
+   You can stop the container by opening a new shell instance and running: `docker stop test`
 
 6. You can inspect the structure of the patched image with `docker history` to see the new patch layer appended to the image:
 
     ```bash
-    $ docker history docker.io/library/nginx:1.21.6-patched
+    $ docker history $IMAGE-patched
     IMAGE          CREATED              CREATED BY                                      SIZE      COMMENT
     262dacfeb193   About a minute ago   mount / from exec sh -c apt install --no-ins…   41.1MB    buildkit.exporter.image.v0
     <missing>      20 months ago        /bin/sh -c #(nop)  CMD ["nginx" "-g" "daemon…   0B
