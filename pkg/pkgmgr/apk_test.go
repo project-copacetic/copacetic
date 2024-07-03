@@ -219,7 +219,7 @@ func Test_apkManager_GetPackageType(t *testing.T) {
 	}
 }
 
-func TestInstallUpdatesAPK(t *testing.T) {
+func Test_InstallUpdates_APK(t *testing.T) {
 	tests := []struct {
 		name          string
 		manifest      *unversioned.UpdateManifest

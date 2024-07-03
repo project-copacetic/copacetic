@@ -2,11 +2,17 @@ package pkgmgr
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -413,6 +419,204 @@ func TestIsValidVersion(t *testing.T) {
 			if (err != nil && err.Error() != tt.expectedErr) || (err == nil && tt.expectedErr != "") {
 				t.Errorf("isValidPackage(%q) error = %v, want %v", tt.pkgVersion, err, tt.expectedErr)
 			}
+		})
+	}
+}
+
+func Test_installUpdates_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		ignoreErrors   bool
+		mockSetup      func(reference *mocks.MockReference)
+		rpmTools       rpmToolPaths
+		expectedCmd    string
+		expectedResult []byte
+		expectedError  string
+	}{
+		{
+			name: "DNF update all packages",
+			rpmTools: rpmToolPaths{
+				"dnf": "/usr/bin/dnf",
+			},
+			expectedCmd:    `sh -c 'output=$(/usr/bin/dnf upgrade  -y && /usr/bin/dnf clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
+			expectedResult: nil,
+		},
+		{
+			name: "YUM update all packages",
+			rpmTools: rpmToolPaths{
+				"yum": "/usr/bin/yum",
+				"rpm": "/usr/bin/rpm",
+			},
+			expectedCmd:    `sh -c 'output=$(/usr/bin/yum upgrade  -y && /usr/bin/yum clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
+			expectedResult: nil,
+		},
+		{
+			name: "MicroDNF update all packages",
+			rpmTools: rpmToolPaths{
+				"microdnf": "/usr/bin/microdnf",
+				"rpm":      "/usr/bin/rpm",
+			},
+			ignoreErrors:   false,
+			expectedCmd:    `sh -c 'output=$(/usr/bin/microdnf update && /usr/bin/microdnf clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
+			expectedResult: nil,
+		},
+		{
+			name: "Update specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.0.1"},
+				{Name: "package2", FixedVersion: "2.0.1"},
+			},
+
+			rpmTools: rpmToolPaths{
+				"dnf": "/usr/bin/dnf",
+			},
+			ignoreErrors:   false,
+			expectedCmd:    `sh -c 'output=$(/usr/bin/dnf upgrade package1 package2 -y && /usr/bin/dnf clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
+			expectedResult: []byte("package1-1.0.1\npackage2-2.0.2\n"),
+		},
+		{
+			name:          "No package manager available",
+			rpmTools:      rpmToolPaths{},
+			expectedError: "unexpected: no package manager tools were found for patching",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if test.mockSetup != nil {
+				test.mockSetup(mockRef)
+			}
+
+			rm := &rpmManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+				rpmTools:      test.rpmTools,
+				workingFolder: "/tmp",
+			}
+
+			updatedState, resultBytes, err := rm.installUpdates(context.Background(), test.updates, test.ignoreErrors)
+
+			if test.expectedError != "" {
+				assert.EqualError(t, err, test.expectedError)
+				assert.Nil(t, updatedState)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, updatedState)
+				assert.Equal(t, test.expectedResult, resultBytes)
+			}
+		})
+	}
+}
+
+func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		mockSetup      func(reference *mocks.MockReference)
+		toolImage      string
+		ignoreErrors   bool
+		expectedError  bool
+		expectedResult []byte
+	}{
+		{
+			name: "Successful update with specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.2.3"},
+				{Name: "package2", FixedVersion: "2.3.4"},
+			},
+			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   false,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64"),
+		},
+		{
+			name: "Successful update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(nil), nil)
+			},
+			updates:        nil,
+			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   false,
+			expectedResult: nil,
+			expectedError:  false,
+		},
+		{
+			name: "Ignore errors during update",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.0.1\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "2.0.0"},
+			},
+			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   true,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.0.1\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			rm := &rpmManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+				workingFolder: "/tmp",
+			}
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			// Mock expectations
+			//if tt.expectedError {
+			//	mockClient.On("Solve", mock.Anything, mock.Anything, mock.Anything).Return(mockResult, assert.AnError)
+			//} else {
+			//	mockClient.On("Solve", mock.Anything, mock.Anything, mock.Anything).Return(mockResult, nil)
+			//}
+
+			// Execute
+			result, resultBytes, err := rm.unpackAndMergeUpdates(context.Background(), tt.updates, tt.toolImage, tt.ignoreErrors)
+
+			// Assert
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
 		})
 	}
 }
