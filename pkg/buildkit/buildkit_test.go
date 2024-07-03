@@ -301,7 +301,7 @@ func TestSetupLabels(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.testName, func(t *testing.T) {
 			image := "test_image"
-			baseImage, updatedConfigData := setupLabels(image, test.configData)
+			baseImage, updatedConfigData, _ := setupLabels(image, test.configData)
 
 			if test.expectError {
 				assert.Equal(t, "", baseImage)
@@ -313,7 +313,11 @@ func TestSetupLabels(t *testing.T) {
 				err := json.Unmarshal(updatedConfigData, &updatedConfig)
 				assert.NoError(t, err)
 
-				labels := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+				labels, ok := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+				if !ok {
+					t.Errorf("type assertion to map[string]interface{} failed")
+					return
+				}
 				assert.Equal(t, test.expectImage, labels["BaseImage"])
 			}
 		})

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/containerd/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -77,7 +78,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
-	baseImage, userImageConfig := setupLabels(image, configData)
+	baseImage, userImageConfig, _ := setupLabels(image, configData)
 
 	if baseImage == "" {
 		configData = userImageConfig
@@ -92,7 +93,7 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 			return nil, nil, "", err
 		}
 
-		_, baseImageWithLabels := setupLabels(baseImage, baseImageConfig)
+		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)
 		configData = baseImageWithLabels
 
 		return configData, patchedImageConfig, baseImage, nil
@@ -101,14 +102,18 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 	return configData, nil, image, nil
 }
 
-func setupLabels(image string, configData []byte) (string, []byte) {
+func setupLabels(image string, configData []byte) (string, []byte, error) {
 	imageConfig := make(map[string]interface{})
 	err := json.Unmarshal(configData, &imageConfig)
 	if err != nil {
-		return "", nil
+		return "", nil, err
 	}
 
-	configMap := imageConfig["config"].(map[string]interface{})
+	configMap, ok := imageConfig["config"].(map[string]interface{})
+	if !ok {
+		err := fmt.Errorf("type assertion to map[string]interface{} failed")
+		return "", nil, err
+	}
 
 	var baseImage string
 	labels := configMap["labels"]
@@ -116,16 +121,24 @@ func setupLabels(image string, configData []byte) (string, []byte) {
 		labels = make(map[string]interface{})
 		configMap["labels"] = labels
 	}
-	labelsMap := labels.(map[string]interface{})
-	if baseImageValue, ok := labelsMap["BaseImage"]; ok {
-		baseImage = baseImageValue.(string)
+	labelsMap, ok := labels.(map[string]interface{})
+	if !ok {
+		err := fmt.Errorf("type assertion to map[string]interface{} failed")
+		return "", nil, err
+	}
+	if baseImageValue := labelsMap["BaseImage"]; baseImageValue != nil {
+		baseImage, ok = baseImageValue.(string)
+		if !ok {
+			err := fmt.Errorf("type assertion to string failed")
+			return "", nil, err
+		}
 	} else {
 		labelsMap["BaseImage"] = image
 	}
 
 	imageWithLabels, _ := json.Marshal(imageConfig)
 
-	return baseImage, imageWithLabels
+	return baseImage, imageWithLabels, nil
 }
 
 // Extracts the bytes of the file denoted by `path` from the state `st`.

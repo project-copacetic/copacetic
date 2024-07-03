@@ -2,6 +2,7 @@ package mocks
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/tonistiigi/fsutil/types"
 
@@ -13,72 +14,149 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-// Mock for gwclient.Client
+// Mock for gwclient.Client.
 type MockGWClient struct {
 	mock.Mock
 }
 
 func (m *MockGWClient) ResolveSourceMetadata(ctx context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
 	args := m.Called(ctx, op, opt)
-	return args.Get(0).(*sourceresolver.MetaResponse), args.Error(1)
+
+	metaResponse, ok := args.Get(0).(*sourceresolver.MetaResponse)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to *sourceresolver.MetaResponse failed")
+	}
+
+	return metaResponse, args.Error(1)
 }
 
 func (m *MockGWClient) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*gwclient.Result), args.Error(1)
+
+	result, ok := args.Get(0).(*gwclient.Result)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to *gwclient.Result failed")
+	}
+
+	return result, args.Error(1)
 }
 
 func (m *MockGWClient) ResolveImageConfig(ctx context.Context, ref string, opt sourceresolver.Opt) (string, digest.Digest, []byte, error) {
 	args := m.Called(ctx, ref, opt)
-	return args.String(0), args.Get(1).(digest.Digest), args.Get(2).([]byte), args.Error(3)
+
+	digestResult, ok1 := args.Get(1).(digest.Digest)
+	if !ok1 {
+		return "", digest.Digest(""), nil, fmt.Errorf("type assertion to digest.Digest failed")
+	}
+
+	byteResult, ok2 := args.Get(2).([]byte)
+	if !ok2 {
+		return "", digest.Digest(""), nil, fmt.Errorf("type assertion to []byte failed")
+	}
+
+	return args.String(0), digestResult, byteResult, args.Error(3)
 }
 
 func (m *MockGWClient) BuildOpts() gwclient.BuildOpts {
 	args := m.Called()
-	return args.Get(0).(gwclient.BuildOpts)
+
+	buildOpts, ok := args.Get(0).(gwclient.BuildOpts)
+	if !ok {
+		panic("type assertion to gwclient.BuildOpts failed")
+	}
+
+	return buildOpts
 }
 
 func (m *MockGWClient) Inputs(ctx context.Context) (map[string]llb.State, error) {
 	args := m.Called(ctx)
-	return args.Get(0).(map[string]llb.State), args.Error(1)
+
+	stateMap, ok := args.Get(0).(map[string]llb.State)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to map[string]llb.State failed")
+	}
+
+	return stateMap, args.Error(1)
 }
 
 func (m *MockGWClient) NewContainer(ctx context.Context, req gwclient.NewContainerRequest) (gwclient.Container, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(gwclient.Container), args.Error(1)
+
+	container, ok := args.Get(0).(gwclient.Container)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to gwclient.Container failed")
+	}
+
+	return container, args.Error(1)
 }
 
 func (m *MockGWClient) Warn(ctx context.Context, dgst digest.Digest, msg string, opts gwclient.WarnOpts) error {
 	args := m.Called(ctx, dgst, msg, opts)
-	return args.Get(0).(error)
+
+	warnErr, ok := args.Get(0).(error)
+	if !ok {
+		return fmt.Errorf("type assertion to error failed")
+	}
+
+	return warnErr
 }
 
-// MockReference is a mock of the Reference interface
+// MockReference is a mock of the Reference interface.
 type MockReference struct {
 	mock.Mock
 }
 
 func (m *MockReference) ReadFile(ctx context.Context, req gwclient.ReadRequest) ([]byte, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).([]byte), args.Error(1)
+
+	byteResult, ok := args.Get(0).([]byte)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to []byte failed")
+	}
+
+	return byteResult, args.Error(1)
 }
 
 func (m *MockReference) ToState() (llb.State, error) {
 	args := m.Called()
-	return args.Get(0).(llb.State), args.Error(1)
+
+	state, ok := args.Get(0).(llb.State)
+	if !ok {
+		return state, fmt.Errorf("type assertion to llb.State failed")
+	}
+
+	return state, args.Error(1)
 }
 
 func (m *MockReference) Evaluate(ctx context.Context) error {
 	args := m.Called(ctx)
-	return args.Get(0).(error)
+
+	evalErr, ok := args.Get(0).(error)
+	if !ok {
+		return fmt.Errorf("type assertion to error failed")
+	}
+
+	return evalErr
 }
 
 func (m *MockReference) StatFile(ctx context.Context, req gwclient.StatRequest) (*types.Stat, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).(*types.Stat), args.Error(1)
+
+	stat, ok := args.Get(0).(*types.Stat)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to *types.Stat failed")
+	}
+
+	return stat, args.Error(1)
 }
 
 func (m *MockReference) ReadDir(ctx context.Context, req gwclient.ReadDirRequest) ([]*types.Stat, error) {
 	args := m.Called(ctx, req)
-	return args.Get(0).([]*types.Stat), args.Error(1)
+
+	statSlice, ok := args.Get(0).([]*types.Stat)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to []*types.Stat failed")
+	}
+
+	return statSlice, args.Error(1)
 }
