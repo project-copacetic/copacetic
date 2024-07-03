@@ -115,14 +115,6 @@
         "ignoreErrors": false
     },
     {
-        "image": "docker.io/library/centos",
-        "tag": "7.6.1810",
-        "digest": "sha256:62d9e1c2daa91166139b51577fe4f4f6b4cc41a3a2c7fc36bd895e2a17a3e4e6",
-        "distro": "CentOS",
-        "description": "Valid rpm DB, yum present",
-        "ignoreErrors": false
-    },
-    {
         "image": "docker.io/library/amazonlinux",
         "tag": "2.0.20210326.0",
         "digest": "sha256:06380711d6a8ac0b6989f7e2a4419e560796791d9c7c843753a719c73552dc30",
