@@ -34,7 +34,7 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 	case "debian", "ubuntu":
 		return &dpkgManager{config: config, workingFolder: workingFolder, osVersion: osVersion}, nil
 	case "cbl-mariner", "centos", "redhat", "rocky", "amazon":
-		return &rpmManager{config: config, workingFolder: workingFolder}, nil
+		return &rpmManager{config: config, workingFolder: workingFolder, osVersion: osVersion}, nil
 	default:
 		return nil, fmt.Errorf("unsupported osType %s specified", osType)
 	}
