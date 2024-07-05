@@ -28,6 +28,7 @@ func (m *MockGWClient) ResolveSourceMetadata(ctx context.Context, op *pb.SourceO
 	return metaResponse, args.Error(1)
 }
 
+//nolint:gocritic
 func (m *MockGWClient) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
 	args := m.Called(ctx, req)
 
@@ -77,6 +78,7 @@ func (m *MockGWClient) Inputs(ctx context.Context) (map[string]llb.State, error)
 	return stateMap, args.Error(1)
 }
 
+//nolint:gocritic
 func (m *MockGWClient) NewContainer(ctx context.Context, req gwclient.NewContainerRequest) (gwclient.Container, error) {
 	args := m.Called(ctx, req)
 
@@ -88,6 +90,7 @@ func (m *MockGWClient) NewContainer(ctx context.Context, req gwclient.NewContain
 	return container, args.Error(1)
 }
 
+//nolint:gocritic
 func (m *MockGWClient) Warn(ctx context.Context, dgst digest.Digest, msg string, opts gwclient.WarnOpts) error {
 	args := m.Called(ctx, dgst, msg, opts)
 

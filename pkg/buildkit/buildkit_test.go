@@ -373,5 +373,7 @@ func TestUpdateImageConfigData(t *testing.T) {
 		if resultImage != "rockylinux:latest" {
 			t.Errorf("Expected image to be baseimage:latest, got %s", resultImage)
 		}
+
+		mockClient.AssertExpectations(t)
 	})
 }
