@@ -2,7 +2,7 @@
 title: Quick Start
 ---
 
-This sample illustrates how to patch outdated containers with `copa`.
+This guide illustrates how to patch outdated containers with `copa`.
 
 ## Prerequisites
 
@@ -14,6 +14,7 @@ This sample illustrates how to patch outdated containers with `copa`.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
   * Optional:
     * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.  
+      * Alternatively, see [scanner plugins](#scanner-plugins) for custom scanner support.
 
 ## Sample Steps
 
@@ -30,13 +31,6 @@ This sample illustrates how to patch outdated containers with `copa`.
     ```bash
     $ export IMAGE=docker.io/library/nginx:1.21.6
     $ trivy image --vuln-type os --ignore-unfixed $IMAGE
-    2024-07-03T14:30:26.167-0700	INFO	Vulnerability scanning is enabled
-    2024-07-03T14:30:26.167-0700	INFO	Secret scanning is enabled
-    2024-07-03T14:30:26.167-0700	INFO	If your scanning is slow, please try '--scanners vuln' to disable secret scanning
-    2024-07-03T14:30:26.167-0700	INFO	Please see also https://aquasecurity.github.io/trivy/v0.44/docs/scanner/secret/#recommendation for faster secret detection
-    2024-07-03T14:30:27.980-0700	INFO	Detected OS: debian
-    2024-07-03T14:30:27.980-0700	INFO	Detecting Debian vulnerabilities...
-    
     nginx:1.21.6 (debian 11.3)
     ==========================
     Total: 207 (UNKNOWN: 0, LOW: 12, MEDIUM: 104, HIGH: 76, CRITICAL: 15)
@@ -45,38 +39,38 @@ This sample illustrates how to patch outdated containers with `copa`.
 
 3. Patch the supplied image with Copa:
 
-   ###### 3.1 Update all outdated packages
-    By default, Copa will update all outdated packages in an image to the latest available versions. 
-    :::note
-    Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. 
-    :::
+    1. Update all outdated packages
+        By default, Copa will update all outdated packages in an image to the latest available versions. 
+        :::note
+        Upgrading all packages may introduce compatibility issues or break existing functionality. Make sure to test the patched image to ensure stability. 
+        :::
 
-    ```bash
-     copa patch -i $IMAGE
-    ```
-
-    :::tip 
-    If you want to patch an image using the digest, run the following command instead: 
-    
-    ```bash
-        export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+        ```bash
         copa patch -i $IMAGE
-    ```
-    :::
+        ```
 
-   ###### 3.2 Update only targeted packages
-    Alternatively, you can chose to have a targeted patching of your image by providing an optional vulnerability report. In the following commands, we are only updating packages marked vulnerable by Trivy:
+        :::tip 
+        If you want to patch an image using the digest, run the following command instead: 
+        
+        ```bash
+            export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+            copa patch -i $IMAGE
+        ```
+        :::
 
-    1. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
-    ```bash
-    trivy image --vuln-type os --ignore-unfixed -f json -o $(basename $IMAGE).json $IMAGE
-    ```
-    
-    2. Supply the Trivy report as an additional argument to the Copa command to patch image.
+    2. Update only targeted packages
+        Alternatively, you can chose to have a targeted patching of your image by providing an optional vulnerability report. In the following commands, we are only updating packages marked vulnerable by Trivy:
 
-    ```bash
-    copa patch -r $(basename $IMAGE).json -i $IMAGE
-    ```
+        2.1. Scan the container image for patchable OS vulnerabilities, outputting the results to a JSON file:
+        ```bash
+        trivy image --vuln-type os --ignore-unfixed -f json -o $(basename $IMAGE).json $IMAGE
+        ```
+        
+        2.2. Supply the Trivy report as an additional argument to the Copa command to patch image.
+
+        ```bash
+        copa patch -r $(basename $IMAGE).json -i $IMAGE
+        ```
     
     In both cases by default, Copa will produce a tag with a `-patched` suffix and export a new image with the specified `1.21.6-patched` label to the local Docker daemon. 
 
@@ -92,17 +86,6 @@ This sample illustrates how to patch outdated containers with `copa`.
 
     ```bash
     $ trivy image --vuln-type os --ignore-unfixed $IMAGE-patched
-    2024-07-03T14:11:26.908-0700	INFO	Need to update DB
-    2024-07-03T14:11:26.908-0700	INFO	DB Repository: ghcr.io/aquasecurity/trivy-db
-    2024-07-03T14:11:26.908-0700	INFO	Downloading DB...
-    49.57 MiB / 49.57 MiB [-------------------------------------------------------------------------] 100.00% 26.35 MiB p/s 2.1s
-    2024-07-03T14:11:29.864-0700	INFO	Vulnerability scanning is enabled
-    2024-07-03T14:11:29.864-0700	INFO	Secret scanning is enabled
-    2024-07-03T14:11:29.864-0700	INFO	If your scanning is slow, please try '--scanners vuln' to disable secret scanning
-    2024-07-03T14:11:29.864-0700	INFO	Please see also https://aquasecurity.github.io/trivy/v0.44/docs/scanner/secret/#recommendation for faster secret detection
-    2024-07-03T14:11:32.197-0700	INFO	Detected OS: debian
-    2024-07-03T14:11:32.197-0700	INFO	Detecting Debian vulnerabilities...
-
     nginx:1.21.6-patched (debian 11.10)
     ===================================
     Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
