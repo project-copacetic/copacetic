@@ -49,7 +49,7 @@ jobs:
           CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@125fc84a9a348dbcf27191600683ec096ec9021c # v4.4.1
+        uses: codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673 # v4.5.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
@@ -78,7 +78,7 @@ jobs:
           make build
           make archive
       - name: Upload copa to build artifacts
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        uses: actions/upload-artifact@0b2256b8c012f0828dc542b3febcab082c67f72b # v4.3.4
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
@@ -101,7 +101,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Check out code
@@ -114,7 +114,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -123,7 +123,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+        uses: docker/setup-qemu-action@5927c834f5b4fdf503fca6f4c7eccda82949e1ee # v3.1.0
       - name: Run functional test
         shell: bash
         run: |
@@ -143,7 +143,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Check out code
@@ -156,7 +156,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -165,7 +165,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+        uses: docker/setup-qemu-action@5927c834f5b4fdf503fca6f4c7eccda82949e1ee # v3.1.0
       - name: Run functional test
         shell: bash
         run: |
@@ -200,7 +200,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # v4.1.7
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -209,7 +209,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@68827325e0b33c7199eb31dd4e31fbe9023e06e3 # v3.0.0
+        uses: docker/setup-qemu-action@5927c834f5b4fdf503fca6f4c7eccda82949e1ee # v3.1.0
       - name: Run e2e tests
         shell: bash
         run: |
