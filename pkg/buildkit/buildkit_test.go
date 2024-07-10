@@ -197,17 +197,17 @@ func TestNewClient(t *testing.T) {
 			cancel()
 			checkMissingCapsError(t, err, requiredCaps...)
 		})
-		t.Run("faulty addr", func(t *testing.T) {
+		t.Run("Invalid key path", func(t *testing.T) {
 			t.Parallel()
-			addr := newMockBuildkitAPI(t) // this should return a faulty addr
+			addr := newMockBuildkitAPI(t)
 			ctxT, cancel := context.WithTimeout(ctx, time.Second)
 			defer cancel()
 			bkOpts := Opts{
-				Addr:    `invalid-address:\\` + addr,
+				Addr:    `https://` + addr,
 				KeyPath: `No-Keys-Exist/Here`,
 			}
 			_, err := NewClient(ctxT, bkOpts)
-			assert.Error(t, err)
+			assert.ErrorContains(t, err, "could not read certificate/key")
 		})
 		t.Run("with caps", func(t *testing.T) {
 			t.Parallel()
@@ -228,10 +228,10 @@ func TestNewClient(t *testing.T) {
 		t.Run("default buildkit addr", func(t *testing.T) {
 			t.Parallel()
 			bkOpts := Opts{} // Initialize with default values
-			client, err := NewClient(context.Background(), bkOpts)
+			client, err := NewClient(context.TODO(), bkOpts)
 			assert.NoError(t, err)
 			defer client.Close()
-			err = ValidateClient(context.Background(), client)
+			err = ValidateClient(context.TODO(), client)
 			assert.NoError(t, err)
 		})
 	})
