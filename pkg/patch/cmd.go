@@ -25,6 +25,7 @@ type patchArgs struct {
 	ignoreError   bool
 	format        string
 	output        string
+	silent        bool
 	bkOpts        buildkit.Opts
 }
 
@@ -50,6 +51,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.scanner,
 				ua.format,
 				ua.output,
+				ua.silent,
 				ua.ignoreError,
 				bkopts)
 		},
@@ -66,6 +68,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
 	flags.StringVarP(&ua.scanner, "scanner", "s", "trivy", "Scanner used to generate the report, defaults to 'trivy'")
 	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
+	flags.BoolVar(&ua.silent, "silent", false, "silences output while processing")
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 
