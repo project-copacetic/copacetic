@@ -27,6 +27,15 @@ The folder specified defaults to the system temp folder unless the `--working-fo
 It's often useful to be able to inspect what the output of an intermediate LLB stage would look like after it has executed, and you can perform an analog to `printf` debugging by solving the LLB stage to a Docker image and then inspecting the resulting image:
 
 ```go
+// Add this to pkg/buildkit/buildkit.go to use
+func SolveToDocker(ctx context.Context, c *client.Client, st *llb.State, configData []byte, tag string) error {
+	def, err := st.Marshal(ctx)
+	if err != nil {
+		log.Errorf("st.Marshal failed with %s", err)
+		return err
+```
+
+```go
 // DEBUG: Solve the LLB stage to a Docker image.
 if err := buildkit.SolveToDocker(ctx, dm.config.Client, &<llb.Stage>, dm.config.ConfigData, dm.config.ImageName+"-<llb.Stage suffix>"); err != nil {
     return nil, err
