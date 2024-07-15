@@ -10,7 +10,7 @@ ROOTMARK = $(shell printf "\033[31;1m[needs root]\033[0m")
 CGO_ENABLED  ?= 0
 CLI_VERSION  ?= edge
 DEBUG        ?= 0
-NODE_VERSION ?= 16-bullseye-slim
+NODE_VERSION ?= 20-bookworm-slim
 
 # Go build metadata variables
 BASE_PACKAGE_NAME := github.com/project-copacetic/copacetic
