@@ -423,6 +423,65 @@ func TestIsValidVersion(t *testing.T) {
 	}
 }
 
+func TestParseManifestFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected map[string]string
+		wantErr  bool
+	}{
+		{
+			name:  "Valid input",
+			input: "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n",
+			expected: map[string]string{
+				"package1": "1.0.0",
+				"package2": "2.3.4",
+			},
+			wantErr: false,
+		},
+		{
+			name:     "Empty input",
+			input:    "",
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:     "Input with extra newline",
+			input:    "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n\n",
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:     "Invalid format - missing version",
+			input:    "package1\t1.0.0.cm2\npackage2\n",
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:  "Input with extra tabs",
+			input: "package1\t1.0.0.cm2\textra\npackage2\t2.3.4.cm2\n",
+			expected: map[string]string{
+				"package1": "1.0.0",
+				"package2": "2.3.4",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseManifestFile(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseManifestFile() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("parseManifestFile() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
 func Test_installUpdates_RPM(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -430,42 +489,45 @@ func Test_installUpdates_RPM(t *testing.T) {
 		ignoreErrors   bool
 		mockSetup      func(reference *mocks.MockReference)
 		rpmTools       rpmToolPaths
-		expectedCmd    string
 		expectedResult []byte
 		expectedError  string
 	}{
 		{
 			name: "DNF update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
 			rpmTools: rpmToolPaths{
 				"dnf": "/usr/bin/dnf",
 			},
-			expectedCmd:    `sh -c 'output=$(/usr/bin/dnf upgrade  -y && /usr/bin/dnf clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
 			expectedResult: nil,
 		},
 		{
 			name: "YUM update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
 			rpmTools: rpmToolPaths{
 				"yum": "/usr/bin/yum",
 				"rpm": "/usr/bin/rpm",
 			},
-			expectedCmd:    `sh -c 'output=$(/usr/bin/yum upgrade  -y && /usr/bin/yum clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
 			expectedResult: nil,
 		},
 		{
 			name: "MicroDNF update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
 			rpmTools: rpmToolPaths{
 				"microdnf": "/usr/bin/microdnf",
 				"rpm":      "/usr/bin/rpm",
 			},
 			ignoreErrors:   false,
-			expectedCmd:    `sh -c 'output=$(/usr/bin/microdnf update && /usr/bin/microdnf clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
 			expectedResult: nil,
 		},
 		{
 			name: "Update specific packages",
 			mockSetup: func(mr *mocks.MockReference) {
-				// To pass all test assertions, the mock for "Solve" needs to be moved in here
-				// mgwc.On("Solve", mock.Anything, mock.Anything).Return(&gwclient.Result{}, nil)
 				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
 			},
 			updates: unversioned.UpdatePackages{
@@ -476,7 +538,6 @@ func Test_installUpdates_RPM(t *testing.T) {
 				"dnf": "/usr/bin/dnf",
 			},
 			ignoreErrors:   false,
-			expectedCmd:    `sh -c 'output=$(/usr/bin/dnf upgrade package1 package2 -y && /usr/bin/dnf clean all 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi'`,
 			expectedResult: []byte("package1-1.0.1\npackage2-2.0.2\n"),
 		},
 		{
@@ -494,7 +555,9 @@ func Test_installUpdates_RPM(t *testing.T) {
 			mockResult := &gwclient.Result{}
 			mockResult.SetRef(mockRef)
 
-			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+			if test.name != "No package manager available" {
+				mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+			}
 
 			if test.mockSetup != nil {
 				test.mockSetup(mockRef)
@@ -505,11 +568,10 @@ func Test_installUpdates_RPM(t *testing.T) {
 					Client:     mockClient,
 					ImageState: llb.Scratch(),
 				},
-				rpmTools:      test.rpmTools,
-				workingFolder: "/tmp",
+				rpmTools: test.rpmTools,
 			}
 
-			updatedState, resultBytes, err := rm.installUpdates(context.Background(), test.updates, test.ignoreErrors)
+			updatedState, resultBytes, err := rm.installUpdates(context.TODO(), test.updates, test.ignoreErrors)
 
 			if test.expectedError != "" {
 				assert.EqualError(t, err, test.expectedError)
@@ -522,8 +584,7 @@ func Test_installUpdates_RPM(t *testing.T) {
 			}
 
 			mockClient.AssertExpectations(t)
-			// See comment in "update specific packages" for why this is commented out
-			// mockRef.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
 		})
 	}
 }
@@ -597,10 +658,9 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 					Client:     mockClient,
 					ImageState: llb.Scratch(),
 				},
-				workingFolder: "/tmp",
 			}
 
-			result, resultBytes, err := rm.unpackAndMergeUpdates(context.Background(), test.updates, test.toolImage, test.ignoreErrors)
+			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), test.updates, test.toolImage, test.ignoreErrors)
 
 			// Assert
 			if test.expectedError {

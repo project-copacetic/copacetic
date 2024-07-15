@@ -294,7 +294,7 @@ func Test_InstallUpdates_APK(t *testing.T) {
 				workingFolder: "/tmp",
 			}
 
-			state, pkgs, err := am.InstallUpdates(context.Background(), test.manifest, test.ignoreErrors)
+			state, pkgs, err := am.InstallUpdates(context.TODO(), test.manifest, test.ignoreErrors)
 
 			if test.expectedError != "" {
 				assert.Error(t, err)
