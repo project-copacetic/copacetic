@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/containerd/containerd/platforms"
+	"github.com/containerd/platforms"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
