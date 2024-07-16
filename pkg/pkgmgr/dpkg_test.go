@@ -478,8 +478,8 @@ func Test_installUpdates_DPKG(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			mockClient := new(mocks.MockGWClient)
 			mockRef := new(mocks.MockReference)
 
@@ -488,8 +488,8 @@ func Test_installUpdates_DPKG(t *testing.T) {
 
 			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
 
-			if test.mockSetup != nil {
-				test.mockSetup(mockRef)
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
 			}
 
 			dm := &dpkgManager{
@@ -499,16 +499,16 @@ func Test_installUpdates_DPKG(t *testing.T) {
 				},
 			}
 
-			updatedState, resultBytes, err := dm.installUpdates(context.TODO(), test.updates, test.ignoreErrors)
+			updatedState, resultBytes, err := dm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
 
-			if test.expectedError != "" {
-				assert.EqualError(t, err, test.expectedError)
+			if tt.expectedError != "" {
+				assert.EqualError(t, err, tt.expectedError)
 				assert.Nil(t, updatedState)
 				assert.Nil(t, resultBytes)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, updatedState)
-				assert.Equal(t, test.expectedResult, resultBytes)
+				assert.Equal(t, tt.expectedResult, resultBytes)
 			}
 
 			mockClient.AssertExpectations(t)

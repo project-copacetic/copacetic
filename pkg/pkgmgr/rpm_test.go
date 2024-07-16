@@ -547,20 +547,20 @@ func Test_installUpdates_RPM(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			mockClient := new(mocks.MockGWClient)
 			mockRef := new(mocks.MockReference)
 
 			mockResult := &gwclient.Result{}
 			mockResult.SetRef(mockRef)
 
-			if test.name != "No package manager available" {
+			if tt.mockSetup != nil {
 				mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
 			}
 
-			if test.mockSetup != nil {
-				test.mockSetup(mockRef)
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
 			}
 
 			rm := &rpmManager{
@@ -568,19 +568,19 @@ func Test_installUpdates_RPM(t *testing.T) {
 					Client:     mockClient,
 					ImageState: llb.Scratch(),
 				},
-				rpmTools: test.rpmTools,
+				rpmTools: tt.rpmTools,
 			}
 
-			updatedState, resultBytes, err := rm.installUpdates(context.TODO(), test.updates, test.ignoreErrors)
+			updatedState, resultBytes, err := rm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
 
-			if test.expectedError != "" {
-				assert.EqualError(t, err, test.expectedError)
+			if tt.expectedError != "" {
+				assert.EqualError(t, err, tt.expectedError)
 				assert.Nil(t, updatedState)
 				assert.Nil(t, resultBytes)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, updatedState)
-				assert.Equal(t, test.expectedResult, resultBytes)
+				assert.Equal(t, tt.expectedResult, resultBytes)
 			}
 
 			mockClient.AssertExpectations(t)
@@ -639,8 +639,8 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			mockClient := new(mocks.MockGWClient)
 			mockRef := new(mocks.MockReference)
 
@@ -649,8 +649,8 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 
 			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
 
-			if test.mockSetup != nil {
-				test.mockSetup(mockRef)
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
 			}
 
 			rm := &rpmManager{
@@ -660,17 +660,17 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 				},
 			}
 
-			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), test.updates, test.toolImage, test.ignoreErrors)
+			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), tt.updates, tt.toolImage, tt.ignoreErrors)
 
 			// Assert
-			if test.expectedError {
+			if tt.expectedError {
 				assert.Error(t, err)
 				assert.Nil(t, result)
 				assert.Nil(t, resultBytes)
 			} else {
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
-				assert.Equal(t, test.expectedResult, resultBytes)
+				assert.Equal(t, tt.expectedResult, resultBytes)
 			}
 
 			mockClient.AssertExpectations(t)

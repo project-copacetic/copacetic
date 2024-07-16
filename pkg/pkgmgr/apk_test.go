@@ -272,8 +272,8 @@ func Test_InstallUpdates_APK(t *testing.T) {
 		},
 	}
 
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			mockGWClient := new(mocks.MockGWClient)
 			mockRef := new(mocks.MockReference)
 
@@ -282,8 +282,8 @@ func Test_InstallUpdates_APK(t *testing.T) {
 
 			mockGWClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
 
-			if test.mockSetup != nil {
-				test.mockSetup(mockRef)
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
 			}
 
 			am := &apkManager{
@@ -294,22 +294,22 @@ func Test_InstallUpdates_APK(t *testing.T) {
 				workingFolder: "/tmp",
 			}
 
-			state, pkgs, err := am.InstallUpdates(context.TODO(), test.manifest, test.ignoreErrors)
+			state, pkgs, err := am.InstallUpdates(context.TODO(), tt.manifest, tt.ignoreErrors)
 
-			if test.expectedError != "" {
+			if tt.expectedError != "" {
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), test.expectedError)
+				assert.Contains(t, err.Error(), tt.expectedError)
 			} else {
 				assert.NoError(t, err)
 			}
 
-			if test.expectedState {
+			if tt.expectedState {
 				assert.NotNil(t, state)
 			} else {
 				assert.Nil(t, state)
 			}
 
-			assert.Equal(t, test.expectedPkgs, pkgs)
+			assert.Equal(t, tt.expectedPkgs, pkgs)
 		})
 	}
 }

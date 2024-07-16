@@ -47,12 +47,12 @@ func (m *MockGWClient) ResolveImageConfig(ctx context.Context, ref string, opt s
 
 	digestResult, ok1 := args.Get(1).(digest.Digest)
 	if !ok1 {
-		return "", digest.Digest(""), nil, fmt.Errorf("type assertion to digest.Digest failed")
+		return "", "", nil, fmt.Errorf("type assertion to digest.Digest failed")
 	}
 
 	byteResult, ok2 := args.Get(2).([]byte)
 	if !ok2 {
-		return "", digest.Digest(""), nil, fmt.Errorf("type assertion to []byte failed")
+		return "", "", nil, fmt.Errorf("type assertion to []byte failed")
 	}
 
 	return args.String(0), digestResult, byteResult, args.Error(3)
