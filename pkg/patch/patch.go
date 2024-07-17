@@ -83,13 +83,11 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		log.Warnf("Image name has no tag or digest, using latest as tag")
 		imageName = reference.TagNameOnly(imageName)
 	}
+	var tag string
 	taggedName, ok := imageName.(reference.Tagged)
-	if !ok {
-		err := errors.New("Unrecognized docker repository format. Please use one of the following: image-registry/imagename:imageversion or image-registry/imagename:imageversion@indexdigest")
-		log.Error(err)
-		return err
+	if ok {
+		tag = taggedName.Tag()
 	}
-	tag := taggedName.Tag()
 	if patchedTag == "" {
 		if tag == "" {
 			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
@@ -326,8 +324,10 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "redhat", nil
 	case strings.Contains(osType, "rocky"):
 		return "rocky", nil
+	case strings.Contains(osType, "wolfi"):
+		return "wolfi", nil
 	default:
-		log.Error("unsupported osType", osType)
+		log.Error("unsupported osType ", osType)
 		return "", errors.ErrUnsupported
 	}
 }
