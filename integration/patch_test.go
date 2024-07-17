@@ -48,7 +48,10 @@ func TestPatch(t *testing.T) {
 
 	for _, img := range images {
 		img := img
-		if !reportFile {
+
+		// Oracle tends to throw false positives with Trivy
+		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
+		if !reportFile && !strings.Contains(img.Image, "oracle") {
 			img.IgnoreErrors = false
 		}
 
@@ -249,9 +252,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 	out, err := cmd.CombinedOutput()
 
-	if !ignoreErrors {
-		assert.NoError(t, err, string(out))
-	}
+	assert.NoError(t, err, string(out))
 }
 
 func (s *scannerCmd) withOutput(p string) *scannerCmd {
