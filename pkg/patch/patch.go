@@ -324,8 +324,6 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "redhat", nil
 	case strings.Contains(osType, "rocky"):
 		return "rocky", nil
-	case strings.Contains(osType, "wolfi"):
-		return "wolfi", nil
 	default:
 		log.Error("unsupported osType ", osType)
 		return "", errors.ErrUnsupported
