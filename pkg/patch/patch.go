@@ -87,6 +87,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	taggedName, ok := imageName.(reference.Tagged)
 	if ok {
 		tag = taggedName.Tag()
+	} else {
+		log.Warnf("Image name has no tag")
 	}
 	if patchedTag == "" {
 		if tag == "" {
