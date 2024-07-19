@@ -4,14 +4,22 @@ import "testing"
 
 func TestNewPatchCmd(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		expected string
+		name      string
+		args      []string
+		expected  bool
+		errString string
 	}{
 		{
-			name:     "Missing image flag",
-			args:     []string{"-r", "trivy.json", "-t", "3.7-alpine-patched"},
-			expected: "required flag(s) \"image\" not set",
+			name:      "Missing image flag",
+			args:      []string{"-r", "trivy.json", "-t", "3.7-alpine-patched"},
+			expected:  true,
+			errString: "required flag(s) \"image\" not set",
+		},
+		{
+			name:      "Silent flag used",
+			args:      []string{"-t", "3.7-alpine-patched", "-i", "alpine:latest", "--silent"},
+			expected:  false,
+			errString: "",
 		},
 	}
 
@@ -24,7 +32,10 @@ func TestNewPatchCmd(t *testing.T) {
 
 			// Run the command and capture the output
 			err := cmd.Execute()
-			if err == nil || err.Error() != tt.expected {
+			if err != nil && !tt.expected {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			if err != nil && err.Error() != tt.errString {
 				t.Errorf("Unexpected error: %v, expected: %v", err, tt.expected)
 			}
 		})
