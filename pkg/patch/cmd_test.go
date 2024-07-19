@@ -17,7 +17,7 @@ func TestNewPatchCmd(t *testing.T) {
 		},
 		{
 			name:      "Silent flag used",
-			args:      []string{"-t", "3.7-alpine-patched", "-i", "alpine:latest", "--silent"},
+			args:      []string{"-t", "3.7-alpine-patched", "-i", "alpine:3.14", "--silent"},
 			expected:  false,
 			errString: "",
 		},
@@ -34,8 +34,7 @@ func TestNewPatchCmd(t *testing.T) {
 			err := cmd.Execute()
 			if err != nil && !tt.expected {
 				t.Errorf("Unexpected error: %v", err)
-			}
-			if err != nil && err.Error() != tt.errString {
+			} else if err != nil && err.Error() != tt.errString {
 				t.Errorf("Unexpected error: %v, expected: %v", err, tt.expected)
 			}
 		})
