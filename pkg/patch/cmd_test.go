@@ -32,10 +32,16 @@ func TestNewPatchCmd(t *testing.T) {
 
 			// Run the command and capture the output
 			err := cmd.Execute()
-			if err != nil && !tt.expected {
-				t.Errorf("Unexpected error: %v", err)
-			} else if err != nil && err.Error() != tt.errString {
-				t.Errorf("Unexpected error: %v, expected: %v", err, tt.expected)
+			if !tt.expected {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+			} else {
+				if err == nil {
+					t.Errorf("Expected error: %v, got %v", tt.expected, err)
+				} else if err != nil && err.Error() != tt.errString {
+					t.Errorf("Unexpected error: %v, expected: %v", err, tt.expected)
+				}
 			}
 		})
 	}
