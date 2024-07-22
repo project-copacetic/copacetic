@@ -3,6 +3,7 @@ package integration
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -190,6 +191,12 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	var reportPath string
 	if reportFile {
 		reportPath = "-r=" + path + "/scan.json"
+	}
+
+	if strings.Contains(ref, "oracle") && reportFile {
+		err := errors.New("oracle is not supported with trivy scans")
+		fmt.Println(err)
+		return
 	}
 
 	//#nosec G204
