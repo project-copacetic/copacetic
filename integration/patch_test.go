@@ -114,9 +114,13 @@ func TestPatch(t *testing.T) {
 			}
 
 			// currently validation is only present when patching with a scan report
-			if reportFile {
+			if reportFile && !strings.Contains(img.Image, "oracle") {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
+			} else {
+				err := errors.New("oracle is not supported with trivy scans")
+				fmt.Println(err)
+				return
 			}
 		})
 	}
