@@ -253,6 +253,12 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 		args = append(args, "--exit-code="+strconv.Itoa(s.exitCode))
 	}
 
+	if strings.Contains(ref, "oracle") {
+		err := errors.New("oracle is not supported with trivy scans")
+		fmt.Println(err)
+		return
+	}
+
 	args = append(args, ref)
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 	cmd.Env = append(cmd.Env, os.Environ()...)
