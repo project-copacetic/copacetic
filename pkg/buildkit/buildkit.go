@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	ImageName         string
 	Client            gwclient.Client
 	ConfigData        []byte
 	PatchedConfigData []byte
@@ -31,7 +32,9 @@ type Opts struct {
 
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
 	// Initialize buildkit config for the target image
-	config := Config{}
+	config := Config{
+		ImageName: userImage,
+	}
 
 	// Resolve and pull the config for the target image
 	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, sourceresolver.Opt{
@@ -78,7 +81,10 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
-	baseImage, userImageConfig, _ := setupLabels(image, configData)
+	baseImage, userImageConfig, err := setupLabels(image, configData)
+	if err != nil {
+		return nil, nil, "", err
+	}
 
 	if baseImage == "" {
 		configData = userImageConfig
@@ -118,10 +124,9 @@ func setupLabels(image string, configData []byte) (string, []byte, error) {
 	var baseImage string
 	labels := configMap["labels"]
 	if labels == nil {
-		labels = make(map[string]interface{})
-		configMap["labels"] = labels
+		configMap["labels"] = make(map[string]interface{})
 	}
-	labelsMap, ok := labels.(map[string]interface{})
+	labelsMap, ok := configMap["labels"].(map[string]interface{})
 	if !ok {
 		err := fmt.Errorf("type assertion to map[string]interface{} failed")
 		return "", nil, err

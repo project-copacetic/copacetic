@@ -83,7 +83,11 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 	osType := Debian
 
 	if manifest == nil || manifest.Metadata.OS.Type == Debian {
-		version = strings.Split(version, ".")[0] + "-slim"
+		if version > string(11) {
+			version = strings.Split("11", ".")[0] + "-slim"
+		} else {
+			version = strings.Split(version, ".")[0] + "-slim"
+		}
 	} else {
 		osType = manifest.Metadata.OS.Type
 	}
@@ -354,23 +358,21 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if dm.config.PatchedConfigData != nil {
-		// Diff the base image and new patches
-		patchDiff := llb.Diff(dm.config.ImageState, aptInstalled)
-
 		// Diff the base image and patched image to get previous patches
 		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
 
-		// Merge the old patch diffs and new patch diffs
-		prevAndNewPatch := llb.Merge([]llb.State{prevPatchDiff, patchDiff})
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(dm.config.ImageState, aptInstalled)
 
-		// This additional diff ensures previous patch layers are discarded
-		// While ensuring all previous and new patches are properly applied to the base image
-		combinedPatch := llb.Diff(dm.config.ImageState, prevAndNewPatch)
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 
 		// Merge previous and new patches into the base image
-		combinedPatchMerge := llb.Merge([]llb.State{dm.config.ImageState, combinedPatch})
+		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
 
-		return &combinedPatchMerge, resultsBytes, nil
+		return &completePatchMerge, resultsBytes, nil
 	}
 
 	// Diff the installed updates and merge that into the target image
@@ -529,17 +531,15 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		// Diff the manifests for the latest updates
 		manifestsDiff := llb.Diff(fieldsWritten, statusUpdated)
 
-		// Merge the old patch diffs and new patch diffs
-		prevAndNewPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
-
-		// This additional diff ensures previous patch layers are discarded
-		// While ensuring all previous and new patches are properly applied to the base image
-		combinedPatch := llb.Diff(dm.config.ImageState, prevAndNewPatch)
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 
 		// Merge previous and new patches into the base image
-		combinedPatchMerge := llb.Merge([]llb.State{dm.config.ImageState, combinedPatch})
+		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
 
-		return &combinedPatchMerge, resultsBytes, nil
+		return &completePatchMerge, resultsBytes, nil
 	}
 
 	// Diff unpacked packages layers from previous and merge with target
