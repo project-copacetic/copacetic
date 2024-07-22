@@ -83,7 +83,7 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 	osType := Debian
 
 	if manifest == nil || manifest.Metadata.OS.Type == Debian {
-		if version > string(11) {
+		if version > fmt.Sprintf("11") {
 			version = strings.Split("11", ".")[0] + "-slim"
 		} else {
 			version = strings.Split(version, ".")[0] + "-slim"
