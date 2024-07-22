@@ -50,7 +50,7 @@ jobs:
       - name: Unit test
         shell: bash
         env:
-          CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic -debug"
+          CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@e28ff129e5465c2c0dcc6f003fc735cb6ae0c673 # v4.5.0

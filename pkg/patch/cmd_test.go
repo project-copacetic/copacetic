@@ -17,7 +17,7 @@ func TestNewPatchCmd(t *testing.T) {
 		},
 		{
 			name:      "Silent flag used",
-			args:      []string{"-i", "alpine:3.14"},
+			args:      []string{"-i", "alpine:3.14", "--debug"},
 			expected:  false,
 			errString: "",
 		},
