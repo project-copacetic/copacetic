@@ -50,9 +50,10 @@ func TestRemoveIfNotDebug(t *testing.T) {
 
 func TestGetOSType(t *testing.T) {
 	testCases := []struct {
-		osRelease      []byte
-		err            error
-		expectedOSType string
+		osRelease         []byte
+		err               error
+		expectedOSType    string
+		expectedOSVersion string
 	}{
 		{
 			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
@@ -65,8 +66,9 @@ func TestGetOSType(t *testing.T) {
 			SUPPORT_URL="https://www.debian.org/support"
 			BUG_REPORT_URL="https://bugs.debian.org/"
 			`),
-			err:            nil,
-			expectedOSType: "debian",
+			err:               nil,
+			expectedOSType:    "debian",
+			expectedOSVersion: "11",
 		},
 		{
 			osRelease: []byte(`NAME="Alpine Linux"
@@ -91,8 +93,9 @@ func TestGetOSType(t *testing.T) {
 			BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
 			PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
 			UBUNTU_CODENAME=jammy`),
-			err:            nil,
-			expectedOSType: "ubuntu",
+			err:               nil,
+			expectedOSType:    "ubuntu",
+			expectedOSVersion: "22.04",
 		},
 		{
 			osRelease: []byte(`NAME="Amazon Linux"
@@ -111,8 +114,9 @@ func TestGetOSType(t *testing.T) {
 			VENDOR_NAME="AWS"
 			VENDOR_URL="https://aws.amazon.com/"
 			SUPPORT_END="2028-03-15"`),
-			err:            nil,
-			expectedOSType: "amazon",
+			err:               nil,
+			expectedOSType:    "amazon",
+			expectedOSVersion: "2023",
 		},
 		{
 			osRelease: []byte(`NAME="CentOS Linux"
@@ -128,8 +132,9 @@ func TestGetOSType(t *testing.T) {
 			BUG_REPORT_URL="https://bugs.centos.org/"
 			CENTOS_MANTISBT_PROJECT="CentOS-8"
 			CENTOS_MANTISBT_PROJECT_VERSION="8"`),
-			err:            nil,
-			expectedOSType: "centos",
+			err:               nil,
+			expectedOSType:    "centos",
+			expectedOSVersion: "8",
 		},
 		{
 			osRelease: []byte(`NAME="Common Base Linux Mariner"
@@ -141,8 +146,9 @@ func TestGetOSType(t *testing.T) {
 			HOME_URL="https://aka.ms/cbl-mariner"
 			BUG_REPORT_URL="https://aka.ms/cbl-mariner"
 			SUPPORT_URL="https://aka.ms/cbl-mariner"`),
-			err:            nil,
-			expectedOSType: "cbl-mariner",
+			err:               nil,
+			expectedOSType:    "cbl-mariner",
+			expectedOSVersion: "2.0",
 		},
 		{
 			osRelease: []byte(`NAME="Red Hat Enterprise Linux"
@@ -162,8 +168,9 @@ func TestGetOSType(t *testing.T) {
 			REDHAT_BUGZILLA_PRODUCT_VERSION=8.9
 			REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
 			REDHAT_SUPPORT_PRODUCT_VERSION="8.9"`),
-			err:            nil,
-			expectedOSType: "redhat",
+			err:               nil,
+			expectedOSType:    "redhat",
+			expectedOSVersion: "8.9",
 		},
 		{
 			osRelease: []byte(`NAME="Rocky Linux"
@@ -183,8 +190,9 @@ func TestGetOSType(t *testing.T) {
 			ROCKY_SUPPORT_PRODUCT_VERSION="9.3"
 			REDHAT_SUPPORT_PRODUCT="Rocky Linux"
 			REDHAT_SUPPORT_PRODUCT_VERSION="9.3"`),
-			err:            nil,
-			expectedOSType: "rocky",
+			err:               nil,
+			expectedOSType:    "rocky",
+			expectedOSVersion: "9.3",
 		},
 		{
 			osRelease:      nil,
@@ -195,10 +203,11 @@ func TestGetOSType(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("TestGetOSType", func(t *testing.T) {
-			osType, err := getOSType(context.TODO(), tc.osRelease)
+			osType, osVersion, err := getOSType(context.TODO(), tc.osRelease)
 
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.expectedOSType, osType)
+			assert.Equal(t, tc.expectedOSVersion, osVersion)
 			assert.Equal(t, tc.err, err)
 		})
 	}
