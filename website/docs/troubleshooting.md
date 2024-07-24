@@ -18,8 +18,7 @@ Without a vulnerability scan, Copa will update all packages in the image:
 patch -i docker.io/library/oraclelinux:7.9
 ```
 
-Oracle reports CVEs in a way that causes Trivy and Copa to report false positives. To patch the entire image, use the Copa `--ignore-errors` flag or don't pass in a vulnerability scan. See [this GitHub issue](https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400) for more information.
-
+Oracle reports CVEs in a way that causes Trivy to report false positives that Copa will be unable to patch. To patch the entire image, use the Copa `--ignore-errors` flag or omit the vulnerability scan report to upgrade all outdated packages. See [this GitHub issue](https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400) for more information.
 ## Filtering Vulnerabilities
 
 You might want to filter/ignore some of the vulnerabilities while patching. To do so, you need to first filter those undesired vulnerabilities from your scanner output.
