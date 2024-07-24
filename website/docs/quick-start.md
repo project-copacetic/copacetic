@@ -49,14 +49,20 @@ This guide illustrates how to patch outdated containers with `copa`.
         copa patch -i $IMAGE
         ```
 
-        :::tip 
-        If you want to patch an image using the digest, run the following command instead: 
-        
+       :::tip
+       If you want to patch an image using the digest, run the following command instead:
+
+        ```bash
+            export IMAGE=docker.io/library/nginx@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+               copa patch -i $IMAGE
+        ```
+       Or if you want to patch an image using the tag and digest, run the following command instead:
+
         ```bash
             export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
             copa patch -i $IMAGE
         ```
-        :::
+       :::
 
     2. Update only targeted packages
         Alternatively, you can chose to have a targeted patching of your image by providing an optional vulnerability report. In the following commands, we are only updating packages marked vulnerable by Trivy:
