@@ -194,8 +194,9 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 
 	if manifest != nil {
 		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
-			log.Info("Detected Oracle image being passed in, setting ignoreErrors to true.")
-			ignoreErrors = true
+			err := fmt.Errorf("Detected Oracle image being passed in without ignore errors \n" +
+				"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
+			return &rm.config.ImageState, nil, err
 		}
 
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
