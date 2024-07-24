@@ -192,12 +192,12 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var rpmComparer VersionComparer
 	var err error
 
-	if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
-		log.Info("Detected Oracle image being passed in, setting ignoreErrors to true.")
-		ignoreErrors = true
-	}
-
 	if manifest != nil {
+		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
+			log.Info("Detected Oracle image being passed in, setting ignoreErrors to true.")
+			ignoreErrors = true
+		}
+
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
 		if err != nil {
