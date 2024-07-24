@@ -132,9 +132,9 @@
     },
     {
         "image": "docker.io/library/oraclelinux",
-        "tag": "8.8",
-        "digest": "sha256:3278c8126ecc10ca719a4faf61b6e0d6df7aa1adfae92928aeea69a02b098a60",
-        "distro": "Oracle Linux 8.8",
+        "tag": "8.9",
+        "digest": "sha256:67c889172b07b1f4067050abf4bcf7fce2febd280664df261fe17fa82501a498",
+        "distro": "Oracle Linux 8.9",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": true
     },
