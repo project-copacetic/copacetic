@@ -128,7 +128,7 @@
         "digest": "sha256:ba39a0daabd2df95ed5f374d016e87513f8e579ecc5a1599d7cf94679a281a34",
         "distro": "Oracle Linux 7.9",
         "description": "Valid rpm DB, yum present",
-        "ignoreErrors": true
+        "ignoreErrors": false
     },
     {
         "image": "docker.io/library/oraclelinux",

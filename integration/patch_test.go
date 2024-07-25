@@ -118,7 +118,7 @@ func TestPatch(t *testing.T) {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
 			} else {
-				err := errors.New("oracle is not supported with trivy scans")
+				err := errors.New("oracle is not supported with trivy scans unless ignore errors is true")
 				fmt.Println(err)
 				return
 			}
@@ -197,12 +197,6 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		reportPath = "-r=" + path + "/scan.json"
 	}
 
-	if strings.Contains(ref, "oracle") && reportFile {
-		err := errors.New("oracle is not supported with trivy scans")
-		fmt.Println(err)
-		return
-	}
-
 	//#nosec G204
 	cmd := exec.Command(
 		copaPath,
@@ -221,7 +215,11 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
+	if strings.Contains(ref, "oracle") {
+		assert.ErrorContains(t, err, "detected oracle image passed in")
+	} else {
+		require.NoError(t, err, string(out))
+	}
 }
 
 func scanner() *scannerCmd {
@@ -257,19 +255,17 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 		args = append(args, "--exit-code="+strconv.Itoa(s.exitCode))
 	}
 
-	if strings.Contains(ref, "oracle") {
-		err := errors.New("oracle is not supported with trivy scans")
-		fmt.Println(err)
-		return
-	}
-
 	args = append(args, ref)
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 	cmd.Env = append(cmd.Env, os.Environ()...)
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 	out, err := cmd.CombinedOutput()
 
-	assert.NoError(t, err, string(out))
+	if strings.Contains(ref, "oracle") {
+		assert.ErrorContains(t, err, "detected oracle image passed in")
+	} else {
+		assert.NoError(t, err, string(out))
+	}
 }
 
 func (s *scannerCmd) withOutput(p string) *scannerCmd {
