@@ -213,7 +213,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 
 	out, err := cmd.CombinedOutput()
 
-	if strings.Contains(ref, "oracle") && reportFile {
+	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
 		assert.Contains(t, string(out), "Error: Detected Oracle image passed in")
 	} else {
 		require.NoError(t, err, string(out))
