@@ -48,6 +48,7 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
+		img := img
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
@@ -260,7 +261,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	out, err := cmd.CombinedOutput()
 
 	if strings.Contains(ref, "oracle") {
-		assert.Contains(t, string(out), "Detected oracle image passed in")
+		assert.Contains(t, string(out), "Detected OS: oracle")
 	} else {
 		assert.NoError(t, err, string(out))
 	}
