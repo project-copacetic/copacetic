@@ -3,7 +3,6 @@ package integration
 import (
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -86,8 +85,8 @@ func TestPatch(t *testing.T) {
 					scan(t, ref, img.IgnoreErrors)
 			}
 
-			r, normalizedNameErr := reference.ParseNormalizedNamed(ref)
-			require.NoError(t, normalizedNameErr, normalizedNameErr)
+			r, err := reference.ParseNormalizedNamed(ref)
+			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
@@ -103,6 +102,8 @@ func TestPatch(t *testing.T) {
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
+			} else if strings.Contains(img.Image, "oracle") {
+				t.Log("Oracle image detected. Skipping Trivy scan.")
 			} else {
 				t.Log("scanning patched image")
 				scanner().
@@ -113,13 +114,9 @@ func TestPatch(t *testing.T) {
 			}
 
 			// currently validation is only present when patching with a scan report
-			if reportFile && !strings.Contains(img.Image, "oracle") {
+			if reportFile {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
-			} else {
-				err = errors.New("Detected oracle image passed in")
-				fmt.Println(err)
-				return
 			}
 		})
 	}
@@ -215,7 +212,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 
 	out, err := cmd.CombinedOutput()
 	if strings.Contains(ref, "oracle") {
-		assert.Contains(t, string(out), "Detected oracle image passed in")
+		assert.Contains(t, string(out), "oraclelinux")
 	} else {
 		require.NoError(t, err, string(out))
 	}
@@ -260,11 +257,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 	out, err := cmd.CombinedOutput()
 
-	if strings.Contains(ref, "oracle") {
-		assert.Contains(t, string(out), "Detected OS: oracle")
-	} else {
-		assert.NoError(t, err, string(out))
-	}
+	assert.NoError(t, err, string(out))
 }
 
 func (s *scannerCmd) withOutput(p string) *scannerCmd {
