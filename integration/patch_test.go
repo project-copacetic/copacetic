@@ -48,8 +48,6 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
-		img := img
-
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
@@ -87,8 +85,8 @@ func TestPatch(t *testing.T) {
 					scan(t, ref, img.IgnoreErrors)
 			}
 
-			r, err := reference.ParseNormalizedNamed(ref)
-			require.NoError(t, err, err)
+			r, normalizedNameErr := reference.ParseNormalizedNamed(ref)
+			require.NoError(t, normalizedNameErr, normalizedNameErr)
 
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
@@ -118,7 +116,7 @@ func TestPatch(t *testing.T) {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
 			} else {
-				err := errors.New("oracle is not supported with trivy scans unless ignore errors is true")
+				err = errors.New("Detected oracle image passed in")
 				fmt.Println(err)
 				return
 			}
@@ -216,7 +214,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 
 	out, err := cmd.CombinedOutput()
 	if strings.Contains(ref, "oracle") {
-		assert.ErrorContains(t, err, "detected oracle image passed in")
+		assert.Contains(t, string(out), "Detected oracle image passed in")
 	} else {
 		require.NoError(t, err, string(out))
 	}
@@ -262,7 +260,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	out, err := cmd.CombinedOutput()
 
 	if strings.Contains(ref, "oracle") {
-		assert.ErrorContains(t, err, "detected oracle image passed in")
+		assert.Contains(t, string(out), "Detected oracle image passed in")
 	} else {
 		assert.NoError(t, err, string(out))
 	}
