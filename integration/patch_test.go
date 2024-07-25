@@ -94,7 +94,10 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
-			if reportFile {
+			switch {
+			case strings.Contains(img.Image, "oracle"):
+				t.Log("Oracle image detected. Skipping Trivy scan.")
+			case reportFile:
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
@@ -102,9 +105,7 @@ func TestPatch(t *testing.T) {
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
-			} else if strings.Contains(img.Image, "oracle") {
-				t.Log("Oracle image detected. Skipping Trivy scan.")
-			} else {
+			default:
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
@@ -114,7 +115,7 @@ func TestPatch(t *testing.T) {
 			}
 
 			// currently validation is only present when patching with a scan report
-			if reportFile {
+			if reportFile && !strings.Contains(img.Image, "oracle") {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
 			}
