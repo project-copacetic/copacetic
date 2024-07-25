@@ -212,11 +212,8 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	out, err := cmd.CombinedOutput()
-	if strings.Contains(ref, "oracle") {
-		assert.Contains(t, string(out), "oraclelinux")
-	} else {
-		require.NoError(t, err, string(out))
-	}
+
+	require.NoError(t, err, string(out))
 }
 
 func scanner() *scannerCmd {
