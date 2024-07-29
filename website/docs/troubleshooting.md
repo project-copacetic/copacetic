@@ -6,7 +6,7 @@ title: Troubleshooting
 
 Copa supports patching Oracle Linux in two ways:
 
-With a vulnerability scan, `--ignore-errors` must be passed in:
+With a vulnerability scan, `--ignore-errors` must be passed in. This will patch all CVEs aside from false positives reported by Trivy:
 
 ```bash
 copa patch -r /oracle-7.9-vulns.json -i docker.io/library/oraclelinux:7.9 --ignore-errors
