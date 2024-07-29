@@ -131,7 +131,7 @@
         "ignoreErrors": false
     },
     {
-        "image": "docker.io/ubi9/ubi-minimal",
+        "image": "docker.io/redhat/ubi9-minimal",
         "tag": "9.4-949",
         "digest": "sha256:9607229894026ebecade4623038fce35bb75bf9371aca7b08ca11b08d103d2ab",
         "distro": "Redhat",
