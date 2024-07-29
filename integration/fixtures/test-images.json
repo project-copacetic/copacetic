@@ -123,6 +123,22 @@
         "ignoreErrors": false
     },
     {
+        "image": "docker.io/library/oraclelinux",
+        "tag": "7.9",
+        "digest": "sha256:ba39a0daabd2df95ed5f374d016e87513f8e579ecc5a1599d7cf94679a281a34",
+        "distro": "Oracle Linux 7.9",
+        "description": "Valid rpm DB, yum present",
+        "ignoreErrors": false
+    },
+    {
+        "image": "docker.io/library/oraclelinux",
+        "tag": "8.9",
+        "digest": "sha256:67c889172b07b1f4067050abf4bcf7fce2febd280664df261fe17fa82501a498",
+        "distro": "Oracle Linux 8.9",
+        "description": "Valid rpm DB, yum present",
+        "ignoreErrors": true
+    },
+    {
         "image": "docker.io/library/rockylinux",
         "tag": "8.9.20231119",
         "digest": "sha256:69cecc7163282ad83e27b739fe8473b7c56e280e83827dcda60e5d37102457f1",
