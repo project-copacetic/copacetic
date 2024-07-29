@@ -422,7 +422,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
+		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
