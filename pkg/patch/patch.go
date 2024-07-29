@@ -74,35 +74,26 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := reference.ParseNormalizedNamed(image)
+// patchWithContext patches the user-supplied image, image
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, userSuppliedPatchTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	dockerNormalizedImageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
 	}
-	if reference.IsNameOnly(imageName) {
+
+	if reference.IsNameOnly(dockerNormalizedImageName) {
 		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = reference.TagNameOnly(imageName)
+		dockerNormalizedImageName = reference.TagNameOnly(dockerNormalizedImageName)
 	}
-	var tag string
-	taggedName, ok := imageName.(reference.Tagged)
-	if ok {
-		tag = taggedName.Tag()
-	} else {
-		log.Warnf("Image name has no tag")
-	}
-	if patchedTag == "" {
-		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
-		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		}
-	}
-	_, err = reference.WithTag(imageName, patchedTag)
+
+	patchedTag := generatePatchedTag(dockerNormalizedImageName, userSuppliedPatchTag)
+
+	_, err = reference.WithTag(dockerNormalizedImageName, patchedTag)
 	if err != nil {
 		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+
+	patchedImageName := fmt.Sprintf("%s:%s", dockerNormalizedImageName.Name(), patchedTag)
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -182,7 +173,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	eg.Go(func() error {
 		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, dockerNormalizedImageName.String())
 			if err != nil {
 				ch <- err
 				return nil, err
@@ -312,6 +303,34 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	})
 
 	return eg.Wait()
+}
+
+func generatePatchedTag(dockerNormalizedImageName reference.Named, userSuppliedPatchTag string) string {
+	// officialTag is typically the versioning tag of the image as published in a container registry
+	var officialTag string
+	var copaTag string
+
+	taggedName, ok := dockerNormalizedImageName.(reference.Tagged)
+
+	if ok {
+		officialTag = taggedName.Tag()
+	} else {
+		log.Warnf("Image name has no tag")
+	}
+
+	if userSuppliedPatchTag != "" {
+		copaTag = fmt.Sprintf("%s-%s", officialTag, userSuppliedPatchTag)
+		return copaTag
+	} else {
+		if officialTag == "" {
+			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+			copaTag = defaultPatchedTagSuffix
+		} else {
+			copaTag = fmt.Sprintf("%s-%s", officialTag, defaultPatchedTagSuffix)
+		}
+	}
+
+	return copaTag
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {

@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/distribution/reference"
+
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -301,6 +303,44 @@ func TestGetOSVersion(t *testing.T) {
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.expectedOSVersion, osVersion)
 			assert.Equal(t, tc.errMsg, errMsg)
+		})
+	}
+}
+
+func TestGeneratePatchedTag(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		dockerImageName      string
+		userSuppliedPatchTag string
+		expectedPatchedTag   string
+	}{
+		{
+			name:                 "NoTag_NoUserSupplied",
+			dockerImageName:      "docker.io/library/alpine",
+			userSuppliedPatchTag: "",
+			expectedPatchedTag:   defaultPatchedTagSuffix,
+		},
+		{
+			name:                 "WithTag_NoUserSupplied",
+			dockerImageName:      "docker.io/redhat/ubi9:latest",
+			userSuppliedPatchTag: "",
+			expectedPatchedTag:   "latest-patched",
+		},
+		{
+			name:                 "WithTag_UserSupplied",
+			dockerImageName:      "docker.io/librari/ubuntu:jammy-20231004",
+			userSuppliedPatchTag: "01",
+			expectedPatchedTag:   "jammy-20231004-01",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			named, _ := reference.ParseNormalizedNamed(tc.dockerImageName)
+			patchedTag := generatePatchedTag(named, tc.userSuppliedPatchTag)
+			if patchedTag != tc.expectedPatchedTag {
+				t.Errorf("expected patchedTag to be %s but got %s", tc.expectedPatchedTag, patchedTag)
+			}
 		})
 	}
 }
