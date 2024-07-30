@@ -51,7 +51,7 @@ This guide illustrates how to patch outdated containers with `copa`.
 
         :::tip 
         If you want to patch an image using the digest, run the following command instead: 
-        
+    
         ```bash
             export IMAGE=docker.io/library/nginx:1.21.6@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
             copa patch -i $IMAGE

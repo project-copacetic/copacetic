@@ -191,7 +191,14 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var updates unversioned.UpdatePackages
 	var rpmComparer VersionComparer
 	var err error
+
 	if manifest != nil {
+		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
+			err = errors.New("Detected Oracle image passed in\n" +
+				"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
+			return &rm.config.ImageState, nil, err
+		}
+
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
 		if err != nil {
@@ -422,7 +429,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
+		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
