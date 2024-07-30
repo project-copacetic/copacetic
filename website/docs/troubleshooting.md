@@ -2,6 +2,23 @@
 title: Troubleshooting
 ---
 
+## Copa and Trivy throw errors when Oracle Linux is passed in
+
+Copa supports patching Oracle Linux in two ways:
+
+With a vulnerability scan, `--ignore-errors` must be passed in. This will patch all CVEs aside from false positives reported by Trivy:
+
+```bash
+copa patch -r /oracle-7.9-vulns.json -i docker.io/library/oraclelinux:7.9 --ignore-errors
+```
+
+Without a vulnerability scan, Copa will update all packages in the image:
+
+```bash
+copa patch -i docker.io/library/oraclelinux:7.9
+```
+
+Oracle reports CVEs in a way that causes Trivy to report false positives that Copa will be unable to patch. To patch the entire image, use the Copa `--ignore-errors` flag or omit the vulnerability scan report to upgrade all outdated packages. See [this GitHub issue](https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400) for more information.
 ## Filtering Vulnerabilities
 
 You might want to filter/ignore some of the vulnerabilities while patching. To do so, you need to first filter those undesired vulnerabilities from your scanner output.

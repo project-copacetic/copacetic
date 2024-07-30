@@ -48,7 +48,9 @@ func TestPatch(t *testing.T) {
 
 	for _, img := range images {
 		img := img
-		if !reportFile {
+		// Oracle tends to throw false positives with Trivy
+		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
+		if !reportFile && !strings.Contains(img.Image, "oracle") {
 			img.IgnoreErrors = false
 		}
 
@@ -92,7 +94,10 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
-			if reportFile {
+			switch {
+			case strings.Contains(img.Image, "oracle"):
+				t.Log("Oracle image detected. Skipping Trivy scan.")
+			case reportFile:
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
@@ -100,7 +105,7 @@ func TestPatch(t *testing.T) {
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
-			} else {
+			default:
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
@@ -110,7 +115,7 @@ func TestPatch(t *testing.T) {
 			}
 
 			// currently validation is only present when patching with a scan report
-			if reportFile {
+			if reportFile && !strings.Contains(img.Image, "oracle") {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
 			}
@@ -207,7 +212,13 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
+
+	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
+		assert.Contains(t, string(out), "Error: Detected Oracle image passed in\n"+
+			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
+	} else {
+		require.NoError(t, err, string(out))
+	}
 }
 
 func scanner() *scannerCmd {
@@ -248,6 +259,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	cmd.Env = append(cmd.Env, os.Environ()...)
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 	out, err := cmd.CombinedOutput()
+
 	assert.NoError(t, err, string(out))
 }
 
