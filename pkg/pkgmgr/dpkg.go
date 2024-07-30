@@ -376,7 +376,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	}
 
 	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(dm.config.ImageState, aptInstalled)
+	patchDiff := llb.Diff(aptUpdated, aptInstalled)
 	patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
 
 	return &patchMerge, resultsBytes, nil
