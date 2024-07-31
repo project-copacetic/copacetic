@@ -42,6 +42,29 @@ const (
 	defaultTag              = "latest"
 )
 
+type BuildOpts struct {
+	BkClient                  *client.Client
+	SolveOpt                  *client.SolveOpt
+	Image                     string
+	Ch                        chan error
+	ReportFile                string
+	WorkingFolder             string
+	Updates                   *unversioned.UpdateManifest
+	IgnoreError               bool
+	Output                    string
+	DockerNormalizedImageName reference.Named
+	PatchedImageName          string
+	Format                    string
+}
+
+type BuildStatus struct {
+	BuildChannel chan *client.SolveStatus
+}
+
+type BuildContext struct {
+	Ctx context.Context
+}
+
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -171,7 +194,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		err = buildkitBuild(bkClient, ctx, &solveOpt, dockerNormalizedImageName, ch, reportFile, workingFolder, updates, ignoreError, output, patchedImageName, format, buildChannel)
+		err = buildkitBuild(
+			BuildContext{ctx},
+			&BuildOpts{
+				bkClient, &solveOpt, image, ch,
+				reportFile, workingFolder, updates, ignoreError,
+				output, dockerNormalizedImageName, patchedImageName, format,
+			},
+			BuildStatus{buildChannel}, updates)
 		return err
 	})
 
@@ -200,49 +230,49 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	return eg.Wait()
 }
 
-func buildkitBuild(bkClient *client.Client, ctx context.Context, solveOpt *client.SolveOpt, dockerNormalizedImageName reference.Named, ch chan error, reportFile string, workingFolder string, updates *unversioned.UpdateManifest, ignoreError bool, output string, patchedImageName string, format string, buildChannel chan *client.SolveStatus) error {
-	_, err := bkClient.Build(ctx, *solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, dockerNormalizedImageName.String())
+func buildkitBuild(buildContext BuildContext, buildOpts *BuildOpts, buildStatus BuildStatus, updates *unversioned.UpdateManifest) error {
+	_, err := buildOpts.BkClient.Build(buildContext.Ctx, *buildOpts.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, buildOpts.DockerNormalizedImageName.String())
 		if err != nil {
-			return handleError(ch, err)
+			return handleError(buildOpts.Ch, err)
 		}
 
-		manager, err := resolvePackageManager(ctx, c, bkConfig, reportFile, updates, workingFolder)
+		manager, err := resolvePackageManager(buildContext, buildOpts, c, bkConfig, updates)
 		if err != nil {
-			return handleError(ch, err)
+			return handleError(buildOpts.Ch, err)
 		}
 
-		return buildReport(ctx, ch, bkConfig, manager, updates, ignoreError, patchedImageName, format, output, reportFile)
-	}, buildChannel)
+		return buildReport(ctx, buildOpts.Ch, bkConfig, manager, buildOpts.Updates, buildOpts.IgnoreError, buildOpts.PatchedImageName, buildOpts.Format, buildOpts.Output, buildOpts.ReportFile)
+	}, buildStatus.BuildChannel)
 	return err
 }
 
-func resolvePackageManager(ctx context.Context, c gwclient.Client, config *buildkit.Config, reportFile string, updates *unversioned.UpdateManifest, workingFolder string) (pkgmgr.PackageManager, error) {
+func resolvePackageManager(buildContext BuildContext, buildOpts *BuildOpts, client gwclient.Client, config *buildkit.Config, updates *unversioned.UpdateManifest) (pkgmgr.PackageManager, error) {
 	var manager pkgmgr.PackageManager
-	if reportFile == "" {
-		fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+	if buildOpts.ReportFile == "" {
+		fileBytes, err := buildkit.ExtractFileFromState(buildContext.Ctx, client, &config.ImageState, "/etc/os-release")
 		if err != nil {
 			return nil, err
 		}
 
-		osType, err := getOSType(ctx, fileBytes)
+		osType, err := getOSType(buildContext.Ctx, fileBytes)
 		if err != nil {
 			return nil, err
 		}
 
-		osVersion, err := getOSVersion(ctx, fileBytes)
+		osVersion, err := getOSVersion(buildContext.Ctx, fileBytes)
 		if err != nil {
 			return nil, err
 		}
 		// get package manager based on os family type
-		manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
+		manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, buildOpts.WorkingFolder)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// get package manager based on os family type
 		var err error
-		manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
+		manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, buildOpts.WorkingFolder)
 		if err != nil {
 			return nil, err
 		}
