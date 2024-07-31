@@ -59,3 +59,14 @@ jobs:
         run: |
           tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
           docker buildx build --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-action:v"$tag" --push .
+
+      - name: Checkout copa-extension repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          repository: project-copacetic/copa-extension
+          ref: main
+
+      - name: Build and push copa-extension image with new version
+        run: |
+          tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
+          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t copa-extension container/copa-extension
