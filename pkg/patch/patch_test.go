@@ -3,7 +3,9 @@ package patch
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"reflect"
 	"testing"
 
@@ -349,7 +351,7 @@ func TestGeneratePatchedTag(t *testing.T) {
 }
 
 func TestUpdateManifest(t *testing.T) {
-	errPkgs := []string{"package1", "package2"}
+	errPkgs := []string{"package1", "package2", "package3"}
 
 	updates := &unversioned.UpdateManifest{
 		Metadata: unversioned.Metadata{
@@ -409,9 +411,7 @@ func TestUpdateManifest(t *testing.T) {
 						Arch: "x86_64",
 					},
 				},
-				Updates: []unversioned.UpdatePackage{
-					{Name: "package3"},
-				},
+				Updates: []unversioned.UpdatePackage{},
 			},
 		},
 		{
@@ -441,6 +441,97 @@ func TestUpdateManifest(t *testing.T) {
 			actual := updateManifest(tc.updates, tc.errPkgs)
 			if !reflect.DeepEqual(actual, tc.expected) {
 				t.Errorf("TestUpdateManifest(%v, %v): expected %v, actual %v", tc.updates, tc.errPkgs, tc.expected, actual)
+			}
+		})
+	}
+}
+
+func TestHandleError(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		wantErr bool
+	}{
+		{
+			name:    "no error",
+			err:     nil,
+			wantErr: false,
+		},
+		{
+			name:    "test error",
+			err:     errors.New("test error"),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := make(chan error, 1)
+			defer close(ch)
+
+			_, err := handleError(ch, tt.err)
+
+			select {
+			case chErr := <-ch:
+				if (chErr == nil && tt.wantErr) || (chErr != nil && !tt.wantErr) {
+					t.Errorf("Error channel did not return expected error, got: %v, want: %v", chErr, tt.err)
+				}
+			default:
+				if tt.wantErr {
+					t.Error("Expected handleError to send error to error channel but it did not")
+				}
+			}
+
+			if (err == nil && tt.wantErr) || (err != nil && !tt.wantErr) {
+				t.Errorf("handleError() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// define a mock reader
+type mockReader struct {
+	data []byte
+	err  error
+}
+
+func (mr *mockReader) Read(p []byte) (int, error) {
+	copy(p, mr.data)
+	return len(mr.data), mr.err
+}
+
+func TestDockerLoad(t *testing.T) {
+	ctx := context.TODO()
+
+	testCases := []struct {
+		name      string
+		pipeR     io.Reader
+		mockCmd   *exec.Cmd
+		expectErr bool
+	}{
+		{
+			name:      "Unrecognized image format",
+			pipeR:     &mockReader{nil, errors.New("unrecognized image format")},
+			mockCmd:   exec.Command("echo", "test"),
+			expectErr: true,
+		},
+		{
+			name:  "Invalid tar header",
+			pipeR: &mockReader{[]byte("alpine:latest"), errors.New("unrecognized tar header")},
+			// this command is likely to fail which is desired for this test case
+			mockCmd:   exec.Command("docker", "load"),
+			expectErr: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := dockerLoad(ctx, testCase.pipeR)
+			if testCase.expectErr && err == nil {
+				t.Errorf("expected an error but got none")
+			}
+			if !testCase.expectErr && err != nil {
+				t.Errorf("did not expect an error but got %v", err)
 			}
 		})
 	}
