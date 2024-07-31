@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
+
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 
 	"github.com/distribution/reference"
 
@@ -329,8 +332,8 @@ func TestGeneratePatchedTag(t *testing.T) {
 		{
 			name:                 "WithTag_UserSupplied",
 			dockerImageName:      "docker.io/librari/ubuntu:jammy-20231004",
-			userSuppliedPatchTag: "01",
-			expectedPatchedTag:   "jammy-20231004-01",
+			userSuppliedPatchTag: "20231004-patched",
+			expectedPatchedTag:   "20231004-patched",
 		},
 	}
 
@@ -340,6 +343,104 @@ func TestGeneratePatchedTag(t *testing.T) {
 			patchedTag := generatePatchedTag(named, tc.userSuppliedPatchTag)
 			if patchedTag != tc.expectedPatchedTag {
 				t.Errorf("expected patchedTag to be %s but got %s", tc.expectedPatchedTag, patchedTag)
+			}
+		})
+	}
+}
+
+func TestUpdateManifest(t *testing.T) {
+	errPkgs := []string{"package1", "package2"}
+
+	updates := &unversioned.UpdateManifest{
+		Metadata: unversioned.Metadata{
+			OS: unversioned.OS{
+				Type:    "Linux",
+				Version: "5.0.1",
+			},
+			Config: unversioned.Config{
+				Arch: "x86_64",
+			},
+		},
+		Updates: []unversioned.UpdatePackage{
+			{Name: "package1"},
+			{Name: "package2"},
+			{Name: "package3"},
+		},
+	}
+
+	testCases := []struct {
+		name     string
+		updates  *unversioned.UpdateManifest
+		errPkgs  []string
+		expected *unversioned.UpdateManifest
+	}{
+		{
+			name:    "NoErrorPackages",
+			updates: updates,
+			errPkgs: []string{},
+			expected: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "Linux",
+						Version: "5.0.1",
+					},
+					Config: unversioned.Config{
+						Arch: "x86_64",
+					},
+				},
+				Updates: []unversioned.UpdatePackage{
+					{Name: "package1"},
+					{Name: "package2"},
+					{Name: "package3"},
+				},
+			},
+		},
+		{
+			name:    "AllErrorPackages",
+			updates: updates,
+			errPkgs: errPkgs,
+			expected: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "Linux",
+						Version: "5.0.1",
+					},
+					Config: unversioned.Config{
+						Arch: "x86_64",
+					},
+				},
+				Updates: []unversioned.UpdatePackage{
+					{Name: "package3"},
+				},
+			},
+		},
+		{
+			name:    "SomeErrorPackages",
+			updates: updates,
+			errPkgs: []string{"package1"},
+			expected: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "Linux",
+						Version: "5.0.1",
+					},
+					Config: unversioned.Config{
+						Arch: "x86_64",
+					},
+				},
+				Updates: []unversioned.UpdatePackage{
+					{Name: "package2"},
+					{Name: "package3"},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := updateManifest(tc.updates, tc.errPkgs)
+			if !reflect.DeepEqual(actual, tc.expected) {
+				t.Errorf("TestUpdateManifest(%v, %v): expected %v, actual %v", tc.updates, tc.errPkgs, tc.expected, actual)
 			}
 		})
 	}

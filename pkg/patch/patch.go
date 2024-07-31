@@ -221,7 +221,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	})
 
 	eg.Go(func() error {
-		if err := dockerLoad(ctx, pipeR); err != nil {
+		err = dockerLoad(ctx, pipeR)
+		if err != nil {
 			return err
 		}
 		return pipeR.Close()
@@ -358,7 +359,7 @@ func generatePatchedTag(dockerNormalizedImageName reference.Named, userSuppliedP
 	}
 
 	if userSuppliedPatchTag != "" {
-		copaTag = fmt.Sprintf("%s-%s", officialTag, userSuppliedPatchTag)
+		copaTag = userSuppliedPatchTag
 		return copaTag
 	} else if officialTag == "" {
 		log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
