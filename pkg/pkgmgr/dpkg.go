@@ -362,7 +362,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
 
 		// Diff the base image and new patches
-		newPatchDiff := llb.Diff(dm.config.ImageState, aptInstalled)
+		newPatchDiff := llb.Diff(aptUpdated, aptInstalled)
 
 		// Merging these two diffs will discard everything in the filesystem that hasn't changed
 		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed

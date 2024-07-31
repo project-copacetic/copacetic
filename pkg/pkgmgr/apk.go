@@ -221,7 +221,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		prevPatchDiff := llb.Diff(am.config.ImageState, am.config.PatchedImageState)
 
 		// Diff the base image and new patches
-		newPatchDiff := llb.Diff(am.config.ImageState, apkInstalled)
+		newPatchDiff := llb.Diff(apkUpdated, apkInstalled)
 
 		// Merging these two diffs will discard everything in the filesystem that hasn't changed
 		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
