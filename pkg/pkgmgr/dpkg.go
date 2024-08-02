@@ -129,7 +129,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 			return updatedImageState, nil, nil
 		}
 
-		updatedImageState, _, err := dm.installUpdates(ctx, nil, ignoreErrors)
+		updatedImageState, _, err := dm.installUpdates(ctx, nil, ignoreErrors , "" ,nil)
 		if err != nil {
 			return updatedImageState, nil, err
 		}
@@ -156,7 +156,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, resultManifestBytes, err = dm.installUpdates(ctx, updates, ignoreErrors)
+		updatedImageState, resultManifestBytes, err = dm.installUpdates(ctx, updates, ignoreErrors , "" , nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -302,60 +302,67 @@ func GetPackageInfo(file string) (string, string, error) {
 //
 // TODO: Support Debian images with valid dpkg status but missing tools. No current examples exist in test set
 // i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
-func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	// TODO: Add support for custom APT config and gpg key injection
-	// Since this takes place in the target container, it can interfere with install actions
-	// such as the installation of the updated debian-archive-keyring package, so it's probably best
-	// to separate it out to an explicit container edit command or opt-in before patching.
-	aptUpdated := dm.config.ImageState.Run(
-		llb.Shlex("apt update"),
-		llb.WithProxy(utils.GetProxy()),
-		llb.IgnoreCache,
-	).Root()
+func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool ,customAPTConfig string, gpgKeys []string) (*llb.State, []byte, error) {
+    aptUpdated := dm.config.ImageState
 
-	checkUpgradable := `sh -c "apt list --upgradable 2>/dev/null | grep -q "upgradable" || exit 1"`
-	aptUpdated = aptUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+    // Apply custom APT configuration if provided
+    if customAPTConfig != "" {
+        aptUpdated = aptUpdated.File(llb.Mkfile("/etc/apt/apt.conf.d/custom.conf", 0644, []byte(customAPTConfig)))
+    }
 
-	// Install all requested update packages without specifying the version. This works around:
-	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
-	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
-	// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
+    // Add GPG keys if provided
+    if len(gpgKeys) > 0 {
+        for _, key := range gpgKeys {
+            aptUpdated = aptUpdated.Run(
+                llb.Shlex(fmt.Sprintf("apt-key add -")),
+                llb.AddMount("/dev/stdin", llb.Scratch().File(llb.Mkfile("key.gpg", 0644, []byte(key)))),
+            ).Root()
+        }
+    }
 
-	var installCmd string
-	if updates != nil {
-		aptInstallTemplate := `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
-		pkgStrings := []string{}
-		for _, u := range updates {
-			pkgStrings = append(pkgStrings, u.Name)
-		}
-		installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
-	} else {
-		// if updates is not specified, update all packages
-		installCmd = `sh -c "output=$(apt upgrade -y && apt clean -y && apt autoremove 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
-	}
+    // Update APT package lists
+    aptUpdated = aptUpdated.Run(
+        llb.Shlex("apt update"),
+        llb.WithProxy(utils.GetProxy()),
+        llb.IgnoreCache,
+    ).Root()
 
-	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+    // Install all requested update packages without specifying the version.
+    var installCmd string
+    if updates != nil {
+        aptInstallTemplate := `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
+        pkgStrings := []string{}
+        for _, u := range updates {
+            pkgStrings = append(pkgStrings, u.Name)
+        }
+        installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
+    } else {
+        // if updates is not specified, update all packages
+        installCmd = `sh -c "apt upgrade -y && apt clean -y && apt autoremove"`
+    }
 
+    aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
 		aptInstalled = aptInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
-	// Write results.manifest to host for post-patch validation
-	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
-	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, dpkgStatusPath, resultManifest)
-	resultsWritten := aptInstalled.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-	resultsDiff := llb.Diff(aptInstalled, resultsWritten)
+    // Write results.manifest to host for post-patch validation
+    const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
+    outputResultsCmd := fmt.Sprintf(outputResultsTemplate, dpkgStatusPath, resultManifest)
+    resultsWritten := aptInstalled.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
+    resultsDiff := llb.Diff(aptInstalled, resultsWritten)
 
-	resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
-	if err != nil {
-		return nil, nil, err
-	}
+    resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+    if err != nil {
+        return nil, nil, err
+    }
 
-	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(aptUpdated, aptInstalled)
-	patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
-	return &patchMerge, resultsBytes, nil
+    // Diff the installed updates and merge that into the target image
+    patchDiff := llb.Diff(aptUpdated, aptInstalled)
+    patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
+    return &patchMerge, resultsBytes, nil
 }
 
 func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
