@@ -215,9 +215,29 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		}
 	}
 
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if am.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(am.config.ImageState, am.config.PatchedImageState)
+
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(apkUpdated, apkInstalled)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{am.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultManifestBytes, nil
+	}
+
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(apkUpdated, apkInstalled)
 	patchMerge := llb.Merge([]llb.State{am.config.ImageState, patchDiff})
+
 	return &patchMerge, resultManifestBytes, nil
 }
 
