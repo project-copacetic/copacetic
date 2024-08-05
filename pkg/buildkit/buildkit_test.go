@@ -2,11 +2,19 @@ package buildkit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/opencontainers/go-digest"
+
+	"github.com/project-copacetic/copacetic/mocks"
+
+	"github.com/stretchr/testify/mock"
 
 	controlapi "github.com/moby/buildkit/api/services/control"
 	types "github.com/moby/buildkit/api/types"
@@ -269,4 +277,121 @@ func TestArrayFile(t *testing.T) {
 			assert.Equal(t, tt.expected, string(b))
 		})
 	}
+}
+
+func TestSetupLabels(t *testing.T) {
+	tests := []struct {
+		testName      string
+		configData    []byte
+		expectBaseImg string
+		expectImage   string
+		expectError   bool
+	}{
+		{
+			"No labels",
+			[]byte(`{"config": {}}`),
+			"",
+			"test_image",
+			false,
+		},
+		{
+			"Labels no base",
+			[]byte(`{"config": {"labels": {}}}`),
+			"",
+			"test_image",
+			false,
+		},
+		{
+			"Labels with base image",
+			[]byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}}}`),
+			"existing_base_image",
+			"existing_base_image",
+			false,
+		},
+		{
+			"Invalid JSON",
+			[]byte(`{"config": {"labels": {"BaseImage": "existing_base_image"}`),
+			"",
+			"",
+			true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.testName, func(t *testing.T) {
+			image := "test_image"
+			baseImage, updatedConfigData, _ := setupLabels(image, test.configData)
+
+			if test.expectError {
+				assert.Equal(t, "", baseImage)
+				assert.Nil(t, updatedConfigData)
+			} else {
+				assert.Equal(t, test.expectBaseImg, baseImage)
+
+				var updatedConfig map[string]interface{}
+				err := json.Unmarshal(updatedConfigData, &updatedConfig)
+				assert.NoError(t, err)
+
+				labels, ok := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
+				if !ok {
+					t.Errorf("type assertion to map[string]interface{} failed")
+					return
+				}
+				assert.Equal(t, test.expectImage, labels["BaseImage"])
+			}
+		})
+	}
+}
+
+func TestUpdateImageConfigData(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("No base image", func(t *testing.T) {
+		mockClient := &mocks.MockGWClient{}
+		configData := []byte(`{"config": {"labels": {"com.example.label": "value"}}}`)
+		expectedData := []byte(`{"config": {"labels": {"com.example.label": "value"}, {"BaseImage": "myimage:latest"}}}`)
+		image := "myimage:latest"
+
+		resultConfig, resultPatched, resultImage, err := updateImageConfigData(ctx, mockClient, configData, image)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		if reflect.DeepEqual(expectedData, configData) {
+			t.Errorf("Expected config data to be %s, got %s", configData, resultConfig)
+		}
+
+		if resultPatched != nil {
+			t.Errorf("Expected patched config to be nil, got %s", resultPatched)
+		}
+
+		if resultImage != image {
+			t.Errorf("Expected image to be %s, got %s", image, resultImage)
+		}
+	})
+
+	t.Run("With base image", func(t *testing.T) {
+		mockClient := &mocks.MockGWClient{}
+		mockClient.On("ResolveImageConfig",
+			mock.Anything, mock.AnythingOfType("string"), mock.Anything).
+			Return("imageConfigString", digest.Digest("digest"), []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`), nil)
+
+		configData := []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`)
+		image := "rockylinux:latest"
+
+		resultConfig, _, resultImage, err := updateImageConfigData(ctx, mockClient, configData, image)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+
+		expectedConfig := []byte(`{"config":{"labels":{"BaseImage":"rockylinux:latest"}}}`)
+		if !reflect.DeepEqual(resultConfig, expectedConfig) {
+			t.Errorf("Expected config data to be %s, got %s", expectedConfig, resultConfig)
+		}
+
+		if resultImage != "rockylinux:latest" {
+			t.Errorf("Expected image to be baseimage:latest, got %s", resultImage)
+		}
+
+		mockClient.AssertExpectations(t)
+	})
 }

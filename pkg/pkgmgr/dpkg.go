@@ -83,7 +83,11 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 	osType := Debian
 
 	if manifest == nil || manifest.Metadata.OS.Type == Debian {
-		version = strings.Split(version, ".")[0] + "-slim"
+		if version > "12" {
+			version = strings.Split("stable", ".")[0] + "-slim"
+		} else {
+			version = strings.Split(version, ".")[0] + "-slim"
+		}
 	} else {
 		osType = manifest.Metadata.OS.Type
 	}
@@ -352,9 +356,29 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		return nil, nil, err
 	}
 
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if dm.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
+
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(aptUpdated, aptInstalled)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultsBytes, nil
+	}
+
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(aptUpdated, aptInstalled)
 	patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
+
 	return &patchMerge, resultsBytes, nil
 }
 
@@ -499,9 +523,29 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
 	statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
 
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if dm.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
+
+		// Diff the manifests for the latest updates
+		manifestsDiff := llb.Diff(fieldsWritten, statusUpdated)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultsBytes, nil
+	}
+
 	// Diff unpacked packages layers from previous and merge with target
 	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
 	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
+
 	return &merged, resultsBytes, nil
 }
 
