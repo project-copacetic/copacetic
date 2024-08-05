@@ -201,7 +201,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 				reportFile, workingFolder, updates, ignoreError,
 				output, dockerNormalizedImageName, patchedImageName, format,
 			},
-			BuildStatus{buildChannel}, updates)
+			BuildStatus{buildChannel})
 		return err
 	})
 
@@ -231,24 +231,24 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	return eg.Wait()
 }
 
-func buildkitBuild(buildContext BuildContext, buildOpts *BuildOpts, buildStatus BuildStatus, updates *unversioned.UpdateManifest) error {
+func buildkitBuild(buildContext BuildContext, buildOpts *BuildOpts, buildStatus BuildStatus) error {
 	_, err := buildOpts.BkClient.Build(buildContext.Ctx, *buildOpts.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, buildOpts.DockerNormalizedImageName.String())
 		if err != nil {
 			return handleError(buildOpts.Ch, err)
 		}
 
-		manager, err := resolvePackageManager(buildContext, buildOpts, c, bkConfig, updates)
+		manager, err := resolvePackageManager(buildContext, buildOpts, c, bkConfig)
 		if err != nil {
 			return handleError(buildOpts.Ch, err)
 		}
 
-		return buildReport(ctx, buildOpts.Ch, bkConfig, manager, buildOpts.Updates, buildOpts.IgnoreError, buildOpts.PatchedImageName, buildOpts.Format, buildOpts.Output, buildOpts.ReportFile)
+		return buildReport(buildContext, buildOpts, bkConfig, manager)
 	}, buildStatus.BuildChannel)
 	return err
 }
 
-func resolvePackageManager(buildContext BuildContext, buildOpts *BuildOpts, client gwclient.Client, config *buildkit.Config, updates *unversioned.UpdateManifest) (pkgmgr.PackageManager, error) {
+func resolvePackageManager(buildContext BuildContext, buildOpts *BuildOpts, client gwclient.Client, config *buildkit.Config) (pkgmgr.PackageManager, error) {
 	var manager pkgmgr.PackageManager
 	if buildOpts.ReportFile == "" {
 		fileBytes, err := buildkit.ExtractFileFromState(buildContext.Ctx, client, &config.ImageState, "/etc/os-release")
@@ -273,7 +273,7 @@ func resolvePackageManager(buildContext BuildContext, buildOpts *BuildOpts, clie
 	} else {
 		// get package manager based on os family type
 		var err error
-		manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, buildOpts.WorkingFolder)
+		manager, err = pkgmgr.GetPackageManager(buildOpts.Updates.Metadata.OS.Type, buildOpts.Updates.Metadata.OS.Version, config, buildOpts.WorkingFolder)
 		if err != nil {
 			return nil, err
 		}
@@ -288,35 +288,35 @@ func handleError(ch chan error, err error) (*gwclient.Result, error) {
 }
 
 // buildReport is an extracted method containing logic to manage the updates and build report.
-func buildReport(ctx context.Context, ch chan error, config *buildkit.Config, manager pkgmgr.PackageManager, updates *unversioned.UpdateManifest, ignoreError bool, patchedImageName string, format string, output string, reportFile string) (*gwclient.Result, error) {
-	patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
+func buildReport(buildContext BuildContext, buildOpts *BuildOpts, config *buildkit.Config, manager pkgmgr.PackageManager) (*gwclient.Result, error) {
+	patchedImageState, errPkgs, err := manager.InstallUpdates(buildContext.Ctx, buildOpts.Updates, buildOpts.IgnoreError)
 	if err != nil {
-		return handleError(ch, err)
+		return handleError(buildOpts.Ch, err)
 	}
 	platform := platforms.Normalize(platforms.DefaultSpec())
 	if platform.OS != "linux" {
 		platform.OS = "linux"
 	}
-	def, err := patchedImageState.Marshal(ctx, llb.Platform(platform))
+	def, err := patchedImageState.Marshal(buildContext.Ctx, llb.Platform(platform))
 	if err != nil {
-		return handleError(ch, fmt.Errorf("unable to get platform from ImageState %w", err))
+		return handleError(buildOpts.Ch, fmt.Errorf("unable to get platform from ImageState %w", err))
 	}
-	res, err := config.Client.Solve(ctx, gwclient.SolveRequest{
+	res, err := config.Client.Solve(buildContext.Ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
 		Evaluate:   true,
 	})
 	if err != nil {
-		return handleError(ch, err)
+		return handleError(buildOpts.Ch, err)
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 	// Currently can only validate updates if updating via scanner
-	if reportFile != "" {
-		validatedManifest := updateManifest(updates, errPkgs)
+	if buildOpts.ReportFile != "" {
+		validatedManifest := updateManifest(buildOpts.Updates, errPkgs)
 		// vex document must contain at least one statement
-		if output != "" && len(validatedManifest.Updates) > 0 {
-			err = vex.TryOutputVexDocument(validatedManifest, manager, patchedImageName, format, output)
+		if buildOpts.Output != "" && len(validatedManifest.Updates) > 0 {
+			err = vex.TryOutputVexDocument(validatedManifest, manager, buildOpts.PatchedImageName, buildOpts.Format, buildOpts.Output)
 			if err != nil {
-				return handleError(ch, err)
+				return handleError(buildOpts.Ch, err)
 			}
 		}
 	}
