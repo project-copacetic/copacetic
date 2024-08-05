@@ -489,7 +489,7 @@ func TestHandleError(t *testing.T) {
 	}
 }
 
-// define a mock reader
+// define a mock reader.
 type mockReader struct {
 	data []byte
 	err  error
