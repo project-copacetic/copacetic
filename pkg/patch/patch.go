@@ -43,13 +43,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, silent, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, silent, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -74,7 +74,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, silent, ignoreError bool, bkOpts buildkit.Opts) error {
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
@@ -275,21 +275,35 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 		return err
 	})
+	if silent {
+		eg.Go(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return context.Cause(ctx)
+				case _, ok := <-buildChannel:
+					if !ok {
+						return nil
+					}
+				}
+			}
+		})
+	} else {
+		eg.Go(func() error {
+			// not using shared context to not disrupt display but let us finish reporting errors
+			mode := progressui.AutoMode
+			if log.GetLevel() >= log.DebugLevel {
+				mode = progressui.PlainMode
+			}
+			display, err := progressui.NewDisplay(os.Stderr, mode)
+			if err != nil {
+				return err
+			}
 
-	eg.Go(func() error {
-		// not using shared context to not disrupt display but let us finish reporting errors
-		mode := progressui.AutoMode
-		if log.GetLevel() >= log.DebugLevel {
-			mode = progressui.PlainMode
-		}
-		display, err := progressui.NewDisplay(os.Stderr, mode)
-		if err != nil {
+			_, err = display.UpdateFrom(ctx, buildChannel)
 			return err
-		}
-
-		_, err = display.UpdateFrom(ctx, buildChannel)
-		return err
-	})
+		})
+	}
 
 	eg.Go(func() error {
 		if err := dockerLoad(ctx, pipeR); err != nil {
