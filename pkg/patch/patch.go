@@ -42,7 +42,7 @@ const (
 	defaultTag              = "latest"
 )
 
-type BuildOpts struct {
+type TrivyOpts struct {
 	BkClient                  *client.Client
 	SolveOpt                  *client.SolveOpt
 	Image                     string
@@ -55,6 +55,11 @@ type BuildOpts struct {
 	DockerNormalizedImageName reference.Named
 	PatchedImageName          string
 	Format                    string
+}
+
+type BkClient struct {
+	BkClient *client.Client
+	SolveOpt *client.SolveOpt
 }
 
 type BuildStatus struct {
@@ -196,7 +201,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	eg.Go(func() error {
 		err = buildkitBuild(
 			BuildContext{ctx},
-			&BuildOpts{
+			&TrivyOpts{
 				bkClient, &solveOpt, image, ch,
 				reportFile, workingFolder, updates, ignoreError,
 				output, dockerNormalizedImageName, patchedImageName, format,
@@ -231,26 +236,26 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	return eg.Wait()
 }
 
-func buildkitBuild(buildContext BuildContext, buildOpts *BuildOpts, buildStatus BuildStatus) error {
-	_, err := buildOpts.BkClient.Build(buildContext.Ctx, *buildOpts.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, buildOpts.DockerNormalizedImageName.String())
+func buildkitBuild(buildContext BuildContext, trivyOpts *TrivyOpts, buildStatus BuildStatus) error {
+	_, err := trivyOpts.BkClient.Build(buildContext.Ctx, *trivyOpts.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, trivyOpts.DockerNormalizedImageName.String())
 		if err != nil {
-			return handleError(buildOpts.Ch, err)
+			return handleError(trivyOpts.Ch, err)
 		}
 
-		manager, err := resolvePackageManager(buildContext, buildOpts, c, bkConfig)
+		manager, err := resolvePackageManager(buildContext, trivyOpts, c, bkConfig)
 		if err != nil {
-			return handleError(buildOpts.Ch, err)
+			return handleError(trivyOpts.Ch, err)
 		}
 
-		return buildReport(buildContext, buildOpts, bkConfig, manager)
+		return buildReport(buildContext, trivyOpts, bkConfig, manager)
 	}, buildStatus.BuildChannel)
 	return err
 }
 
-func resolvePackageManager(buildContext BuildContext, buildOpts *BuildOpts, client gwclient.Client, config *buildkit.Config) (pkgmgr.PackageManager, error) {
+func resolvePackageManager(buildContext BuildContext, trivyOpts *TrivyOpts, client gwclient.Client, config *buildkit.Config) (pkgmgr.PackageManager, error) {
 	var manager pkgmgr.PackageManager
-	if buildOpts.ReportFile == "" {
+	if trivyOpts.ReportFile == "" {
 		fileBytes, err := buildkit.ExtractFileFromState(buildContext.Ctx, client, &config.ImageState, "/etc/os-release")
 		if err != nil {
 			return nil, err
@@ -266,14 +271,14 @@ func resolvePackageManager(buildContext BuildContext, buildOpts *BuildOpts, clie
 			return nil, err
 		}
 		// get package manager based on os family type
-		manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, buildOpts.WorkingFolder)
+		manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, trivyOpts.WorkingFolder)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		// get package manager based on os family type
 		var err error
-		manager, err = pkgmgr.GetPackageManager(buildOpts.Updates.Metadata.OS.Type, buildOpts.Updates.Metadata.OS.Version, config, buildOpts.WorkingFolder)
+		manager, err = pkgmgr.GetPackageManager(trivyOpts.Updates.Metadata.OS.Type, trivyOpts.Updates.Metadata.OS.Version, config, trivyOpts.WorkingFolder)
 		if err != nil {
 			return nil, err
 		}
@@ -288,10 +293,10 @@ func handleError(ch chan error, err error) (*gwclient.Result, error) {
 }
 
 // buildReport is an extracted method containing logic to manage the updates and build report.
-func buildReport(buildContext BuildContext, buildOpts *BuildOpts, config *buildkit.Config, manager pkgmgr.PackageManager) (*gwclient.Result, error) {
-	patchedImageState, errPkgs, err := manager.InstallUpdates(buildContext.Ctx, buildOpts.Updates, buildOpts.IgnoreError)
+func buildReport(buildContext BuildContext, trivyOpts *TrivyOpts, config *buildkit.Config, manager pkgmgr.PackageManager) (*gwclient.Result, error) {
+	patchedImageState, errPkgs, err := manager.InstallUpdates(buildContext.Ctx, trivyOpts.Updates, trivyOpts.IgnoreError)
 	if err != nil {
-		return handleError(buildOpts.Ch, err)
+		return handleError(trivyOpts.Ch, err)
 	}
 	platform := platforms.Normalize(platforms.DefaultSpec())
 	if platform.OS != "linux" {
@@ -299,24 +304,24 @@ func buildReport(buildContext BuildContext, buildOpts *BuildOpts, config *buildk
 	}
 	def, err := patchedImageState.Marshal(buildContext.Ctx, llb.Platform(platform))
 	if err != nil {
-		return handleError(buildOpts.Ch, fmt.Errorf("unable to get platform from ImageState %w", err))
+		return handleError(trivyOpts.Ch, fmt.Errorf("unable to get platform from ImageState %w", err))
 	}
 	res, err := config.Client.Solve(buildContext.Ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
 		Evaluate:   true,
 	})
 	if err != nil {
-		return handleError(buildOpts.Ch, err)
+		return handleError(trivyOpts.Ch, err)
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 	// Currently can only validate updates if updating via scanner
-	if buildOpts.ReportFile != "" {
-		validatedManifest := updateManifest(buildOpts.Updates, errPkgs)
+	if trivyOpts.ReportFile != "" {
+		validatedManifest := updateManifest(trivyOpts.Updates, errPkgs)
 		// vex document must contain at least one statement
-		if buildOpts.Output != "" && len(validatedManifest.Updates) > 0 {
-			err = vex.TryOutputVexDocument(validatedManifest, manager, buildOpts.PatchedImageName, buildOpts.Format, buildOpts.Output)
+		if trivyOpts.Output != "" && len(validatedManifest.Updates) > 0 {
+			err = vex.TryOutputVexDocument(validatedManifest, manager, trivyOpts.PatchedImageName, trivyOpts.Format, trivyOpts.Output)
 			if err != nil {
-				return handleError(buildOpts.Ch, err)
+				return handleError(trivyOpts.Ch, err)
 			}
 		}
 	}

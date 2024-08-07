@@ -3,6 +3,7 @@ package patch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -312,6 +313,8 @@ func TestGetOSVersion(t *testing.T) {
 	}
 }
 
+// Test generating a patched tag for an image
+// If userSuppliedPatchTag is a blank string, the function defaults to defaultPatchedTagSuffix.
 func TestGeneratePatchedTag(t *testing.T) {
 	testCases := []struct {
 		name                 string
@@ -326,16 +329,22 @@ func TestGeneratePatchedTag(t *testing.T) {
 			expectedPatchedTag:   defaultPatchedTagSuffix,
 		},
 		{
+			name:                 "NoTag_UserSupplied",
+			dockerImageName:      "docker.io/library/alpine",
+			userSuppliedPatchTag: "1234",
+			expectedPatchedTag:   "1234",
+		},
+		{
 			name:                 "WithTag_NoUserSupplied",
 			dockerImageName:      "docker.io/redhat/ubi9:latest",
 			userSuppliedPatchTag: "",
-			expectedPatchedTag:   "latest-patched",
+			expectedPatchedTag:   fmt.Sprintf("latest-%s", defaultPatchedTagSuffix),
 		},
 		{
 			name:                 "WithTag_UserSupplied",
 			dockerImageName:      "docker.io/librari/ubuntu:jammy-20231004",
-			userSuppliedPatchTag: "20231004-patched",
-			expectedPatchedTag:   "20231004-patched",
+			userSuppliedPatchTag: "20231004-custom-tag",
+			expectedPatchedTag:   "20231004-custom-tag",
 		},
 	}
 
@@ -350,9 +359,8 @@ func TestGeneratePatchedTag(t *testing.T) {
 	}
 }
 
+// This test simulates the vulnerable packages Trivy supplies to Copa.
 func TestUpdateManifest(t *testing.T) {
-	errPkgs := []string{"package1", "package2", "package3"}
-
 	updates := &unversioned.UpdateManifest{
 		Metadata: unversioned.Metadata{
 			OS: unversioned.OS{
@@ -370,6 +378,7 @@ func TestUpdateManifest(t *testing.T) {
 		},
 	}
 
+	// errPkgs in this struct is used to define which packages would throw an error during the update process
 	testCases := []struct {
 		name     string
 		updates  *unversioned.UpdateManifest
@@ -400,7 +409,7 @@ func TestUpdateManifest(t *testing.T) {
 		{
 			name:    "AllErrorPackages",
 			updates: updates,
-			errPkgs: errPkgs,
+			errPkgs: []string{"package1", "package2", "package3"},
 			expected: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
 					OS: unversioned.OS{
