@@ -31,6 +31,11 @@ func TestGetDockerTransport(t *testing.T) {
 			addr:    "tcp://localhost:2375",
 			wantErr: false,
 		},
+		{
+			name:    "invalid addr",
+			addr:    "1234://this/is/not/real:at-all-",
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
