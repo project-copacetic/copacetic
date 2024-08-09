@@ -341,7 +341,15 @@ func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "", fmt.Errorf("unable to parse os-release data %w", err)
 	}
 
-	return osData["VERSION_ID"], nil
+	var osVersion string
+	semanticVersion := strings.Split(osData["VERSION_ID"], ".")
+	switch {
+	case len(semanticVersion) > 2:
+		osVersion = strings.Join(semanticVersion[:2], ".")
+	default:
+		osVersion = osData["VERSION_ID"]
+	}
+	return osVersion, nil
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
