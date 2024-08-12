@@ -268,6 +268,16 @@ func TestGetOSVersion(t *testing.T) {
 			expectedOSVersion: "11",
 		},
 		{
+			osRelease: []byte(`NAME="Alpine Linux"
+			ID=alpine
+			VERSION_ID=3.17.5
+			PRETTY_NAME="Alpine Linux v3.17"
+			HOME_URL="https://alpinelinux.org/"
+			BUG_REPORT_URL="https://gitlab.alpinelinux.org/alpine/aports/-/issues"`),
+			errMsg:            "",
+			expectedOSVersion: "3.17",
+		},
+		{
 			osRelease:         []byte("Cannot Parse Version_ID"),
 			errMsg:            "unable to parse os-release data osrelease: malformed line \"Cannot Parse Version_ID\"",
 			expectedOSVersion: "",
