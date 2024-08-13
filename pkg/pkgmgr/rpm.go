@@ -34,7 +34,7 @@ const (
 	rpmManifest2        = "container-manifest-2"
 	rpmManifestWildcard = "container-manifest-*"
 
-	installToolsCmd   = "tdnf install busybox cpio dnf-utils -y"
+	// installToolsCmd   = "tdnf install busybox cpio dnf-utils -y"
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
 
@@ -255,13 +255,20 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		llb.ResolveModeDefault,
 	)
 
+	// List all packages installed in the tooling image
+	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
+	installToolsCmd, err := rm.generateToolInstallCmd(ctx, toolsListed)
+	if err != nil {
+		return err
+	}
+
+	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum"}
+
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
 		File(llb.Mkdir(inputPath, 0o744, llb.WithParents(true)))
-
-	toolList := []string{"dnf", "microdnf", "rpm", "yum"}
 
 	rpmDBList := []string{
 		filepath.Join(rpmLibPath, rpmBDB),
@@ -274,7 +281,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	toolListPath := filepath.Join(inputPath, "tool_list")
 	dbListPath := filepath.Join(inputPath, "rpm_db_list")
 
-	probed := buildkit.WithArrayFile(&mkFolders, toolListPath, toolList)
+	probed := buildkit.WithArrayFile(&mkFolders, toolListPath, packageManagers)
 	probed = buildkit.WithArrayFile(&probed, dbListPath, rpmDBList)
 	outState := probed.Run(
 		llb.AddEnv("TOOL_LIST_PATH", toolListPath),
@@ -359,6 +366,51 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		rm.rpmTools = rpmTools
 	}
 	return nil
+}
+
+func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed llb.State) (string, error) {
+	applicationsList, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolsListed, "/applications.txt")
+	if err != nil {
+		return "", err
+	}
+
+	// Convert applicationsList so we have a string to work with
+	applicationsListSplit := strings.Split(string(applicationsList), "\n")
+
+	// packageManagersInstalled is the package manager(s) available within the tooling image
+	var packageManagersInstalled []string
+	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum"}
+
+	for i := range applicationsListSplit {
+		for _, packageManager := range packageManagerList {
+			if applicationsListSplit[i] == packageManager {
+				packageManagersInstalled = append(packageManagersInstalled, applicationsListSplit[i])
+			}
+		}
+	}
+
+	// missingTools indicates which tools, if any, need to be installed within the tooling image
+	var missingTools []string
+	requiredToolingList := []string{"busybox", "dnf-utils", "cpio"}
+
+	for i := range requiredToolingList {
+		found := false
+		for x := range applicationsListSplit {
+			if applicationsListSplit[x] == requiredToolingList[i] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingTools = append(missingTools, requiredToolingList[i])
+		}
+	}
+
+	// A tooling image could contain multiple package managers
+	// Choose the first one detected to use in the installation command
+	installCmd := fmt.Sprintf("%s install %s -y", packageManagersInstalled[0], strings.Join(missingTools, " "))
+
+	return installCmd, nil
 }
 
 func parseManifestFile(file string) (map[string]string, error) {
@@ -498,6 +550,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	toolingBase := llb.Image(toolImage,
 		llb.ResolveModeDefault,
 	)
+
+	// List all packages installed in the tooling image
+	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
+	installToolsCmd, err := rm.generateToolInstallCmd(ctx, toolsListed)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	// Install busybox. This should reuse the layer cached from probeRPMStatus.
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
