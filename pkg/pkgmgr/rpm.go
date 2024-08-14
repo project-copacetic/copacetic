@@ -262,7 +262,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		return err
 	}
 
-	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum"}
+	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
 
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
@@ -379,7 +379,7 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed ll
 
 	// packageManagersInstalled is the package manager(s) available within the tooling image
 	var packageManagersInstalled []string
-	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum"}
+	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
 
 	for i := range applicationsListSplit {
 		for _, packageManager := range packageManagerList {
