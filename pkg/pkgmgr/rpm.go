@@ -34,7 +34,6 @@ const (
 	rpmManifest2        = "container-manifest-2"
 	rpmManifestWildcard = "container-manifest-*"
 
-	// installToolsCmd   = "tdnf install busybox cpio dnf-utils -y"
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
 
@@ -257,7 +256,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 
 	// List all packages installed in the tooling image
 	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
-	installToolsCmd, err := rm.generateToolInstallCmd(ctx, toolsListed)
+	installToolsCmd, err := rm.generateToolInstallCmd(ctx, &toolsListed)
 	if err != nil {
 		return err
 	}
@@ -368,8 +367,8 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	return nil
 }
 
-func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed llb.State) (string, error) {
-	applicationsList, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolsListed, "/applications.txt")
+func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *llb.State) (string, error) {
+	applicationsList, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, toolsListed, "/applications.txt")
 	if err != nil {
 		return "", err
 	}
@@ -378,8 +377,9 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed ll
 	applicationsListSplit := strings.Split(string(applicationsList), "\n")
 
 	// packageManagersInstalled is the package manager(s) available within the tooling image
+	// RPM must be excluded from this list as it cannot connect to RPM repos
 	var packageManagersInstalled []string
-	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
+	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum"}
 
 	for i := range applicationsListSplit {
 		for _, packageManager := range packageManagerList {
@@ -553,7 +553,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// List all packages installed in the tooling image
 	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
-	installToolsCmd, err := rm.generateToolInstallCmd(ctx, toolsListed)
+	installToolsCmd, err := rm.generateToolInstallCmd(ctx, &toolsListed)
 	if err != nil {
 		return nil, nil, err
 	}
