@@ -43,8 +43,6 @@ const (
 )
 
 type TrivyOpts struct {
-	BkClient                  *client.Client
-	SolveOpt                  *client.SolveOpt
 	Image                     string
 	Ch                        chan error
 	ReportFile                string
@@ -102,7 +100,15 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-// patchWithContext patches the user-supplied image, image.
+// patchWithContext patches the user-supplied image, image
+// reportFile is a vulnerability scan passed in by the user
+// userSuppliedPatchTag is a tag set by the user to use for the patched image tag
+// workingFolder is the folder used by copa, defaults to system temp folder
+// scanner used to generate reportFile, defaults to Trivy
+// format is the output format, defaults to openvex
+// output is the desired output filepath
+// ignoreError defines whether Copa should ignore errors
+// bkOpts contains buildkitd options for addresses, CA certs, client certs, and client keys.
 func patchWithContext(ctx context.Context, ch chan error, image, reportFile, userSuppliedPatchTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	dockerNormalizedImageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
@@ -110,7 +116,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	}
 
 	if reference.IsNameOnly(dockerNormalizedImageName) {
-		log.Warnf("Image name has no tag or digest, using latest as tag")
+		log.Warnf("Image name %s has no tag or digest, defaulting to %s:latest", image, dockerNormalizedImageName)
 		dockerNormalizedImageName = reference.TagNameOnly(dockerNormalizedImageName)
 	}
 
@@ -202,9 +208,12 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 		err = buildkitBuild(
 			BuildContext{ctx},
 			&TrivyOpts{
-				bkClient, &solveOpt, image, ch,
+				image, ch,
 				reportFile, workingFolder, updates, ignoreError,
 				output, dockerNormalizedImageName, patchedImageName, format,
+			},
+			BkClient{
+				bkClient, &solveOpt,
 			},
 			BuildStatus{buildChannel})
 		return err
@@ -236,8 +245,9 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	return eg.Wait()
 }
 
-func buildkitBuild(buildContext BuildContext, trivyOpts *TrivyOpts, buildStatus BuildStatus) error {
-	_, err := trivyOpts.BkClient.Build(buildContext.Ctx, *trivyOpts.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+// buildkitBuild submits a build request to BuildKit with the given information.
+func buildkitBuild(buildContext BuildContext, trivyOpts *TrivyOpts, bkClient BkClient, buildStatus BuildStatus) error {
+	_, err := bkClient.BkClient.Build(buildContext.Ctx, *bkClient.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, trivyOpts.DockerNormalizedImageName.String())
 		if err != nil {
 			return handleError(trivyOpts.Ch, err)

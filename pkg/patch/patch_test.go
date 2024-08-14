@@ -346,6 +346,18 @@ func TestGeneratePatchedTag(t *testing.T) {
 			userSuppliedPatchTag: "20231004-custom-tag",
 			expectedPatchedTag:   "20231004-custom-tag",
 		},
+		{
+			name:                 "NoTag_WithDigest_NoUserSupplied",
+			dockerImageName:      "docker.io/library/debian@sha256:540ebf19fb0bbc243e1314edac26b9fe7445e9c203357f27968711a45ea9f1d4",
+			userSuppliedPatchTag: "",
+			expectedPatchedTag:   defaultPatchedTagSuffix,
+		},
+		{
+			name:                 "NoTag_WithDigest_UserSupplied",
+			dockerImageName:      "docker.io/library/debian@sha256:540ebf19fb0bbc243e1314edac26b9fe7445e9c203357f27968711a45ea9f1d4",
+			userSuppliedPatchTag: "stable-patched",
+			expectedPatchedTag:   "stable-patched",
+		},
 	}
 
 	for _, tc := range testCases {
