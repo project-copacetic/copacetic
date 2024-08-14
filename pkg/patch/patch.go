@@ -42,9 +42,8 @@ const (
 	defaultTag              = "latest"
 )
 
-type TrivyOpts struct {
+type ScannerOpts struct {
 	Image                     string
-	Ch                        chan error
 	ReportFile                string
 	WorkingFolder             string
 	Updates                   *unversioned.UpdateManifest
@@ -193,15 +192,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 	eg.Go(func() error {
 		err = buildkitBuild(
 			BuildContext{ctx},
-			&TrivyOpts{
-				image, ch,
-				reportFile, workingFolder, updates, ignoreError,
+			&ScannerOpts{
+				image, reportFile, workingFolder, updates, ignoreError,
 				output, dockerNormalizedImageName, patchedImageName, format,
 			},
 			BkClient{
 				bkClient, &solveOpt,
 			},
-			BuildStatus{buildChannel})
+			BuildStatus{buildChannel}, ch)
 		return err
 	})
 
@@ -232,24 +230,24 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, use
 }
 
 // buildkitBuild submits a build request to BuildKit with the given information.
-func buildkitBuild(buildContext BuildContext, trivyOpts *TrivyOpts, bkClient BkClient, buildStatus BuildStatus) error {
+func buildkitBuild(buildContext BuildContext, trivyOpts *ScannerOpts, bkClient BkClient, buildStatus BuildStatus, ch chan error) error {
 	_, err := bkClient.BkClient.Build(buildContext.Ctx, *bkClient.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, trivyOpts.DockerNormalizedImageName.String())
 		if err != nil {
-			return handleError(trivyOpts.Ch, err)
+			return handleError(ch, err)
 		}
 
 		manager, err := resolvePackageManager(buildContext, trivyOpts, c, bkConfig)
 		if err != nil {
-			return handleError(trivyOpts.Ch, err)
+			return handleError(ch, err)
 		}
 
-		return buildReport(buildContext, trivyOpts, bkConfig, manager)
+		return buildReport(buildContext, trivyOpts, bkConfig, manager, ch)
 	}, buildStatus.BuildChannel)
 	return err
 }
 
-func resolvePackageManager(buildContext BuildContext, trivyOpts *TrivyOpts, client gwclient.Client, config *buildkit.Config) (pkgmgr.PackageManager, error) {
+func resolvePackageManager(buildContext BuildContext, trivyOpts *ScannerOpts, client gwclient.Client, config *buildkit.Config) (pkgmgr.PackageManager, error) {
 	var manager pkgmgr.PackageManager
 	if trivyOpts.ReportFile == "" {
 		fileBytes, err := buildkit.ExtractFileFromState(buildContext.Ctx, client, &config.ImageState, "/etc/os-release")
@@ -289,10 +287,10 @@ func handleError(ch chan error, err error) (*gwclient.Result, error) {
 }
 
 // buildReport is an extracted method containing logic to manage the updates and build report.
-func buildReport(buildContext BuildContext, trivyOpts *TrivyOpts, config *buildkit.Config, manager pkgmgr.PackageManager) (*gwclient.Result, error) {
+func buildReport(buildContext BuildContext, trivyOpts *ScannerOpts, config *buildkit.Config, manager pkgmgr.PackageManager, ch chan error) (*gwclient.Result, error) {
 	patchedImageState, errPkgs, err := manager.InstallUpdates(buildContext.Ctx, trivyOpts.Updates, trivyOpts.IgnoreError)
 	if err != nil {
-		return handleError(trivyOpts.Ch, err)
+		return handleError(ch, err)
 	}
 	platform := platforms.Normalize(platforms.DefaultSpec())
 	if platform.OS != "linux" {
@@ -300,14 +298,14 @@ func buildReport(buildContext BuildContext, trivyOpts *TrivyOpts, config *buildk
 	}
 	def, err := patchedImageState.Marshal(buildContext.Ctx, llb.Platform(platform))
 	if err != nil {
-		return handleError(trivyOpts.Ch, fmt.Errorf("unable to get platform from ImageState %w", err))
+		return handleError(ch, fmt.Errorf("unable to get platform from ImageState %w", err))
 	}
 	res, err := config.Client.Solve(buildContext.Ctx, gwclient.SolveRequest{
 		Definition: def.ToPB(),
 		Evaluate:   true,
 	})
 	if err != nil {
-		return handleError(trivyOpts.Ch, err)
+		return handleError(ch, err)
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 	// Currently can only validate updates if updating via scanner
@@ -317,7 +315,7 @@ func buildReport(buildContext BuildContext, trivyOpts *TrivyOpts, config *buildk
 		if trivyOpts.Output != "" && len(validatedManifest.Updates) > 0 {
 			err = vex.TryOutputVexDocument(validatedManifest, manager, trivyOpts.PatchedImageName, trivyOpts.Format, trivyOpts.Output)
 			if err != nil {
-				return handleError(trivyOpts.Ch, err)
+				return handleError(ch, err)
 			}
 		}
 	}
@@ -347,14 +345,14 @@ func updateManifest(updates *unversioned.UpdateManifest, errPkgs []string) *unve
 }
 
 func generatePatchedTag(dockerNormalizedImageName reference.Named, userSuppliedPatchTag string) string {
-	// officialTag is typically the versioning tag of the image as published in a container registry
-	var officialTag string
+	// currentTag is typically the versioning tag of the image as published in a container registry
+	var currentTag string
 	var copaTag string
 
 	taggedName, ok := dockerNormalizedImageName.(reference.Tagged)
 
 	if ok {
-		officialTag = taggedName.Tag()
+		currentTag = taggedName.Tag()
 	} else {
 		log.Warnf("Image name has no tag")
 	}
@@ -362,13 +360,13 @@ func generatePatchedTag(dockerNormalizedImageName reference.Named, userSuppliedP
 	if userSuppliedPatchTag != "" {
 		copaTag = userSuppliedPatchTag
 		return copaTag
-	} else if officialTag == "" {
+	} else if currentTag == "" {
 		log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
 		copaTag = defaultPatchedTagSuffix
 		return copaTag
 	}
 
-	copaTag = fmt.Sprintf("%s-%s", officialTag, defaultPatchedTagSuffix)
+	copaTag = fmt.Sprintf("%s-%s", currentTag, defaultPatchedTagSuffix)
 	return copaTag
 }
 
