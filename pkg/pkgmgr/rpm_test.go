@@ -590,6 +590,8 @@ func Test_installUpdates_RPM(t *testing.T) {
 }
 
 func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
+	// Due to the generateToolInstallCmd function, we need to pass in a package manager as well
+	// Without a package manager passed in, these tests all fail
 	tests := []struct {
 		name           string
 		updates        unversioned.UpdatePackages
@@ -602,7 +604,7 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 		{
 			name: "Successful update with specific packages",
 			mockSetup: func(mr *mocks.MockReference) {
-				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64"), nil)
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\ntdnf"), nil)
 			},
 			updates: unversioned.UpdatePackages{
 				{Name: "package1", FixedVersion: "1.2.3"},
@@ -611,23 +613,23 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 			toolImage:      "test-tool-image:latest",
 			ignoreErrors:   false,
 			expectedError:  false,
-			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64"),
+			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\ntdnf"),
 		},
 		{
 			name: "Successful update all packages",
 			mockSetup: func(mr *mocks.MockReference) {
-				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(nil), nil)
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("tdnf"), nil)
 			},
 			updates:        nil,
 			toolImage:      "test-tool-image:latest",
 			ignoreErrors:   false,
-			expectedResult: nil,
+			expectedResult: []byte("tdnf"),
 			expectedError:  false,
 		},
 		{
 			name: "Ignore errors during update",
 			mockSetup: func(mr *mocks.MockReference) {
-				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.0.1\n"), nil)
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.0.1\ntdnf"), nil)
 			},
 			updates: unversioned.UpdatePackages{
 				{Name: "package1", FixedVersion: "2.0.0"},
@@ -635,7 +637,7 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 			toolImage:      "test-tool-image:latest",
 			ignoreErrors:   true,
 			expectedError:  false,
-			expectedResult: []byte("package1\t1.0.1\n"),
+			expectedResult: []byte("package1\t1.0.1\ntdnf"),
 		},
 	}
 
