@@ -301,7 +301,7 @@ func GetPackageInfo(file string) (string, string, error) {
 //   - sh and apt installed on the image
 //   - valid dpkg status on the image
 //
-// Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates
+// Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	aptUpdated := dm.config.ImageState.Run(
 		llb.Shlex("apt update"),
