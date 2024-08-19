@@ -92,7 +92,6 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 		osType = manifest.Metadata.OS.Type
 	}
 
-	// TODO: support qualifying image name with designated repository
 	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
 	return fmt.Sprintf("%s:%s", osType, version)
 }
@@ -302,15 +301,8 @@ func GetPackageInfo(file string) (string, string, error) {
 //   - sh and apt installed on the image
 //   - valid dpkg status on the image
 //
-// Images Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates
-//
-// TODO: Support Debian images with valid dpkg status but missing tools. No current examples exist in test set
-// i.e. extra RunOption to mount a copy of busybox-static or full apt install into the image and invoking that.
+// Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	// TODO: Add support for custom APT config and gpg key injection
-	// Since this takes place in the target container, it can interfere with install actions
-	// such as the installation of the updated debian-archive-keyring package, so it's probably best
-	// to separate it out to an explicit container edit command or opt-in before patching.
 	aptUpdated := dm.config.ImageState.Run(
 		llb.Shlex("apt update"),
 		llb.WithProxy(utils.GetProxy()),
