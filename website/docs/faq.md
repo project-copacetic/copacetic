@@ -17,6 +17,20 @@ To patch vulnerabilities for applications, you can package these applications an
 
 If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. 
 
+## How does Copa determine what tooling image to use?
+
+All images being passed into Copa has their versioning data carefully stripped so that an appropriate tooling image can be obtained from a container repository.
+
+Debian: All debian images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `debain:12.6` is passed in, `debian:12-slim` is used as the tooling image.
+
+Ubuntu: All Ubuntu images use the same versioning that was passed in. e.g. if `ubuntu:24.04` is passed in, `ubuntu:24.04` will be used for the tooling image.
+
+There is one caveat for Ubuntu images. If an Ubuntu image is being patched without a Trivy scan, Copa is unable to parse a scan for versioning information. In these scenarios, Copa will fallback to `debian:stable-slim` as the tooling image.
+
+RPM: All RPM-based images will use `mcr.microsoft.com/cbl-mariner/base/core:2.0` as the tooling image.
+
+APK: APK-based images never use a tooling image.
+
 ## Can I replace the package repositories in the image with my own?
 
 :::caution
