@@ -2,11 +2,17 @@ package pkgmgr
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -413,6 +419,262 @@ func TestIsValidVersion(t *testing.T) {
 			if (err != nil && err.Error() != tt.expectedErr) || (err == nil && tt.expectedErr != "") {
 				t.Errorf("isValidPackage(%q) error = %v, want %v", tt.pkgVersion, err, tt.expectedErr)
 			}
+		})
+	}
+}
+
+func TestParseManifestFile(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected map[string]string
+		wantErr  bool
+	}{
+		{
+			name:  "Valid input",
+			input: "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n",
+			expected: map[string]string{
+				"package1": "1.0.0",
+				"package2": "2.3.4",
+			},
+			wantErr: false,
+		},
+		{
+			name:     "Empty input",
+			input:    "",
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:     "Input with extra newline",
+			input:    "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n\n",
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:     "Invalid format - missing version",
+			input:    "package1\t1.0.0.cm2\npackage2\n",
+			expected: nil,
+			wantErr:  true,
+		},
+		{
+			name:  "Input with extra tabs",
+			input: "package1\t1.0.0.cm2\textra\npackage2\t2.3.4.cm2\n",
+			expected: map[string]string{
+				"package1": "1.0.0",
+				"package2": "2.3.4",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseManifestFile(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("parseManifestFile() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(got, tt.expected) {
+				t.Errorf("parseManifestFile() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func Test_installUpdates_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		ignoreErrors   bool
+		mockSetup      func(reference *mocks.MockReference)
+		rpmTools       rpmToolPaths
+		expectedResult []byte
+		expectedError  string
+	}{
+		{
+			name: "DNF update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
+			rpmTools: rpmToolPaths{
+				"dnf": "/usr/bin/dnf",
+			},
+			expectedResult: nil,
+		},
+		{
+			name: "YUM update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
+			rpmTools: rpmToolPaths{
+				"yum": "/usr/bin/yum",
+				"rpm": "/usr/bin/rpm",
+			},
+			expectedResult: nil,
+		},
+		{
+			name: "MicroDNF update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
+			rpmTools: rpmToolPaths{
+				"microdnf": "/usr/bin/microdnf",
+				"rpm":      "/usr/bin/rpm",
+			},
+			ignoreErrors:   false,
+			expectedResult: nil,
+		},
+		{
+			name: "Update specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.0.1"},
+				{Name: "package2", FixedVersion: "2.0.1"},
+			},
+			rpmTools: rpmToolPaths{
+				"dnf": "/usr/bin/dnf",
+			},
+			ignoreErrors:   false,
+			expectedResult: []byte("package1-1.0.1\npackage2-2.0.2\n"),
+		},
+		{
+			name:          "No package manager available",
+			rpmTools:      rpmToolPaths{},
+			expectedError: "unexpected: no package manager tools were found for patching",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			if tt.mockSetup != nil {
+				mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+			}
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			rm := &rpmManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+				rpmTools: tt.rpmTools,
+			}
+
+			updatedState, resultBytes, err := rm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
+
+			if tt.expectedError != "" {
+				assert.EqualError(t, err, tt.expectedError)
+				assert.Nil(t, updatedState)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, updatedState)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		mockSetup      func(reference *mocks.MockReference)
+		toolImage      string
+		ignoreErrors   bool
+		expectedError  bool
+		expectedResult []byte
+	}{
+		{
+			name: "Successful update with specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.2.3"},
+				{Name: "package2", FixedVersion: "2.3.4"},
+			},
+			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   false,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64"),
+		},
+		{
+			name: "Successful update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(nil), nil)
+			},
+			updates:        nil,
+			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   false,
+			expectedResult: nil,
+			expectedError:  false,
+		},
+		{
+			name: "Ignore errors during update",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.0.1\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "2.0.0"},
+			},
+			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   true,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.0.1\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			rm := &rpmManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+			}
+
+			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), tt.updates, tt.toolImage, tt.ignoreErrors)
+
+			// Assert
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
 		})
 	}
 }

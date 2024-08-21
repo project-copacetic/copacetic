@@ -388,9 +388,6 @@ func parseManifestFile(file string) (map[string]string, error) {
 // Patch a regular RPM-based image with:
 //   - sh and an appropriate tool installed on the image (yum, dnf, microdnf)
 //   - valid rpm database on the image
-//
-// TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
-// i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
 func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	pkgs := ""
 

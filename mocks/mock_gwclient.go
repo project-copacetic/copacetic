@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/tonistiigi/fsutil/types"
+
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -45,12 +47,12 @@ func (m *MockGWClient) ResolveImageConfig(ctx context.Context, ref string, opt s
 
 	digestResult, ok1 := args.Get(1).(digest.Digest)
 	if !ok1 {
-		return "", digest.Digest(""), nil, fmt.Errorf("type assertion to digest.Digest failed")
+		return "", "", nil, fmt.Errorf("type assertion to digest.Digest failed")
 	}
 
 	byteResult, ok2 := args.Get(2).([]byte)
 	if !ok2 {
-		return "", digest.Digest(""), nil, fmt.Errorf("type assertion to []byte failed")
+		return "", "", nil, fmt.Errorf("type assertion to []byte failed")
 	}
 
 	return args.String(0), digestResult, byteResult, args.Error(3)
@@ -138,4 +140,26 @@ func (m *MockReference) Evaluate(ctx context.Context) error {
 	}
 
 	return evalErr
+}
+
+func (m *MockReference) StatFile(ctx context.Context, req gwclient.StatRequest) (*types.Stat, error) {
+	args := m.Called(ctx, req)
+
+	typesStat, ok := args.Get(0).(*types.Stat)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to types.Stat failed")
+	}
+
+	return typesStat, args.Error(1)
+}
+
+func (m *MockReference) ReadDir(ctx context.Context, req gwclient.ReadDirRequest) ([]*types.Stat, error) {
+	args := m.Called(ctx, req)
+
+	typesStat, ok := args.Get(0).([]*types.Stat)
+	if !ok {
+		return nil, fmt.Errorf("type assertion to types failed")
+	}
+
+	return typesStat, args.Error(1)
 }
