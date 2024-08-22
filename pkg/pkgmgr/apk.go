@@ -157,12 +157,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 // Patch a regular alpine image with:
 //   - sh and apk installed on the image
 //   - valid apk db state on the image
-//
-// TODO: support "distroless" Alpine images (e.g. APKO images)
-// Still assumes that APK exists in the target image and is pathed, which can be addressed by
-// mounting a copy of apk-tools-static into the image and invoking apk-static directly.
 func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	// TODO: Add support for custom APK config
 	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
 
 	// If updating all packages, check for upgrades before proceeding with patch
