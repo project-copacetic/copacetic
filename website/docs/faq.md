@@ -19,7 +19,7 @@ If you find that your storage is rapidly being taken up after working with Copa,
 
 ## How does Copa determine what tooling image to use?
 
-All images being passed into Copa has their versioning data carefully stripped so that an appropriate tooling image can be obtained from a container repository.
+All images being passed into Copa have their versioning data carefully stripped so that an appropriate tooling image can be obtained from a container repository.
 
 Debian: All debian images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `debain:12.6` is passed in, `debian:12-slim` is used as the tooling image.
 
