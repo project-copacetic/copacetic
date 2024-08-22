@@ -29,7 +29,7 @@ There is one caveat for Ubuntu images. If an Ubuntu image is being patched witho
 
 RPM: All RPM-based images will use `mcr.microsoft.com/cbl-mariner/base/core:2.0` as the tooling image.
 
-APK: APK-based images never use a tooling image.
+APK: APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
 
 ## Can I replace the package repositories in the image with my own?
 
