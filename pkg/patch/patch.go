@@ -166,7 +166,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	if solveOpt.SourcePolicy != nil {
 		switch {
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "redhat"):
-			err = errors.New("RedHat is not supported via source policies due to busybox not being in the RHEL repos\n" +
+			err = errors.New("RedHat is not supported via source policies due to BusyBox not being in the RHEL repos\n" +
 				"Please use a different RPM-based image")
 			return err
 
