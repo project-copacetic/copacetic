@@ -212,7 +212,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			}
 
 			// Export the patched image state to Docker
-			// TODO: Add support for other output modes as buildctl does.
 			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
 				ch <- err
