@@ -157,12 +157,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 // Patch a regular alpine image with:
 //   - sh and apk installed on the image
 //   - valid apk db state on the image
-//
-// TODO: support "distroless" Alpine images (e.g. APKO images)
-// Still assumes that APK exists in the target image and is pathed, which can be addressed by
-// mounting a copy of apk-tools-static into the image and invoking apk-static directly.
 func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	// TODO: Add support for custom APK config
 	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
 
 	// If updating all packages, check for upgrades before proceeding with patch
@@ -215,9 +210,29 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		}
 	}
 
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if am.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(am.config.ImageState, am.config.PatchedImageState)
+
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(apkUpdated, apkInstalled)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{am.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultManifestBytes, nil
+	}
+
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(apkUpdated, apkInstalled)
 	patchMerge := llb.Merge([]llb.State{am.config.ImageState, patchDiff})
+
 	return &patchMerge, resultManifestBytes, nil
 }
 

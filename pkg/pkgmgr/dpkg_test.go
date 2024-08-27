@@ -1,12 +1,19 @@
 package pkgmgr
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -436,6 +443,76 @@ func Test_GetPackageInfo(t *testing.T) {
 			if name != tt.want.name || version != tt.want.version || errMsg != tt.want.errMsg {
 				t.Errorf("GetPackageInfo() = Name: %v, Version: %v Error: %v, want Name: %v, Version: %v, Error: %v", name, version, err, tt.want.name, tt.want.version, tt.want.errMsg)
 			}
+		})
+	}
+}
+
+func Test_installUpdates_DPKG(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		ignoreErrors   bool
+		mockSetup      func(reference *mocks.MockReference)
+		expectedResult []byte
+		expectedError  string
+	}{
+		{
+			name: "Update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(nil), nil)
+			},
+			ignoreErrors:   false,
+			expectedResult: nil,
+		},
+		{
+			name: "Update specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.0.1"},
+				{Name: "package2", FixedVersion: "2.0.1"},
+			},
+			ignoreErrors:   false,
+			expectedResult: []byte("package1-1.0.1\npackage2-2.0.2\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			dm := &dpkgManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+			}
+
+			updatedState, resultBytes, err := dm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
+
+			if tt.expectedError != "" {
+				assert.EqualError(t, err, tt.expectedError)
+				assert.Nil(t, updatedState)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, updatedState)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
 		})
 	}
 }

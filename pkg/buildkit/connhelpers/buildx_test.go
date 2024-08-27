@@ -13,4 +13,7 @@ func TestBuildx(t *testing.T) {
 
 	_, err = connhelper.GetConnectionHelper("buildx://foobar")
 	assert.NoError(t, err)
+
+	_, err = connhelper.GetConnectionHelper("buildx://foorbar/something")
+	assert.Error(t, err)
 }

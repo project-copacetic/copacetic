@@ -1,10 +1,18 @@
 package pkgmgr
 
 import (
+	"context"
 	_ "embed"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/project-copacetic/copacetic/mocks"
+
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -207,6 +215,101 @@ func Test_apkManager_GetPackageType(t *testing.T) {
 			if got := am.GetPackageType(); got != tt.want {
 				t.Errorf("apkManager.GetPackageType() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func Test_InstallUpdates_APK(t *testing.T) {
+	tests := []struct {
+		name          string
+		manifest      *unversioned.UpdateManifest
+		ignoreErrors  bool
+		mockSetup     func(reference *mocks.MockReference)
+		expectedState bool
+		expectedPkgs  []string
+		expectedError string
+	}{
+		{
+			name: "Update specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
+			},
+			manifest: &unversioned.UpdateManifest{
+				Updates: unversioned.UpdatePackages{
+					{Name: "package1", FixedVersion: "1.0.1"},
+					{Name: "package2", FixedVersion: "2.0.1"},
+				},
+			},
+			ignoreErrors:  false,
+			expectedState: true,
+			expectedPkgs:  nil,
+			expectedError: "",
+		},
+		{
+			name: "Nil manifest",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.1\n"), nil)
+			},
+			manifest:      nil,
+			expectedState: true,
+			expectedPkgs:  nil,
+			expectedError: "",
+		},
+		{
+			name: "Ignore errors",
+			manifest: &unversioned.UpdateManifest{
+				Updates: unversioned.UpdatePackages{
+					{Name: "package1", FixedVersion: "2.0.0"},
+				},
+			},
+			ignoreErrors: true,
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\n"), nil)
+			},
+			expectedState: true,
+			expectedPkgs:  []string{"package1"},
+			expectedError: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockGWClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockGWClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			am := &apkManager{
+				config: &buildkit.Config{
+					Client:     mockGWClient,
+					ImageState: llb.Scratch(),
+				},
+				workingFolder: "/tmp",
+			}
+
+			state, pkgs, err := am.InstallUpdates(context.TODO(), tt.manifest, tt.ignoreErrors)
+
+			if tt.expectedError != "" {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.expectedError)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			if tt.expectedState {
+				assert.NotNil(t, state)
+			} else {
+				assert.Nil(t, state)
+			}
+
+			assert.Equal(t, tt.expectedPkgs, pkgs)
 		})
 	}
 }
