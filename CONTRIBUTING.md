@@ -132,6 +132,14 @@ git commit --amend --no-edit --signoff
 git push --force-with-lease <remote-name> <branch-name>
 ```
 
+or leverage
+
+```bash
+git switch <branch-name>
+git rebase HEAD~<number of commits on branch> --signoff
+git push --force-with-lease <remote-name> <branch-name>
+```
+
 ## Code of Conduct
 
 This project has adopted the [CNCF Code of Conduct](./CODE_OF_CONDUCT)
