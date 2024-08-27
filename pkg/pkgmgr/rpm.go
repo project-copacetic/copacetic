@@ -393,16 +393,16 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *l
 	var missingTools []string
 	requiredToolingList := []string{"busybox", "dnf-utils", "cpio"}
 
-	for i := range requiredToolingList {
+	for _, requiredTool := range requiredToolingList {
 		found := false
-		for x := range applicationsListSplit {
-			if applicationsListSplit[x] == requiredToolingList[i] {
+		for _, application := range applicationsListSplit {
+			if application == requiredTool {
 				found = true
 				break
 			}
 		}
 		if !found {
-			missingTools = append(missingTools, requiredToolingList[i])
+			missingTools = append(missingTools, requiredTool)
 		}
 	}
 
