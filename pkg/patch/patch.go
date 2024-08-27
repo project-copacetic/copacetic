@@ -171,7 +171,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			return err
 
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "rockylinux"):
-			err = errors.New("RockyLinux is not supported via source policies due to busybox not being in the RockyLinux repos\n" +
+			err = errors.New("RockyLinux is not supported via source policies due to BusyBox not being in the RockyLinux repos\n" +
 				"Please use a different RPM-based image")
 			return err
 		}
