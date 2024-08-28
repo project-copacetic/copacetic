@@ -373,19 +373,14 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *l
 		return "", err
 	}
 
-	// Convert applicationsList so we have a string to work with
-	applicationsListSplit := strings.Split(string(applicationsList), "\n")
-
 	// packageManagersInstalled is the package manager(s) available within the tooling image
 	// RPM must be excluded from this list as it cannot connect to RPM repos
 	var packageManagersInstalled []string
 	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum"}
 
-	for i := range applicationsListSplit {
-		for _, packageManager := range packageManagerList {
-			if applicationsListSplit[i] == packageManager {
-				packageManagersInstalled = append(packageManagersInstalled, applicationsListSplit[i])
-			}
+	for _, packageManager := range packageManagerList {
+		if strings.Contains(string(applicationsList), packageManager) {
+			packageManagersInstalled = append(packageManagersInstalled, packageManager)
 		}
 	}
 
@@ -393,16 +388,14 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *l
 	var missingTools []string
 	requiredToolingList := []string{"busybox", "dnf-utils", "cpio"}
 
-	for _, requiredTool := range requiredToolingList {
-		found := false
-		for _, application := range applicationsListSplit {
-			if application == requiredTool {
-				found = true
-				break
-			}
+	for _, tool := range requiredToolingList {
+		isMissingTool := !strings.Contains(string(applicationsList), tool)
+		if isMissingTool {
+			missingTools = append(missingTools, tool)
 		}
-		if !found {
-			missingTools = append(missingTools, requiredTool)
+
+		if tool == "cpio" && !isMissingTool && strings.Contains(string(applicationsList), "rpm2cpio") {
+			missingTools = append(missingTools, "cpio")
 		}
 	}
 
