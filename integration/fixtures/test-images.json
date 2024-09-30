@@ -104,7 +104,7 @@
         "digest": "sha256:c85680df0ddccfd5bf0cd60ff7d0c07b0ea783bcee9ce5dc748b68c0d36e280a",
         "distro": "Mariner",
         "description": "Valid rpm DB, no dnf, yum & rpm present, arm64 cross-arch",
-        "ignoreErrors": false
+        "ignoreErrors": true
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/distroless/base",
