@@ -74,3 +74,6 @@ Yes, [Dependabot](https://docs.github.com/en/code-security/dependabot) can creat
 - By default, if no update type is specified, Dependabot will be able to bump from a non-revision version to a revisioned version of an image if it exists. For example from `1.2.3` -> `1.2.3-1`.
 - If update type is restricted to patch only, the version would be updated to the patched version unless a minor version exists. For example, `1.2.3` would be updated to `1.2.3-1` and keep bumping revisions (`1.2.3-1 -> 1.2.3-2` etc.) over `1.3.0` or `2.0`. If `1.2.4` exists, however, it would be updated to `1.2.4` instead.
 - If patched at build time, Dependabot should pick up the revision of the patch version (`1.2.3-2` -> `1.2.4` -> `1.2.4-1`) to minimize regressions.
+
+## Does Copa cause a buildup of patched layers on each patch?
+No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested.
