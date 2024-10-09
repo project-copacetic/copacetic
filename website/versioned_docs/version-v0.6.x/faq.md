@@ -13,6 +13,10 @@ Copa is not capable of patching vulnerabilities for compiled languages, like Go,
 
 To patch vulnerabilities for applications, you can package these applications and consume them from package repositories, like `http://archive.ubuntu.com/ubuntu/` for Ubuntu, and ensure Trivy can scan and report vulnerabilities for these packages. This way, Copa can patch the applications as a whole, though it cannot patch specific modules within the applications.
 
+## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
+
+After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.
+
 ## Can I replace the package repositories in the image with my own?
 
 :::caution
