@@ -31,7 +31,7 @@ RPM: All RPM-based images will use `mcr.microsoft.com/cbl-mariner/base/core:2.0`
 
 APK: APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
 
-## After Copa patched the image, why does the scanner still show patched vulnerabilities
+## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 
 After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.
 
