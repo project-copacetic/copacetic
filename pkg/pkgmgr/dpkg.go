@@ -423,8 +423,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 								exit 1
 							fi
 
-							mkdir /var/cache/apt-get/archives
-							cd /var/cache/apt-get/archives
+							mkdir /var/cache/apt/archives
+							cd /var/cache/apt/archives
 							echo "$update_packages" > packages.txt
 					`,
 			})).Root()
