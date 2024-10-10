@@ -70,3 +70,6 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 > The tooling image for Debian-based images can be `docker.io/library/debian:11-slim` or `docker.io/library/debian:12-slim` depending on the target image version. RPM-based repos use `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
+
+## Does Copa cause a buildup of patched layers on each patch?
+No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
