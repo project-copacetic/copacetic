@@ -17,6 +17,10 @@ To patch vulnerabilities for applications, you can package these applications an
 
 If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. 
 
+## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
+
+After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.
+
 ## Can I replace the package repositories in the image with my own?
 
 :::caution
