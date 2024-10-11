@@ -43,7 +43,7 @@ Experimental: This feature might change without preserving backwards compatibili
 
 :::
 
-Copa does not support replacing the repositories in the package managers with alternatives. Images must already use the intended package repositories. For example, for debian, updating `/etc/apt-get/sources.list` from `http://archive.ubuntu.com/ubuntu/` to a mirror, such as `https://mirrors.wikimedia.org/ubuntu/`.
+Copa does not support replacing the repositories in the package managers with alternatives. Images must already use the intended package repositories. For example, for debian, updating `/etc/apt/sources.list` from `http://archive.ubuntu.com/ubuntu/` to a mirror, such as `https://mirrors.wikimedia.org/ubuntu/`.
 
 If you need the tooling image to use a different package repository, you can create a source policy to define a replacement image and/or pin to a digest. For example, the following source policy replaces `docker.io/library/debian:11-slim` image with `foo.io/bar/baz:latest@sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5`:
 

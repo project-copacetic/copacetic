@@ -21,7 +21,7 @@
         "tag": "1.21.6",
         "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
         "distro": "Debian",
-        "description": "Valid dpkg/status, apt-get present",
+        "description": "Valid dpkg/status, apt present",
         "ignoreErrors": false
     },
     {
@@ -30,7 +30,7 @@
         "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
         "localName": "local/image:tag",
         "distro": "Debian",
-        "description": "Valid dpkg/status, apt-get present, locally tagged with repo and image name",
+        "description": "Valid dpkg/status, apt present, locally tagged with repo and image name",
         "ignoreErrors": false
     },
     {
@@ -38,7 +38,7 @@
         "tag": "v1.23.4",
         "digest": "sha256:30116c7218264d95623d3918a50da703675755cae866cd4c324586611fcd50ea",
         "distro": "Debian",
-        "description": "Valid dpkg/status, apt-get present, custom network config",
+        "description": "Valid dpkg/status, apt present, custom network config",
         "ignoreErrors": false
     },
     {
@@ -46,7 +46,7 @@
         "tag": "v1.27.2",
         "digest": "sha256:1e4f13f5f5c215813fb9c9c6f56da1c0354363f2a69bd12732658f79d585864f",
         "distro": "Custom Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt-get, libssl1.1",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1.1",
         "ignoreErrors": false
     },
     {

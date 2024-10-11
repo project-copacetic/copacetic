@@ -24,7 +24,7 @@ const (
 	dpkgLibPath      = "/var/lib/dpkg"
 	dpkgStatusPath   = dpkgLibPath + "/status"
 	dpkgStatusFolder = dpkgLibPath + "/status.d"
-	dpkgDownloadPath = "/var/cache/apt-get/archives"
+	dpkgDownloadPath = "/var/cache/apt/archives"
 
 	statusdOutputFilename = "statusd_type"
 )
@@ -401,7 +401,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
 		}
 
-		updated = updated.Run(
+		updated = updated.Run( 
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
 				`bash`, `-c`, `
@@ -411,7 +411,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-								latest_version=$(apt-get show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+								latest_version=$(apt-cache show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
 	
 								if [ "$latest_version" != "$pkg_version" ]; then
 									update_packages="$update_packages $pkg_name"
