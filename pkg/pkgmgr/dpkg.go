@@ -401,7 +401,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
 		}
 
-		updated = updated.Run( 
+		updated = updated.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
 				`bash`, `-c`, `

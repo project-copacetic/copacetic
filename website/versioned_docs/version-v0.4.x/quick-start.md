@@ -115,7 +115,7 @@ This sample illustrates how to patch containers using vulnerability reports with
     ```bash
     $ docker history mcr.microsoft.com/oss/nginx/nginx:1.21.6-patched
     IMAGE          CREATED        CREATED BY                                      SIZE      COMMENT
-    a372df41e06d   1 minute ago   mount / from exec sh -c apt install --no-ins…   26.1MB    buildkit.exporter.image.v0
+    a372df41e06d   1 minute ago   mount / from exec sh -c apt-get install --no-ins…   26.1MB    buildkit.exporter.image.v0
     <missing>      3 months ago   CMD ["nginx" "-g" "daemon off;"]                0B        buildkit.dockerfile.v0
     <missing>      3 months ago   STOPSIGNAL SIGQUIT                              0B        buildkit.dockerfile.v0
     <missing>      3 months ago   EXPOSE map[80/tcp:{}]                           0B        buildkit.dockerfile.v0
