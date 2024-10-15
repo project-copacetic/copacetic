@@ -117,7 +117,7 @@ This guide illustrates how to patch outdated containers with `copa`.
     ```bash
     $ docker history $IMAGE-patched
     IMAGE          CREATED              CREATED BY                                      SIZE      COMMENT
-    262dacfeb193   About a minute ago   mount / from exec sh -c apt install --no-ins…   41.1MB    buildkit.exporter.image.v0
+    262dacfeb193   About a minute ago   mount / from exec sh -c apt-get install --no-ins…   41.1MB    buildkit.exporter.image.v0
     <missing>      20 months ago        /bin/sh -c #(nop)  CMD ["nginx" "-g" "daemon…   0B
     <missing>      20 months ago        /bin/sh -c #(nop)  STOPSIGNAL SIGQUIT           0B
     <missing>      20 months ago        /bin/sh -c #(nop)  EXPOSE 80                    0B

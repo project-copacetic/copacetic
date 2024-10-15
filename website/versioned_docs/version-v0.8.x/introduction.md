@@ -27,7 +27,7 @@ In addition to filling the operational gap not met by left-shift security practi
 The `copa` tool is an extensible engine that:
 
 1. Parses the needed update packages from the container image’s vulnerability report produced by a scanner like Trivy. New adapters can be written to accommodate more report formats.
-2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt, apk, etc. New adapters can be written to support more package managers.
+2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt-get, apk, etc. New adapters can be written to support more package managers.
 3. Applies the resulting update binaries to the container image using buildkit.
 
 <img title="report-driven vulnerability patching" src="/copacetic/website/img/vulnerability-patch.png" />
