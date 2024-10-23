@@ -335,6 +335,8 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "centos", nil
 	case strings.Contains(osType, "mariner"):
 		return "cbl-mariner", nil
+	case strings.Contains(osType, "azure linux"):
+		return "azurelinux", nil
 	case strings.Contains(osType, "red hat"):
 		return "redhat", nil
 	case strings.Contains(osType, "rocky"):

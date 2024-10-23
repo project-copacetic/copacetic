@@ -138,12 +138,23 @@ func TestGetRPMImageName(t *testing.T) {
 			manifest: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
 					OS: unversioned.OS{
+						Type:    "azurelinux",
+						Version: "3.0",
+					},
+				},
+			},
+			image: "mcr.microsoft.com/azurelinux/base/core:3.0",
+		},
+		{
+			manifest: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
 						Type:    "redhat",
 						Version: "8.4",
 					},
 				},
 			},
-			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0", // use default version of cbl-mariner image
+			image: "mcr.microsoft.com/azurelinux/base/core:3.0", // use default version of azurelinux image
 		},
 	}
 

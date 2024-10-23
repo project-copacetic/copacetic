@@ -108,12 +108,13 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
 func getRPMImageName(manifest *unversioned.UpdateManifest) string {
-	// Standardize on mariner as tooling image base as redhat/ubi does not provide
+	// Standardize on azure linux as tooling image base as redhat/ubi does not provide
 	// static busybox binary
-	image := "mcr.microsoft.com/cbl-mariner/base/core"
-	version := "2.0"
+	image := "mcr.microsoft.com/azurelinux/base/core"
+	version := "3.0"
 	if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
 		// Use appropriate version of cbl-mariner image if available
+		image = "mcr.microsoft.com/cbl-mariner/base/core"
 		vers := strings.Split(manifest.Metadata.OS.Version, ".")
 		if len(vers) < 2 {
 			vers = append(vers, "0")
@@ -348,7 +349,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		}
 
 		var allErrors *multierror.Error
-		if rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
+		if rpmTools["tdnf"] == "" && rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
 			err = errors.New("image contains no RPM package managers needed for patching")
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
@@ -449,16 +450,20 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	// Install patches using available rpm managers in order of preference
 	var installCmd string
 	switch {
-	case rm.rpmTools["dnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s check-update; if [ $? -ne 0 ]; then echo >> /updates.txt; fi"`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["dnf"], checkUpdateTemplate) {
+	case rm.rpmTools["tdnf"] != "" || rm.rpmTools["dnf"] != "":
+		dnfTooling := rm.rpmTools["tdnf"]
+		if dnfTooling == "" {
+			dnfTooling = rm.rpmTools["dnf"]
+		}
+		checkUpdateTemplate := `sh -c "%[1]s check-update; if [ $? -eq 0 ]; then echo >> /updates.txt; fi"`
+		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
+		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
-		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -eq 0 ]; then echo >> /updates.txt; fi'`
 		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
@@ -466,7 +471,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -eq 0 ]; then echo >> /updates.txt; fi;"`
 		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
