@@ -235,7 +235,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args := []string{
 		"trivy",
 		"image",
-		"--vuln-type=os",
+		"--pkg-types=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
 		"--db-repository=public.ecr.aws/aquasecurity/trivy-db", // due to TOOMANYREQUESTS error from GHCR
