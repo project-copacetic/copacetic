@@ -23,8 +23,8 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: 0.44.0
-  BUILDKIT_VERSION: 0.12.0
+  TRIVY_VERSION: 0.56.2
+  BUILDKIT_VERSION: 0.16.0
 
 jobs:
   unit-test:
@@ -41,7 +41,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
       - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
-          go-version: "1.22"
+          go-version: "1.23"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
       - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
-          go-version: "1.22"
+          go-version: "1.23"
           check-latest: true
       - name: Build copa
         shell: bash
@@ -112,7 +112,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
       - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
-          go-version: "1.22"
+          go-version: "1.23"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -154,7 +154,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
       - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
-          go-version: "1.22"
+          go-version: "1.23"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -192,7 +192,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4.2.1
       - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
-          go-version: "1.22"
+          go-version: "1.23"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash

@@ -239,6 +239,8 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 		"--vuln-type=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
+		"--db-repository=public.ecr.aws/aquasecurity/trivy-db", // due to TOOMANYREQUESTS error from GHCR
+		"--java-db-repository=public.ecr.aws/aquasecurity/trivy-java-db",
 	}
 	if s.output != "" {
 		args = append(args, []string{"-o=" + s.output, "-f=json"}...)
