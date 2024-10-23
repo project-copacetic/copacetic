@@ -271,7 +271,6 @@ func TestArrayFile(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.desc, func(t *testing.T) {
 			b := ArrayFile(tt.input)
 			assert.Equal(t, tt.expected, string(b))

@@ -47,7 +47,6 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
-		img := img
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
