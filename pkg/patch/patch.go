@@ -83,10 +83,18 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		log.Warnf("Image name has no tag or digest, using latest as tag")
 		imageName = reference.TagNameOnly(imageName)
 	}
-	var tag string
-	taggedName, ok := imageName.(reference.Tagged)
-	if ok {
+	var tag  string
+	var digest string
+	if taggedName, ok := imageName.(reference.Tagged); ok {
 		tag = taggedName.Tag()
+		digest, err = FetchImageDigest(taggedName)
+		if err != nil {
+			return err
+		}
+		imageName, err = reference.WithDigest(imageName, digest)
+		if err != nil {
+			return err
+		}	
 	} else {
 		log.Warnf("Image name has no tag")
 	}
@@ -102,7 +110,12 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	if err != nil {
 		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	// Make sure the digest was successfully fetched earlier and is valid
+    if digest == "" {
+        return fmt.Errorf("failed to fetch digest for image %s", imageName) 
+    }
+	
+	patchedImageName := fmt.Sprintf("%s@sha256:%s", imageName.Name(), digest)
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -133,6 +146,13 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		}
 		log.Debugf("updates to apply: %v", updates)
 	}
+
+	if updates != nil && len(updates.Updates) > 0 {
+		if err := vex.TryOutputVexDocument(updates, manager, patchedImageName, format, output); err != nil {
+			return err
+		}
+	}
+	return eg.Wait()
 
 	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
