@@ -95,7 +95,7 @@
         "tag": "2.0.20240112",
         "digest": "sha256:60323975ec3aabe1840920a65237950a54c5fef6ffc811a5d26bb6bd130f1cc3",
         "distro": "Mariner",
-        "description": "Valid rpm DB, no dnf, yum & rpm present",
+        "description": "Valid rpm DB, tdnf, yum & rpm present",
         "ignoreErrors": false
     },
     {
@@ -103,7 +103,7 @@
         "tag": "2.0.20240112-arm64",
         "digest": "sha256:c85680df0ddccfd5bf0cd60ff7d0c07b0ea783bcee9ce5dc748b68c0d36e280a",
         "distro": "Mariner",
-        "description": "Valid rpm DB, no dnf, yum & rpm present, arm64 cross-arch",
+        "description": "Valid rpm DB, tdnf, yum & rpm present, arm64 cross-arch",
         "ignoreErrors": false
     },
     {
@@ -111,7 +111,31 @@
         "tag": "2.0.20220527",
         "digest": "sha256:f550c5428df17b145851ad75983aca6d613ad4b51ca7983b2a83e67d0ac91a5d",
         "distro": "Mariner Distroless",
-        "description": "Custom rpmmanifest files, no yum/dnf/microdnf/rpm",
+        "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm",
+        "ignoreErrors": false
+    },
+    {
+        "image": "mcr.microsoft.com/azurelinux/base/core",
+        "tag": "3.0.20240727",
+        "digest": "sha256:02004412d6133fba772fd88dd45ea99b61258722bfc796c156937df4a5d75c6c",
+        "distro": "Azure Linux",
+        "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum",
+        "ignoreErrors": false
+    },
+    {
+        "image": "mcr.microsoft.com/azurelinux/base/core",
+        "tag": "3.0.20240727-arm64",
+        "digest": "sha256:5975d2ba45e7d256d4eb4e2b3df3aefbaddf25f14fa300fa126fb93b9f082d33",
+        "distro": "Azure Linux",
+        "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum, arm64 cross-arch",
+        "ignoreErrors": false
+    },
+    {
+        "image": "mcr.microsoft.com/azurelinux/distroless/base",
+        "tag": "3.0.20240727",
+        "digest": "sha256:50c24841324cdb36a268bb1288dd6f8bd5bcf19055c24f6aaa750a740a8be62d",
+        "distro": "Azure Linux Distroless",
+        "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm",
         "ignoreErrors": false
     },
     {

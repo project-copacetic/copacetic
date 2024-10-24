@@ -15,21 +15,32 @@ To patch vulnerabilities for applications, you can package these applications an
 
 ## My disk space is being filled up after using Copa. How can I fix this?
 
-If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches. 
+If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches.
 
 ## How does Copa determine what tooling image to use?
 
 All images being passed into Copa have their versioning data carefully extracted and stripped so that an appropriate tooling image can be obtained from a container repository.
 
-Debian: All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `debian:11-slim` is used as the tooling image.
+### DPKG
 
-Ubuntu: All Ubuntu-based images use the same versioning that was passed in. e.g. if `tomcat:10.1.17-jre17-temurin-jammy` is passed in, `ubuntu:22.04` will be used for the tooling image.
+#### Debian
+All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `debian:11-slim` is used as the tooling image.
+
+#### Ubuntu
+All Ubuntu-based images use the same versioning that was passed in. e.g. if `tomcat:10.1.17-jre17-temurin-jammy` is passed in, `ubuntu:22.04` will be used for the tooling image.
 
 There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being patched without a Trivy scan, Copa is unable to parse a scan for versioning information. In these scenarios, Copa will fallback to `debian:stable-slim` as the tooling image.
 
-RPM: All RPM-based images will use `mcr.microsoft.com/cbl-mariner/base/core:2.0` as the tooling image.
+### RPM
 
-APK: APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
+#### Azure Linux 3.0+
+Azure Linux based images will use `mcr.microsoft.com/azurelinux/base/core` with the same version as the image being patched.
+
+#### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, and Amazon Linux
+These RPM-based distros will use `mcr.microsoft.com/cbl-mariner/base/core:2.0`
+
+### APK (Alpine)
+APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
 
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 

@@ -63,6 +63,18 @@ func TestGetPackageManager(t *testing.T) {
 		assert.IsType(t, &rpmManager{}, manager)
 	})
 
+	t.Run("should return an rpmManager for azurelinux", func(t *testing.T) {
+		// Call the GetPackageManager function with "azurelinux" as osType
+		manager, err := GetPackageManager("azurelinux", "1.0", config, workingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
 	t.Run("should return an rpmManager for redhat", func(t *testing.T) {
 		// Call the GetPackageManager function with "redhat" as osType
 		manager, err := GetPackageManager("redhat", "1.0", config, workingFolder)
