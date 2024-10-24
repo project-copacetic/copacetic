@@ -77,9 +77,11 @@ func TestPatch(t *testing.T) {
 			if reportFile {
 				scanResults = filepath.Join(dir, "scan.json")
 				t.Log("scanning original image")
+				scanner().downloadDB(t)
 				scanner().
 					withIgnoreFile(ignoreFile).
 					withOutput(scanResults).
+					withSkipDBUpdate().
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					scan(t, ref, img.IgnoreErrors)
 			}
@@ -108,6 +110,7 @@ func TestPatch(t *testing.T) {
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
+					withSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
@@ -229,6 +232,20 @@ type scannerCmd struct {
 	skipDBUpdate bool
 	ignoreFile   string
 	exitCode     int
+}
+
+func (s *scannerCmd) downloadDB(t *testing.T) {
+	args := []string{
+		"trivy",
+		"image",
+		"--download-db-only",
+		"--db-repository=mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db:2",
+	}
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
 
 func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
