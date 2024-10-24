@@ -115,30 +115,6 @@
         "ignoreErrors": false
     },
     {
-        "image": "mcr.microsoft.com/azurelinux/base/core",
-        "tag": "3.0.20240727",
-        "digest": "sha256:02004412d6133fba772fd88dd45ea99b61258722bfc796c156937df4a5d75c6c",
-        "distro": "Azure Linux",
-        "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum",
-        "ignoreErrors": false
-    },
-    {
-        "image": "mcr.microsoft.com/azurelinux/base/core",
-        "tag": "3.0.20240727-arm64",
-        "digest": "sha256:5975d2ba45e7d256d4eb4e2b3df3aefbaddf25f14fa300fa126fb93b9f082d33",
-        "distro": "Azure Linux",
-        "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum, arm64 cross-arch",
-        "ignoreErrors": false
-    },
-    {
-        "image": "mcr.microsoft.com/azurelinux/distroless/base",
-        "tag": "3.0.20240727",
-        "digest": "sha256:50c24841324cdb36a268bb1288dd6f8bd5bcf19055c24f6aaa750a740a8be62d",
-        "distro": "Azure Linux Distroless",
-        "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm",
-        "ignoreErrors": false
-    },
-    {
         "image": "docker.io/library/amazonlinux",
         "tag": "2.0.20210326.0",
         "digest": "sha256:06380711d6a8ac0b6989f7e2a4419e560796791d9c7c843753a719c73552dc30",
