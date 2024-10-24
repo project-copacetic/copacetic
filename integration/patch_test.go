@@ -53,6 +53,7 @@ func TestPatch(t *testing.T) {
 			img.IgnoreErrors = false
 		}
 
+		// download the trivy db before running the tests
 		scanner().downloadDB(t)
 
 		t.Run(img.Description, func(t *testing.T) {
@@ -240,7 +241,7 @@ func (s *scannerCmd) downloadDB(t *testing.T) {
 		"trivy",
 		"image",
 		"--download-db-only",
-		"--db-repository=mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db:2",
+		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
 	}
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 	cmd.Env = append(cmd.Env, os.Environ()...)
