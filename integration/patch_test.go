@@ -77,7 +77,6 @@ func TestPatch(t *testing.T) {
 			if reportFile {
 				scanResults = filepath.Join(dir, "scan.json")
 				t.Log("scanning original image")
-				scanner().downloadDB(t)
 				scanner().
 					withIgnoreFile(ignoreFile).
 					withOutput(scanResults).
@@ -99,7 +98,6 @@ func TestPatch(t *testing.T) {
 				t.Log("Oracle image detected. Skipping Trivy scan.")
 			case reportFile:
 				t.Log("scanning patched image")
-				scanner().downloadDB(t)
 				scanner().
 					withIgnoreFile(ignoreFile).
 					withSkipDBUpdate().
@@ -108,7 +106,6 @@ func TestPatch(t *testing.T) {
 					scan(t, patchedRef, img.IgnoreErrors)
 			default:
 				t.Log("scanning patched image")
-				scanner().downloadDB(t)
 				scanner().
 					withIgnoreFile(ignoreFile).
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
@@ -232,18 +229,6 @@ type scannerCmd struct {
 	skipDBUpdate bool
 	ignoreFile   string
 	exitCode     int
-}
-
-func (s *scannerCmd) downloadDB(t *testing.T) {
-	args := []string{
-		"trivy",
-		"image",
-		"--download-db-only",
-	}
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
 }
 
 func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
