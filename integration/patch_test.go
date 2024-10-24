@@ -53,6 +53,8 @@ func TestPatch(t *testing.T) {
 			img.IgnoreErrors = false
 		}
 
+		scanner().downloadDB(t)
+
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
@@ -77,7 +79,6 @@ func TestPatch(t *testing.T) {
 			if reportFile {
 				scanResults = filepath.Join(dir, "scan.json")
 				t.Log("scanning original image")
-				scanner().downloadDB(t)
 				scanner().
 					withIgnoreFile(ignoreFile).
 					withOutput(scanResults).
