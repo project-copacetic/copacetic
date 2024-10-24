@@ -235,7 +235,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args := []string{
 		"trivy",
 		"image",
-		"--pkg-types=os",
+		"--vuln-type=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
 	}
