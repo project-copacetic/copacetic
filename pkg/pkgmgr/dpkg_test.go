@@ -196,7 +196,7 @@ var (
 func TestDpkgParseResultsManifest(t *testing.T) {
 	t.Run("valid manifest", func(t *testing.T) {
 		expectedMap := map[string]string{
-			"apt":        "1.8.2.3",
+			"apt-get":    "1.8.2.3",
 			"base-files": "10.3+deb10u13",
 		}
 		actualMap, err := dpkgParseResultsManifest(validDPKGManifest)
@@ -286,19 +286,19 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		{
 			name: "version lower than requested",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "2.0"},
+				{Name: "apt-get", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 			expectedError: `1 error occurred:
-	* downloaded package apt version 1.8.2.3 lower than required 2.0 for update`,
-			expectedErrPkgs: []string{"apt"},
+	* downloaded package apt-get version 1.8.2.3 lower than required 2.0 for update`,
+			expectedErrPkgs: []string{"apt-get"},
 		},
 		{
 			name: "version lower than requested with ignore errors",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "2.0"},
+				{Name: "apt-get", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
@@ -307,7 +307,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		{
 			name: "version equal to requested",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "1.8.2.3"},
+				{Name: "apt-get", FixedVersion: "1.8.2.3"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
@@ -316,7 +316,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		{
 			name: "version greater than requested",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "0.9"},
+				{Name: "apt-get", FixedVersion: "0.9"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
