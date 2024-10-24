@@ -125,7 +125,7 @@
     {
         "image": "mcr.microsoft.com/azurelinux/base/core",
         "tag": "3.0.20240727-arm64",
-        "digest": "sha256:597f376429c6004f54891e972a39995dc0fdf8339ba32b0731b6f00bfaa17f4d",
+        "digest": "sha256:5975d2ba45e7d256d4eb4e2b3df3aefbaddf25f14fa300fa126fb93b9f082d33",
         "distro": "Azure Linux",
         "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum, arm64 cross-arch",
         "ignoreErrors": false
