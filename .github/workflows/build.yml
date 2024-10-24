@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: 0.44.0
+  TRIVY_VERSION: 0.56.2
   BUILDKIT_VERSION: 0.16.0
 
 jobs:

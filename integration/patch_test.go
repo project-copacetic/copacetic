@@ -235,9 +235,10 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args := []string{
 		"trivy",
 		"image",
-		"--vuln-type=os",
+		"--pkg-types=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
+		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
 	}
 	if s.output != "" {
 		args = append(args, []string{"-o=" + s.output, "-f=json"}...)
