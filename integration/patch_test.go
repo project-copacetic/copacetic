@@ -256,7 +256,6 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 		"--pkg-types=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
-		"--db-repository=mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db:2",
 	}
 	if s.output != "" {
 		args = append(args, []string{"-o=" + s.output, "-f=json"}...)
