@@ -54,7 +54,7 @@ func TestPatch(t *testing.T) {
 		}
 
 		// download the trivy db before running the tests
-		scanner().downloadDB(t)
+		downloadDB(t)
 
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
@@ -236,7 +236,7 @@ type scannerCmd struct {
 	exitCode     int
 }
 
-func (s *scannerCmd) downloadDB(t *testing.T) {
+func downloadDB(t *testing.T) {
 	args := []string{
 		"trivy",
 		"image",
