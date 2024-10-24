@@ -31,21 +31,21 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 	switch osType {
 	case "alpine":
 		return &apkManager{
-			config: config,
+			config:        config,
 			workingFolder: workingFolder,
 		}, nil
 	case "debian", "ubuntu":
 		return &dpkgManager{
-			config: config,
+			config:        config,
 			workingFolder: workingFolder,
-			osVersion: osVersion,
+			osVersion:     osVersion,
 		}, nil
 	case "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon":
 		return &rpmManager{
-			config: config,
+			config:        config,
 			workingFolder: workingFolder,
-			osType: osType,
-			osVersion: osVersion,
+			osType:        osType,
+			osVersion:     osVersion,
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported osType %s specified", osType)

@@ -109,27 +109,27 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
 func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string) string {
-    var image, version string
+	var image, version string
 
-    if osType == "azurelinux" {
+	if osType == "azurelinux" {
 		image = "mcr.microsoft.com/azurelinux/base/core"
 		version = osVersion
-    } else {
+	} else {
 		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
-        image = "mcr.microsoft.com/cbl-mariner/base/core"
-        version = "2.0"
+		image = "mcr.microsoft.com/cbl-mariner/base/core"
+		version = "2.0"
 
-        if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
-            vers := strings.Split(manifest.Metadata.OS.Version, ".")
-            if len(vers) < 2 {
-                vers = append(vers, "0")
-            }
-            version = fmt.Sprintf("%s.%s", vers[0], vers[1])
-        }
-    }
+		if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
+			vers := strings.Split(manifest.Metadata.OS.Version, ".")
+			if len(vers) < 2 {
+				vers = append(vers, "0")
+			}
+			version = fmt.Sprintf("%s.%s", vers[0], vers[1])
+		}
+	}
 
-    log.Debugf("Using %s:%s as basis for tooling image", image, version)
-    return fmt.Sprintf("%s:%s", image, version)
+	log.Debugf("Using %s:%s as basis for tooling image", image, version)
+	return fmt.Sprintf("%s:%s", image, version)
 }
 
 func parseRPMTools(b []byte) (rpmToolPaths, error) {

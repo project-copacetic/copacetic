@@ -174,8 +174,8 @@ func TestGetRPMImageName(t *testing.T) {
 			image:     "mcr.microsoft.com/azurelinux/base/core:999.0",
 		},
 		{
-			name: "RedHat (defaults to Azure Linux)",
-			manifest: &unversioned.UpdateManifest{},
+			name:      "RedHat (defaults to Azure Linux)",
+			manifest:  &unversioned.UpdateManifest{},
 			osType:    "redhat",
 			osVersion: "8.4",
 			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
