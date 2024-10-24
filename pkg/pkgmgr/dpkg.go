@@ -101,9 +101,9 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 		return DPKGStatusNone
 	}
 
-	st, err := strconv.Atoi(string(b))
+	st, err := strconv.ParseUint(string(b), 10, 32)
 	if err != nil {
-		st = int(DPKGStatusNone)
+		st = uint64(DPKGStatusNone)
 	}
 
 	// convert ascii digit to byte
@@ -407,12 +407,12 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 				`bash`, `-c`, `
 							json_str=$PACKAGES_PRESENT
 							update_packages=""
-	
+
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
 								latest_version=$(apt-cache show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
-	
+
 								if [ "$latest_version" != "$pkg_version" ]; then
 									update_packages="$update_packages $pkg_name"
 								fi

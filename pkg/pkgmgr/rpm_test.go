@@ -96,12 +96,15 @@ func TestIsLessThanRPMVersion(t *testing.T) {
 
 // TestGetRPMImageName tests the getRPMImageName function with different manifest inputs.
 func TestGetRPMImageName(t *testing.T) {
-	// Define test cases with input manifest and expected output image name
 	testCases := []struct {
-		manifest *unversioned.UpdateManifest
-		image    string
+		name      string // Adding name for better test identification
+		manifest  *unversioned.UpdateManifest
+		osType    string
+		osVersion string
+		image     string
 	}{
 		{
+			name: "CBL-Mariner 2.0",
 			manifest: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
 					OS: unversioned.OS{
@@ -110,9 +113,12 @@ func TestGetRPMImageName(t *testing.T) {
 					},
 				},
 			},
-			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0",
+			osType:    "cbl-mariner",
+			osVersion: "2.0.0",
+			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0",
 		},
 		{
+			name: "CBL-Mariner 1.5",
 			manifest: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
 					OS: unversioned.OS{
@@ -121,9 +127,12 @@ func TestGetRPMImageName(t *testing.T) {
 					},
 				},
 			},
-			image: "mcr.microsoft.com/cbl-mariner/base/core:1.5",
+			osType:    "cbl-mariner",
+			osVersion: "1.5",
+			image:     "mcr.microsoft.com/cbl-mariner/base/core:1.5",
 		},
 		{
+			name: "CBL-Mariner 3 (default minor version)",
 			manifest: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
 					OS: unversioned.OS{
@@ -132,27 +141,58 @@ func TestGetRPMImageName(t *testing.T) {
 					},
 				},
 			},
-			image: "mcr.microsoft.com/cbl-mariner/base/core:3.0", // default minor version to 0
+			osType:    "cbl-mariner",
+			osVersion: "3",
+			image:     "mcr.microsoft.com/cbl-mariner/base/core:3.0",
 		},
 		{
+			name: "Azure Linux 3.0",
 			manifest: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
 					OS: unversioned.OS{
-						Type:    "redhat",
-						Version: "8.4",
+						Type:    "azurelinux",
+						Version: "3.0",
 					},
 				},
 			},
-			image: "mcr.microsoft.com/cbl-mariner/base/core:2.0", // use default version of cbl-mariner image
+			osType:    "azurelinux",
+			osVersion: "3.0",
+			image:     "mcr.microsoft.com/azurelinux/base/core:3.0",
+		},
+		{
+			name:      "Azure Linux 3.0 without update manifest",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "azurelinux",
+			osVersion: "3.0",
+			image:     "mcr.microsoft.com/azurelinux/base/core:3.0",
+		},
+		{
+			name:      "Azure Linux future version",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "azurelinux",
+			osVersion: "999.0",
+			image:     "mcr.microsoft.com/azurelinux/base/core:999.0",
+		},
+		{
+			name:      "RedHat (defaults to Azure Linux)",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "redhat",
+			osVersion: "8.4",
+			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
+		},
+		{
+			name:      "Nil manifest",
+			manifest:  nil,
+			osType:    "",
+			osVersion: "",
+			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 	}
 
-	// Loop over test cases and run getRPMImageName function with each input manifest
+	// Loop over test cases and run getRPMImageName function with each input
 	for _, tc := range testCases {
-		t.Run(tc.image, func(t *testing.T) {
-			image := getRPMImageName(tc.manifest)
-
-			// Use testify package to assert that the output image name matches the expected one
+		t.Run(tc.name, func(t *testing.T) {
+			image := getRPMImageName(tc.manifest, tc.osType, tc.osVersion)
 			assert.Equal(t, tc.image, image)
 		})
 	}

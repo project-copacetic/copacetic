@@ -47,12 +47,14 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
-		img := img
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
 			img.IgnoreErrors = false
 		}
+
+		// download the trivy db before running the tests
+		downloadDB(t)
 
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
@@ -81,6 +83,7 @@ func TestPatch(t *testing.T) {
 				scanner().
 					withIgnoreFile(ignoreFile).
 					withOutput(scanResults).
+					withSkipDBUpdate().
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					scan(t, ref, img.IgnoreErrors)
 			}
@@ -109,6 +112,7 @@ func TestPatch(t *testing.T) {
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
+					withSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
@@ -232,11 +236,26 @@ type scannerCmd struct {
 	exitCode     int
 }
 
+func downloadDB(t *testing.T) {
+	args := []string{
+		"trivy",
+		"image",
+		"--download-db-only",
+		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
+	}
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
 func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args := []string{
 		"trivy",
 		"image",
-		"--vuln-type=os",
+		"--quiet",
+		"--pkg-types=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
 	}

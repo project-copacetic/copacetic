@@ -145,6 +145,19 @@ func TestGetOSType(t *testing.T) {
 			expectedOSType: "cbl-mariner",
 		},
 		{
+			osRelease: []byte(`NAME="Microsoft Azure Linux"
+			VERSION="3.0.20240727"
+			ID=azurelinux
+			VERSION_ID="3.0"
+			PRETTY_NAME="Microsoft Azure Linux 3.0"
+			ANSI_COLOR="1;34"
+			HOME_URL="https://aka.ms/azurelinux"
+			BUG_REPORT_URL="https://aka.ms/azurelinux"
+			SUPPORT_URL="https://aka.ms/azurelinux"`),
+			err:            nil,
+			expectedOSType: "azurelinux",
+		},
+		{
 			osRelease: []byte(`NAME="Red Hat Enterprise Linux"
 			VERSION="8.9 (Ootpa)"
 			ID="rhel"
@@ -157,7 +170,7 @@ func TestGetOSType(t *testing.T) {
 			HOME_URL="https://www.redhat.com/"
 			DOCUMENTATION_URL="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8"
 			BUG_REPORT_URL="https://bugzilla.redhat.com/"
-			
+
 			REDHAT_BUGZILLA_PRODUCT="Red Hat Enterprise Linux 8"
 			REDHAT_BUGZILLA_PRODUCT_VERSION=8.9
 			REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
@@ -199,7 +212,7 @@ func TestGetOSType(t *testing.T) {
 			CPE_NAME="cpe:/o:oracle:linux:7:9:server"
 			HOME_URL="https://linux.oracle.com/"
 			BUG_REPORT_URL="https://github.com/oracle/oracle-linux"
-			
+
 			ORACLE_BUGZILLA_PRODUCT="Oracle Linux 7"
 			ORACLE_BUGZILLA_PRODUCT_VERSION=7.9
 			ORACLE_SUPPORT_PRODUCT="Oracle Linux"
@@ -221,7 +234,7 @@ func TestGetOSType(t *testing.T) {
 			CPE_NAME="cpe:/o:oracle:linux:8:9:server"
 			HOME_URL="https://linux.oracle.com/"
 			BUG_REPORT_URL="https://github.com/oracle/oracle-linux"
-			
+
 			ORACLE_BUGZILLA_PRODUCT="Oracle Linux 8"
 			ORACLE_BUGZILLA_PRODUCT_VERSION=8.9
 			ORACLE_SUPPORT_PRODUCT="Oracle Linux"

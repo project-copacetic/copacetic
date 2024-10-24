@@ -27,12 +27,11 @@ func TestPlugins(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		tc := tc // capture range variable
 		t.Run(tc.image, func(t *testing.T) {
 			t.Parallel()
 			_, err := runPatch(tc.image, tc.report)
 			if err != nil {
-				assert.Equal(t, tc.err, fmt.Errorf(err.Error()))
+				assert.Equal(t, tc.err, fmt.Errorf("%s", err.Error()))
 			} else {
 				assert.Equal(t, tc.err, nil)
 			}
