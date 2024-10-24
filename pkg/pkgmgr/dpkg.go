@@ -189,12 +189,12 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(
-		llb.Shlex("apt update"),
+		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 	).Root()
 
-	const installBusyBoxCmd = "apt install busybox-static"
+	const installBusyBoxCmd = "apt-get install busybox-static"
 	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyBoxApplied := dm.config.ImageState.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
@@ -298,19 +298,19 @@ func GetPackageInfo(file string) (string, string, error) {
 }
 
 // Patch a regular debian image with:
-//   - sh and apt installed on the image
+//   - sh and apt-get installed on the image
 //   - valid dpkg status on the image
 //
 // Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	aptUpdated := dm.config.ImageState.Run(
-		llb.Shlex("apt update"),
+	aptGetUpdated := dm.config.ImageState.Run(
+		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 	).Root()
 
-	checkUpgradable := `sh -c "apt list --upgradable 2>/dev/null | grep -q "upgradable" || exit 1"`
-	aptUpdated = aptUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
+	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
 
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -319,29 +319,29 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	var installCmd string
 	if updates != nil {
-		aptInstallTemplate := `sh -c "apt install --no-install-recommends -y %s && apt clean -y"`
+		aptGetInstallTemplate := `sh -c "apt-get install --no-install-recommends -y %s && apt-get clean -y"`
 		pkgStrings := []string{}
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
-		installCmd = fmt.Sprintf(aptInstallTemplate, strings.Join(pkgStrings, " "))
+		installCmd = fmt.Sprintf(aptGetInstallTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// if updates is not specified, update all packages
-		installCmd = `sh -c "output=$(apt upgrade -y && apt clean -y && apt autoremove 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
+		installCmd = `sh -c "output=$(apt-get upgrade -y && apt-get clean -y && apt-get autoremove 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
 	}
 
-	aptInstalled := aptUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	aptGetInstalled := aptGetUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		aptInstalled = aptInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+		aptGetInstalled = aptGetInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
 	// Write results.manifest to host for post-patch validation
 	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, dpkgStatusPath, resultManifest)
-	resultsWritten := aptInstalled.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-	resultsDiff := llb.Diff(aptInstalled, resultsWritten)
+	resultsWritten := aptGetInstalled.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
+	resultsDiff := llb.Diff(aptGetInstalled, resultsWritten)
 
 	resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
 	if err != nil {
@@ -354,7 +354,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
 
 		// Diff the base image and new patches
-		newPatchDiff := llb.Diff(aptUpdated, aptInstalled)
+		newPatchDiff := llb.Diff(aptGetUpdated, aptGetInstalled)
 
 		// Merging these two diffs will discard everything in the filesystem that hasn't changed
 		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
@@ -368,7 +368,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	}
 
 	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(aptUpdated, aptInstalled)
+	patchDiff := llb.Diff(aptGetUpdated, aptGetInstalled)
 	patchMerge := llb.Merge([]llb.State{dm.config.ImageState, patchDiff})
 
 	return &patchMerge, resultsBytes, nil
@@ -387,9 +387,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.ResolveModeDefault,
 	)
 
-	// Run apt update && apt download list of updates to target folder
+	// Run apt-get update && apt-get download list of updates to target folder
 	updated := toolingBase.Run(
-		llb.Shlex("apt update"),
+		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 	).Root()
@@ -411,7 +411,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-								latest_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+								latest_version=$(apt-cache show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
 	
 								if [ "$latest_version" != "$pkg_version" ]; then
 									update_packages="$update_packages $pkg_name"
@@ -436,17 +436,17 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	var downloadCmd string
 	pkgStrings := []string{}
 	if updates != nil {
-		aptDownloadTemplate := "apt download --no-install-recommends %s"
+		aptGetDownloadTemplate := "apt-get download --no-install-recommends %s"
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
-		downloadCmd = fmt.Sprintf(aptDownloadTemplate, strings.Join(pkgStrings, " "))
+		downloadCmd = fmt.Sprintf(aptGetDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// only update the outdated pacakges from packages.txt
 		downloadCmd = `
 		packages=$(<packages.txt)
 		for package in $packages; do
-			output=$(apt download --no-install-recommends "$package" 2>&1)
+			output=$(apt-get download --no-install-recommends "$package" 2>&1)
 			if [ $? -ne 0 ]; then
 				echo "$output" >>error_log.txt
 			fi
