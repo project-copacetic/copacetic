@@ -82,7 +82,7 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
 
-## I am getting "downloaded package <name> version <version> lower than required <version> for update" error when trying to patch an image. What does this mean?
+## I am getting `downloaded package ... version ... lower than required ... for update` error when trying to patch an image. What does this mean?
 
 This error means that the package manager is trying to install a version of the package that is lower than the version that was required from the scanner report. This can happen for a few reasons:
 
