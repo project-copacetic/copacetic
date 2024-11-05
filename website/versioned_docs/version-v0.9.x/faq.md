@@ -82,6 +82,22 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
 
+## I am getting `downloaded package ... version ... lower than required ... for update` error when trying to patch an image. What does this mean?
+
+This error means that the package manager is trying to install a version of the package that is lower than the version that was required from the scanner report. This can happen for a few reasons:
+
+- Package repositories are not updated to the latest version of the package. For example, sometimes there is a lag between when a CVE is detected by Trivy using Red Hat vulnerability database and when it is available in the package repositories for CentOS.
+
+- Scanner reports are not up to date. Make sure to run the scanner with the latest vulnerability database. If you are using Trivy, it is recommended to pull the latest version of the Trivy DB, and not rely on cached or stale versions.
+
+To verify the package version discrepancies, you can compare the package version provided by the package repositories and the scanner reports. Follow the Trivy documentation on [how to find the security advisory data sources](https://aquasecurity.github.io/trivy/dev/community/contribute/discussion/#false-detection), and then compare the package version in the scanner report with the applicable security advisory, and applicable package repository.
+
+If you are continuing to see this and the package repositories and vulnerability databases are not updated, you can either:
+
+- use `--ignore-errors` flag or [filter the applicable vulnerability in the scanner](troubleshooting.md#filtering-vulnerabilities).
+
+- update all packages without any scanner reports. This can be done by not providing a scanner report to copa, and copa will update all packages to the latest version available in the package repositories.
+
 ## Can I use Dependabot with Copa patched images?
 Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
 
