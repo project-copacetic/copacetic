@@ -96,7 +96,7 @@ If you are continuing to see this and the package repositories and vulnerability
 
 - use `--ignore-errors` flag or [filter the applicable vulnerability in the scanner](troubleshooting.md#filtering-vulnerabilities).
 
-- update all packages without any scanner reports. This can be done by not providing a scanner report to copa, and copa will update all packages to the latest version available in the package repositories.
+- update all packages without any scanner reports. This can be done by not providing a scanner report to Copa, and Copa will update all packages to the latest version available in the package repositories.
 
 ## Can I use Dependabot with Copa patched images?
 Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
