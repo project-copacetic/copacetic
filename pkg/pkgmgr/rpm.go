@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
@@ -32,7 +34,6 @@ const (
 	rpmManifest2        = "container-manifest-2"
 	rpmManifestWildcard = "container-manifest-*"
 
-	installToolsCmd   = "tdnf install busybox cpio dnf-utils -y"
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
 
@@ -43,6 +44,9 @@ type rpmManager struct {
 	workingFolder string
 	rpmTools      rpmToolPaths
 	isDistroless  bool
+	packageInfo   map[string]string
+	osType        string
+	osVersion     string
 }
 
 type rpmDBType uint
@@ -79,8 +83,22 @@ func (st rpmDBType) String() string {
 
 // Depending on go-rpm-version lib for RPM version comparison rules.
 func isValidRPMVersion(v string) bool { // nolint:revive
-	// TODO: Verify if there are format correctness check that need to be added given lack of support in rpmVer lib
-	return true
+	err := isValidVersion(v)
+	return err == nil
+}
+
+func isValidVersion(ver string) error {
+	if !unicode.IsDigit(rune(ver[0])) {
+		return errors.New("upstream_version must start with digit")
+	}
+
+	allowedSymbols := ".-+~:_"
+	for _, s := range ver {
+		if !unicode.IsDigit(s) && !unicode.IsLetter(s) && !strings.ContainsRune(allowedSymbols, s) {
+			return fmt.Errorf("upstream_version %s includes invalid character %q", ver, s)
+		}
+	}
+	return nil
 }
 
 func isLessThanRPMVersion(v1, v2 string) bool {
@@ -90,19 +108,26 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getRPMImageName(manifest *unversioned.UpdateManifest) string {
-	// Standardize on mariner as tooling image base as redhat/ubi does not provide
-	// static busybox binary
-	image := "mcr.microsoft.com/cbl-mariner/base/core"
-	version := "2.0"
-	if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
-		// Use appropriate version of cbl-mariner image if available
-		vers := strings.Split(manifest.Metadata.OS.Version, ".")
-		if len(vers) < 2 {
-			vers = append(vers, "0")
+func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string) string {
+	var image, version string
+
+	if osType == "azurelinux" {
+		image = "mcr.microsoft.com/azurelinux/base/core"
+		version = osVersion
+	} else {
+		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
+		image = "mcr.microsoft.com/cbl-mariner/base/core"
+		version = "2.0"
+
+		if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
+			vers := strings.Split(manifest.Metadata.OS.Version, ".")
+			if len(vers) < 2 {
+				vers = append(vers, "0")
+			}
+			version = fmt.Sprintf("%s.%s", vers[0], vers[1])
 		}
-		version = fmt.Sprintf("%s.%s", vers[0], vers[1])
 	}
+
 	log.Debugf("Using %s:%s as basis for tooling image", image, version)
 	return fmt.Sprintf("%s:%s", image, version)
 }
@@ -173,7 +198,14 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var updates unversioned.UpdatePackages
 	var rpmComparer VersionComparer
 	var err error
+
 	if manifest != nil {
+		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
+			err = errors.New("Detected Oracle image passed in\n" +
+				"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
+			return &rm.config.ImageState, nil, err
+		}
+
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
 		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
 		if err != nil {
@@ -186,7 +218,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		log.Debugf("latest unique RPMs: %v", updates)
 	}
 
-	toolImageName := getRPMImageName(manifest)
+	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion)
 	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
 	}
@@ -194,12 +226,12 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var updatedImageState *llb.State
 	var resultManifestBytes []byte
 	if rm.isDistroless {
-		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName)
+		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
 	} else {
-		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates)
+		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -230,13 +262,20 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		llb.ResolveModeDefault,
 	)
 
+	// List all packages installed in the tooling image
+	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
+	installToolsCmd, err := rm.generateToolInstallCmd(ctx, &toolsListed)
+	if err != nil {
+		return err
+	}
+
+	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
+
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
 		File(llb.Mkdir(inputPath, 0o744, llb.WithParents(true)))
-
-	toolList := []string{"dnf", "microdnf", "rpm", "yum"}
 
 	rpmDBList := []string{
 		filepath.Join(rpmLibPath, rpmBDB),
@@ -249,7 +288,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	toolListPath := filepath.Join(inputPath, "tool_list")
 	dbListPath := filepath.Join(inputPath, "rpm_db_list")
 
-	probed := buildkit.WithArrayFile(&mkFolders, toolListPath, toolList)
+	probed := buildkit.WithArrayFile(&mkFolders, toolListPath, packageManagers)
 	probed = buildkit.WithArrayFile(&probed, dbListPath, rpmDBList)
 	outState := probed.Run(
 		llb.AddEnv("TOOL_LIST_PATH", toolListPath),
@@ -286,6 +325,16 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	switch rpmDB {
 	case RPMDBManifests:
 		rm.isDistroless = true
+		rpmManifest2File, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &outState, rpmManifest2)
+		if err != nil {
+			return err
+		}
+		// parse container-manifest-2 to get installed package names and versions
+		pkgInfo, err := parseManifestFile(string(rpmManifest2File))
+		if err != nil {
+			return err
+		}
+		rm.packageInfo = pkgInfo
 	case RPMDBNone, RPMDBMixed:
 		err := fmt.Errorf("could not find determine RPM DB type of target image: %v", rpmDB)
 		log.Error(err)
@@ -307,7 +356,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 		}
 
 		var allErrors *multierror.Error
-		if rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
+		if rpmTools["tdnf"] == "" && rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
 			err = errors.New("image contains no RPM package managers needed for patching")
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
@@ -326,13 +375,73 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	return nil
 }
 
+func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *llb.State) (string, error) {
+	applicationsList, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, toolsListed, "/applications.txt")
+	if err != nil {
+		return "", err
+	}
+
+	// packageManagersInstalled is the package manager(s) available within the tooling image
+	// RPM must be excluded from this list as it cannot connect to RPM repos
+	var packageManagersInstalled []string
+	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum"}
+
+	for _, packageManager := range packageManagerList {
+		if strings.Contains(string(applicationsList), packageManager) {
+			packageManagersInstalled = append(packageManagersInstalled, packageManager)
+		}
+	}
+
+	// missingTools indicates which tools, if any, need to be installed within the tooling image
+	var missingTools []string
+	requiredToolingList := []string{"busybox", "dnf-utils", "cpio"}
+
+	for _, tool := range requiredToolingList {
+		isMissingTool := !strings.Contains(string(applicationsList), tool)
+		if isMissingTool {
+			missingTools = append(missingTools, tool)
+		}
+
+		if tool == "cpio" && !isMissingTool && strings.Contains(string(applicationsList), "rpm2cpio") {
+			missingTools = append(missingTools, "cpio")
+		}
+	}
+
+	// A tooling image could contain multiple package managers
+	// Choose the first one detected to use in the installation command
+	installCmd := fmt.Sprintf("%s install %s -y", packageManagersInstalled[0], strings.Join(missingTools, " "))
+
+	return installCmd, nil
+}
+
+func parseManifestFile(file string) (map[string]string, error) {
+	// split into lines
+	file = strings.TrimSuffix(file, "\n")
+	lines := strings.Split(file, "\n")
+
+	resultMap := make(map[string]string)
+
+	// iterate over lines
+	for _, line := range lines {
+		// split line into columns
+		columns := strings.Split(line, "\t")
+
+		if len(columns) >= 2 {
+			// get package name and version
+			name := columns[0]
+			version := strings.TrimSuffix(columns[1], ".cm2")
+			resultMap[name] = version
+		} else {
+			return nil, errors.New("unexpected format when parsing rpm manifest file")
+		}
+	}
+	return resultMap, nil
+}
+
 // Patch a regular RPM-based image with:
 //   - sh and an appropriate tool installed on the image (yum, dnf, microdnf)
 //   - valid rpm database on the image
-//
-// TODO: Support RPM-based images with valid rpm status but missing tools. (e.g. calico images > v3.21.0)
-// i.e. extra RunOption to mount a copy of rpm tools installed into the image and invoking that.
-func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages) (*llb.State, []byte, error) {
+func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	pkgs := ""
 
 	// If specific updates, provided, parse into pkg names, else will update all
@@ -348,14 +457,33 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	// Install patches using available rpm managers in order of preference
 	var installCmd string
 	switch {
-	case rm.rpmTools["dnf"] != "":
+	case rm.rpmTools["tdnf"] != "" || rm.rpmTools["dnf"] != "":
+		dnfTooling := rm.rpmTools["tdnf"]
+		if dnfTooling == "" {
+			dnfTooling = rm.rpmTools["dnf"]
+		}
+		checkUpdateTemplate := `sh -c "$(%[1]s -q check-update | wc -l); if [ $? -ne 0 ]; then echo >> /updates.txt; fi"`
+		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
+
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(dnfInstallTemplate, rm.rpmTools["dnf"], pkgs)
+		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
+		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
+
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s && %[1]s clean all'`
+		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
+
+		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
@@ -363,48 +491,145 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	}
 	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		installed = installed.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
+
 	// Write results.manifest to host for post-patch validation
 	var resultBytes []byte
-	var err error
 	if updates != nil {
 		const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
 		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
 		resultsWritten := installed.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
+		var err error
 		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if rm.config.PatchedConfigData != nil {
+		// Diff the base image and pat[]ched image to get previous patches
+		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(rm.config.ImageState, installed)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultBytes, nil
+	}
+
 	// Diff the installed updates and merge that into the target image
 	patchDiff := llb.Diff(rm.config.ImageState, installed)
 	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
+
 	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string) (*llb.State, []byte, error) {
+func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) bool {
+	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
+	stateWithCheck := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+
+	// if error in extracting file, that means updates.txt does not exist and there are no updates.
+	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
+
+	return err == nil
+}
+
+func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
 		llb.ResolveModeDefault,
 	)
 
+	// List all packages installed in the tooling image
+	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
+	installToolsCmd, err := rm.generateToolInstallCmd(ctx, &toolsListed)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// Install busybox. This should reuse the layer cached from probeRPMStatus.
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
+
+	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
+	if updates == nil {
+		jsonPackageData, err := json.Marshal(rm.packageInfo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
+		}
+
+		busyboxCopied = busyboxCopied.Run(
+			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
+			llb.Args([]string{
+				`bash`, `-c`, `
+								json_str=$PACKAGES_PRESENT
+								update_packages=""
+
+								while IFS=':' read -r package version; do
+									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+
+									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2 | sed 's/\.cm2//')
+
+									if [ "$latest_version" != "$pkg_version" ]; then
+										update_packages="$update_packages $pkg_name"
+									fi
+								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+								if [ -z "$update_packages" ]; then
+									echo "No packages to update"
+									exit 1
+								fi
+
+								echo "$update_packages" > packages.txt
+						`,
+			})).Root()
+	}
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
-	const rpmDownloadTemplate = `yumdownloader --downloadonly --downloaddir=. --best -y %s`
-	pkgStrings := []string{}
-	for _, u := range updates {
-		pkgStrings = append(pkgStrings, u.Name)
+	var downloadCmd string
+	if updates != nil {
+		const rpmDownloadTemplate = `yumdownloader --downloadonly --downloaddir=. --best -y %s`
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
+	} else {
+		// only updated the outdated pacakges from packages.txt
+		downloadCmd = `
+		packages=$(<packages.txt)
+		for package in $packages; do
+			output=$(yumdownloader --downloadonly --downloaddir=. --best -y "$package" 2>&1)
+			if [ $? -ne 0 ]; then
+				echo "$output" >>error_log.txt
+			fi
+		done
+		`
 	}
-	downloadCmd := fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
-	downloaded := busyboxCopied.Run(llb.Shlex(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+
+	downloaded := busyboxCopied.Run(buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
 
 	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
 	const extractTemplate = `sh -c 'for f in %[1]s/*.rpm ; do rpm2cpio "$f" | cpio -idmv -D %[1]s ; done'`
@@ -456,9 +681,29 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		return nil, nil, err
 	}
 
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if rm.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+
+		// Diff the manifests for the latest updates
+		manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, patchedRoot})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultBytes, nil
+	}
+
 	// Diff unpacked packages layers from previous and merge with target
 	manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
 	merged := llb.Merge([]llb.State{rm.config.ImageState, patchedRoot, manifestsDiff})
+
 	return &merged, resultBytes, nil
 }
 

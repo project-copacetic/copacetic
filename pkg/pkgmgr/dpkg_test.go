@@ -1,12 +1,19 @@
 package pkgmgr
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -125,7 +132,7 @@ func TestGetAPTImageName(t *testing.T) {
 	// Run test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getAPTImageName(tc.manifest)
+			got := getAPTImageName(tc.manifest, tc.manifest.Metadata.OS.Version)
 			if got != tc.want {
 				t.Errorf("getAPTImageName() = %v, want %v", got, tc.want)
 			}
@@ -189,7 +196,7 @@ var (
 func TestDpkgParseResultsManifest(t *testing.T) {
 	t.Run("valid manifest", func(t *testing.T) {
 		expectedMap := map[string]string{
-			"apt":        "1.8.2.3",
+			"apt-get":    "1.8.2.3",
 			"base-files": "10.3+deb10u13",
 		}
 		actualMap, err := dpkgParseResultsManifest(validDPKGManifest)
@@ -279,19 +286,19 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		{
 			name: "version lower than requested",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "2.0"},
+				{Name: "apt-get", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
 			ignoreErrors: false,
 			expectedError: `1 error occurred:
-	* downloaded package apt version 1.8.2.3 lower than required 2.0 for update`,
-			expectedErrPkgs: []string{"apt"},
+	* downloaded package apt-get version 1.8.2.3 lower than required 2.0 for update`,
+			expectedErrPkgs: []string{"apt-get"},
 		},
 		{
 			name: "version lower than requested with ignore errors",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "2.0"},
+				{Name: "apt-get", FixedVersion: "2.0"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
@@ -300,7 +307,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		{
 			name: "version equal to requested",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "1.8.2.3"},
+				{Name: "apt-get", FixedVersion: "1.8.2.3"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
@@ -309,7 +316,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 		{
 			name: "version greater than requested",
 			updates: unversioned.UpdatePackages{
-				{Name: "apt", FixedVersion: "0.9"},
+				{Name: "apt-get", FixedVersion: "0.9"},
 			},
 			cmp:          dpkgComparer,
 			resultsBytes: validDPKGManifest,
@@ -339,7 +346,7 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 	}
 }
 
-func Test_dpkgManager_GetPackageType(t *testing.T) {
+func TestGetPackageType(t *testing.T) {
 	type fields struct {
 		config        *buildkit.Config
 		workingFolder string
@@ -373,6 +380,139 @@ func Test_dpkgManager_GetPackageType(t *testing.T) {
 			if got := dm.GetPackageType(); got != tt.want {
 				t.Errorf("dpkgManager.GetPackageType() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func Test_GetPackageInfo(t *testing.T) {
+	type fields struct {
+		name    string
+		version string
+		errMsg  string
+	}
+	tests := []struct {
+		name string
+		file string
+		want fields
+	}{
+		{
+			name: "valid package file format",
+			file: `Package: tzdata
+			Version: 2021a-1+deb11u8
+			Architecture: all
+			Maintainer: GNU Libc Maintainers <debian-glibc@lists.debian.org>
+			Installed-Size: 3393
+			Depends: debconf (>= 0.5) | debconf-2.0
+			Provides: tzdata-bullseye
+			Section: localization
+			Priority: required
+			Multi-Arch: foreign
+			Homepage: https://www.iana.org/time-zones
+			Description: time zone and daylight-saving time data
+			 This package contains data required for the implementation of
+			 standard local time for many representative locations around the
+			 globe. It is updated periodically to reflect changes made by
+			 political bodies to time zone boundaries, UTC offsets, and
+			 daylight-saving rules.`,
+			want: fields{
+				name:    "tzdata",
+				version: "2021a-1+deb11u8",
+				errMsg:  "",
+			},
+		},
+		{
+			name: "invalid package file format",
+			file: "PackageVersion",
+			want: fields{
+				name:    "",
+				version: "",
+				errMsg:  "no package name found for package",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			name, version, err := GetPackageInfo(tt.file)
+			var errMsg string
+			if err == nil {
+				errMsg = ""
+			} else {
+				errMsg = err.Error()
+			}
+
+			if name != tt.want.name || version != tt.want.version || errMsg != tt.want.errMsg {
+				t.Errorf("GetPackageInfo() = Name: %v, Version: %v Error: %v, want Name: %v, Version: %v, Error: %v", name, version, err, tt.want.name, tt.want.version, tt.want.errMsg)
+			}
+		})
+	}
+}
+
+func Test_installUpdates_DPKG(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		ignoreErrors   bool
+		mockSetup      func(reference *mocks.MockReference)
+		expectedResult []byte
+		expectedError  string
+	}{
+		{
+			name: "Update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(nil), nil)
+			},
+			ignoreErrors:   false,
+			expectedResult: nil,
+		},
+		{
+			name: "Update specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.0.1"},
+				{Name: "package2", FixedVersion: "2.0.1"},
+			},
+			ignoreErrors:   false,
+			expectedResult: []byte("package1-1.0.1\npackage2-2.0.2\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			dm := &dpkgManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+			}
+
+			updatedState, resultBytes, err := dm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
+
+			if tt.expectedError != "" {
+				assert.EqualError(t, err, tt.expectedError)
+				assert.Nil(t, updatedState)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, updatedState)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
 		})
 	}
 }

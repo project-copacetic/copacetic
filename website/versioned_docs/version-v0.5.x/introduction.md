@@ -27,7 +27,7 @@ In addition to filling the operational gap not met by left-shift security practi
 The `copa` tool is an extensible engine that:
 
 1. Parses the needed update packages from the container image’s vulnerability report produced by a scanner like Trivy. New adapters can be written to accommodate more report formats.
-2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt, apk, etc. New adapters can be written to support more package managers.
+2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt-get, apk, etc. New adapters can be written to support more package managers.
 3. Applies the resulting update binaries to the container image using buildkit.
 
 <img title="report-driven vulnerability patching" src="/copacetic/website/img/vulnerability-patch.png" />
@@ -36,6 +36,7 @@ This approach is motivated by the core principles of making direct container pat
 
 - **Copa supports patching _existing_ container images**.
   - Devs don't need to build their images using specific tools or modify them in some way just to support container patching.
+- **Copa supports containers without package managers _including_ distroless containers**
 - **Copa works with the existing vulnerability scanning and mitigation ecosystems**.
   - Image publishers don't need to create new workflows for container patching since Copa supports patching container images using the security update packages already being published today.
   - Consumers do not need to migrate to a new and potentially more limited support ecosystem for custom distros or change their container vulnerability scanning pipelines to include remediation, since Copa can be integrated seamlessly as an extra step to patch containers based on those scanning reports.

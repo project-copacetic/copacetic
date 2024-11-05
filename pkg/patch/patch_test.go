@@ -145,6 +145,19 @@ func TestGetOSType(t *testing.T) {
 			expectedOSType: "cbl-mariner",
 		},
 		{
+			osRelease: []byte(`NAME="Microsoft Azure Linux"
+			VERSION="3.0.20240727"
+			ID=azurelinux
+			VERSION_ID="3.0"
+			PRETTY_NAME="Microsoft Azure Linux 3.0"
+			ANSI_COLOR="1;34"
+			HOME_URL="https://aka.ms/azurelinux"
+			BUG_REPORT_URL="https://aka.ms/azurelinux"
+			SUPPORT_URL="https://aka.ms/azurelinux"`),
+			err:            nil,
+			expectedOSType: "azurelinux",
+		},
+		{
 			osRelease: []byte(`NAME="Red Hat Enterprise Linux"
 			VERSION="8.9 (Ootpa)"
 			ID="rhel"
@@ -157,13 +170,77 @@ func TestGetOSType(t *testing.T) {
 			HOME_URL="https://www.redhat.com/"
 			DOCUMENTATION_URL="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8"
 			BUG_REPORT_URL="https://bugzilla.redhat.com/"
-			
+
 			REDHAT_BUGZILLA_PRODUCT="Red Hat Enterprise Linux 8"
 			REDHAT_BUGZILLA_PRODUCT_VERSION=8.9
 			REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
 			REDHAT_SUPPORT_PRODUCT_VERSION="8.9"`),
 			err:            nil,
 			expectedOSType: "redhat",
+		},
+		{
+			osRelease: []byte(`NAME="Rocky Linux"
+			VERSION="9.3 (Blue Onyx)"
+			ID="rocky"
+			ID_LIKE="rhel centos fedora"
+			VERSION_ID="9.3"
+			PLATFORM_ID="platform:el9"
+			PRETTY_NAME="Rocky Linux 9.3 (Blue Onyx)"
+			ANSI_COLOR="0;32"
+			LOGO="fedora-logo-icon"
+			CPE_NAME="cpe:/o:rocky:rocky:9::baseos"
+			HOME_URL="https://rockylinux.org/"
+			BUG_REPORT_URL="https://bugs.rockylinux.org/"
+			SUPPORT_END="2032-05-31"
+			ROCKY_SUPPORT_PRODUCT="Rocky-Linux-9"
+			ROCKY_SUPPORT_PRODUCT_VERSION="9.3"
+			REDHAT_SUPPORT_PRODUCT="Rocky Linux"
+			REDHAT_SUPPORT_PRODUCT_VERSION="9.3"`),
+			err:            nil,
+			expectedOSType: "rocky",
+		},
+		{
+			osRelease: []byte(`NAME="Oracle Linux Server"
+			VERSION="7.9"
+			ID="ol"
+			ID_LIKE="fedora"
+			VARIANT="Server"
+			VARIANT_ID="server"
+			VERSION_ID="7.9"
+			PRETTY_NAME="Oracle Linux Server 7.9"
+			ANSI_COLOR="0;31"
+			CPE_NAME="cpe:/o:oracle:linux:7:9:server"
+			HOME_URL="https://linux.oracle.com/"
+			BUG_REPORT_URL="https://github.com/oracle/oracle-linux"
+
+			ORACLE_BUGZILLA_PRODUCT="Oracle Linux 7"
+			ORACLE_BUGZILLA_PRODUCT_VERSION=7.9
+			ORACLE_SUPPORT_PRODUCT="Oracle Linux"
+			ORACLE_SUPPORT_PRODUCT_VERSION=7.9`),
+			err:            nil,
+			expectedOSType: "oracle",
+		},
+		{
+			osRelease: []byte(`NAME="Oracle Linux Server"
+			VERSION="8.9"
+			ID="ol"
+			ID_LIKE="fedora"
+			VARIANT="Server"
+			VARIANT_ID="server"
+			VERSION_ID="8.9"
+			PLATFORM_ID="platform:el8"
+			PRETTY_NAME="Oracle Linux Server 8.9"
+			ANSI_COLOR="0;31"
+			CPE_NAME="cpe:/o:oracle:linux:8:9:server"
+			HOME_URL="https://linux.oracle.com/"
+			BUG_REPORT_URL="https://github.com/oracle/oracle-linux"
+
+			ORACLE_BUGZILLA_PRODUCT="Oracle Linux 8"
+			ORACLE_BUGZILLA_PRODUCT_VERSION=8.9
+			ORACLE_SUPPORT_PRODUCT="Oracle Linux"
+			ORACLE_SUPPORT_PRODUCT_VERSION=8.9`),
+			err:            nil,
+			expectedOSType: "oracle",
 		},
 		{
 			osRelease:      nil,
@@ -179,6 +256,51 @@ func TestGetOSType(t *testing.T) {
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.expectedOSType, osType)
 			assert.Equal(t, tc.err, err)
+		})
+	}
+}
+
+func TestGetOSVersion(t *testing.T) {
+	testCases := []struct {
+		osRelease         []byte
+		errMsg            string
+		expectedOSVersion string
+	}{
+		{
+			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
+			NAME="Debian GNU/Linux"
+			VERSION_ID="11"
+			VERSION="11 (bullseye)"
+			VERSION_CODENAME=bullseye
+			ID=debian
+			HOME_URL="https://www.debian.org/"
+			SUPPORT_URL="https://www.debian.org/support"
+			BUG_REPORT_URL="https://bugs.debian.org/"
+			`),
+			errMsg:            "",
+			expectedOSVersion: "11",
+		},
+		{
+			osRelease:         []byte("Cannot Parse Version_ID"),
+			errMsg:            "unable to parse os-release data osrelease: malformed line \"Cannot Parse Version_ID\"",
+			expectedOSVersion: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run("TestGetOSVersion", func(t *testing.T) {
+			osVersion, err := getOSVersion(context.TODO(), tc.osRelease)
+
+			var errMsg string
+			if err == nil {
+				errMsg = ""
+			} else {
+				errMsg = err.Error()
+			}
+
+			// Use testify package to assert that the output manifest and error match the expected ones
+			assert.Equal(t, tc.expectedOSVersion, osVersion)
+			assert.Equal(t, tc.errMsg, errMsg)
 		})
 	}
 }

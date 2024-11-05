@@ -51,7 +51,7 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	updates := unversioned.UpdateManifest{
 		Metadata: unversioned.Metadata{
 			OS: unversioned.OS{
-				Type:    report.Metadata.OS.Family,
+				Type:    string(report.Metadata.OS.Family),
 				Version: report.Metadata.OS.Name,
 			},
 			Config: unversioned.Config{

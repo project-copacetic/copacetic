@@ -18,8 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-//go:embed fixtures/trivy_ignore.rego
-var trivyIgnore []byte
+var (
+	//go:embed fixtures/test-images.json
+	testImages []byte
+
+	//go:embed fixtures/trivy_ignore.rego
+	trivyIgnore []byte
+)
 
 type testImage struct {
 	Image        string        `json:"image"`
@@ -32,25 +37,8 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
-	var file []byte
-	var err error
-
-	// test distroless and non-distroless
-	if reportFile {
-		file, err = os.ReadFile("fixtures/test-images.json")
-		if err != nil {
-			t.Error("Unable to read test-images", err)
-		}
-	} else {
-		// only test non-distroless
-		file, err = os.ReadFile("fixtures/test-images-non-distroless.json")
-		if err != nil {
-			t.Error("Unable to read test-images", err)
-		}
-	}
-
 	var images []testImage
-	err = json.Unmarshal(file, &images)
+	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
 
 	tmp := t.TempDir()
@@ -59,7 +47,15 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
-		img := img
+		// Oracle tends to throw false positives with Trivy
+		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
+		if !reportFile && !strings.Contains(img.Image, "oracle") {
+			img.IgnoreErrors = false
+		}
+
+		// download the trivy db before running the tests
+		downloadDB(t)
+
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
@@ -87,6 +83,7 @@ func TestPatch(t *testing.T) {
 				scanner().
 					withIgnoreFile(ignoreFile).
 					withOutput(scanResults).
+					withSkipDBUpdate().
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					scan(t, ref, img.IgnoreErrors)
 			}
@@ -100,7 +97,10 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
-			if reportFile {
+			switch {
+			case strings.Contains(img.Image, "oracle"):
+				t.Log("Oracle image detected. Skipping Trivy scan.")
+			case reportFile:
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
@@ -108,17 +108,18 @@ func TestPatch(t *testing.T) {
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
-			} else {
+			default:
 				t.Log("scanning patched image")
 				scanner().
 					withIgnoreFile(ignoreFile).
+					withSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					withExitCode(1).
 					scan(t, patchedRef, img.IgnoreErrors)
 			}
 
 			// currently validation is only present when patching with a scan report
-			if reportFile {
+			if reportFile && !strings.Contains(img.Image, "oracle") {
 				t.Log("verifying the vex output")
 				validVEXJSON(t, dir)
 			}
@@ -215,7 +216,13 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
+
+	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
+		assert.Contains(t, string(out), "Error: Detected Oracle image passed in\n"+
+			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
+	} else {
+		require.NoError(t, err, string(out))
+	}
 }
 
 func scanner() *scannerCmd {
@@ -229,11 +236,26 @@ type scannerCmd struct {
 	exitCode     int
 }
 
+func downloadDB(t *testing.T) {
+	args := []string{
+		"trivy",
+		"image",
+		"--download-db-only",
+		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
+	}
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
 func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	args := []string{
 		"trivy",
 		"image",
-		"--vuln-type=os",
+		"--quiet",
+		"--pkg-types=os",
 		"--ignore-unfixed",
 		"--scanners=vuln",
 	}
@@ -256,6 +278,7 @@ func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
 	cmd.Env = append(cmd.Env, os.Environ()...)
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 	out, err := cmd.CombinedOutput()
+
 	assert.NoError(t, err, string(out))
 }
 

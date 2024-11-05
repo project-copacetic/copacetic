@@ -12,8 +12,8 @@ import (
 func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	config := &buildkit.Config{}
 	workingFolder := "/tmp"
-	alpineManager, _ := pkgmgr.GetPackageManager("alpine", config, workingFolder)
-	debianManager, _ := pkgmgr.GetPackageManager("debian", config, workingFolder)
+	alpineManager, _ := pkgmgr.GetPackageManager("alpine", "", config, workingFolder)
+	debianManager, _ := pkgmgr.GetPackageManager("debian", "", config, workingFolder)
 	patchedImageName := "foo.io/bar:latest"
 	t.Setenv("COPA_VEX_AUTHOR", "test author")
 

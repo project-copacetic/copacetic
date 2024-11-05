@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/platforms"
 	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	log "github.com/sirupsen/logrus"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
@@ -81,13 +83,13 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		log.Warnf("Image name has no tag or digest, using latest as tag")
 		imageName = reference.TagNameOnly(imageName)
 	}
+	var tag string
 	taggedName, ok := imageName.(reference.Tagged)
-	if !ok {
-		err := errors.New("unexpected: TagNameOnly did not create Tagged ref")
-		log.Error(err)
-		return err
+	if ok {
+		tag = taggedName.Tag()
+	} else {
+		log.Warnf("Image name has no tag")
 	}
-	tag := taggedName.Tag()
 	if patchedTag == "" {
 		if tag == "" {
 			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
@@ -161,6 +163,20 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return err
 	}
 
+	if solveOpt.SourcePolicy != nil {
+		switch {
+		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "redhat"):
+			err = errors.New("RedHat is not supported via source policies due to BusyBox not being in the RHEL repos\n" +
+				"Please use a different RPM-based image")
+			return err
+
+		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "rockylinux"):
+			err = errors.New("RockyLinux is not supported via source policies due to BusyBox not being in the RockyLinux repos\n" +
+				"Please use a different RPM-based image")
+			return err
+		}
+	}
+
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
@@ -188,17 +204,21 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 					return nil, err
 				}
 
-				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(osType, config, workingFolder)
+				osVersion, err := getOSVersion(ctx, fileBytes)
 				if err != nil {
 					ch <- err
 					return nil, err
 				}
-				// do not specify updates, will update all
-				updates = nil
+
+				// get package manager based on os family type
+				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
 			} else {
 				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, config, workingFolder)
+				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -206,17 +226,21 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			}
 
 			// Export the patched image state to Docker
-			// TODO: Add support for other output modes as buildctl does.
 			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
 				ch <- err
 				return nil, err
 			}
 
-			def, err := patchedImageState.Marshal(ctx)
+			platform := platforms.Normalize(platforms.DefaultSpec())
+			if platform.OS != "linux" {
+				platform.OS = "linux"
+			}
+
+			def, err := patchedImageState.Marshal(ctx, llb.Platform(platform))
 			if err != nil {
 				ch <- err
-				return nil, err
+				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
 			}
 
 			res, err := c.Solve(ctx, gwclient.SolveRequest{
@@ -311,12 +335,28 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "centos", nil
 	case strings.Contains(osType, "mariner"):
 		return "cbl-mariner", nil
+	case strings.Contains(osType, "azure linux"):
+		return "azurelinux", nil
 	case strings.Contains(osType, "red hat"):
 		return "redhat", nil
+	case strings.Contains(osType, "rocky"):
+		return "rocky", nil
+	case strings.Contains(osType, "oracle"):
+		return "oracle", nil
 	default:
-		log.Error("unsupported osType", osType)
+		log.Error("unsupported osType ", osType)
 		return "", errors.ErrUnsupported
 	}
+}
+
+func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
+	r := bytes.NewReader(osreleaseBytes)
+	osData, err := osrelease.Parse(ctx, r)
+	if err != nil {
+		return "", fmt.Errorf("unable to parse os-release data %w", err)
+	}
+
+	return osData["VERSION_ID"], nil
 }
 
 func dockerLoad(ctx context.Context, pipeR io.Reader) error {
