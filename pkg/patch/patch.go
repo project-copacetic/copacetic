@@ -84,37 +84,24 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		imageName = reference.TagNameOnly(imageName)
 	}
 	var tag string
-	var digest string
-	if taggedName, ok := imageName.(reference.Tagged); ok {
-		tag = taggedName.Tag()
-		digest, err = FetchImageDigest(taggedName)
-		if err != nil {
-			return err
-		}
-		imageName, err = reference.WithDigest(imageName, digest)
-		if err != nil {
-			return err
-		}
+	taggedName, ok := imageName.(reference.Tagged)
+	if ok {
+		    tag = taggedName.Tag()
 	} else {
-		log.Warnf("Image name has no tag")
-	}
+			log.Warnf("Image name has no tag")
+	}		
 	if patchedTag == "" {
-		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
-		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		}
+		    if tag == "" {
+			        log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+			        patchedTag = defaultPatchedTagSuffix
+		    } else {
+			        patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
+		    }
 	}
 	_, err = reference.WithTag(imageName, patchedTag)
 	if err != nil {
 		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
 	}
-	// Make sure the digest was successfully fetched earlier and is valid
-	if digest == "" {
-		return fmt.Errorf("failed to fetch digest for image %s", imageName)
-	}
-
 	patchedImageName := fmt.Sprintf("%s@sha256:%s", imageName.Name(), digest)
 
 	// Ensure working folder exists for call to InstallUpdates
@@ -147,16 +134,9 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		log.Debugf("updates to apply: %v", updates)
 	}
 
-	if updates != nil && len(updates.Updates) > 0 {
-		if err := vex.TryOutputVexDocument(updates, manager, patchedImageName, format, output); err != nil {
-			return err
-		}
-	}
-	return eg.Wait()
-
 	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
-		return err
+		    return err
 	}
 	defer bkClient.Close()
 
