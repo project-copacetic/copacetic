@@ -86,23 +86,23 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	var tag string
 	taggedName, ok := imageName.(reference.Tagged)
 	if ok {
-		    tag = taggedName.Tag()
+		tag = taggedName.Tag()
 	} else {
-			log.Warnf("Image name has no tag")
-	}		
+		log.Warnf("Image name has no tag")
+	}
 	if patchedTag == "" {
-		    if tag == "" {
-			        log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			        patchedTag = defaultPatchedTagSuffix
-		    } else {
-			        patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		    }
+		if tag == "" {
+			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+			patchedTag = defaultPatchedTagSuffix
+		} else {
+			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
+		}
 	}
 	_, err = reference.WithTag(imageName, patchedTag)
 	if err != nil {
 		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
 	}
-	patchedImageName := fmt.Sprintf("%s@sha256:%s", imageName.Name(), digest)
+	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -136,7 +136,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
-		    return err
+		return err
 	}
 	defer bkClient.Close()
 
