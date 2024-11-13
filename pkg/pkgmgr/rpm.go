@@ -462,7 +462,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		if dnfTooling == "" {
 			dnfTooling = rm.rpmTools["dnf"]
 		}
-		checkUpdateTemplate := `sh -c "$(%[1]s -q check-update | wc -l); if [ $? -ne 0 ]; then echo >> /updates.txt; fi"`
+		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
 		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
