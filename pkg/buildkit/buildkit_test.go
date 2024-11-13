@@ -49,7 +49,7 @@ func (s *mockControlServer) Solve(context.Context, *controlapi.SolveRequest) (*c
 
 type mockLLBBridgeServer struct {
 	gateway.LLBBridgeServer
-	caps []caps.APICap
+	caps []*caps.APICap
 }
 
 func (m *mockLLBBridgeServer) Ping(context.Context, *gateway.PingRequest) (*gateway.PongResponse, error) {
@@ -63,7 +63,7 @@ func (m *mockLLBBridgeServer) Solve(context.Context, *gateway.SolveRequest) (*ga
 	return &gateway.SolveResponse{}, nil
 }
 
-func makeCapList(capIDs ...apicaps.CapID) []caps.APICap {
+func makeCapList(capIDs ...apicaps.CapID) []*caps.APICap {
 	var (
 		ls   apicaps.CapList
 		caps = make([]apicaps.Cap, 0, len(capIDs))
