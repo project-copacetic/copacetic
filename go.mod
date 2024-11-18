@@ -5,7 +5,7 @@ go 1.22.7
 toolchain go1.23.3
 
 require (
-	github.com/aquasecurity/trivy v0.57.0
+	github.com/aquasecurity/trivy v0.57.1
 	github.com/containerd/platforms v0.2.1
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/go-docker v0.3.0
