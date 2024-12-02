@@ -10,14 +10,14 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.6.0
-	github.com/docker/buildx v0.18.0
-	github.com/docker/cli v27.3.1+incompatible
+	github.com/docker/buildx v0.19.1
+	github.com/docker/cli v27.4.0-rc.2+incompatible
 	github.com/google/go-containerregistry v0.20.2
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20230223133812-3ed183d23422
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.17.2
+	github.com/moby/buildkit v0.18.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.0
 	github.com/openvex/go-vex v0.2.5
@@ -26,7 +26,7 @@ require (
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 	github.com/stretchr/testify v1.10.0
-	github.com/tonistiigi/fsutil v0.0.0-20241028165955-397af5306b5c
+	github.com/tonistiigi/fsutil v0.0.0-20241121093142-31cf1f437184
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
 	golang.org/x/sync v0.9.0
 	google.golang.org/grpc v1.68.0
@@ -73,18 +73,18 @@ require (
 	github.com/chai2010/gettext-go v1.0.2 // indirect
 	github.com/cloudflare/circl v1.3.8 // indirect
 	github.com/containerd/console v1.0.4 // indirect
-	github.com/containerd/containerd v1.7.22 // indirect
+	github.com/containerd/containerd v1.7.24 // indirect
 	github.com/containerd/containerd/api v1.7.19 // indirect
-	github.com/containerd/continuity v0.4.4 // indirect
-	github.com/containerd/errdefs v0.1.0 // indirect
+	github.com/containerd/continuity v0.4.5 // indirect
+	github.com/containerd/errdefs v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/ttrpc v1.2.5 // indirect
-	github.com/containerd/typeurl/v2 v2.2.0 // indirect
+	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.3.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dlclark/regexp2 v1.4.0 // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
-	github.com/docker/docker v27.3.1+incompatible // indirect
+	github.com/docker/docker v27.4.0-rc.2+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.8.2 // indirect
 	github.com/docker/go v1.5.1-1.0.20160303222718-d30aec9fd63c // indirect
 	github.com/docker/go-connections v0.5.0 // indirect
@@ -250,7 +250,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.28.0 // indirect
 	go.opentelemetry.io/otel/metric v1.31.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.28.0 // indirect
-	go.opentelemetry.io/otel/sdk/metric v1.27.0 // indirect
+	go.opentelemetry.io/otel/sdk/metric v1.28.0 // indirect
 	go.opentelemetry.io/otel/trace v1.31.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.3.1 // indirect
 	go.starlark.net v0.0.0-20230525235612-a134d8f9ddca // indirect
