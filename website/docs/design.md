@@ -93,4 +93,3 @@ The core architectural choice of using packages as the unit of patching creates 
 3. **Platform Limitations**:
    - No support for Windows containers given the dependency on buildkit
 
-This design prioritizes practicality and integration with existing Linux package management ecosystems, while accepting the inherent limitations and maintenance overhead of this approach.
