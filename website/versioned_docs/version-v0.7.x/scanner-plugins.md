@@ -99,7 +99,7 @@ From the above, we can see that the plugin must return a JSON object via standar
   "metadata": {
     "os": {
         "type": "debian",
-        "version": "11.3",
+        "version": "11.3"
     },
     "config": {
       "arch": "amd64"
