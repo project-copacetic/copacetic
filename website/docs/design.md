@@ -79,9 +79,8 @@ type PackageManager interface {
 The core architectural choice of using packages as the unit of patching creates several constraints:
 
 1. **Package-Based Update Model**:
-   - While copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on package updates
-   - When using scanner reports, false positives/negatives from scanners flow downstream to copa
-   - The package-based approach limits the kinds of vulnerabilities copa can address to those fixable via package updates
+   - While Copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on os-level package updates
+   - When using scanner reports to perform a targeted patching of packages, false positives/negatives from scanners flow downstream to Copa
 
 2. **Package Manager Dependencies**:
    - Copa depends on individual package manager adapters to correctly deploy patches to target images
