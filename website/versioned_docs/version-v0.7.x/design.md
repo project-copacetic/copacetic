@@ -76,7 +76,19 @@ type PackageManager interface {
 
 ## Tradeoffs
 
-- The core architectural choice of relying on packages as the unit of patching creates a couple of constraints:
-  - By relying on existing vulnerability scanner behavior that only detects vulnerabilities via presence/absence of vulnerable packages, copa is limited in the kinds of vulnerabilities it can address and false positive/negatives from scanners flow downstream to copa.
-  - copa depends on individual package manager adapters to correctly deploy patches to the target images, but there is a long tail of compatibility issues that arise depending on the target image itself (e.g. outdated package manager config/keys, invalid/missing package graph, etc.). Overall, the maintenance cost of the project is expected to be non-trivial to address this.
-- No support for windows containers given the dependency on buildkit.
+The core architectural choice of using packages as the unit of patching creates several constraints:
+
+1. **Package-Based Update Model**:
+   - While Copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on os-level package updates
+   - When using scanner reports to perform a targeted patching of packages, false positives/negatives from scanners flow downstream to Copa
+
+2. **Package Manager Dependencies**:
+   - Copa depends on individual package manager adapters to correctly deploy patches to target images
+   - There is a long tail of compatibility issues that arise depending on the target image itself:
+     - Outdated package manager config/keys
+     - Invalid/missing package graph
+     - Repository configuration issues
+   - Overall, the maintenance cost of the project is expected to be non-trivial to address these package manager complexities
+
+3. **Platform Limitations**:
+   - No support for Windows containers given the dependency on buildkit
