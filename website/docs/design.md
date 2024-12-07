@@ -78,7 +78,7 @@ type PackageManager interface {
 
 
 1. **Package-Based Update Model**:
-   - While Copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on os-level package updates
+   - While Copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on package updates
    - When using scanner reports to perform a targeted patching of packages, false positives/negatives from scanners flow downstream to Copa
 
 2. **Package Manager Dependencies**:
