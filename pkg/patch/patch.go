@@ -42,6 +42,31 @@ const (
 	defaultTag              = "latest"
 )
 
+type ScannerOpts struct {
+	Image                     string
+	ReportFile                string
+	WorkingFolder             string
+	Updates                   *unversioned.UpdateManifest
+	IgnoreError               bool
+	Output                    string
+	DockerNormalizedImageName reference.Named
+	PatchedImageName          string
+	Format                    string
+}
+
+type BkClient struct {
+	BkClient *client.Client
+	SolveOpt *client.SolveOpt
+}
+
+type BuildStatus struct {
+	BuildChannel chan *client.SolveStatus
+}
+
+type BuildContext struct {
+	Ctx context.Context
+}
+
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -74,35 +99,34 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-	imageName, err := reference.ParseNormalizedNamed(image)
+// patchWithContext patches the user-supplied image, image
+// reportFile is a vulnerability scan passed in by the user
+// userSuppliedPatchTag is a tag set by the user to use for the patched image tag
+// workingFolder is the folder used by copa, defaults to system temp folder
+// scanner used to generate reportFile, defaults to Trivy
+// format is the output format, defaults to openvex
+// output is the desired output filepath
+// ignoreError defines whether Copa should ignore errors
+// bkOpts contains buildkitd options for addresses, CA certs, client certs, and client keys.
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, userSuppliedPatchTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	dockerNormalizedImageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
 	}
-	if reference.IsNameOnly(imageName) {
-		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = reference.TagNameOnly(imageName)
+
+	if reference.IsNameOnly(dockerNormalizedImageName) {
+		log.Warnf("Image name %s has no tag or digest, defaulting to %s:latest", image, dockerNormalizedImageName)
+		dockerNormalizedImageName = reference.TagNameOnly(dockerNormalizedImageName)
 	}
-	var tag string
-	taggedName, ok := imageName.(reference.Tagged)
-	if ok {
-		tag = taggedName.Tag()
-	} else {
-		log.Warnf("Image name has no tag")
-	}
-	if patchedTag == "" {
-		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
-		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		}
-	}
-	_, err = reference.WithTag(imageName, patchedTag)
+
+	patchedTag := generatePatchedTag(dockerNormalizedImageName, userSuppliedPatchTag)
+
+	_, err = reference.WithTag(dockerNormalizedImageName, patchedTag)
 	if err != nil {
 		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+
+	patchedImageName := fmt.Sprintf("%s:%s", dockerNormalizedImageName.Name(), patchedTag)
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -180,112 +204,16 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-			// Configure buildctl/client for use by package manager
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
-
-			// Create package manager helper
-			var manager pkgmgr.PackageManager
-			if reportFile == "" {
-				// determine OS family
-				fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
-				if err != nil {
-					ch <- err
-					return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
-				}
-
-				osType, err := getOSType(ctx, fileBytes)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-
-				osVersion, err := getOSVersion(ctx, fileBytes)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-
-				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-			} else {
-				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-			}
-
-			// Export the patched image state to Docker
-			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
-
-			platform := platforms.Normalize(platforms.DefaultSpec())
-			if platform.OS != "linux" {
-				platform.OS = "linux"
-			}
-
-			def, err := patchedImageState.Marshal(ctx, llb.Platform(platform))
-			if err != nil {
-				ch <- err
-				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
-			}
-
-			res, err := c.Solve(ctx, gwclient.SolveRequest{
-				Definition: def.ToPB(),
-				Evaluate:   true,
-			})
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
-
-			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
-
-			// Currently can only validate updates if updating via scanner
-			if reportFile != "" {
-				// create a new manifest with the successfully patched packages
-				validatedManifest := &unversioned.UpdateManifest{
-					Metadata: unversioned.Metadata{
-						OS: unversioned.OS{
-							Type:    updates.Metadata.OS.Type,
-							Version: updates.Metadata.OS.Version,
-						},
-						Config: unversioned.Config{
-							Arch: updates.Metadata.Config.Arch,
-						},
-					},
-					Updates: []unversioned.UpdatePackage{},
-				}
-				for _, update := range updates.Updates {
-					if !slices.Contains(errPkgs, update.Name) {
-						validatedManifest.Updates = append(validatedManifest.Updates, update)
-					}
-				}
-				// vex document must contain at least one statement
-				if output != "" && len(validatedManifest.Updates) > 0 {
-					if err := vex.TryOutputVexDocument(validatedManifest, manager, patchedImageName, format, output); err != nil {
-						ch <- err
-						return nil, err
-					}
-				}
-			}
-
-			return res, nil
-		}, buildChannel)
-
+		err = buildkitBuild(
+			BuildContext{ctx},
+			&ScannerOpts{
+				image, reportFile, workingFolder, updates, ignoreError,
+				output, dockerNormalizedImageName, patchedImageName, format,
+			},
+			BkClient{
+				bkClient, &solveOpt,
+			},
+			BuildStatus{buildChannel}, ch)
 		return err
 	})
 
@@ -305,13 +233,155 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	})
 
 	eg.Go(func() error {
-		if err := dockerLoad(ctx, pipeR); err != nil {
+		err = dockerLoad(ctx, pipeR)
+		if err != nil {
 			return err
 		}
 		return pipeR.Close()
 	})
 
 	return eg.Wait()
+}
+
+// buildkitBuild submits a build request to BuildKit with the given information.
+func buildkitBuild(buildContext BuildContext, trivyOpts *ScannerOpts, bkClient BkClient, buildStatus BuildStatus, ch chan error) error {
+	_, err := bkClient.BkClient.Build(buildContext.Ctx, *bkClient.SolveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, c, trivyOpts.DockerNormalizedImageName.String())
+		if err != nil {
+			return handleError(ch, err)
+		}
+
+		manager, err := resolvePackageManager(buildContext, trivyOpts, c, bkConfig)
+		if err != nil {
+			return handleError(ch, err)
+		}
+
+		return buildReport(buildContext, trivyOpts, bkConfig, manager, ch)
+	}, buildStatus.BuildChannel)
+	return err
+}
+
+func resolvePackageManager(buildContext BuildContext, trivyOpts *ScannerOpts, client gwclient.Client, config *buildkit.Config) (pkgmgr.PackageManager, error) {
+	var manager pkgmgr.PackageManager
+	if trivyOpts.ReportFile == "" {
+		fileBytes, err := buildkit.ExtractFileFromState(buildContext.Ctx, client, &config.ImageState, "/etc/os-release")
+		if err != nil {
+			return nil, err
+		}
+
+		osType, err := getOSType(buildContext.Ctx, fileBytes)
+		if err != nil {
+			return nil, err
+		}
+
+		osVersion, err := getOSVersion(buildContext.Ctx, fileBytes)
+		if err != nil {
+			return nil, err
+		}
+		// get package manager based on os family type
+		manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, trivyOpts.WorkingFolder)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// get package manager based on os family type
+		var err error
+		manager, err = pkgmgr.GetPackageManager(trivyOpts.Updates.Metadata.OS.Type, trivyOpts.Updates.Metadata.OS.Version, config, trivyOpts.WorkingFolder)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return manager, nil
+}
+
+// handleError streamlines error forwarding to error channel and returns the error again for further propagation.
+func handleError(ch chan error, err error) (*gwclient.Result, error) {
+	ch <- err
+	return nil, err
+}
+
+// buildReport is an extracted method containing logic to manage the updates and build report.
+func buildReport(buildContext BuildContext, trivyOpts *ScannerOpts, config *buildkit.Config, manager pkgmgr.PackageManager, ch chan error) (*gwclient.Result, error) {
+	patchedImageState, errPkgs, err := manager.InstallUpdates(buildContext.Ctx, trivyOpts.Updates, trivyOpts.IgnoreError)
+	if err != nil {
+		return handleError(ch, err)
+	}
+	platform := platforms.Normalize(platforms.DefaultSpec())
+	if platform.OS != "linux" {
+		platform.OS = "linux"
+	}
+	def, err := patchedImageState.Marshal(buildContext.Ctx, llb.Platform(platform))
+	if err != nil {
+		return handleError(ch, fmt.Errorf("unable to get platform from ImageState %w", err))
+	}
+	res, err := config.Client.Solve(buildContext.Ctx, gwclient.SolveRequest{
+		Definition: def.ToPB(),
+		Evaluate:   true,
+	})
+	if err != nil {
+		return handleError(ch, err)
+	}
+	res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
+	// Currently can only validate updates if updating via scanner
+	if trivyOpts.ReportFile != "" {
+		validatedManifest := updateManifest(trivyOpts.Updates, errPkgs)
+		// vex document must contain at least one statement
+		if trivyOpts.Output != "" && len(validatedManifest.Updates) > 0 {
+			err = vex.TryOutputVexDocument(validatedManifest, manager, trivyOpts.PatchedImageName, trivyOpts.Format, trivyOpts.Output)
+			if err != nil {
+				return handleError(ch, err)
+			}
+		}
+	}
+	return res, nil
+}
+
+// updateManifest creates a new manifest with the successfully patched packages.
+func updateManifest(updates *unversioned.UpdateManifest, errPkgs []string) *unversioned.UpdateManifest {
+	validatedManifest := &unversioned.UpdateManifest{
+		Metadata: unversioned.Metadata{
+			OS: unversioned.OS{
+				Type:    updates.Metadata.OS.Type,
+				Version: updates.Metadata.OS.Version,
+			},
+			Config: unversioned.Config{
+				Arch: updates.Metadata.Config.Arch,
+			},
+		},
+		Updates: []unversioned.UpdatePackage{},
+	}
+	for _, update := range updates.Updates {
+		if !slices.Contains(errPkgs, update.Name) {
+			validatedManifest.Updates = append(validatedManifest.Updates, update)
+		}
+	}
+	return validatedManifest
+}
+
+func generatePatchedTag(dockerNormalizedImageName reference.Named, userSuppliedPatchTag string) string {
+	// currentTag is typically the versioning tag of the image as published in a container registry
+	var currentTag string
+	var copaTag string
+
+	taggedName, ok := dockerNormalizedImageName.(reference.Tagged)
+
+	if ok {
+		currentTag = taggedName.Tag()
+	} else {
+		log.Warnf("Image name has no tag")
+	}
+
+	if userSuppliedPatchTag != "" {
+		copaTag = userSuppliedPatchTag
+		return copaTag
+	} else if currentTag == "" {
+		log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
+		copaTag = defaultPatchedTagSuffix
+		return copaTag
+	}
+
+	copaTag = fmt.Sprintf("%s-%s", currentTag, defaultPatchedTagSuffix)
+	return copaTag
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
