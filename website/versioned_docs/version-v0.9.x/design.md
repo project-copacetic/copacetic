@@ -89,4 +89,5 @@ type PackageManager interface {
    - Overall, the maintenance cost of the project is expected to be non-trivial to address these package manager complexities
 
 3. **Platform Limitations**:
-   - No support for Windows containers given the dependency on buildkit
+   - Windows container support requires further exploration, particularly around package upgrade mechanisms
+   - BuildKit now has experimental Windows support
