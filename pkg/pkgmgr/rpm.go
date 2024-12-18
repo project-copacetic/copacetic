@@ -564,13 +564,14 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
 
+	// Retreive all package info from image to be patched.
+	jsonPackageData, err := json.Marshal(rm.packageInfo)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
+	}
+
 	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
 	if updates == nil {
-		jsonPackageData, err := json.Marshal(rm.packageInfo)
-		if err != nil {
-			return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
-		}
-
 		busyboxCopied = busyboxCopied.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
@@ -599,6 +600,31 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 			})).Root()
 	}
 
+	// Create a new state for tooling image with all the packages from the image we are trying to patch
+	// this will ensure the rpm database is generate for us to use
+	newrootfs := busyboxCopied.Run(
+		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
+		llb.AddEnv("OS_VERSION", rm.osVersion),
+		llb.Args([]string{
+			`bash`, `-c`, `
+							json_str=$PACKAGES_PRESENT_ALL
+							packages_formatted=""
+
+							while IFS=':' read -r package version; do
+								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+
+								packages_formatted="$packages_formatted $pkg_name-$pkg_version"
+
+							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+							tdnf makecache
+							tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
+
+							ls /tmp/rootfs/var/lib/rpm
+					`,
+		})).AddMount("/tmp/rootfs", llb.Scratch())
+
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
@@ -612,7 +638,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		}
 		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
-		// only updated the outdated pacakges from packages.txt
+		// only updated the outdated packages from packages.txt
 		downloadCmd = `
 		packages=$(<packages.txt)
 		for package in $packages; do
@@ -624,7 +650,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		`
 	}
 
-	downloaded := busyboxCopied.Run(buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := busyboxCopied.Run(buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).AddMount("/var/lib/rpm", newrootfs, llb.SourcePath("/tmp/rootfs"))
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
