@@ -586,7 +586,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2 | sed 's/\.cm2//')
 
 									if [ "$latest_version" != "$pkg_version" ]; then
-										update_packages="$update_packages $pkg_name"
+										update_packages="$update_packages $pkg_name.cm2"
 									fi
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
@@ -607,22 +607,22 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		llb.Args([]string{
 			`bash`, `-c`, `
-							json_str=$PACKAGES_PRESENT_ALL
-							packages_formatted=""
+								json_str=$PACKAGES_PRESENT_ALL
+								packages_formatted=""
 
-							while IFS=':' read -r package version; do
-								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+								while IFS=':' read -r package version; do
+									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
 
-								packages_formatted="$packages_formatted $pkg_name-$pkg_version"
+									packages_formatted="$packages_formatted $pkg_name-$pkg_version.cm2"
 
-							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
-							tdnf makecache
-							tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
+								tdnf makecache
+								tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
 
-							ls /tmp/rootfs/var/lib/rpm
-					`,
+								ls /tmp/rootfs/var/lib/rpm
+						`,
 		})).AddMount("/tmp/rootfs", llb.Scratch())
 
 	// Download all requested update packages without specifying the version. This works around:
@@ -639,10 +639,11 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// only updated the outdated packages from packages.txt
-		downloadCmd = `
+		downloadCmd = `		
 		packages=$(<packages.txt)
 		for package in $packages; do
-			output=$(yumdownloader --downloadonly --downloaddir=. --best -y "$package" 2>&1)
+			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted 2>&1)
+
 			if [ $? -ne 0 ]; then
 				echo "$output" >>error_log.txt
 			fi
@@ -650,87 +651,111 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		`
 	}
 
-	downloaded := busyboxCopied.Run(buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).AddMount("/var/lib/rpm", newrootfs, llb.SourcePath("/tmp/rootfs"))
+	currImg := rm.config.ImageState.File(llb.Copy(newrootfs, "/var/lib/rpm", "/var/lib/rpm", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
-	// Validate no errors were encountered if updating all
-	if updates == nil && !ignoreErrors {
-		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
-	}
+	downloaded := busyboxCopied.Run(llb.AddEnv("OS_VERSION", rm.osVersion), buildkit.Sh(downloadCmd), llb.WithProxy(utils.GetProxy())).AddMount("/tmp/rootfs", currImg)
 
-	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
-	const extractTemplate = `sh -c 'for f in %[1]s/*.rpm ; do rpm2cpio "$f" | cpio -idmv -D %[1]s ; done'`
-	extractCmd := fmt.Sprintf(extractTemplate, downloadPath)
-	unpacked := downloaded.Run(llb.Shlex(extractCmd)).Root()
+	// instead of this pass in ignore errors as env var into donwload cmd
+	/*
+		// Validate no errors were encountered if updating all
+		if updates == nil && !ignoreErrors {
+			downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+		} */
+
+	/*	// Scripted enumeration and rpm install of all downloaded packages under the download folder as root
+		const extractTemplate = `sh -c 'for f in %[1]s/*.rpm ; do rpm2cpio "$f" | cpio -idmv -D %[1]s ; done'`
+		extractCmd := fmt.Sprintf(extractTemplate, downloadPath)
+		unpacked := downloaded.Run(llb.Shlex(extractCmd)).Root() */
 
 	// Diff out busybox and downloaded rpm packages from the installed files under the download folder as root
 	// then move the results to normal root for the layer to merge with target image.
-	patchDiff := llb.Diff(downloaded, unpacked)
-	patchedRoot := llb.Scratch().File(llb.Copy(patchDiff, downloadPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+	//patchDiff := llb.Diff(downloaded, unpacked)
+	//patchedRoot := llb.Scratch().File(llb.Copy(downloaded, downloadPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+
+	//patchedRoot := downloaded
 
 	// Scripted extraction of all rpm manifest fields for version checking to separate layer into local mount
 	// Note that target dirs of shell commands need to be created before use
-	mkFolders := downloaded.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).File(llb.Mkdir(rpmManifestPath, 0o744, llb.WithParents(true)))
+	//mkFolders := downloaded.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).File(llb.Mkdir(rpmManifestPath, 0o744, llb.WithParents(true)))
 	const rpmManifestFormat = `%{NAME}\\t%{VERSION}-%{RELEASE}\\t$installTime\\t%{BUILDTIME}\\t%{VENDOR}\\t%{EPOCH}\\t%{SIZE}\\t%{ARCH}\\t%{EPOCHNUM}\\t%{SOURCERPM}\\n`
-	const writeFieldsTemplate = `find . -name '*.rpm' -exec sh -c "installTime=$(date +%%s); rpm -q {} --queryformat \"%s\" > %s" \;`
-	writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, rpmManifestFormat, filepath.Join(resultsPath, "{}.manifest2"))
-	fieldsWritten := mkFolders.Dir(downloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
 
-	// Update the rpm manifests for Mariner distroless
-	manifestsPath := filepath.Join(rpmManifestPath, rpmManifestWildcard)
-	manifests := fieldsWritten.File(llb.Copy(rm.config.ImageState, manifestsPath, resultsPath, &llb.CopyInfo{AllowWildcard: true}))
-	const updateManifest2Template = `find . -name '*.manifest2' -exec sh -c '
-		found={};
-		t=$(printf "\t");
-		while IFS=$t read -r -a fields;
-		do update1="${fields[0]}-${fields[1]}.${fields[7]}";
-			update2="$(cat $found)";
-			installed=$(grep -P "${fields[0]}\t" container-manifest-2);
-			if [[ -n $installed ]];
-			then IFS=$t read -a oldInfo <<< $installed;
-				old1="${oldInfo[0]}-${oldInfo[1]}.${oldInfo[7]}";
-				sed -i "s/$old1/$update1/g" container-manifest-1;
-				sed -i "s/$installed/$update2/g" container-manifest-2;
-			else echo "$update1" >> container-manifest-1;
-				echo "$update2" >> container-manifest-2;
-			fi;
-		done < $found' \;`
-	manifestsUpdated := manifests.Dir(resultsPath).Run(llb.Shlex(updateManifest2Template)).Root()
-	manifestsPlaced := manifestsUpdated.File(llb.Copy(manifestsUpdated, filepath.Join(resultsPath, rpmManifestWildcard), rpmManifestPath, &llb.CopyInfo{AllowWildcard: true}))
+	tmp := `rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` > /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2`
+	// mount patched image db (tmp/rootfs) into tooling
+	downloaded = busyboxCopied.Run(llb.Shlex(tmp)).AddMount("/tmp/rootfs", downloaded)
 
-	// Write results.manifest to host for post-patch validation
-	const writeResultsTemplate = `find . -name '*.manifest2' -exec sh -c 't=$(printf "\t"); while IFS=$t read -r -a fields; do echo "${fields[0]}$t${fields[1]}$t${fields[7]}" >> %s; done < {}' \;`
-	writeResultsCmd := fmt.Sprintf(writeResultsTemplate, filepath.Join(resultsPath, resultManifest))
-	resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(writeResultsCmd)).Root()
+	tmp2 := `rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa` + ` > /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1`
+	downloaded = busyboxCopied.Run(llb.Shlex(tmp2)).AddMount("/tmp/rootfs", downloaded)
 
-	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, filepath.Join(resultsPath, resultManifest))
-	if err != nil {
-		return nil, nil, err
-	}
+	downloaded = downloaded.File(llb.Rm(("/var/lib/rpm")))
 
-	// If the image has been patched before, diff the base image and patched image to retain previous patches
-	if rm.config.PatchedConfigData != nil {
-		// Diff the base image and patched image to get previous patches
-		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+	/*
+		const writeFieldsTemplate = `find . -name '*.rpm' -exec sh -c "installTime=$(date +%%s); rpm -q {} --queryformat \"%s\" > %s" \;`
+		writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, rpmManifestFormat, filepath.Join(resultsPath, "{}.manifest2"))
+		fieldsWritten := mkFolders.Dir(downloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
 
-		// Diff the manifests for the latest updates
-		manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
+		// Update the rpm manifests for Mariner distroless
+		manifestsPath := filepath.Join(rpmManifestPath, rpmManifestWildcard)
+		manifests := fieldsWritten.File(llb.Copy(rm.config.ImageState, manifestsPath, resultsPath, &llb.CopyInfo{AllowWildcard: true}))
+		const updateManifest2Template = `find . -name '*.manifest2' -exec sh -c '
+			found={};
+			t=$(printf "\t");
+			while IFS=$t read -r -a fields;
+			do update1="${fields[0]}-${fields[1]}.${fields[7]}";
+				update2="$(cat $found)";
+				installed=$(grep -P "${fields[0]}\t" container-manifest-2);
+				if [[ -n $installed ]];
+				then IFS=$t read -a oldInfo <<< $installed;
+					old1="${oldInfo[0]}-${oldInfo[1]}.${oldInfo[7]}";
+					sed -i "s/$old1/$update1/g" container-manifest-1;
+					sed -i "s/$installed/$update2/g" container-manifest-2;
+				else echo "$update1" >> container-manifest-1;
+					echo "$update2" >> container-manifest-2;
+				fi;
+			done < $found' \;`
+		manifestsUpdated := manifests.Dir(resultsPath).Run(llb.Shlex(updateManifest2Template)).Root()
+		manifestsPlaced := manifestsUpdated.File(llb.Copy(manifestsUpdated, filepath.Join(resultsPath, rpmManifestWildcard), rpmManifestPath, &llb.CopyInfo{AllowWildcard: true}))
 
-		// Merging these two diffs will discard everything in the filesystem that hasn't changed
-		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
-		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, patchedRoot})
-		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+	*/
 
-		// Merge previous and new patches into the base image
-		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
+	/*
 
-		return &completePatchMerge, resultBytes, nil
-	}
+		// Write results.manifest to host for post-patch validation
+		const writeResultsTemplate = `find . -name '*.manifest2' -exec sh -c 't=$(printf "\t"); while IFS=$t read -r -a fields; do echo "${fields[0]}$t${fields[1]}$t${fields[7]}" >> %s; done < {}' \;`
+		writeResultsCmd := fmt.Sprintf(writeResultsTemplate, filepath.Join(resultsPath, resultManifest))
+		resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(writeResultsCmd)).Root()
+
+		resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, filepath.Join(resultsPath, resultManifest))
+		if err != nil {
+			return nil, nil, err
+		} *?
+
+		/*
+
+		// If the image has been patched before, diff the base image and patched image to retain previous patches
+		if rm.config.PatchedConfigData != nil {
+			// Diff the base image and patched image to get previous patches
+			prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+
+			// Diff the manifests for the latest updates
+			manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
+
+			// Merging these two diffs will discard everything in the filesystem that hasn't changed
+			// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+			combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, patchedRoot})
+			squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+			// Merge previous and new patches into the base image
+			completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
+
+			return &completePatchMerge, resultBytes, nil
+		} */
 
 	// Diff unpacked packages layers from previous and merge with target
-	manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
-	merged := llb.Merge([]llb.State{rm.config.ImageState, patchedRoot, manifestsDiff})
+	//manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
+	diff := llb.Diff(rm.config.ImageState, downloaded)
+	merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
 
-	return &merged, resultBytes, nil
+	return &merged, nil, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
