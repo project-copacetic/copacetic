@@ -602,6 +602,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
+
+	// remove hardcode from packages_formatted for generic case
 	rpmdb := busyboxCopied.Run(
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", rm.osVersion),
@@ -630,6 +632,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
 	var downloadCmd string
+	const rpmManifestFormat = `%{NAME}\\t%{VERSION}-%{RELEASE}\\t$installTime\\t%{BUILDTIME}\\t%{VENDOR}\\t%{EPOCH}\\t%{SIZE}\\t%{ARCH}\\t%{EPOCHNUM}\\t%{SOURCERPM}\\n`
 	if updates != nil {
 		const rpmDownloadTemplate = `
 		packages="%s"
@@ -657,11 +660,15 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	} else {
 		// only updated the outdated packages from packages.txt
 		downloadCmd = `		
+		set -x
+
 		packages=$(<packages.txt)
 		mkdir -p /tmp/rootfs/var/lib
-		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
+		# ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
+		rm -rf /tmp/rootfs/var/lib/rpm
+		mv /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
-		rpm --dbpath=/tmp/rpmdb -qa
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
@@ -669,23 +676,27 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 			echo "$ouput"
 
 			if [ $? -ne 0 ]; then
-				echo "$output" >>error_log.txt
-				echo "${output}"
+				echo "$output" | tee error_log.txt
 			fi
 		done
 
-		rpm --dbpath=/tmp/rpmdb -qa
-		rm /tmp/rootfs/var/lib/rpm || exit 1
+		mkdir /tmp/rootfs/var/lib/rpmmanifest
+
+		
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
+		rm -rf /tmp/rootfs/var/lib/rpm
+		rm -rf /tmp/rootfs/var/cache/tdnf
 		`
 	}
-
-	// currImg := rm.config.ImageState.File(llb.Copy(newrootfs, "/var/lib/rpm", "/var/lib/rpm", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
 	downloaded := busyboxCopied.Run(
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
-		llb.AddMount("/tmp/rootfs", rpmdb),
+		llb.AddMount("/tmp/rpmdb", rpmdb),
 	).AddMount("/tmp/rootfs", rm.config.ImageState)
 
 	// instead of this pass in ignore errors as env var into donwload cmd
@@ -694,15 +705,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		if updates == nil && !ignoreErrors {
 			downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 		} */
-
-	const rpmManifestFormat = `%{NAME}\\t%{VERSION}-%{RELEASE}\\t$installTime\\t%{BUILDTIME}\\t%{VENDOR}\\t%{EPOCH}\\t%{SIZE}\\t%{ARCH}\\t%{EPOCHNUM}\\t%{SOURCERPM}\\n`
-
-	tmp := `rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` > /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2`
-	// mount patched image db (tmp/rootfs) into tooling
-	downloaded = busyboxCopied.Run(llb.Shlex(tmp)).AddMount("/tmp/rootfs", downloaded)
-
-	tmp2 := `rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa` + ` > /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1`
-	downloaded = busyboxCopied.Run(llb.Shlex(tmp2)).AddMount("/tmp/rootfs", downloaded)
 
 	/*
 		const writeFieldsTemplate = `find . -name '*.rpm' -exec sh -c "installTime=$(date +%%s); rpm -q {} --queryformat \"%s\" > %s" \;`
@@ -763,10 +765,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// Diff unpacked packages layers from previous and merge with target
 	//manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
-	diff := llb.Diff(rm.config.ImageState, downloaded)
-	merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
+	// diff := llb.Diff(rm.Config.ImageState, downloaded)
+	// merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
 
-	return &merged, nil, nil
+	return &downloaded, nil, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
