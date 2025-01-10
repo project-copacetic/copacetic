@@ -699,6 +699,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		llb.AddMount("/tmp/rpmdb", rpmdb),
 	).AddMount("/tmp/rootfs", rm.config.ImageState)
 
+	downloaded = llb.Scratch().File(llb.Copy(downloaded, "/", "/"))
+
 	// instead of this pass in ignore errors as env var into donwload cmd
 	/*
 		// Validate no errors were encountered if updating all
@@ -766,8 +768,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Diff unpacked packages layers from previous and merge with target
 	//manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
 	// diff := llb.Diff(rm.Config.ImageState, downloaded)
-	// merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
-
+	// merged := llb.Merge([]llb.State{rm.config.ImageState, downloaded})
 	return &downloaded, nil, nil
 }
 
