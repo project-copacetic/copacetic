@@ -632,39 +632,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
 	var downloadCmd string
-	const rpmManifestFormat = `%{NAME}\\t%{VERSION}-%{RELEASE}\\t$installTime\\t%{BUILDTIME}\\t%{VENDOR}\\t%{EPOCH}\\t%{SIZE}\\t%{ARCH}\\t%{EPOCHNUM}\\t%{SOURCERPM}\\n`
+	const rpmManifestFormat = `\\%{NAME}\\t\\%{VERSION}-\\%{RELEASE}\\t\\$installTime\\t\\%{BUILDTIME}\\t\\%{VENDOR}\\t\\%{EPOCH}\\t\\%{SIZE}\\t\\%{ARCH}\\t\\%{EPOCHNUM}\\t\\%{SOURCERPM}\\n`
 	if updates != nil {
 		const rpmDownloadTemplate = `
-		packages="%s"
-		mkdir -p /tmp/rootfs/var/lib
-		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
-
-		rpm --dbpath=/tmp/rpmdb -qa
-
-		for package in $packages; do
-			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
-
-			if [ $? -ne 0 ]; then
-				echo "$output" >>error_log.txt
-			fi
-		done
-		rpm --dbpath=/tmp/rpmdb -qa
-		 rm /tmp/rootfs/var/lib/rpm || exit 1
-		`
-		pkgStrings := []string{}
-		for _, u := range updates {
-			pkgStrings = append(pkgStrings, u.Name)
-		}
-		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
-	} else {
-		// only updated the outdated packages from packages.txt
-		downloadCmd = `		
 		set -x
+		packages="%s"
 
-		packages=$(<packages.txt)
 		mkdir -p /tmp/rootfs/var/lib
-		# ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/lib/rpm
 		mv /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
@@ -682,6 +656,41 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
+		rm -rf /tmp/rootfs/var/lib/rpm
+		rm -rf /tmp/rootfs/var/cache/tdnf
+		`
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
+	} else {
+		// only updated the outdated packages from packages.txt
+		downloadCmd = `		
+		set -x
+
+		packages=$(<packages.txt)
+		mkdir -p /tmp/rootfs/var/lib
+		rm -rf /tmp/rootfs/var/lib/rpm
+		mv /tmp/rpmdb /tmp/rootfs/var/lib/rpm
+
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
+
+		for package in $packages; do
+			package="${package%%.*}" # trim anything after the first "."
+			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			echo "$ouput"
+
+			if [ $? -ne 0 ]; then
+				echo "$output" | tee error_log.txt
+			fi
+		done
+
+		mkdir /tmp/rootfs/var/lib/rpmmanifest
 		
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
@@ -701,7 +710,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		llb.AddMount("/tmp/rpmdb", rpmdb),
 	).Root()
 
-	downloaded = llb.Scratch().File(llb.Copy(downloaded, "/tmp/rootfs", "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+	downloaded = llb.Scratch().File(llb.Copy(downloaded, "/tmp/rootfs", "/"))
+
+	// TODO: add error validation based on --ignore-errors
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if rm.config.PatchedConfigData != nil {
@@ -722,6 +733,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Diff unpacked packages layers from previous and merge with target
 	diff := llb.Diff(rm.config.ImageState, downloaded)
 	merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
+
+	// TO DO: results manifest shouldnt be nil for validation
 	return &merged, nil, nil
 }
 
