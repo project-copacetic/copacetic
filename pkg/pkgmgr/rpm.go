@@ -603,7 +603,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
 
-	// remove hardcode from packages_formatted for generic case
+	// TODO remove hardcode from packages_formatted for generic case?
 	rpmdb := busyboxCopied.Run(
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", rm.osVersion),
@@ -692,62 +692,16 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		`
 	}
 
+	busyboxCopied = busyboxCopied.File(llb.Copy(rm.config.ImageState, "/", "/tmp/rootfs"))
+
 	downloaded := busyboxCopied.Run(
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
 		llb.AddMount("/tmp/rpmdb", rpmdb),
-	).AddMount("/tmp/rootfs", rm.config.ImageState)
+	).Root()
 
-	downloaded = llb.Scratch().File(llb.Copy(downloaded, "/", "/"))
-
-	// instead of this pass in ignore errors as env var into donwload cmd
-	/*
-		// Validate no errors were encountered if updating all
-		if updates == nil && !ignoreErrors {
-			downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
-		} */
-
-	/*
-		const writeFieldsTemplate = `find . -name '*.rpm' -exec sh -c "installTime=$(date +%%s); rpm -q {} --queryformat \"%s\" > %s" \;`
-		writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, rpmManifestFormat, filepath.Join(resultsPath, "{}.manifest2"))
-		fieldsWritten := mkFolders.Dir(downloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
-
-		// Update the rpm manifests for Mariner distroless
-		manifestsPath := filepath.Join(rpmManifestPath, rpmManifestWildcard)
-		manifests := fieldsWritten.File(llb.Copy(rm.config.ImageState, manifestsPath, resultsPath, &llb.CopyInfo{AllowWildcard: true}))
-		const updateManifest2Template = `find . -name '*.manifest2' -exec sh -c '
-			found={};
-			t=$(printf "\t");
-			while IFS=$t read -r -a fields;
-			do update1="${fields[0]}-${fields[1]}.${fields[7]}";
-				update2="$(cat $found)";
-				installed=$(grep -P "${fields[0]}\t" container-manifest-2);
-				if [[ -n $installed ]];
-				then IFS=$t read -a oldInfo <<< $installed;
-					old1="${oldInfo[0]}-${oldInfo[1]}.${oldInfo[7]}";
-					sed -i "s/$old1/$update1/g" container-manifest-1;
-					sed -i "s/$installed/$update2/g" container-manifest-2;
-				else echo "$update1" >> container-manifest-1;
-					echo "$update2" >> container-manifest-2;
-				fi;
-			done < $found' \;`
-		manifestsUpdated := manifests.Dir(resultsPath).Run(llb.Shlex(updateManifest2Template)).Root()
-		manifestsPlaced := manifestsUpdated.File(llb.Copy(manifestsUpdated, filepath.Join(resultsPath, rpmManifestWildcard), rpmManifestPath, &llb.CopyInfo{AllowWildcard: true}))
-
-	*/
-
-	/*
-
-		// Write results.manifest to host for post-patch validation
-		const writeResultsTemplate = `find . -name '*.manifest2' -exec sh -c 't=$(printf "\t"); while IFS=$t read -r -a fields; do echo "${fields[0]}$t${fields[1]}$t${fields[7]}" >> %s; done < {}' \;`
-		writeResultsCmd := fmt.Sprintf(writeResultsTemplate, filepath.Join(resultsPath, resultManifest))
-		resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(writeResultsCmd)).Root()
-
-		resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, filepath.Join(resultsPath, resultManifest))
-		if err != nil {
-			return nil, nil, err
-		} */
+	downloaded = llb.Scratch().File(llb.Copy(downloaded, "/tmp/rootfs", "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if rm.config.PatchedConfigData != nil {
@@ -766,10 +720,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	}
 
 	// Diff unpacked packages layers from previous and merge with target
-	//manifestsDiff := llb.Diff(manifestsUpdated, manifestsPlaced)
-	// diff := llb.Diff(rm.Config.ImageState, downloaded)
-	// merged := llb.Merge([]llb.State{rm.config.ImageState, downloaded})
-	return &downloaded, nil, nil
+	diff := llb.Diff(rm.config.ImageState, downloaded)
+	merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
+	return &merged, nil, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
