@@ -639,8 +639,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		packages="%s"
 
 		mkdir -p /tmp/rootfs/var/lib
-		rm -rf /tmp/rootfs/var/lib/rpm
-		mv /tmp/rpmdb /tmp/rootfs/var/lib/rpm
+		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 
@@ -660,7 +659,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
-		rm -rf /tmp/rootfs/var/lib/rpm
+		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
 		`
 		pkgStrings := []string{}
@@ -675,8 +674,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		packages=$(<packages.txt)
 		mkdir -p /tmp/rootfs/var/lib
-		rm -rf /tmp/rootfs/var/lib/rpm
-		mv /tmp/rpmdb /tmp/rootfs/var/lib/rpm
+		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 
@@ -696,21 +694,17 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
-		rm -rf /tmp/rootfs/var/lib/rpm
+		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
 		`
 	}
-
-	busyboxCopied = busyboxCopied.File(llb.Copy(rm.config.ImageState, "/", "/tmp/rootfs"))
 
 	downloaded := busyboxCopied.Run(
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
 		llb.AddMount("/tmp/rpmdb", rpmdb),
-	).Root()
-
-	downloaded = llb.Scratch().File(llb.Copy(downloaded, "/tmp/rootfs", "/"))
+	).AddMount("/tmp/rootfs", rm.config.ImageState)
 
 	// TODO: add error validation based on --ignore-errors
 
@@ -732,7 +726,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// Diff unpacked packages layers from previous and merge with target
 	diff := llb.Diff(rm.config.ImageState, downloaded)
-	merged := llb.Merge([]llb.State{rm.config.ImageState, diff})
+	merged := llb.Merge([]llb.State{llb.Scratch(), rm.config.ImageState, diff})
 
 	// TO DO: results manifest shouldnt be nil for validation
 	return &merged, nil, nil
