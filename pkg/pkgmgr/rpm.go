@@ -603,7 +603,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
 
-	// TODO remove hardcode from packages_formatted for generic case?
 	rpmdb := busyboxCopied.Run(
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", rm.osVersion),
@@ -656,7 +655,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + rpmManifestFormat + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf ` + `\\%{NAME}\\t\\%{VERSION}-\\%{RELEASE}\\t\\$installTime\\t\\%{BUILDTIME}\\t\\%{VENDOR}\\t\\%{EPOCH}\\t\\%{SIZE}\\t\\%{ARCH}\\t\\%{EPOCHNUM}\\t\\%{SOURCERPM}\\n` + ` | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
@@ -706,7 +705,24 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		llb.AddMount("/tmp/rpmdb", rpmdb),
 	).AddMount("/tmp/rootfs", rm.config.ImageState)
 
-	// TODO: add error validation based on --ignore-errors
+	// Validate no errors were encountered if updating all
+	if updates == nil && !ignoreErrors {
+		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	}
+
+	// Write results.manifest to host for post-patch validation
+	var resultBytes []byte
+	if updates != nil {
+		const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
+		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, string(jsonPackageData), resultManifest)
+		resultsWritten := downloaded.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
+
+		var err error
+		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if rm.config.PatchedConfigData != nil {
@@ -728,8 +744,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	diff := llb.Diff(rm.config.ImageState, downloaded)
 	merged := llb.Merge([]llb.State{llb.Scratch(), rm.config.ImageState, diff})
 
-	// TO DO: results manifest shouldnt be nil for validation
-	return &merged, nil, nil
+	return &merged, resultBytes, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
