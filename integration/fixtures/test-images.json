@@ -187,7 +187,7 @@
     },
     {
         "image": "docker.io/almalinux",
-        "tag": "9.4",
+        "tag": "9.4-20240923",
         "digest": "sha256:1c718a4cd7bab3bdb069ddbbd1eb593a390e6932d51d0048a2f6556303bafba7",
         "distro": "AlmaLinux",
         "description": "Valid rpm DB, microdnf & rpm present",

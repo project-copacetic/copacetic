@@ -267,7 +267,7 @@ func TestGetOSType(t *testing.T) {
 			REDHAT_SUPPORT_PRODUCT="AlmaLinux"
 			REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`),
 			err:            nil,
-			expectedOSType: "almalinux",
+			expectedOSType: "alma",
 		},
 	}
 
