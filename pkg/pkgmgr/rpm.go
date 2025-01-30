@@ -769,14 +769,14 @@ func rpmReadResultsManifest(b []byte) ([]string, error) {
 func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsBytes []byte, ignoreErrors bool) ([]string, error) {
 	lines, err := rpmReadResultsManifest(resultsBytes)
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	// Assert rpm info list doesn't contain more entries than expected
 	if len(lines) > len(updates) {
 		err = fmt.Errorf("expected %d updates, installed %d", len(updates), len(lines))
 		log.Error(err)
-		return nil, nil
+		return nil, err
 	}
 
 	// Not strictly necessary, but sort the two lists to not take a dependency on the
@@ -832,5 +832,5 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 		return errorPkgs, nil
 	}
 
-	return errorPkgs, nil
+	return errorPkgs, allErrors.ErrorOrNil()
 }
