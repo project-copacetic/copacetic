@@ -631,11 +631,12 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
 	var downloadCmd string
 	const rpmManifestFormat = `\\%{NAME}\\t\\%{VERSION}-\\%{RELEASE}\\t\\$installTime\\t\\%{BUILDTIME}\\t\\%{VENDOR}\\t\\%{EPOCH}\\t\\%{SIZE}\\t\\%{ARCH}\\t\\%{EPOCHNUM}\\t\\%{SOURCERPM}\\n`
+	const queryFormat = `--queryformat "%s" %s > "%s"`
 
 	pkgs := ""
 
 	if updates != nil {
-		const rpmDownloadTemplate = `
+		rpmDownloadTemplate := `
 		set -x
 		packages="%s"
 
@@ -662,7 +663,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
-		`
+	
+		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, pkgs, "/tmp/rootfs/manifest") + ``
+
 		pkgStrings := []string{}
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
@@ -680,7 +683,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
-
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
 			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
@@ -699,7 +701,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
+
+		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, "", "/tmp/rootfs/manifest") + `
 		`
+
 	}
 
 	downloaded := busyboxCopied.Run(
@@ -708,6 +713,15 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		llb.WithProxy(utils.GetProxy()),
 		llb.AddMount("/tmp/rpmdb", rpmdb),
 	).AddMount("/tmp/rootfs", rm.config.ImageState)
+
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &downloaded, "/manifest")
+	if err != nil {
+		return nil, nil, err
+	}
+
+	withoutManifest := downloaded.File(llb.Rm("/manifest"))
+	diffBase := llb.Diff(rm.config.ImageState, withoutManifest)
+	downloaded = llb.Merge([]llb.State{diffBase, withoutManifest})
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if rm.config.PatchedConfigData != nil {
@@ -728,35 +742,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Diff unpacked packages layers from previous and merge with target
 	diff := llb.Diff(rm.config.ImageState, downloaded)
 	merged := llb.Merge([]llb.State{llb.Scratch(), rm.config.ImageState, diff})
-
-	// Validate no errors were encountered if updating all
-	if updates == nil && !ignoreErrors {
-		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
-	}
-
-	// Write results.manifest to host for post-patch validation
-	var resultBytes []byte
-	const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
-	if updates != nil {
-		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
-		resultsWritten := downloaded.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
-
-		var err error
-		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
-		if err != nil {
-			return nil, nil, err
-		}
-	} else {
-		// fix json string i think
-		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, string(jsonPackageData), resultManifest)
-		resultsWritten := downloaded.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
-
-		var err error
-		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
 
 	return &merged, resultBytes, nil
 }
