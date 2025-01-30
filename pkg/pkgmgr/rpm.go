@@ -602,7 +602,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
-
 	rpmdb := busyboxCopied.Run(
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", rm.osVersion),
@@ -632,6 +631,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	//  - Reports specifying remediation packages for cbl-mariner v1 instead of v2 (e.g. *.cm1.aarch64 instead of *.cm2.aarch64)
 	var downloadCmd string
 	const rpmManifestFormat = `\\%{NAME}\\t\\%{VERSION}-\\%{RELEASE}\\t\\$installTime\\t\\%{BUILDTIME}\\t\\%{VENDOR}\\t\\%{EPOCH}\\t\\%{SIZE}\\t\\%{ARCH}\\t\\%{EPOCHNUM}\\t\\%{SOURCERPM}\\n`
+
+	pkgs := ""
+
 	if updates != nil {
 		const rpmDownloadTemplate = `
 		set -x
@@ -665,6 +667,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
+		pkgs = strings.Join(pkgStrings, " ")
+
 		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// only updated the outdated packages from packages.txt
@@ -730,7 +734,31 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
 	}
 
-	return &merged, nil, nil
+	// Write results.manifest to host for post-patch validation
+	var resultBytes []byte
+	const rpmResultsTemplate = `sh -c 'rpm -qa --queryformat "%s" %s > "%s"'`
+	if updates != nil {
+		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, pkgs, resultManifest)
+		resultsWritten := downloaded.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
+
+		var err error
+		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else {
+		// fix json string i think
+		outputResultsCmd := fmt.Sprintf(rpmResultsTemplate, resultQueryFormat, string(jsonPackageData), resultManifest)
+		resultsWritten := downloaded.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
+
+		var err error
+		resultBytes, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &resultsWritten, resultManifest)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return &merged, resultBytes, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
