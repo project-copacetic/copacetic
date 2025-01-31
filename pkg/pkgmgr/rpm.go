@@ -648,10 +648,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
 			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
-			echo "$ouput"
 
-			if [ $? -ne 0 ]; then
-				echo "$output" | tee error_log.txt
+			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+				exit $?
 			fi
 		done
 
@@ -670,7 +669,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
-		pkgs = strings.Join(pkgStrings, " ")
 
 		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
@@ -686,10 +684,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
 			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
-			echo "$ouput"
 
-			if [ $? -ne 0 ]; then
-				echo "$output" | tee error_log.txt
+			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+				exit $?
 			fi
 		done
 
@@ -707,8 +704,14 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	}
 
+	errorValidation := "false"
+	if ignoreErrors {
+		errorValidation = "true"
+	}
+
 	downloaded := busyboxCopied.Run(
 		llb.AddEnv("OS_VERSION", rm.osVersion),
+		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
 		llb.AddMount("/tmp/rpmdb", rpmdb),
