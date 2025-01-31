@@ -738,7 +738,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		// Merge previous and new patches into the base image
 		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
 
-		return &completePatchMerge, nil, nil
+		return &completePatchMerge, resultBytes, nil
 	}
 
 	// Diff unpacked packages layers from previous and merge with target
