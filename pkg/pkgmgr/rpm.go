@@ -564,7 +564,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
 
-	// Retreive all package info from image to be patched.
+	// Retrieve all package info from image to be patched.
 	jsonPackageData, err := json.Marshal(rm.packageInfo)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
@@ -701,7 +701,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, "", "/tmp/rootfs/manifest") + `
 		`
-
 	}
 
 	errorValidation := "false"
