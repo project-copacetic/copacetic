@@ -36,7 +36,7 @@ There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being p
 #### Azure Linux 3.0+
 Azure Linux based images will use `mcr.microsoft.com/azurelinux/base/core` with the same version as the image being patched.
 
-#### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, and Amazon Linux
+#### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux
 These RPM-based distros will use `mcr.microsoft.com/cbl-mariner/base/core:2.0`
 
 ### APK (Alpine)
