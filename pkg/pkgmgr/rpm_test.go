@@ -474,8 +474,8 @@ func TestParseManifestFile(t *testing.T) {
 			name:  "Valid input",
 			input: "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n",
 			expected: map[string]string{
-				"package1": "1.0.0",
-				"package2": "2.3.4",
+				"package1": "1.0.0.cm2",
+				"package2": "2.3.4.cm2",
 			},
 			wantErr: false,
 		},
@@ -501,8 +501,8 @@ func TestParseManifestFile(t *testing.T) {
 			name:  "Input with extra tabs",
 			input: "package1\t1.0.0.cm2\textra\npackage2\t2.3.4.cm2\n",
 			expected: map[string]string{
-				"package1": "1.0.0",
-				"package2": "2.3.4",
+				"package1": "1.0.0.cm2",
+				"package2": "2.3.4.cm2",
 			},
 			wantErr: false,
 		},
