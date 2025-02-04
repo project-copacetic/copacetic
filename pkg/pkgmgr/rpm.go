@@ -583,7 +583,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
 									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2 | sed 's/\.cm2//')
+									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
 
 									if [ "$latest_version" != "$pkg_version" ]; then
 										update_packages="$update_packages $pkg_name"
@@ -614,7 +614,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
 
-									packages_formatted="$packages_formatted $pkg_name-$pkg_version.cm2"
+									packages_formatted="$packages_formatted $pkg_name-$pkg_version"
 
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
