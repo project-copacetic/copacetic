@@ -429,7 +429,7 @@ func parseManifestFile(file string) (map[string]string, error) {
 		if len(columns) >= 2 {
 			// get package name and version
 			name := columns[0]
-			version := strings.TrimSuffix(columns[1], ".cm2")
+			version := columns[1]
 			resultMap[name] = version
 		} else {
 			return nil, errors.New("unexpected format when parsing rpm manifest file")
