@@ -179,10 +179,18 @@
     },
     {
         "image": "docker.io/grafana/grafana-image-renderer",
-        "tag" : "3.4.0",
+        "tag": "3.4.0",
         "digest": "sha256:205a39f5b58f96b9ff81a0b523a60c26c86e88e76575696fcd6debde9de02197",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present, fail to patch libssl/libcryto",
         "ignoreErrors": true
+    },
+    {
+        "image": "docker.io/almalinux",
+        "tag": "9.4-20240923",
+        "digest": "sha256:1c718a4cd7bab3bdb069ddbbd1eb593a390e6932d51d0048a2f6556303bafba7",
+        "distro": "AlmaLinux",
+        "description": "Valid rpm DB, microdnf & rpm present",
+        "ignoreErrors": false
     }
 ]

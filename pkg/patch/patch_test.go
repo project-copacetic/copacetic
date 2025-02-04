@@ -247,6 +247,28 @@ func TestGetOSType(t *testing.T) {
 			err:            errors.ErrUnsupported,
 			expectedOSType: "",
 		},
+		{
+			osRelease: []byte(`NAME="AlmaLinux"
+			VERSION="9.4 (Seafoam Ocelot)"
+			ID="almalinux"
+			ID_LIKE="rhel centos fedora"
+			VERSION_ID="9.4"
+			PLATFORM_ID="platform:el9"
+			PRETTY_NAME="AlmaLinux 9.4 (Seafoam Ocelot)"
+			ANSI_COLOR="0;34"
+			CPE_NAME="cpe:/o:almalinux:almalinux:9::baseos"
+			HOME_URL="https://almalinux.org/"
+			DOCUMENTATION_URL="https://wiki.almalinux.org/"
+			BUG_REPORT_URL="https://bugs.almalinux.org/"
+
+			SUPPORT_END="2032-06-01"
+			ALMALINUX_MANTISBT_PROJECT="AlmaLinux-9"
+    		ALMALINUX_MANTISBT_PROJECT_VERSION="9.4"
+			REDHAT_SUPPORT_PRODUCT="AlmaLinux"
+			REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`),
+			err:            nil,
+			expectedOSType: "alma",
+		},
 	}
 
 	for _, tc := range testCases {

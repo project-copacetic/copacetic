@@ -174,6 +174,11 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			err = errors.New("RockyLinux is not supported via source policies due to BusyBox not being in the RockyLinux repos\n" +
 				"Please use a different RPM-based image")
 			return err
+
+		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "alma"):
+			err = errors.New("AlmaLinux is not supported via source policies due to BusyBox not being in the AlmaLinux repos\n" +
+				"Please use a different RPM-based image")
+			return err
 		}
 	}
 
@@ -343,6 +348,8 @@ func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
 		return "rocky", nil
 	case strings.Contains(osType, "oracle"):
 		return "oracle", nil
+	case strings.Contains(osType, "alma"):
+		return "alma", nil
 	default:
 		log.Error("unsupported osType ", osType)
 		return "", errors.ErrUnsupported
