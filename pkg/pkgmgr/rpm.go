@@ -656,7 +656,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm --rebuilddb -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
@@ -692,8 +692,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 		
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm --rebuilddb -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
-
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
