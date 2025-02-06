@@ -23,8 +23,9 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: 0.56.2
-  BUILDKIT_VERSION: 0.16.0
+  TRIVY_VERSION: 0.59.1
+  BUILDKIT_VERSION: 0.19.0
+  TRIVY_DISABLE_VEX_NOTICE: "true"
 
 jobs:
   unit-test:
