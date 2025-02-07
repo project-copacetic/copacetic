@@ -638,6 +638,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpmDownloadTemplate := `
 		set -x
 		packages="%s"
+		echo "$packages"
 
 		mkdir -p /tmp/rootfs/var/lib
 		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
@@ -656,7 +657,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+	
+		echo "testing just name"
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf \"\%{NAME}\"
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
@@ -676,6 +679,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		set -x
 
 		packages=$(<packages.txt)
+		echo "$packages"
 		mkdir -p /tmp/rootfs/var/lib
 		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
@@ -692,7 +696,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 		
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | grep -v '^gpg-pubkey' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
 		 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
