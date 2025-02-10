@@ -632,8 +632,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	var downloadCmd string
 	const queryFormat = `--queryformat "%s" %s > "%s"`
 
-	pkgs := ""
-
 	if updates != nil {
 		rpmDownloadTemplate := `
 		set -x
@@ -665,7 +663,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
 	
-		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, pkgs, "/tmp/rootfs/manifest") + ``
+		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, "", "/tmp/rootfs/manifest") + ``
 
 		pkgStrings := []string{}
 		for _, u := range updates {
@@ -696,7 +694,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 		
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | grep -v '^gpg-pubkey' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm --erase --allmatches gpg-pubkey-*
 		 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
