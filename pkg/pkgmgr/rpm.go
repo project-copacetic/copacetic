@@ -788,6 +788,13 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	})
 	log.Debugf("Resulting updates: %s", lines)
 
+	// Assert rpm info list doesn't contain more entries than expected
+	if len(lines) > len(updates) {
+		err = fmt.Errorf("expected %d updates, installed %d", len(updates), len(lines))
+		log.Error(err)
+		return nil, err
+	}
+
 	// Walk files and check update name is prefix for file name
 	// results.manifest file is expected to the `rpm -qa <packages ...>`
 	// using the resultQueryFormat with tab delimiters.
