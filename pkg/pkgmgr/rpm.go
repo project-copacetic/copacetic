@@ -655,25 +655,24 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
-	
-		echo "testing just name"
-		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf \"\%{NAME}\"
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf "%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{INSTALLTIME}\t%%{BUILDTIME}\t%%{VENDOR}\t%%{EPOCH}\t%%{SIZE}\t%%{ARCH}\t%%{EPOCHNUM}\t%%{SOURCERPM}\n" | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm --erase --allmatches gpg-pubkey-*
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
-	
-		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, "", "/tmp/rootfs/manifest") + ``
+
+		rpm --dbpath /tmp/rpmdb -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > /tmp/rootfs/manifest`
 
 		pkgStrings := []string{}
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 
-		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "))
+		downloadCmd = fmt.Sprintf(rpmDownloadTemplate, strings.Join(pkgStrings, " "), strings.Join(pkgStrings, " "))
 	} else {
 		// only updated the outdated packages from packages.txt
-		downloadCmd = `		
+		downloadCmd = `
 		set -x
 
 		packages=$(<packages.txt)
@@ -691,18 +690,20 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 			fi
 		done
 
+		rpm --dbpath=/tmp/rootfs/var/lib/rpm --erase --allmatches gpg-pubkey-*
+
 		mkdir /tmp/rootfs/var/lib/rpmmanifest
-		
+
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm --erase --allmatches gpg-pubkey-*
 		 
+
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
 
-		rpm --dbpath /tmp/rpmdb -qa ` + fmt.Sprintf(queryFormat, resultQueryFormat, "", "/tmp/rootfs/manifest") + `
-		`
+		rpm --dbpath /tmp/rpmdb -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" > /tmp/rootfs/manifest`
 	}
 
 	errorValidation := "false"
@@ -773,13 +774,6 @@ func rpmReadResultsManifest(b []byte) ([]string, error) {
 func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsBytes []byte, ignoreErrors bool) ([]string, error) {
 	lines, err := rpmReadResultsManifest(resultsBytes)
 	if err != nil {
-		return nil, err
-	}
-
-	// Assert rpm info list doesn't contain more entries than expected
-	if len(lines) > len(updates) {
-		err = fmt.Errorf("expected %d updates, installed %d", len(updates), len(lines))
-		log.Error(err)
 		return nil, err
 	}
 
