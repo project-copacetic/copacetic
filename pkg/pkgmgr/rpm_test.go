@@ -474,8 +474,8 @@ func TestParseManifestFile(t *testing.T) {
 			name:  "Valid input",
 			input: "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n",
 			expected: map[string]string{
-				"package1": "1.0.0",
-				"package2": "2.3.4",
+				"package1": "1.0.0.cm2",
+				"package2": "2.3.4.cm2",
 			},
 			wantErr: false,
 		},
@@ -501,8 +501,8 @@ func TestParseManifestFile(t *testing.T) {
 			name:  "Input with extra tabs",
 			input: "package1\t1.0.0.cm2\textra\npackage2\t2.3.4.cm2\n",
 			expected: map[string]string{
-				"package1": "1.0.0",
-				"package2": "2.3.4",
+				"package1": "1.0.0.cm2",
+				"package2": "2.3.4.cm2",
 			},
 			wantErr: false,
 		},
@@ -717,6 +717,39 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 
 			mockClient.AssertExpectations(t)
 			mockRef.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_getJSONPackageData_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		packageInfo    map[string]string
+		wantErr        bool
+		expectedResult []byte
+	}{
+		{
+			name:           "Successful parsing of rm.PackageInfo",
+			wantErr:        false,
+			expectedResult: []byte("{\"filesystem\":\"1.1-19.cm2\",\"mariner-release\":\"2.0-56.cm2\"}"),
+			packageInfo: map[string]string{
+				"filesystem":      "1.1-19.cm2",
+				"mariner-release": "2.0-56.cm2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := getJSONPackageData(tt.packageInfo)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getJSONPackageData(%v) error = %v, wantErr %v", err, err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(result, tt.expectedResult) {
+				t.Errorf("getJSONPackageData() = %v, want %v", result, tt.expectedResult)
+			}
 		})
 	}
 }
