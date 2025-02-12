@@ -720,3 +720,37 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 		})
 	}
 }
+
+func Test_getJsonPackageData_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		packageInfo    map[string]string
+		wantErr        bool
+		expectedResult []byte
+	}{
+		{
+			name:           "Successful parsing of rm.PackageInfo",
+			wantErr:        false,
+			expectedResult: []byte("{\"filesystem\":\"1.1-19.cm2\",\"mariner-release\":\"2.0-56.cm2\"}"),
+			packageInfo: map[string]string{
+				"filesystem":      "1.1-19.cm2",
+				"mariner-release": "2.0-56.cm2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := getJsonPackageData(tt.packageInfo)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getJsonPackageData(%v) error = %v, wantErr %v", err, err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(result, tt.expectedResult) {
+				t.Errorf("getJsonPackageData() = %v, want %v", result, tt.expectedResult)
+			}
+
+		})
+	}
+}

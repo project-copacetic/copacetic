@@ -565,9 +565,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
 
 	// Retrieve all package info from image to be patched.
-	jsonPackageData, err := json.Marshal(rm.packageInfo)
+	jsonPackageData, err := getJsonPackageData(rm.packageInfo)
 	if err != nil {
-		return nil, nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
+		return nil, nil, err
 	}
 
 	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
@@ -768,6 +768,15 @@ func rpmReadResultsManifest(b []byte) ([]string, error) {
 	}
 
 	return lines, nil
+}
+
+func getJsonPackageData(packageInfo map[string]string) ([]byte, error) {
+	data, err := json.Marshal(packageInfo)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
+	}
+
+	return data, nil
 }
 
 func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsBytes []byte, ignoreErrors bool) ([]string, error) {
