@@ -721,7 +721,7 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 	}
 }
 
-func Test_getJsonPackageData_RPM(t *testing.T) {
+func Test_getJSONPackageData_RPM(t *testing.T) {
 	tests := []struct {
 		name           string
 		packageInfo    map[string]string
@@ -741,16 +741,15 @@ func Test_getJsonPackageData_RPM(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := getJsonPackageData(tt.packageInfo)
+			result, err := getJSONPackageData(tt.packageInfo)
 
 			if (err != nil) != tt.wantErr {
-				t.Errorf("getJsonPackageData(%v) error = %v, wantErr %v", err, err, tt.wantErr)
+				t.Errorf("getJSONPackageData(%v) error = %v, wantErr %v", err, err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(result, tt.expectedResult) {
-				t.Errorf("getJsonPackageData() = %v, want %v", result, tt.expectedResult)
+				t.Errorf("getJSONPackageData() = %v, want %v", result, tt.expectedResult)
 			}
-
 		})
 	}
 }

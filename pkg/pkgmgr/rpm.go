@@ -565,7 +565,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	busyboxCopied := toolsInstalled.Dir(downloadPath).Run(llb.Shlex("cp /usr/sbin/busybox .")).Root()
 
 	// Retrieve all package info from image to be patched.
-	jsonPackageData, err := getJsonPackageData(rm.packageInfo)
+	jsonPackageData, err := getJSONPackageData(rm.packageInfo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -770,7 +770,7 @@ func rpmReadResultsManifest(b []byte) ([]string, error) {
 	return lines, nil
 }
 
-func getJsonPackageData(packageInfo map[string]string) ([]byte, error) {
+func getJSONPackageData(packageInfo map[string]string) ([]byte, error) {
 	data, err := json.Marshal(packageInfo)
 	if err != nil {
 		return nil, fmt.Errorf("unable to marshal rm.packageInfo %w", err)
