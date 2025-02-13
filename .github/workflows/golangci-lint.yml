@@ -35,6 +35,6 @@ jobs:
           check-latest: true
 
       - name: lint
-        uses: golangci/golangci-lint-action@ec5d18412c0aeab7936cb16880d708ba2a64e1ae # v6.2.0
+        uses: golangci/golangci-lint-action@e0ebdd245eea59746bb0b28ea6a9871d3e35fbc9 # v6.3.3
         with:
           version: v1.61.0
