@@ -437,8 +437,8 @@ github.com/dlclark/regexp2 v1.4.0 h1:F1rxgk7p4uKjwIQxBs9oAXe5CqrXlCduYEJvrF4u93E
 github.com/dlclark/regexp2 v1.4.0/go.mod h1:2pZnwuY/m+8K6iRw6wQdMtk+rH5tNGR1i55kozfMjCc=
 github.com/docker/buildx v0.19.3 h1:FL8ilSQi5HXzvEXHzLXW9oBuz8XzOsO/t2JVPTwo+Gs=
 github.com/docker/buildx v0.19.3/go.mod h1:k4WP+XmGRYL0a7l4RZAI2TqpwhuAuSQ5U/rosRgFmAA=
-github.com/docker/cli v27.4.1+incompatible h1:VzPiUlRJ/xh+otB75gva3r05isHMo5wXDfPRi5/b4hI=
-github.com/docker/cli v27.4.1+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
+github.com/docker/cli v27.5.1+incompatible h1:JB9cieUT9YNiMITtIsguaN55PLOHhBSz3LKVc6cqWaY=
+github.com/docker/cli v27.5.1+incompatible/go.mod h1:JLrzqnKDaYBop7H2jaqPtU4hHvMKP+vjCwu2uszcLI8=
 github.com/docker/distribution v2.7.1+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
 github.com/docker/distribution v2.8.3+incompatible h1:AtKxIZ36LoNK51+Z6RpzLpddBirtxJnzDrHLEKxTAYk=
 github.com/docker/distribution v2.8.3+incompatible/go.mod h1:J2gT2udsDAN96Uj4KfcMRqY0/ypR+oyYUYmja8H+y+w=
