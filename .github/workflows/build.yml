@@ -199,14 +199,18 @@ jobs:
         shell: bash
         run: |
           docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
+          tmp="$(mktemp)"
 
           symlink_path="/sbin"
-          if docker exec test [ -L "$symlink_path" ]; then
+          docker cp test:"$symlink_path" "${tmp}_symlink"
+
+          if [ -L "${tmp}_symlink" ]; then
               echo "The path $symlink_path is a symlink."
           else
               echo "The path $symlink_path is not a symlink."
           fi
 
+          rm "${tmp}" "${tmp}_symlink"
           docker rm -f test
 
   test-plugin:
