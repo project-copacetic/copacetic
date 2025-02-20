@@ -191,7 +191,7 @@ jobs:
           shell: bash
           run: |
             docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
-            tmp="$(mktmp)"
+            tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
             
             if ! grep -q foo "${tmp}"; then
@@ -203,6 +203,10 @@ jobs:
 
             rm "${tmp}"
             docker rm -f test
+        - name: Check RPM patched image for symlink
+          shell : bash
+          run : |
+            
 
   test-plugin:
     needs: build
