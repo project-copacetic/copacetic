@@ -190,6 +190,8 @@ jobs:
         - name: Check RPM patched image for noreplace file
           shell: bash
           run: |
+            docker images
+            
             docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
@@ -208,7 +210,6 @@ jobs:
         - name: Check RPM patched image for symlink
           shell : bash
           run : |
-            
 
   test-plugin:
     needs: build
