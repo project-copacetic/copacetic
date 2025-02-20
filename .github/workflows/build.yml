@@ -179,7 +179,7 @@ jobs:
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
-      - name: Test RPM validation
+      - name: Test RPM validation - noreplace files
         shell: bash
         run: |
             docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
@@ -195,6 +195,19 @@ jobs:
 
             rm "${tmp}"
             docker rm -f test
+      - name: Test RPM validation - symlink
+        shell: bash
+        run: |
+          docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
+
+          symlink_path="/sbin"
+          if docker exec test [ -L "$symlink_path" ]; then
+              echo "The path $symlink_path is a symlink."
+          else
+              echo "The path $symlink_path is not a symlink."
+          fi
+
+          docker rm -f test
 
   test-plugin:
     needs: build
