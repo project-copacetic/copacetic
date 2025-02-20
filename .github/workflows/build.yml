@@ -193,6 +193,8 @@ jobs:
             docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
+
+            cat "${tmp}" 
             
             if ! grep -q foo "${tmp}"; then
                 echo "Error: openssl.cnf content replaced" >&2
