@@ -179,19 +179,11 @@ jobs:
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
-
-  test-rpm-validation:
-    needs: test-patch-no-report
-    name: Test RPM validation
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions: read-all
-    steps:
-        - name: Check RPM patched image for noreplace file
-          shell: bash
-          run: |
+      - name: Test RPM validation
+        shell: bash
+        run: |
             docker images
-            
+
             docker create --name test docker.io/sozercan/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
@@ -207,9 +199,6 @@ jobs:
 
             rm "${tmp}"
             docker rm -f test
-        - name: Check RPM patched image for symlink
-          shell : bash
-          run : |
 
   test-plugin:
     needs: build
