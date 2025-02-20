@@ -204,10 +204,11 @@ jobs:
           symlink_path="/sbin"
           docker cp test:"$symlink_path" "${tmp}_symlink"
 
-          if [ -L "${tmp}_symlink" ]; then
-              echo "The path $symlink_path is a symlink."
-          else
-              echo "The path $symlink_path is not a symlink."
+          if [ ! -L "${tmp}_symlink" ]; then
+              echo "Error: The path $symlink_path is not a symlink."
+              rm "${tmp}" "${tmp}_symlink"
+              docker rm -f test
+              exit 1
           fi
 
           rm "${tmp}" "${tmp}_symlink"
