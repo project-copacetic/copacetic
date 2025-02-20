@@ -35,14 +35,14 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@cb605e52c26070c328afc4562f0b4ada7618a84e # v2.3.1
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -69,13 +69,13 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@cb605e52c26070c328afc4562f0b4ada7618a84e # v2.3.1
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Build copa
         shell: bash
@@ -114,7 +114,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -129,7 +129,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
+        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
       - name: Run functional test
         shell: bash
         run: |
@@ -157,7 +157,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -172,7 +172,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
+        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
       - name: Run functional test
         shell: bash
         run: |
@@ -222,14 +222,14 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@cb605e52c26070c328afc4562f0b4ada7618a84e # v2.3.1
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash
@@ -250,7 +250,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
+        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
       - name: Run e2e tests
         shell: bash
         run: |
