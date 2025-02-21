@@ -182,6 +182,8 @@ jobs:
       - name: Test RPM validation - noreplace files
         shell: bash
         run: |
+            docker images
+            
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
@@ -198,6 +200,8 @@ jobs:
       - name: Test RPM validation - symlink
         shell: bash
         run: |
+          docker images
+          
           docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
           tmp="$(mktemp)"
 
