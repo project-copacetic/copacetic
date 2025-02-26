@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"testing"
 
 	log "github.com/sirupsen/logrus"
@@ -324,5 +325,24 @@ func TestGetOSVersion(t *testing.T) {
 			assert.Equal(t, tc.expectedOSVersion, osVersion)
 			assert.Equal(t, tc.errMsg, errMsg)
 		})
+	}
+}
+
+func TestGetRepoNameWithDigest(t *testing.T) {
+	original := execCommandContext
+	defer func() { execCommandContext = original }()
+
+	execCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, "echo", "sha256:mocked-digest")
+		return cmd
+	}
+
+	ctx := context.Background()
+	result, err := getRepoNameWithDigest(ctx, "docker.io/library/nginx:1.21.6-patched")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "nginx@sha256:mocked-digest" {
+		t.Fatalf("unexpected result: %s", result)
 	}
 }
