@@ -702,7 +702,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rm /tmp/rootfs/var/lib/rpm
 		rm -rf /tmp/rootfs/var/cache/tdnf
 
-		rpm --dbpath /tmp/rpmdb -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" > /tmp/rootfs/manifest`
+		rpm --dbpath /tmp/rpmdb -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > /tmp/rootfs/manifest`
 	}
 
 	errorValidation := "false"
