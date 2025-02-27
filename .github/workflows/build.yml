@@ -178,15 +178,14 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          echo "Running test with buildkit address: ${COPA_BUILDKIT_ADDR}"
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
       - name: Test RPM validation - noreplace files
         shell: bash
         run: |
             set -eux -o pipefail
 
+            . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
             address="${COPA_BUILDKIT_ADDR}"
-            echo "$address"
 
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
                 address="${COPA_BUILDKIT_ADDR#docker://}"
@@ -211,6 +210,11 @@ jobs:
       - name: Test RPM validation - symlink
         shell: bash
         run: |
+          set -eux -o pipefail
+
+          . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          address="${COPA_BUILDKIT_ADDR}"
+
           address=${COPA_BUILDKIT_ADDR}
           if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
               address="${COPA_BUILDKIT_ADDR#docker://}"
