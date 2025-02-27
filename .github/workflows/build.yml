@@ -184,9 +184,9 @@ jobs:
         run: |
             set -eux -o pipefail
 
-            address=${COPA_BUILDKIT_ADDR}
+            address="${COPA_BUILDKIT_ADDR}"
             echo "$address"
-            
+
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
                 address="${COPA_BUILDKIT_ADDR#docker://}"
                 echo "ADDRESS $address"
