@@ -182,9 +182,13 @@ jobs:
       - name: Test RPM validation - noreplace files
         shell: bash
         run: |
-            docker images
-            
-            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+            address=${COPA_BUILDKIT_ADDR}
+            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+                address="${COPA_BUILDKIT_ADDR#docker://}"
+                echo "ADDRESS $address"
+            fi
+
+            docker -H "$address" create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
             
@@ -200,9 +204,12 @@ jobs:
       - name: Test RPM validation - symlink
         shell: bash
         run: |
-          docker images
-          
-          docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+          address=${COPA_BUILDKIT_ADDR}
+          if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+              address="${COPA_BUILDKIT_ADDR#docker://}"
+          fi
+
+          docker -H "$address" create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
           tmp="$(mktemp)"
 
           symlink_path="/sbin"
