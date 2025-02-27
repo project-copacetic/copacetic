@@ -327,7 +327,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		installCmd = fmt.Sprintf(aptGetInstallTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// if updates is not specified, update all packages
-		installCmd = `sh -c "output=$(apt-get upgrade -y && apt-get clean -y && apt-get autoremove 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
+		installCmd = `sh -c "output=$(apt-get upgrade -y && apt-get clean -y && apt-get autoremove -y 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
 	}
 
 	aptGetInstalled := aptGetUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
