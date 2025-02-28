@@ -309,8 +309,18 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
-	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
-	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	// detect held packages and log them
+	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
+	heldState := aptGetUpdated.Run(llb.Shlex(checkHeldCmd)).Root()
+
+	// read that file from the solve output
+	heldBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &heldState, "/held.txt")
+	if err == nil && len(heldBytes) > 0 {
+		lines := strings.Split(strings.TrimSpace(string(heldBytes)), "\n")
+		if len(lines) > 0 && lines[0] != "" {
+			log.Warnf("apt-held packages found, not patched by Copa: %v", lines)
+		}
+	}
 
 	// Install all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
