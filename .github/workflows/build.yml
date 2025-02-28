@@ -192,9 +192,10 @@ jobs:
                 echo "ADDRESS $address"
             fi
 
-            echo "$address"
+            export DOCKER_HOST="$address"
 
-            docker -H "$address" create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+
+            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
             
@@ -215,12 +216,14 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           address="${COPA_BUILDKIT_ADDR}"
 
-          address=${COPA_BUILDKIT_ADDR}
           if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
               address="${COPA_BUILDKIT_ADDR#docker://}"
+              echo "ADDRESS $address"
           fi
 
-          docker -H "$address" create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+          export DOCKER_HOST="$address"
+
+          docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
           tmp="$(mktemp)"
 
           symlink_path="/sbin"
