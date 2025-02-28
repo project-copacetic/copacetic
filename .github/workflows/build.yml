@@ -27,6 +27,9 @@ env:
   BUILDKIT_VERSION: 0.19.0
   TRIVY_DISABLE_VEX_NOTICE: "true"
 
+permissions:
+  contents: read
+
 jobs:
   unit-test:
     name: Unit Test
@@ -105,6 +108,11 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
       - name: Download copa from build artifacts
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
@@ -148,6 +156,11 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
       - name: Download copa from build artifacts
         uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
