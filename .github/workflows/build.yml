@@ -27,6 +27,9 @@ env:
   BUILDKIT_VERSION: 0.19.0
   TRIVY_DISABLE_VEX_NOTICE: "true"
 
+permissions:
+  contents: read
+
 jobs:
   unit-test:
     name: Unit Test
@@ -54,7 +57,7 @@ jobs:
           CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@13ce06bfc6bbe3ecf90edbbf1bc32fe5978ca1d3 # v5.3.1
+        uses: codecov/codecov-action@0565863a31f2c772f9f0395002a31e3f06189574 # v5.4.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
@@ -105,8 +108,13 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
@@ -120,7 +128,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -129,7 +137,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
+        uses: docker/setup-qemu-action@5964de0df58d5ad28b04d8fe2e6b80ad47105b91 # v3.5.0
       - name: Run functional test
         shell: bash
         run: |
@@ -148,8 +156,13 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@4d991eb9b905ef189e4c376166672c3f2f230481 # v2.11.0
+        with:
+          egress-policy: audit
+
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
@@ -163,7 +176,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -172,7 +185,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
+        uses: docker/setup-qemu-action@5964de0df58d5ad28b04d8fe2e6b80ad47105b91 # v3.5.0
       - name: Run functional test
         shell: bash
         run: |
@@ -207,7 +220,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@cc203385981b70ca67e1cc392babf9cc229d5806 # v4.1.9
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -216,7 +229,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 # v3.4.0
+        uses: docker/setup-qemu-action@5964de0df58d5ad28b04d8fe2e6b80ad47105b91 # v3.5.0
       - name: Run e2e tests
         shell: bash
         run: |
