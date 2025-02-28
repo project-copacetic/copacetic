@@ -185,16 +185,11 @@ jobs:
             set -eux -o pipefail
 
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-            address="${COPA_BUILDKIT_ADDR}"
 
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
-                address="${COPA_BUILDKIT_ADDR#docker://}"
-                echo "ADDRESS $address"
+                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
             fi
-
-            export DOCKER_HOST="$address"
-
-
+      
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
@@ -214,14 +209,10 @@ jobs:
           set -eux -o pipefail
 
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          address="${COPA_BUILDKIT_ADDR}"
 
           if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
-              address="${COPA_BUILDKIT_ADDR#docker://}"
-              echo "ADDRESS $address"
+              export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
           fi
-
-          export DOCKER_HOST="$address"
 
           docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
           tmp="$(mktemp)"
