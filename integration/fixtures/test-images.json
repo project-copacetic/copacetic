@@ -4,7 +4,7 @@
         "tag": "test",
         "digest": "sha256:164dbe64a682513e341b6262646c8bee2fb72fca3801aedd9f720765704af995",
         "distro": "Mariner Distroless",
-        "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom opensssl.cnf",
+        "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
         "ignoreErrors": false
     }
 ]
