@@ -3,8 +3,16 @@ package patch
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"reflect"
 	"testing"
+
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+
+	"github.com/distribution/reference"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -323,6 +331,251 @@ func TestGetOSVersion(t *testing.T) {
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.expectedOSVersion, osVersion)
 			assert.Equal(t, tc.errMsg, errMsg)
+		})
+	}
+}
+
+// Test generating a patched tag for an image
+// If userSuppliedPatchTag is a blank string, the function defaults to defaultPatchedTagSuffix.
+func TestGeneratePatchedTag(t *testing.T) {
+	testCases := []struct {
+		name                 string
+		dockerImageName      string
+		userSuppliedPatchTag string
+		expectedPatchedTag   string
+	}{
+		{
+			name:                 "NoTag_NoUserSupplied",
+			dockerImageName:      "docker.io/library/alpine",
+			userSuppliedPatchTag: "",
+			expectedPatchedTag:   defaultPatchedTagSuffix,
+		},
+		{
+			name:                 "NoTag_UserSupplied",
+			dockerImageName:      "docker.io/library/alpine",
+			userSuppliedPatchTag: "1234",
+			expectedPatchedTag:   "1234",
+		},
+		{
+			name:                 "WithTag_NoUserSupplied",
+			dockerImageName:      "docker.io/redhat/ubi9:latest",
+			userSuppliedPatchTag: "",
+			expectedPatchedTag:   fmt.Sprintf("latest-%s", defaultPatchedTagSuffix),
+		},
+		{
+			name:                 "WithTag_UserSupplied",
+			dockerImageName:      "docker.io/librari/ubuntu:jammy-20231004",
+			userSuppliedPatchTag: "20231004-custom-tag",
+			expectedPatchedTag:   "20231004-custom-tag",
+		},
+		{
+			name:                 "NoTag_WithDigest_NoUserSupplied",
+			dockerImageName:      "docker.io/library/debian@sha256:540ebf19fb0bbc243e1314edac26b9fe7445e9c203357f27968711a45ea9f1d4",
+			userSuppliedPatchTag: "",
+			expectedPatchedTag:   defaultPatchedTagSuffix,
+		},
+		{
+			name:                 "NoTag_WithDigest_UserSupplied",
+			dockerImageName:      "docker.io/library/debian@sha256:540ebf19fb0bbc243e1314edac26b9fe7445e9c203357f27968711a45ea9f1d4",
+			userSuppliedPatchTag: "stable-patched",
+			expectedPatchedTag:   "stable-patched",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			named, _ := reference.ParseNormalizedNamed(tc.dockerImageName)
+			patchedTag := generatePatchedTag(named, tc.userSuppliedPatchTag)
+			if patchedTag != tc.expectedPatchedTag {
+				t.Errorf("expected patchedTag to be %s but got %s", tc.expectedPatchedTag, patchedTag)
+			}
+		})
+	}
+}
+
+// This test simulates the vulnerable packages Trivy supplies to Copa.
+func TestUpdateManifest(t *testing.T) {
+	updates := &unversioned.UpdateManifest{
+		Metadata: unversioned.Metadata{
+			OS: unversioned.OS{
+				Type:    "Linux",
+				Version: "5.0.1",
+			},
+			Config: unversioned.Config{
+				Arch: "x86_64",
+			},
+		},
+		Updates: []unversioned.UpdatePackage{
+			{Name: "package1"},
+			{Name: "package2"},
+			{Name: "package3"},
+		},
+	}
+
+	// errPkgs in this struct is used to define which packages would throw an error during the update process
+	testCases := []struct {
+		name     string
+		updates  *unversioned.UpdateManifest
+		errPkgs  []string
+		expected *unversioned.UpdateManifest
+	}{
+		{
+			name:    "NoErrorPackages",
+			updates: updates,
+			errPkgs: []string{},
+			expected: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "Linux",
+						Version: "5.0.1",
+					},
+					Config: unversioned.Config{
+						Arch: "x86_64",
+					},
+				},
+				Updates: []unversioned.UpdatePackage{
+					{Name: "package1"},
+					{Name: "package2"},
+					{Name: "package3"},
+				},
+			},
+		},
+		{
+			name:    "AllErrorPackages",
+			updates: updates,
+			errPkgs: []string{"package1", "package2", "package3"},
+			expected: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "Linux",
+						Version: "5.0.1",
+					},
+					Config: unversioned.Config{
+						Arch: "x86_64",
+					},
+				},
+				Updates: []unversioned.UpdatePackage{},
+			},
+		},
+		{
+			name:    "SomeErrorPackages",
+			updates: updates,
+			errPkgs: []string{"package1"},
+			expected: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "Linux",
+						Version: "5.0.1",
+					},
+					Config: unversioned.Config{
+						Arch: "x86_64",
+					},
+				},
+				Updates: []unversioned.UpdatePackage{
+					{Name: "package2"},
+					{Name: "package3"},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := updateManifest(tc.updates, tc.errPkgs)
+			if !reflect.DeepEqual(actual, tc.expected) {
+				t.Errorf("TestUpdateManifest(%v, %v): expected %v, actual %v", tc.updates, tc.errPkgs, tc.expected, actual)
+			}
+		})
+	}
+}
+
+func TestHandleError(t *testing.T) {
+	tests := []struct {
+		name    string
+		err     error
+		wantErr bool
+	}{
+		{
+			name:    "no error",
+			err:     nil,
+			wantErr: false,
+		},
+		{
+			name:    "test error",
+			err:     errors.New("test error"),
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ch := make(chan error, 1)
+			defer close(ch)
+
+			_, err := handleError(ch, tt.err)
+
+			select {
+			case chErr := <-ch:
+				if (chErr == nil && tt.wantErr) || (chErr != nil && !tt.wantErr) {
+					t.Errorf("Error channel did not return expected error, got: %v, want: %v", chErr, tt.err)
+				}
+			default:
+				if tt.wantErr {
+					t.Error("Expected handleError to send error to error channel but it did not")
+				}
+			}
+
+			if (err == nil && tt.wantErr) || (err != nil && !tt.wantErr) {
+				t.Errorf("handleError() error = %v, wantErr = %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// define a mock reader.
+type mockReader struct {
+	data []byte
+	err  error
+}
+
+func (mr *mockReader) Read(p []byte) (int, error) {
+	copy(p, mr.data)
+	return len(mr.data), mr.err
+}
+
+func TestDockerLoad(t *testing.T) {
+	ctx := context.TODO()
+
+	testCases := []struct {
+		name      string
+		pipeR     io.Reader
+		mockCmd   *exec.Cmd
+		expectErr bool
+	}{
+		{
+			name:      "Unrecognized image format",
+			pipeR:     &mockReader{nil, errors.New("unrecognized image format")},
+			mockCmd:   exec.Command("echo", "test"),
+			expectErr: true,
+		},
+		{
+			name:  "Invalid tar header",
+			pipeR: &mockReader{[]byte("alpine:latest"), errors.New("unrecognized tar header")},
+			// this command is likely to fail which is desired for this test case
+			mockCmd:   exec.Command("docker", "load"),
+			expectErr: true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := dockerLoad(ctx, testCase.pipeR)
+			if testCase.expectErr && err == nil {
+				t.Errorf("expected an error but got none")
+			}
+			if !testCase.expectErr && err != nil {
+				t.Errorf("did not expect an error but got %v", err)
+			}
 		})
 	}
 }
