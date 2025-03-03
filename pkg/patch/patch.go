@@ -42,6 +42,11 @@ const (
 	defaultTag              = "latest"
 )
 
+// used for testing.
+var (
+	execCommandContext = exec.CommandContext
+)
+
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -279,9 +284,20 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 						validatedManifest.Updates = append(validatedManifest.Updates, update)
 					}
 				}
+
+				// get the repo name from the image name
+				var nameDigestOrTag string
+				if repoNameWithDigest, err := getRepoNameWithDigest(ctx, patchedImageName); err != nil {
+					// if error just use the patchedImageName
+					// otherwise use the repoNameWithDigest
+					nameDigestOrTag = patchedImageName
+				} else {
+					nameDigestOrTag = repoNameWithDigest
+				}
+
 				// vex document must contain at least one statement
 				if output != "" && len(validatedManifest.Updates) > 0 {
-					if err := vex.TryOutputVexDocument(validatedManifest, manager, patchedImageName, format, output); err != nil {
+					if err := vex.TryOutputVexDocument(validatedManifest, manager, nameDigestOrTag, format, output); err != nil {
 						ch <- err
 						return nil, err
 					}
@@ -316,7 +332,9 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return pipeR.Close()
 	})
 
-	return eg.Wait()
+	err = eg.Wait()
+
+	return err
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
@@ -385,4 +403,30 @@ func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	go utils.LogPipe(stdout, log.InfoLevel)
 
 	return cmd.Run()
+}
+
+// e.g. "docker.io/library/nginx:1.21.6-patched".
+func getRepoNameWithDigest(ctx context.Context, patchedImageName string) (string, error) {
+	cmd := execCommandContext(ctx, "docker", "image", "inspect",
+		patchedImageName,
+		"--format", "{{.Id}}",
+	)
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to get local digest: %v, output=%s", err, out)
+	}
+
+	localID := strings.TrimSpace(string(out))
+	localID = strings.TrimPrefix(localID, "sha256:")
+
+	// get the repo name
+	parts := strings.Split(patchedImageName, "/")
+	last := parts[len(parts)-1]
+	if idx := strings.IndexRune(last, ':'); idx >= 0 {
+		last = last[:idx]
+	}
+
+	nameWithDigest := fmt.Sprintf("%s@sha256:%s", last, localID)
+	return nameWithDigest, nil
 }
