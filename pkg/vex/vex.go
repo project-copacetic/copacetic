@@ -12,14 +12,14 @@ type Vex interface {
 	CreateVEXDocument(updates *unversioned.UpdateManifest, patchedImageName string, pkgmgr pkgmgr.PackageManager) (string, error)
 }
 
-func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgmgr pkgmgr.PackageManager, patchedImageName, format, file string) error {
+func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedImageName, format, file string) error {
 	var doc string
 	var err error
 
 	switch format {
 	case "openvex":
 		ov := &OpenVex{}
-		doc, err = ov.CreateVEXDocument(updates, patchedImageName, pkgmgr)
+		doc, err = ov.CreateVEXDocument(updates, patchedImageName, pkgType)
 		if err != nil {
 			return err
 		}

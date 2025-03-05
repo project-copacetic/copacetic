@@ -51,7 +51,11 @@ func TestTryOutputVexDocument(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := TryOutputVexDocument(tt.args.updates, tt.args.pkgmgr, tt.args.patchedImageName, tt.args.format, tt.args.file); (err != nil) != tt.wantErr {
+			var pkgType string
+			if tt.args.pkgmgr != nil {
+				pkgType = tt.args.pkgmgr.GetPackageType()
+			}
+			if err := TryOutputVexDocument(tt.args.updates, pkgType, tt.args.patchedImageName, tt.args.format, tt.args.file); (err != nil) != tt.wantErr {
 				t.Errorf("TryOutputVexDocument() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})

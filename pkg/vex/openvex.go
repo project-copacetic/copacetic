@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/openvex/go-vex/pkg/vex"
-	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
@@ -29,7 +28,7 @@ type OpenVex struct{}
 func (o *OpenVex) CreateVEXDocument(
 	updates *unversioned.UpdateManifest,
 	patchedImageName string,
-	pkgmgr pkgmgr.PackageManager,
+	pkgType string,
 ) (string, error) {
 	t := now()
 	doc := v
@@ -53,7 +52,6 @@ func (o *OpenVex) CreateVEXDocument(
 		},
 	}
 
-	pkgType := pkgmgr.GetPackageType()
 	for _, u := range updates.Updates {
 		subComponent := vex.Subcomponent{
 			Component: vex.Component{

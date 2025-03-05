@@ -189,7 +189,25 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		var pkgType string
+		var validatedManifest *unversioned.UpdateManifest
+		if updates != nil {
+			// create a new manifest with the successfully patched packages
+			validatedManifest = &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    updates.Metadata.OS.Type,
+						Version: updates.Metadata.OS.Version,
+					},
+					Config: unversioned.Config{
+						Arch: updates.Metadata.Config.Arch,
+					},
+				},
+				Updates: []unversioned.UpdatePackage{},
+			}
+		}
+
+		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
 			if err != nil {
@@ -263,37 +281,31 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 
-			// Currently can only validate updates if updating via scanner
-			if reportFile != "" {
-				// create a new manifest with the successfully patched packages
-				validatedManifest := &unversioned.UpdateManifest{
-					Metadata: unversioned.Metadata{
-						OS: unversioned.OS{
-							Type:    updates.Metadata.OS.Type,
-							Version: updates.Metadata.OS.Version,
-						},
-						Config: unversioned.Config{
-							Arch: updates.Metadata.Config.Arch,
-						},
-					},
-					Updates: []unversioned.UpdatePackage{},
-				}
+			// for the vex document, only include updates that were successfully applied
+			pkgType = manager.GetPackageType()
+			if validatedManifest != nil {
 				for _, update := range updates.Updates {
 					if !slices.Contains(errPkgs, update.Name) {
 						validatedManifest.Updates = append(validatedManifest.Updates, update)
-					}
-				}
-				// vex document must contain at least one statement
-				if output != "" && len(validatedManifest.Updates) > 0 {
-					if err := vex.TryOutputVexDocument(validatedManifest, manager, patchedImageName, format, output); err != nil {
-						ch <- err
-						return nil, err
 					}
 				}
 			}
 
 			return res, nil
 		}, buildChannel)
+
+		// Currently can only validate updates if updating via scanner
+		if reportFile != "" && validatedManifest != nil {
+			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
+			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
+			// vex document must contain at least one statement
+			if output != "" && len(validatedManifest.Updates) > 0 {
+				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
+					ch <- err
+					return err
+				}
+			}
+		}
 
 		return err
 	})
@@ -320,7 +332,9 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return pipeR.Close()
 	})
 
-	return eg.Wait()
+	err = eg.Wait()
+
+	return err
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
@@ -389,4 +403,15 @@ func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	go utils.LogPipe(stdout, log.InfoLevel)
 
 	return cmd.Run()
+}
+
+// e.g. "docker.io/library/nginx:1.21.6-patched".
+func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
+	parts := strings.Split(patchedImageName, "/")
+	last := parts[len(parts)-1]
+	if idx := strings.IndexRune(last, ':'); idx >= 0 {
+		last = last[:idx]
+	}
+	nameWithDigest := fmt.Sprintf("%s@%s", last, imageDigest)
+	return nameWithDigest
 }
