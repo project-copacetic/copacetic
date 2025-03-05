@@ -75,6 +75,10 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	if reportFile == "" && output != "" {
+		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
+	}
+
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
 		return err
