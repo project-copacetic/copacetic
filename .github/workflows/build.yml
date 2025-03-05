@@ -191,7 +191,60 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+      - name: Test RPM validation - noreplace files
+        shell: bash
+        run: |
+            set -eux -o pipefail
+
+            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+            fi
+      
+            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+            tmp="$(mktemp)"
+            docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
+            
+            if ! grep -q foo "${tmp}"; then
+                echo "Error: openssl.cnf content replaced" >&2
+                rm "${tmp}"
+                docker rm -f test
+                exit 1
+            fi
+
+            rm "${tmp}"
+            docker rm -f test
+      - name: Test RPM validation - symlink
+        shell: bash
+        run: |
+          set -eux -o pipefail
+
+          _cleanup() {
+              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
+              sudo rm -rf "$SOCK_DIR"
+          }
+
+          if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+              export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+              trap '_cleanup' EXIT
+          fi
+
+          docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+          tmp="$(mktemp)"
+
+          symlink_path="/sbin"
+          docker cp test:"$symlink_path" "${tmp}_symlink"
+
+          if [ ! -L "${tmp}_symlink" ]; then
+              echo "Error: The path $symlink_path is not a symlink."
+              rm "${tmp}" "${tmp}_symlink"
+              docker rm -f test
+              exit 1
+          fi
+
+          rm "${tmp}" "${tmp}_symlink"
+          docker rm -f test
 
   test-plugin:
     needs: build

@@ -12,6 +12,8 @@ EOF
 sock_dir="$(mktemp -d)"
 
 docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
+echo "DOCKER_CUSTOM_UNIX_ID=$docker_custom_unix_id" >> $GITHUB_ENV
+echo "SOCK_DIR=$sock_dir" >> $GITHUB_ENV
 
 
 timeout 5m bash -c '
@@ -20,13 +22,6 @@ until [ "$(docker inspect -f "{{.State.Status}}" $docker_custom_unix_id)" == "ru
     sleep 0.1
 done
 ' -- "$docker_custom_unix_id"
-
-_cleanup() {
-    docker rm -f "$docker_custom_unix_id"
-    sudo rm -rf "${sock_dir}"
-}
-
-trap '_cleanup' EXIT
 
 _check_docker_dind() {
     docker -H "unix://${sock_dir}/docker.sock" info
