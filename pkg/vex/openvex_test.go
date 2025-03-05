@@ -173,7 +173,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			o := &OpenVex{}
-			got, err := o.CreateVEXDocument(tt.args.updates, tt.args.patchedImageName, tt.args.pkgmgr)
+			pkgType := tt.args.pkgmgr.GetPackageType()
+			got, err := o.CreateVEXDocument(tt.args.updates, tt.args.patchedImageName, pkgType)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("OpenVex.CreateVEXDocument() error = %v, wantErr %v", err, tt.wantErr)
 				return

@@ -326,3 +326,10 @@ func TestGetOSVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRepoNameWithDigest(t *testing.T) {
+	result := getRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
+	if result != "nginx@sha256:mocked-digest" {
+		t.Fatalf("unexpected result: %s", result)
+	}
+}
