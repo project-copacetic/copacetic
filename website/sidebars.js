@@ -33,6 +33,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'github-action',
+        'docker-extension',
         'custom-address',
         'output',
         'scanner-plugins',
