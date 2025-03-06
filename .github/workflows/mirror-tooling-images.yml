@@ -1,0 +1,58 @@
+name: "[Daily] Mirror Tooling Images to GHCR"
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # every day at 3 AM UTC
+  workflow_dispatch:
+    inputs:
+      ghcr_namespace:
+        description: "GHCR Namespace"
+        required: true
+        default: "ghcr.io/project-copacetic/copacetic"
+
+env:
+  GHCR_NAMESPACE: ${{ github.event.inputs.ghcr_namespace || 'ghcr.io/project-copacetic/copacetic' }}
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    strategy:
+      matrix:
+        images:
+          - "mirror.gcr.io/debian:10-slim"
+          - "mirror.gcr.io/debian:11-slim"
+          - "mirror.gcr.io/debian:12-slim"
+          - "mirror.gcr.io/debian:stable-slim"
+          - "mirror.gcr.io/ubuntu:20.04"
+          - "mirror.gcr.io/ubuntu:22.04"
+          - "mcr.microsoft.com/azurelinux/base/core:3.0"
+          - "mcr.microsoft.com/cbl-mariner/base/core:2.0"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@e3d2460bbb42d7710191569f88069044cfb9d8cf # v4.2.2
+
+      - name: Install oras CLI
+        uses: oras-project/setup-oras@5c0b487ce3fe0ce3ab0d034e63669e426e294e4d # v1.2.2
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | oras login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Mirror multi-platform tooling images
+        env:
+          SOURCE_IMAGE: ${{ matrix.images }}
+        run: |
+          if [[ "$SOURCE_IMAGE" == */* ]]; then
+            TARGET_IMAGE=$(echo "$SOURCE_IMAGE" | sed 's#^[^/]*/##')
+          else
+            TARGET_IMAGE="$SOURCE_IMAGE"
+          fi
+
+          echo "Mirroring: $SOURCE_IMAGE -> $GHCR_NAMESPACE/$TARGET_IMAGE"
+
+          oras cp --recursive "$SOURCE_IMAGE" "$GHCR_NAMESPACE/$TARGET_IMAGE"
