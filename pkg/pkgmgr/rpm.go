@@ -112,11 +112,11 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 	var image, version string
 
 	if osType == "azurelinux" {
-		image = "mcr.microsoft.com/azurelinux/base/core"
+		image = "azurelinux/base/core"
 		version = osVersion
 	} else {
 		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
-		image = "mcr.microsoft.com/cbl-mariner/base/core"
+		image = "cbl-mariner/base/core"
 		version = "2.0"
 
 		if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
@@ -129,7 +129,7 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 	}
 
 	log.Debugf("Using %s:%s as basis for tooling image", image, version)
-	return fmt.Sprintf("%s:%s", image, version)
+	return fmt.Sprintf("%s/%s:%s", imageCachePrefix, image, version)
 }
 
 func parseRPMTools(b []byte) (rpmToolPaths, error) {
