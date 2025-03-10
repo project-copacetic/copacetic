@@ -17,6 +17,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
+	"oras.land/oras-go/v2/registry/remote"
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
@@ -33,6 +34,8 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 	"github.com/quay/claircore/osrelease"
+
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const (
@@ -144,13 +147,19 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 	defer bkClient.Close()
 
+	// get the original media type of the image to determine the exporter type
+	exporterType, err := getExporterType(ctx, imageName.Name(), tag)
+	if err != nil {
+		log.Warnf("unable to determine exporter type, defaulting to %s", client.ExporterDocker)
+	}
+
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
-				Type: client.ExporterDocker,
+				Type: exporterType,
 				Attrs: map[string]string{
 					"name": patchedImageName,
 				},
@@ -335,6 +344,36 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	err = eg.Wait()
 
 	return err
+}
+
+func getExporterType(ctx context.Context, imageName, ref string) (string, error) {
+	defaultExporter := client.ExporterDocker
+	repo, err := remote.NewRepository(imageName)
+	if err != nil {
+		return defaultExporter, fmt.Errorf("unable to create repository %w", err)
+	}
+
+	descriptor, err := repo.Resolve(ctx, ref)
+	if err != nil {
+		return defaultExporter, fmt.Errorf("unable to resolve descriptor %w", err)
+	}
+
+	rc, err := repo.Manifests().Fetch(ctx, descriptor)
+	if err != nil {
+		return defaultExporter, fmt.Errorf("unable to fetch manifests from descriptor %w", err)
+	}
+	defer rc.Close()
+	mediaTypeBytes, err := io.ReadAll(rc)
+	if err != nil {
+		return defaultExporter, fmt.Errorf("unable to read media type from descriptor %w", err)
+	}
+
+	switch string(mediaTypeBytes) {
+	case ispec.MediaTypeImageIndex, ispec.MediaTypeImageManifest, ispec.MediaTypeImageConfig:
+		return client.ExporterOCI, nil
+	default:
+		return client.ExporterDocker, nil
+	}
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
