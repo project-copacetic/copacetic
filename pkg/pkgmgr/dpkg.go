@@ -93,7 +93,7 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 	}
 
 	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
-	return fmt.Sprintf("%s:%s", osType, version)
+	return fmt.Sprintf("%s/%s:%s", imageCachePrefix, osType, version)
 }
 
 func getDPKGStatusType(b []byte) dpkgStatusType {

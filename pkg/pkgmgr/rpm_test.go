@@ -115,7 +115,7 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "cbl-mariner",
 			osVersion: "2.0.0",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0",
 		},
 		{
 			name: "CBL-Mariner 1.5",
@@ -129,7 +129,7 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "cbl-mariner",
 			osVersion: "1.5",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:1.5",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:1.5",
 		},
 		{
 			name: "CBL-Mariner 3 (default minor version)",
@@ -143,7 +143,7 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "cbl-mariner",
 			osVersion: "3",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:3.0",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:3.0",
 		},
 		{
 			name: "Azure Linux 3.0",
@@ -157,35 +157,35 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "azurelinux",
 			osVersion: "3.0",
-			image:     "mcr.microsoft.com/azurelinux/base/core:3.0",
+			image:     "ghcr.io/project-copacetic/copacetic/azurelinux/base/core:3.0",
 		},
 		{
 			name:      "Azure Linux 3.0 without update manifest",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "azurelinux",
 			osVersion: "3.0",
-			image:     "mcr.microsoft.com/azurelinux/base/core:3.0",
+			image:     "ghcr.io/project-copacetic/copacetic/azurelinux/base/core:3.0",
 		},
 		{
 			name:      "Azure Linux future version",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "azurelinux",
 			osVersion: "999.0",
-			image:     "mcr.microsoft.com/azurelinux/base/core:999.0",
+			image:     "ghcr.io/project-copacetic/copacetic/azurelinux/base/core:999.0",
 		},
 		{
 			name:      "RedHat (defaults to Azure Linux)",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "redhat",
 			osVersion: "8.4",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 		{
 			name:      "Nil manifest",
 			manifest:  nil,
 			osType:    "",
 			osVersion: "",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 	}
 
