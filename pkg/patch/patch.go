@@ -144,13 +144,29 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 	defer bkClient.Close()
 
+	// get the original media type of the image to determine the exporter type
+	exporterType := client.ExporterDocker
+	ref := fmt.Sprintf("%s:%s", imageName.Name(), tag)
+
+	resolvedMediaType, err := utils.GetMediaType(ref)
+	if err != nil {
+		log.Warnf("unable to determine exporter type, defaulting to %s, err: %v", exporterType, err)
+	} else if t := utils.ParseMediaType(resolvedMediaType); t != "" {
+		exporterType = t
+		log.Debugf("resolved media type %s to exporter type %s", resolvedMediaType, exporterType)
+	} else {
+		log.Warnf("unable to determine exporter type, defaulting to %s", exporterType)
+	}
+
+	log.Debugf("using exporter type %s", exporterType)
+
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
-				Type: client.ExporterDocker,
+				Type: exporterType,
 				Attrs: map[string]string{
 					"name": patchedImageName,
 				},
