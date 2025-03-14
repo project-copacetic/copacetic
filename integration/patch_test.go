@@ -14,6 +14,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +48,10 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
+		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
+		mediaType, err := utils.GetMediaType(imageRef)
+		require.NoError(t, err)
+
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
@@ -95,7 +100,11 @@ func TestPatch(t *testing.T) {
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+			out := patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+
+			// check for the media type of the patched image
+			// should be of the form "using exporter type <type>"
+			require.Contains(t, out, fmt.Sprintf("using exporter type %s", utils.ParseMediaType(mediaType)))
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -187,7 +196,7 @@ func dockerCmd(t *testing.T, args ...string) {
 	require.NoError(t, err, string(out))
 }
 
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
+func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) string {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
@@ -210,6 +219,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
+		"--debug",
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
@@ -223,6 +233,8 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	} else {
 		require.NoError(t, err, string(out))
 	}
+
+	return string(out)
 }
 
 func scanner() *scannerCmd {
