@@ -16,3 +16,10 @@ To patch vulnerabilities for applications, you can package these applications an
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 
 After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.
+
+## What Operating Systems Are Supported?
+Copa is officially supported on:
+- **macOS** – Install via Homebrew.
+- **Linux** – Generic Linux installations are supported via Homebrew, with **Ubuntu 22.04** recommended for the development environment.
+
+> **Note:** Windows is not natively supported. However, Windows users can run Copa using WSL2 for Docker integration.

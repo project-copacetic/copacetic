@@ -21,6 +21,19 @@ If you find that your storage is rapidly being taken up after working with Copa,
 
 All images being passed into Copa have their versioning data carefully extracted and stripped so that an appropriate tooling image can be obtained from a container repository.
 
+### Supported OS Types
+Copacetic supports the following operating systems:  
+- Alpine  
+- Debian  
+- Ubuntu  
+- CBL-Mariner  
+- Azure Linux  
+- CentOS  
+- Oracle Linux  
+- Red Hat  
+- Rocky Linux  
+- Amazon Linux  
+
 ### DPKG
 
 #### Debian

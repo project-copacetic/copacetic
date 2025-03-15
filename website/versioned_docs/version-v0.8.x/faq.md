@@ -73,3 +73,24 @@ For more information on source policies, see [Buildkit Source Policies](https://
 
 ## Does Copa cause a buildup of patched layers on each patch?
 No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
+
+## What Operating Systems Are Supported?
+-**Host Installation:**
+    - **macOS** – Install via [Homebrew](https://brew.sh/).
+    - **Linux** – Generic Linux installations are supported via Homebrew.
+
+**Container Image Patching:**
+- **DPKG-based (Debian/Ubuntu):**
+    - Uses tooling images matching the base OS version (e.g., `ubuntu:22.04`).
+
+- **RPM-based:**
+    - CentOS
+    - Oracle Linux
+    - Rocky Linux
+    - AlmaLinux
+    - Amazon Linux
+    - CBL-Mariner (Azure Linux 1 & 2)
+    - Azure Linux 3.0+ (newly supported in v8)
+
+- **Alpine (APK-based):**
+    - **Not supported** – Copa does not patch distroless Alpine-based images.

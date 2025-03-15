@@ -52,3 +52,10 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 > Tooling image for Debian-based images are `docker.io/library/debian:11-slim` and RPM-based repos are `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
+
+## What Operating Systems Are Supported?
+Copa is officially supported on:
+- **macOS** – Install via Homebrew.
+- **Linux** – Generic Linux installations are supported via Homebrew, with **Ubuntu 22.04** recommended for the development environment.
+
+> **Note:** Windows is not natively supported. However, Windows users can run Copa using WSL2 for Docker integration.

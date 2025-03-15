@@ -56,3 +56,17 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 > The tooling image for Debian-based images can be `docker.io/library/debian:11-slim` or `docker.io/library/debian:12-slim` depending on the target image version. RPM-based repos use `mcr.microsoft.com/cbl-mariner/base/core:2.0`.
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
+
+## What Operating Systems Are Supported?
+**Host Installation:**
+  - **macOS** – Install via Homebrew.
+  - **Linux** – Generic Linux installations are supported via Homebrew, with **Ubuntu 22.04** recommended for the development environment.
+
+**Container Image Patching:**
+  - **DPKG-based Images (Debian/Ubuntu):**
+    - Uses the appropriate tooling images (e.g., Ubuntu images use the same version passed in, such as `ubuntu:22.04`).
+  - **RPM-based Images:**
+    - Supports RPM-based distributions such as CentOS, Rocky Linux, and Amazon Linux.
+    - *Note:* Official support for Oracle Linux was introduced later in v0.8.x.
+  - **APK-based Images (Alpine):**
+    - Alpine-based images are not patched by Copacetic.

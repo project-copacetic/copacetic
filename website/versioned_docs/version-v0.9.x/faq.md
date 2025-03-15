@@ -103,3 +103,22 @@ Yes, see [best practices](best-practices.md#dependabot) to learn more about usin
 
 ## Does Copa cause a buildup of patched layers on each patch?
 No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
+
+## What Operating Systems Are Supported?
+- **Host Installation:**
+  - **macOS** – Install via [Homebrew](https://brew.sh/).
+  - **Linux** – Generic Linux installations are supported via Homebrew.
+
+**Container Image Patching:**
+- **DPKG-based (Debian/Ubuntu):**
+  - Debian
+  - Ubuntu
+
+- **RPM-based:**
+  - Azure Linux 3.0+
+  - CBL-Mariner (Azure Linux 1 and 2)
+  - CentOS
+  - Oracle Linux
+  - Rocky Linux
+  - Alma Linux
+  - Amazon Linux
