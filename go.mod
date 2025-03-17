@@ -17,7 +17,7 @@ require (
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
 	github.com/moby/buildkit v0.19.0
 	github.com/opencontainers/go-digest v1.0.0
-	github.com/opencontainers/image-spec v1.1.0
+	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.5
 	github.com/quay/claircore v1.5.35
 	github.com/sirupsen/logrus v1.9.3
