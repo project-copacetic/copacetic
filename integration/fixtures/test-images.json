@@ -192,5 +192,13 @@
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
         "ignoreErrors": false
+    },
+    {
+        "image": "ghcr.io/project-copacetic/copacetic/test/tdnf",
+        "tag": "test",
+        "digest": "sha256:2920efc9c8447ad404cde391eaa6f61f39a2c2e7dffb678f241f36be6ede0f33",
+        "distro": "Mariner",
+        "description": "Valid rpm DB, tdnf, yum & rpm present, custom tdnf.conf",
+        "ignoreErrors": false
     }
 ]
