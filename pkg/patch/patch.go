@@ -146,7 +146,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
+	cfg := authprovider.DockerAuthProviderConfig{ConfigFile: dockerConfig}
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
