@@ -30,12 +30,13 @@ const (
 )
 
 type dpkgManager struct {
-	config        *buildkit.Config
-	workingFolder string
-	isDistroless  bool
-	statusdNames  string
-	packageInfo   map[string]string
-	osVersion     string
+	config         *buildkit.Config
+	workingFolder  string
+	isDistroless   bool
+	statusdNames   string
+	packageInfo    map[string]string
+	osVersion      string
+	tempStatusFile string
 }
 
 type dpkgStatusType uint
@@ -245,22 +246,29 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 		if updateAll {
 			namesList := strings.Fields(dm.statusdNames)
 			packageInfo := make(map[string]string)
+			var buffer bytes.Buffer
+
 			for _, name := range namesList {
-				fileBtyes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
+
+				fileBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
 				if err != nil {
 					return err
 				}
 
 				if !strings.HasSuffix(name, ".md5sums") {
-					pkgName, pkgVersion, err := GetPackageInfo(string(fileBtyes))
+					pkgName, pkgVersion, err := GetPackageInfo(string(fileBytes))
 					if err != nil {
 						return err
 					}
+
+					buffer.Write(fileBytes)
+					buffer.WriteString("\n")
 
 					packageInfo[pkgName] = pkgVersion
 				}
 			}
 
+			dm.tempStatusFile = buffer.String()
 			dm.packageInfo = packageInfo
 		}
 
@@ -440,6 +448,15 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			})).Root()
 	}
 
+	// Replace status file in tooling image with new status file with relevant pacakge info from image to be patched.
+	dpkgdb := updated.Run(
+		llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+		llb.Args([]string{
+			`bash`, `-xec`, `
+					echo "$STATUS_FILE" > status
+				`,
+		}))
+
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
@@ -464,7 +481,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		`
 	}
 
-	downloaded := updated.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := dpkgdb.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
