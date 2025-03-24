@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -108,7 +109,7 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string) string {
+func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string, useCachePrefix bool) string {
 	var image, version string
 
 	if osType == "azurelinux" {
@@ -129,7 +130,12 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 	}
 
 	log.Debugf("Using %s:%s as basis for tooling image", image, version)
-	return fmt.Sprintf("%s/%s:%s", imageCachePrefix, image, version)
+
+	imagePrefix := "mcr.microsoft.com"
+	if useCachePrefix {
+		imagePrefix = imageCachePrefix
+	}
+	return fmt.Sprintf("%s/%s:%s", imagePrefix, image, version)
 }
 
 func parseRPMTools(b []byte) (rpmToolPaths, error) {
@@ -218,7 +224,12 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		log.Debugf("latest unique RPMs: %v", updates)
 	}
 
-	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion)
+	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion, true)
+	// check if we can resolve the tool image
+	if _, err := rm.tryImage(ctx, toolImageName); err != nil {
+		toolImageName = getRPMImageName(manifest, rm.osType, rm.osVersion, false)
+	}
+
 	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
 	}
@@ -247,6 +258,26 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	}
 
 	return updatedImageState, errPkgs, nil
+}
+
+// tryImage attempts to create an llb.Image reference and call c.Solve() on it
+// to confirm it exists. If it doesn't, it will return an error so we can fallback.
+func (rm *rpmManager) tryImage(ctx context.Context, imageRef string) (llb.State, error) {
+	st := llb.Image(imageRef)
+	def, err := st.Marshal(ctx)
+	if err != nil {
+		return llb.State{}, err
+	}
+
+	// Evaluate the solve to see if BuildKit can actually resolve it
+	_, err = rm.config.Client.Solve(ctx, client.SolveRequest{
+		Definition: def.ToPB(),
+		Evaluate:   true,
+	})
+	if err != nil {
+		return llb.State{}, fmt.Errorf("failed to resolve %s: %w", imageRef, err)
+	}
+	return st, nil
 }
 
 func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
