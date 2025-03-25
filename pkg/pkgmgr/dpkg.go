@@ -78,7 +78,7 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) string {
+func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string, useCachePrefix bool) string {
 	version := osVersion
 	osType := Debian
 
@@ -93,6 +93,9 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 	}
 
 	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
+	if !useCachePrefix {
+		return fmt.Sprintf("%s:%s", osType, version)
+	}
 	return fmt.Sprintf("%s/%s:%s", imageCachePrefix, osType, version)
 }
 
@@ -117,7 +120,10 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Probe for additional information to execute the appropriate update install graphs
-	toolImageName := getAPTImageName(manifest, dm.osVersion)
+	toolImageName := getAPTImageName(manifest, dm.osVersion, true) // check if we can resolve the tool image
+	if _, err := tryImage(ctx, toolImageName, dm.config.Client); err != nil {
+		toolImageName = getAPTImageName(manifest, dm.osVersion, false)
+	}
 	if err := dm.probeDPKGStatus(ctx, toolImageName, (manifest == nil)); err != nil {
 		return nil, nil, err
 	}
