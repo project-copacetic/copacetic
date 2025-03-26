@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -412,13 +411,14 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.IgnoreCache,
 	).Root()
 
+	// Retrieve all package info from image to be patched.
+	jsonPackageData, err := getJSONPackageData(dm.packageInfo)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// In the case of update all packages, only update packages that are not already latest version. Store these packages in packages.txt.
 	if updates == nil {
-		jsonPackageData, err := json.Marshal(dm.packageInfo)
-		if err != nil {
-			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
-		}
-
 		updated = updated.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
@@ -448,14 +448,47 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			})).Root()
 	}
 
-	// Replace status file in tooling image with new status file with relevant pacakge info from image to be patched.
+	/*
+
+		// Replace status file in tooling image with new status file with relevant pacakge info from image to be patched.
+		dpkgdb := updated.Run(
+			llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+			llb.Args([]string{
+				`bash`, `-xec`, `
+						echo "$STATUS_FILE" > status
+					`,
+			})).Root() */
+
+	// Create a new state for tooling image with all the packages from the image to be patched
 	dpkgdb := updated.Run(
+		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
+		llb.AddEnv("OS_VERSION", dm.osVersion),
 		llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
 		llb.Args([]string{
 			`bash`, `-xec`, `
-					echo "$STATUS_FILE" > status
-				`,
-		}))
+									ls
+	
+									mkdir -p /tmp/debian-rootfs
+									touch /tmp/debian-rootfs/var/lib/dpkg/status
+	
+									json_str=$PACKAGES_PRESENT_ALL
+									packages_formatted=""
+	
+									while IFS=':' read -r package version; do
+										pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+										pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+	
+										packages_formatted="$packages_formatted $pkg_name-$pkg_version"
+	
+									done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+	
+									apt-get download --no-install-recommends $packages_formatted
+	
+									dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --install *.deb
+	
+									ls /tmp/debian-rootfs/var/lib/dpkg
+							`,
+		})).AddMount("/tmp/debian-rootfs/var/lib/dpkg", llb.Scratch())
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
