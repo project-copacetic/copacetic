@@ -36,20 +36,19 @@ import (
 )
 
 const (
-	defaultPatchedTagSuffix = "patched"
-	copaProduct             = "copa"
-	defaultRegistry         = "docker.io"
-	defaultTag              = "latest"
+	copaProduct     = "copa"
+	defaultRegistry = "docker.io"
+	defaultTag      = "latest"
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -74,37 +73,27 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
 
+	// parse the image reference
 	imageName, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return fmt.Errorf("failed to parse reference: %w", err)
+	}
+
+	// resolve final patched tag
+	patchedTag, err = resolvePatchedTag(imageName, patchedTag, suffix)
 	if err != nil {
 		return err
 	}
-	if reference.IsNameOnly(imageName) {
-		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = reference.TagNameOnly(imageName)
-	}
-	var tag string
-	taggedName, ok := imageName.(reference.Tagged)
-	if ok {
-		tag = taggedName.Tag()
-	} else {
-		log.Warnf("Image name has no tag")
-	}
-	if patchedTag == "" {
-		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
-		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		}
-	}
+
+	// create the patched image name
 	_, err = reference.WithTag(imageName, patchedTag)
 	if err != nil {
-		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
+		return fmt.Errorf("invalid patched tag: %w with patched tag %s", err, patchedTag)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
@@ -336,6 +325,34 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	err = eg.Wait()
 
 	return err
+}
+
+// resolvePatchedTag merges explicit tag & suffix rules, returning the final patched tag.
+func resolvePatchedTag(imageRef reference.Named, explicitTag, suffix string) (string, error) {
+	// if user explicitly sets a final tag, that wins outright
+	if explicitTag != "" {
+		return explicitTag, nil
+	}
+
+	// parse out any existing tag from the image ref
+	var baseTag string
+	if tagged, ok := imageRef.(reference.Tagged); ok {
+		baseTag = tagged.Tag()
+	}
+
+	// if suffix is empty, default to "patched"
+	if suffix == "" {
+		suffix = "patched"
+	}
+
+	// if we have no original baseTag (the user’s image had no tag),
+	// then we can’t append a suffix to it
+	if baseTag == "" {
+		return "", fmt.Errorf("no tag found in image reference %s", imageRef.String())
+	}
+
+	// otherwise, combine them
+	return fmt.Sprintf("%s-%s", baseTag, suffix), nil
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {

@@ -19,6 +19,7 @@ type patchArgs struct {
 	appImage      string
 	reportFile    string
 	patchedTag    string
+	suffix        string
 	workingFolder string
 	timeout       time.Duration
 	scanner       string
@@ -46,6 +47,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.appImage,
 				ua.reportFile,
 				ua.patchedTag,
+				ua.suffix,
 				ua.workingFolder,
 				ua.scanner,
 				ua.format,
@@ -58,6 +60,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
+	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
 	flags.StringVarP(&ua.bkOpts.Addr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.StringVarP(&ua.bkOpts.CACertPath, "cacert", "", "", "Absolute path to buildkitd CA certificate")

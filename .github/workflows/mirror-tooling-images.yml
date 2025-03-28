@@ -31,6 +31,7 @@ jobs:
           - "mirror.gcr.io/ubuntu:22.04"
           - "mcr.microsoft.com/azurelinux/base/core:3.0"
           - "mcr.microsoft.com/cbl-mariner/base/core:2.0"
+          - "mcr.microsoft.com/cbl-mariner/base/core:1.0"
 
     steps:
       - name: Checkout
