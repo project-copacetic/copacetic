@@ -35,6 +35,7 @@ type dpkgManager struct {
 	statusdNames   string
 	packageInfo    map[string]string
 	osVersion      string
+	osType         string
 	tempStatusFile string
 }
 
@@ -459,35 +460,99 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 					`,
 			})).Root() */
 
-	// Create a new state for tooling image with all the packages from the image to be patched
+	// Add relevant snapshot repos to tooling image
 	dpkgdb := updated.Run(
-		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", dm.osVersion),
-		llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+		llb.AddEnv("OS_TYPE", dm.osType),
 		llb.Args([]string{
 			`bash`, `-xec`, `
-									ls
-	
-									mkdir -p /tmp/debian-rootfs
-									touch /tmp/debian-rootfs/var/lib/dpkg/status
-	
-									json_str=$PACKAGES_PRESENT_ALL
-									packages_formatted=""
-	
-									while IFS=':' read -r package version; do
-										pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-										pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-	
-										packages_formatted="$packages_formatted $pkg_name-$pkg_version"
-	
-									done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
-	
-									apt-get download --no-install-recommends $packages_formatted
-	
-									dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --install *.deb
-	
-									ls /tmp/debian-rootfs/var/lib/dpkg
-							`,
+
+					echo "OS_VERSION: $OS_VERSION"
+					echo "OS_TYPE: $OS_TYPE"
+
+					# Map versions to codenames
+					declare -A debian_versions=(
+						["12"]="bookworm"
+						["11"]="bullseye"
+						["10"]="buster"
+						["9"]="stretch"
+						["8"]="jessie"
+						["7"]="wheezy"
+						["6"]="squeeze"
+						["5"]="lenny"
+					)
+
+					UBUNTU_MIRROR="http://archive.ubuntu.com/ubuntu"
+					DEBIAN_MIRROR="http://deb.debian.org/debian"
+					UBUNTU_OLD="http://old-releases.ubuntu.com/ubuntu"
+					DEBIAN_SNAPSHOT="http://snapshot.debian.org/archive/debian"
+					
+					if [[ "$OS_TYPE" == "ubuntu" ]]; then
+						# Update this as EOL version changes
+						if [[ "$OS_VERSION" < "18.04" ]]; then
+							REPO="$UBUNTU_OLD"
+						else
+							REPO="$UBUNTU_MIRROR"
+						fi
+
+						codename=${debian_versions[$OS_VERSION]}
+					
+						echo "Using Ubuntu repository: $REPO"
+						echo -e "deb $REPO $codename main restricted universe multiverse\ndeb $REPO $codename-updates main restricted universe multiverse\ndeb $REPO $codename-security main restricted universe multiverse" | tee /etc/apt/sources.list > /dev/null
+						
+					elif [[ "$OS_TYPE" == "debian" ]]; then
+						# Update this as EOL version changes
+						 if [[ "$OS_VERSION" < "10" ]]; then
+							REPO="$DEBIAN_SNAPSHOT"
+						else
+							REPO="$DEBIAN_MIRROR"
+						fi
+
+						codename=${debian_versions[$OS_VERSION]}
+					
+						echo "Using Debian repository: $REPO"
+						echo -e "deb $REPO $codename main contrib non-free\ndeb $REPO $codename-updates main contrib non-free\ndeb $REPO $codename-security main contrib non-free" | tee /etc/apt/sources.list > /dev/null
+					fi
+				`,
+		})).Root()
+
+	// Create a new state for tooling image with all the packages from the image to be patched
+	dpkgdb = dpkgdb.Run(
+		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
+		llb.AddEnv("OS_VERSION", dm.osVersion),
+		llb.AddEnv("OS_TYPE", dm.osType),
+		//llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+		llb.Args([]string{
+			`bash`, `-xec`, `
+							ls
+							cat /etc/apt/sources.list 
+
+							mkdir -p /tmp/debian-rootfs
+							touch /tmp/debian-rootfs/var/lib/dpkg/status
+
+							json_str=$PACKAGES_PRESENT_ALL
+							packages_formatted=""
+
+							while IFS=':' read -r package version; do
+								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+
+								packages_formatted="$packages_formatted $pkg_name-$pkg_version"
+
+							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+							echo "FINAL PACKAGES: $packages_formatted"
+
+							dpkg --configure -a
+
+							# errors out here
+							apt-get update
+							apt-get download --no-install-recommends $packages_formatted
+							
+							dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --install *.deb
+
+							ls /tmp/debian-rootfs/var/lib/dpkg
+					`,
 		})).AddMount("/tmp/debian-rootfs/var/lib/dpkg", llb.Scratch())
 
 	// Download all requested update packages without specifying the version. This works around:
