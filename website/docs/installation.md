@@ -23,6 +23,7 @@ You can download the latest and previous versions of `copa` from the [GitHub rel
 git clone https://github.com/project-copacetic/copacetic
 cd copacetic
 make
-# OPTIONAL: install copa to a pathed folder
-sudo mv dist/linux_amd64/release/copa /usr/local/bin/
+# OPTIONAL: install copa to a pathed folder (i.e. /usr/local/bin)
+# Note: if you installed copa via Homebrew, you will need to uninstall it first
+make install
 ```
