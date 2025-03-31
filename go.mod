@@ -24,7 +24,7 @@ require (
 	github.com/quay/claircore v1.5.35
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
-	github.com/spf13/viper v1.20.0
+	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
 	github.com/tonistiigi/fsutil v0.0.0-20250113203817-b14e27f4135a
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8
