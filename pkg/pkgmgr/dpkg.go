@@ -309,6 +309,9 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
+	checkUpgradable := `sh -c "apt list --upgradable 2>/dev/null | grep -q "upgradable" || exit 1"`
+	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
 	heldState := aptGetUpdated.Run(llb.Shlex(checkHeldCmd)).Root()
