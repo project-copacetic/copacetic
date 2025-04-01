@@ -13,4 +13,5 @@ Check out some adopters of Copa in the community:
 ---
 
 ### Copa CLI Adopters
-- [Devtron](https://github.com/devtron-labs/devtron)  
+- [Helmper](https://github.com/ChristofferNissen/helmper)
+- [Kubescape](https://github.com/kubescape/kubescape)
