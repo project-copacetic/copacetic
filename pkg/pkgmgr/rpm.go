@@ -108,7 +108,7 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string) string {
+func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string, useCachePrefix bool) string {
 	var image, version string
 
 	if osType == "azurelinux" {
@@ -129,7 +129,12 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 	}
 
 	log.Debugf("Using %s:%s as basis for tooling image", image, version)
-	return fmt.Sprintf("%s/%s:%s", imageCachePrefix, image, version)
+
+	imagePrefix := "mcr.microsoft.com"
+	if useCachePrefix {
+		imagePrefix = imageCachePrefix
+	}
+	return fmt.Sprintf("%s/%s:%s", imagePrefix, image, version)
 }
 
 func parseRPMTools(b []byte) (rpmToolPaths, error) {
@@ -218,7 +223,12 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		log.Debugf("latest unique RPMs: %v", updates)
 	}
 
-	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion)
+	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion, true)
+	// check if we can resolve the tool image
+	if _, err := tryImage(ctx, toolImageName, rm.config.Client); err != nil {
+		toolImageName = getRPMImageName(manifest, rm.osType, rm.osVersion, false)
+	}
+
 	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
 	}
