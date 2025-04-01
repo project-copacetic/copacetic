@@ -158,7 +158,12 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 //   - sh and apk installed on the image
 //   - valid apk db state on the image
 func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	apkUpdated := am.config.ImageState.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
+	imageStateCurrent := am.config.ImageState
+	if am.config.PatchedConfigData != nil {
+		imageStateCurrent = am.config.PatchedImageState
+	}
+
+	apkUpdated := imageStateCurrent.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
 
 	// If updating all packages, check for upgrades before proceeding with patch
 	if updates == nil {

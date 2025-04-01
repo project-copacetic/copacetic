@@ -52,13 +52,9 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 		return nil, err
 	}
 
-	fmt.Print("baseImage: ", baseImage, "\n")
-
-	// config.ConfigData = configData
-
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
-	config.ImageState, err = llb.Image(userImage,
+	config.ImageState, err = llb.Image(baseImage,
 		llb.ResolveModePreferLocal,
 		llb.WithMetaResolver(c),
 	).WithImageConfig(config.ConfigData)

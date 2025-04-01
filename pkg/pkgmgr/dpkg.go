@@ -178,6 +178,11 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
 func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, updateAll bool) error {
+	imageStateCurrent := dm.config.ImageState
+	if dm.config.PatchedConfigData != nil {
+		imageStateCurrent = dm.config.PatchedImageState
+	}
+
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get image platform %w", err)
@@ -196,7 +201,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 
 	const installBusyBoxCmd = "apt-get install busybox-static"
 	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd), llb.WithProxy(utils.GetProxy())).Root()
-	busyBoxApplied := dm.config.ImageState.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
+	busyBoxApplied := imageStateCurrent.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
 	resultsState := mkFolders.Run(
@@ -303,7 +308,12 @@ func GetPackageInfo(file string) (string, string, error) {
 //
 // Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	aptGetUpdated := dm.config.ImageState.Run(
+	imageStateCurrent := dm.config.ImageState
+	if dm.config.PatchedConfigData != nil {
+		imageStateCurrent = dm.config.PatchedImageState
+	}
+
+	aptGetUpdated := imageStateCurrent.Run(
 		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
