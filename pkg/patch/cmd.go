@@ -27,6 +27,7 @@ type patchArgs struct {
 	format        string
 	output        string
 	bkOpts        buildkit.Opts
+	push          bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -53,6 +54,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.format,
 				ua.output,
 				ua.ignoreError,
+				ua.push,
 				bkopts)
 		},
 	}
@@ -71,6 +73,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
+	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
