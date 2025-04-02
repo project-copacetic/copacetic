@@ -513,9 +513,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 						# Determine security repo format - only exists for LTS versions
 						SECURITY_REPO=""
 						if [[ $codename == "bullseye" || $codename == "bookworm" || $codename == "trixie" ]]; then
-							SECURITY_REPO="deb ${REPO} ${codename}-security main contrib non-free"
+							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}-security main contrib non-free"
 						elif [[ "$OS_VERSION" == "buster" ]]; then
-							SECURITY_REPO="deb ${REPO} ${codename}/updates main contrib non-free"
+							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}/updates main contrib non-free"
 						fi
 					
 						echo "Using Debian repository: $REPO"
