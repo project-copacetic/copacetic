@@ -37,14 +37,14 @@ func (o *OpenVex) CreateVEXDocument(
 	// set author from environment variable if it exists
 	author := os.Getenv("COPA_VEX_AUTHOR")
 	if author != "" {
-		doc.Metadata.Author = author
+		doc.Author = author
 	}
 
 	id, err := id()
 	if err != nil {
 		return "", err
 	}
-	doc.Metadata.ID = id
+	doc.ID = id
 
 	imageProduct := vex.Product{
 		Component: vex.Component{
