@@ -36,20 +36,19 @@ import (
 )
 
 const (
-	defaultPatchedTagSuffix = "patched"
-	copaProduct             = "copa"
-	defaultRegistry         = "docker.io"
-	defaultTag              = "latest"
+	copaProduct     = "copa"
+	defaultRegistry = "docker.io"
+	defaultTag      = "latest"
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -74,33 +73,27 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	if reportFile == "" && output != "" {
+		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
+	}
+
+	// parse the image reference
 	imageName, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return fmt.Errorf("failed to parse reference: %w", err)
+	}
+
+	// resolve final patched tag
+	patchedTag, err = resolvePatchedTag(imageName, patchedTag, suffix)
 	if err != nil {
 		return err
 	}
-	if reference.IsNameOnly(imageName) {
-		log.Warnf("Image name has no tag or digest, using latest as tag")
-		imageName = reference.TagNameOnly(imageName)
-	}
-	var tag string
-	taggedName, ok := imageName.(reference.Tagged)
-	if ok {
-		tag = taggedName.Tag()
-	} else {
-		log.Warnf("Image name has no tag")
-	}
-	if patchedTag == "" {
-		if tag == "" {
-			log.Warnf("No output tag specified for digest-referenced image, defaulting to `%s`", defaultPatchedTagSuffix)
-			patchedTag = defaultPatchedTagSuffix
-		} else {
-			patchedTag = fmt.Sprintf("%s-%s", tag, defaultPatchedTagSuffix)
-		}
-	}
+
+	// create the patched image name
 	_, err = reference.WithTag(imageName, patchedTag)
 	if err != nil {
-		return fmt.Errorf("%w with patched tag %s", err, patchedTag)
+		return fmt.Errorf("invalid patched tag: %w with patched tag %s", err, patchedTag)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
@@ -142,7 +135,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 	pipeR, pipeW := io.Pipe()
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(dockerConfig, nil)}
+	cfg := authprovider.DockerAuthProviderConfig{ConfigFile: dockerConfig}
+	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{
 			{
@@ -185,7 +179,25 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		var pkgType string
+		var validatedManifest *unversioned.UpdateManifest
+		if updates != nil {
+			// create a new manifest with the successfully patched packages
+			validatedManifest = &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    updates.Metadata.OS.Type,
+						Version: updates.Metadata.OS.Version,
+					},
+					Config: unversioned.Config{
+						Arch: updates.Metadata.Config.Arch,
+					},
+				},
+				Updates: []unversioned.UpdatePackage{},
+			}
+		}
+
+		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
 			if err != nil {
@@ -259,37 +271,31 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 
 			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
 
-			// Currently can only validate updates if updating via scanner
-			if reportFile != "" {
-				// create a new manifest with the successfully patched packages
-				validatedManifest := &unversioned.UpdateManifest{
-					Metadata: unversioned.Metadata{
-						OS: unversioned.OS{
-							Type:    updates.Metadata.OS.Type,
-							Version: updates.Metadata.OS.Version,
-						},
-						Config: unversioned.Config{
-							Arch: updates.Metadata.Config.Arch,
-						},
-					},
-					Updates: []unversioned.UpdatePackage{},
-				}
+			// for the vex document, only include updates that were successfully applied
+			pkgType = manager.GetPackageType()
+			if validatedManifest != nil {
 				for _, update := range updates.Updates {
 					if !slices.Contains(errPkgs, update.Name) {
 						validatedManifest.Updates = append(validatedManifest.Updates, update)
-					}
-				}
-				// vex document must contain at least one statement
-				if output != "" && len(validatedManifest.Updates) > 0 {
-					if err := vex.TryOutputVexDocument(validatedManifest, manager, patchedImageName, format, output); err != nil {
-						ch <- err
-						return nil, err
 					}
 				}
 			}
 
 			return res, nil
 		}, buildChannel)
+
+		// Currently can only validate updates if updating via scanner
+		if reportFile != "" && validatedManifest != nil {
+			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
+			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
+			// vex document must contain at least one statement
+			if output != "" && len(validatedManifest.Updates) > 0 {
+				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
+					ch <- err
+					return err
+				}
+			}
+		}
 
 		return err
 	})
@@ -316,7 +322,37 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		return pipeR.Close()
 	})
 
-	return eg.Wait()
+	err = eg.Wait()
+
+	return err
+}
+
+// resolvePatchedTag merges explicit tag & suffix rules, returning the final patched tag.
+func resolvePatchedTag(imageRef reference.Named, explicitTag, suffix string) (string, error) {
+	// if user explicitly sets a final tag, that wins outright
+	if explicitTag != "" {
+		return explicitTag, nil
+	}
+
+	// parse out any existing tag from the image ref
+	var baseTag string
+	if tagged, ok := imageRef.(reference.Tagged); ok {
+		baseTag = tagged.Tag()
+	}
+
+	// if suffix is empty, default to "patched"
+	if suffix == "" {
+		suffix = "patched"
+	}
+
+	// if we have no original baseTag (the user’s image had no tag),
+	// then we can’t append a suffix to it
+	if baseTag == "" {
+		return "", fmt.Errorf("no tag found in image reference %s", imageRef.String())
+	}
+
+	// otherwise, combine them
+	return fmt.Sprintf("%s-%s", baseTag, suffix), nil
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
@@ -385,4 +421,15 @@ func dockerLoad(ctx context.Context, pipeR io.Reader) error {
 	go utils.LogPipe(stdout, log.InfoLevel)
 
 	return cmd.Run()
+}
+
+// e.g. "docker.io/library/nginx:1.21.6-patched".
+func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
+	parts := strings.Split(patchedImageName, "/")
+	last := parts[len(parts)-1]
+	if idx := strings.IndexRune(last, ':'); idx >= 0 {
+		last = last[:idx]
+	}
+	nameWithDigest := fmt.Sprintf("%s@%s", last, imageDigest)
+	return nameWithDigest
 }
