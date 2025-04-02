@@ -249,7 +249,6 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 			var buffer bytes.Buffer
 
 			for _, name := range namesList {
-
 				fileBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
 				if err != nil {
 					return err
@@ -508,7 +507,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							REPO="$DEBIAN_MIRROR"
 						fi
 
-						codename=${debian_versions[$OS_VERSION]}
+						codename=$(echo -n "${debian_versions[$OS_VERSION]}")
 
 						# Determine security repo format - only exists for LTS versions
 						SECURITY_REPO=""
@@ -517,7 +516,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 						elif [[ "$OS_VERSION" == "buster" ]]; then
 							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}/updates main contrib non-free"
 						fi
-					
+
+						# it should be this ?
+						# https://www.veeble.com/kb/debian-repo-urls-for-sources-list-file/
+						# echo -e "deb https://deb.debian.org/debian bullseye main\ndeb-src https://deb.debian.org/debian bullseye main\ndeb https://deb.debian.org/debian-security/ bullseye-security main\ndeb-src https://deb.debian.org/debian-security/ bullseye-security main\ndeb https://deb.debian.org/debian bullseye-updates main\ndeb-src https://deb.debian.org/debian bullseye-updates main" | tee /etc/apt/sources.list > /dev/null
+
 						echo "Using Debian repository: $REPO"
 						echo -e "deb $REPO ${codename} main contrib non-free\ndeb $REPO ${codename}-updates main contrib non-free\n$SECURITY_REPO" | tee /etc/apt/sources.list > /dev/null
 					fi
@@ -529,7 +532,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", dm.osVersion),
 		llb.AddEnv("OS_TYPE", dm.osType),
-		//llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+		// llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
 		llb.Args([]string{
 			`bash`, `-xec`, `
 							ls
@@ -575,7 +578,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		}
 		downloadCmd = fmt.Sprintf(aptGetDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
-		// only update the outdated pacakges from packages.txt
+		// only update the outdated packages from packages.txt
 		downloadCmd = `
 		packages=$(<packages.txt)
 		for package in $packages; do
