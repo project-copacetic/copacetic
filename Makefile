@@ -57,6 +57,15 @@ $(CLI_BINARY):
 	go build $(GCFLAGS) -ldflags $(LDFLAGS) -o $(BINS_OUT_DIR)/$(CLI_BINARY);
 
 ################################################################################
+# Target: install                                                              #
+################################################################################
+.PHONY: install
+install: $(CLI_BINARY)
+	$(info $(INFOMARK) Installing $(CLI_BINARY) ...)
+	sudo cp $(BINS_OUT_DIR)/$(CLI_BINARY) /usr/local/bin/$(CLI_BINARY)
+	sudo chmod +x /usr/local/bin/$(CLI_BINARY)
+
+################################################################################
 # Target: lint                                                                 #
 ################################################################################
 .PHONY: lint

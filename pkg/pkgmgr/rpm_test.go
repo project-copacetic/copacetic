@@ -192,7 +192,7 @@ func TestGetRPMImageName(t *testing.T) {
 	// Loop over test cases and run getRPMImageName function with each input
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			image := getRPMImageName(tc.manifest, tc.osType, tc.osVersion)
+			image := getRPMImageName(tc.manifest, tc.osType, tc.osVersion, true)
 			assert.Equal(t, tc.image, image)
 		})
 	}
