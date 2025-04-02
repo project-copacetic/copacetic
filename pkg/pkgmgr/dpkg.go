@@ -498,7 +498,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 						codename=${debian_versions[$OS_VERSION]}
 					
 						echo "Using Ubuntu repository: $REPO"
-						echo -e "deb $REPO $codename main restricted universe multiverse\ndeb $REPO $codename-updates main restricted universe multiverse" | tee /etc/apt/sources.list > /dev/null
+						echo -e "deb $REPO $codename main restricted universe multiverse\ndeb $REPO $codename-updates main restricted universe multiverse\ndeb $REPO $codename-security main restricted universe multiverse" | tee /etc/apt/sources.list > /dev/null
 						
 					elif [[ "$OS_TYPE" == "debian" ]]; then
 						# Update this as EOL version changes
@@ -509,9 +509,17 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 						fi
 
 						codename=${debian_versions[$OS_VERSION]}
+
+						# Determine security repo format - only exists for LTS versions
+						SECURITY_REPO=""
+						if [[ $codename == "bullseye" || $codename == "bookworm" || $codename == "trixie" ]]; then
+							SECURITY_REPO="deb ${REPO} ${codename}-security main contrib non-free"
+						elif [[ "$OS_VERSION" == "buster" ]]; then
+							SECURITY_REPO="deb ${REPO} ${codename}/updates main contrib non-free"
+						fi
 					
 						echo "Using Debian repository: $REPO"
-						echo -e "deb $REPO $codename main contrib non-free\ndeb $REPO $codename-updates main contrib non-free" | tee /etc/apt/sources.list > /dev/null
+						echo -e "deb $REPO $codename main contrib non-free\ndeb $REPO $codename-updates main contrib non-free\n$SECURITY_REPO" | tee /etc/apt/sources.list > /dev/null
 					fi
 				`,
 		})).Root()
