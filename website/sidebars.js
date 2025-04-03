@@ -52,6 +52,15 @@ const sidebars = {
         'release',
       ],
     },
+    {
+      type: 'category',
+      label: 'Community',
+      collapsed: false,
+      items: [
+        'adopters',
+        'talks-and-presentations',
+      ],
+    },
   ],
 };
 
