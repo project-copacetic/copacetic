@@ -503,15 +503,15 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		if dnfTooling == "" {
 			dnfTooling = rm.rpmTools["dnf"]
 		}
-		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
 		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
+		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
-		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
 		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
@@ -519,7 +519,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
 		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
