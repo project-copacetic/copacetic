@@ -27,8 +27,10 @@ import (
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/manifest"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
@@ -42,13 +44,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFileOrDir, missingReportBehavior, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFileOrDir, missingReportBehavior, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -73,7 +75,27 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFileOrDir, missingReportBehavior, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	var reportFile string
+	// check if reportFileOrDir is a directory
+	f, err := os.Stat(reportFileOrDir)
+	if os.IsNotExist(err)  {
+		return err
+	}
+	if f.IsDir() {
+		// if directory, then were dealing with multi-arch images
+		if err := patchMultiArchImage(ctx, ch, missingReportBehavior, image, reportFileOrDir, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts); err != nil {
+			return fmt.Errorf("failed to patch multi-arch image: %w", err)
+		}
+		log.Debugf("Using report directory: %s", reportFileOrDir)
+		return nil
+	}
+
+	_, err = patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
+	return err
+}
+
+func patchSingleArchImage(ctx context.Context, ch chan error, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) (*types.PatchResult, error) {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
@@ -81,19 +103,19 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	// parse the image reference
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
-		return fmt.Errorf("failed to parse reference: %w", err)
+		return nil, fmt.Errorf("failed to parse reference: %w", err)
 	}
 
 	// resolve final patched tag
 	patchedTag, err = resolvePatchedTag(imageName, patchedTag, suffix)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// create the patched image name
 	_, err = reference.WithTag(imageName, patchedTag)
 	if err != nil {
-		return fmt.Errorf("invalid patched tag: %w with patched tag %s", err, patchedTag)
+		return nil, fmt.Errorf("invalid patched tag: %w with patched tag %s", err, patchedTag)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
@@ -102,16 +124,16 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		var err error
 		workingFolder, err = os.MkdirTemp("", "copa-*")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer removeIfNotDebug(workingFolder)
 		if err = os.Chmod(workingFolder, 0o744); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		if isNew, err := utils.EnsurePath(workingFolder, 0o744); err != nil {
 			log.Errorf("failed to create workingFolder %s", workingFolder)
-			return err
+			return nil, err
 		} else if isNew {
 			defer removeIfNotDebug(workingFolder)
 		}
@@ -122,14 +144,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	if reportFile != "" {
 		updates, err = report.TryParseScanReport(reportFile, scanner)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		log.Debugf("updates to apply: %v", updates)
 	}
 
 	bkClient, err := buildkit.NewClient(ctx, bkOpts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer bkClient.Close()
 
@@ -154,7 +176,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	}
 	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if solveOpt.SourcePolicy != nil {
@@ -162,19 +184,22 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "redhat"):
 			err = errors.New("RedHat is not supported via source policies due to BusyBox not being in the RHEL repos\n" +
 				"Please use a different RPM-based image")
-			return err
+			return nil, err
 
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "rockylinux"):
 			err = errors.New("RockyLinux is not supported via source policies due to BusyBox not being in the RockyLinux repos\n" +
 				"Please use a different RPM-based image")
-			return err
+			return nil, err
 
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "alma"):
 			err = errors.New("AlmaLinux is not supported via source policies due to BusyBox not being in the AlmaLinux repos\n" +
 				"Please use a different RPM-based image")
-			return err
+			return nil, err
 		}
 	}
+
+	// Create a channel to receive the patched image digest
+	patchedImageDigest := make(chan *string, 1)
 
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
@@ -287,6 +312,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 		// Currently can only validate updates if updating via scanner
 		if reportFile != "" && validatedManifest != nil {
 			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
+			patchedImageDigest <- &digest
 			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
 			// vex document must contain at least one statement
 			if output != "" && len(validatedManifest.Updates) > 0 {
@@ -323,8 +349,24 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 	})
 
 	err = eg.Wait()
+	if err != nil {
+		return nil, err
+	}
 
-	return err
+	// Get the solve response from channel
+	digest := <-patchedImageDigest
+	if digest == nil {
+		return nil, fmt.Errorf("no digest found")
+	}
+
+	// Create PatchResult to return
+	result := &types.PatchResult{
+		OriginalImage: image,
+		PatchedImage:  patchedImageName,
+		Digest:        *digest,
+	}
+
+	return result, err
 }
 
 // resolvePatchedTag merges explicit tag & suffix rules, returning the final patched tag.
@@ -432,4 +474,65 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	}
 	nameWithDigest := fmt.Sprintf("%s@%s", last, imageDigest)
 	return nameWithDigest
+}
+
+// handleMissingReport determines what to do when a report is missing for a platform
+func handleMissingReport(platform types.Platform, missingReportBehavior string) error {
+	switch missingReportBehavior {
+	case "skip":
+		log.Printf("Skipping platform %s/%s due to missing report", platform.OS, platform.Arch)
+		return nil
+	case "warn":
+		log.Printf("WARNING: No vulnerability data for platform %s/%s", platform.OS, platform.Arch)
+		return nil
+	case "fail":
+		return fmt.Errorf("no vulnerability data for platform: %s/%s", platform.OS, platform.Arch)
+	default:
+		return fmt.Errorf("invalid missing-report behavior: %s", missingReportBehavior)
+	}
+}
+
+// In the main patching function
+func patchMultiArchImage(ctx context.Context, ch chan error, missingReportBehavior, imageRef, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	// Discover platforms and matching reports
+	platforms, err := manifest.DiscoverPlatforms(imageRef, reportDir)
+	if err != nil {
+		return err
+	}
+
+	// Check if we found any patchable platforms
+	if len(platforms) == 0 {
+		return fmt.Errorf("no patchable platforms found for image %s", imageRef)
+	}
+
+	// Process each platform
+	for _, platform := range platforms {
+		// Check if this platform has a corresponding report
+		reportMissing := true
+		for _, patchablePlatform := range platforms {
+			if platform.OS == patchablePlatform.OS && platform.Arch == patchablePlatform.Arch {
+				reportMissing = false
+				break
+			}
+		}
+
+		// Handle missing report according to user preference
+		if reportMissing {
+			if err := handleMissingReport(platform, missingReportBehavior); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// proceed with patching for this platform
+		patchedImage, err := patchSingleArchImage(ctx, ch, imageRef, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		if err != nil {
+			return err
+		}
+
+		// TODO: save patched image
+		fmt.Printf("Patched image: %s\n", patchedImage.PatchedImage)
+	}
+
+	return nil
 }
