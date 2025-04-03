@@ -16,17 +16,19 @@ import (
 )
 
 type patchArgs struct {
-	appImage      string
-	reportFile    string
-	patchedTag    string
-	suffix        string
-	workingFolder string
-	timeout       time.Duration
-	scanner       string
-	ignoreError   bool
-	format        string
-	output        string
-	bkOpts        buildkit.Opts
+	appImage              string
+	reportFile            string
+	reportDir             string
+	missingReportBehavior string
+	patchedTag            string
+	suffix                string
+	workingFolder         string
+	timeout               time.Duration
+	scanner               string
+	ignoreError           bool
+	format                string
+	output                string
+	bkOpts                buildkit.Opts
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -42,10 +44,17 @@ func NewPatchCmd() *cobra.Command {
 				CertPath:   ua.bkOpts.CertPath,
 				KeyPath:    ua.bkOpts.KeyPath,
 			}
+			var reportFileOrDir string
+			if ua.reportDir != "" {
+				reportFileOrDir = ua.reportDir
+			} else {
+				reportFileOrDir = ua.reportFile
+			}
 			return Patch(context.Background(),
 				ua.timeout,
 				ua.appImage,
-				ua.reportFile,
+				reportFileOrDir,
+				ua.missingReportBehavior,
 				ua.patchedTag,
 				ua.suffix,
 				ua.workingFolder,
@@ -59,6 +68,8 @@ func NewPatchCmd() *cobra.Command {
 	flags := patchCmd.Flags()
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
+	flags.StringVarP(&ua.reportDir, "report-dir", "d", "", "Directory containing vulnerability reports for multi-architecture images")
+	flags.StringVarP(&ua.missingReportBehavior, "missing-report", "m", "fail", "Behavior when report is missing for a platform [skip|warn|fail]")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
