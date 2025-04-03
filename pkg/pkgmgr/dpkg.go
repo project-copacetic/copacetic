@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -30,12 +29,14 @@ const (
 )
 
 type dpkgManager struct {
-	config        *buildkit.Config
-	workingFolder string
-	isDistroless  bool
-	statusdNames  string
-	packageInfo   map[string]string
-	osVersion     string
+	config         *buildkit.Config
+	workingFolder  string
+	isDistroless   bool
+	statusdNames   string
+	packageInfo    map[string]string
+	osVersion      string
+	osType         string
+	tempStatusFile string
 }
 
 type dpkgStatusType uint
@@ -250,22 +251,28 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 		if updateAll {
 			namesList := strings.Fields(dm.statusdNames)
 			packageInfo := make(map[string]string)
+			var buffer bytes.Buffer
+
 			for _, name := range namesList {
-				fileBtyes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
+				fileBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
 				if err != nil {
 					return err
 				}
 
 				if !strings.HasSuffix(name, ".md5sums") {
-					pkgName, pkgVersion, err := GetPackageInfo(string(fileBtyes))
+					pkgName, pkgVersion, err := GetPackageInfo(string(fileBytes))
 					if err != nil {
 						return err
 					}
+
+					buffer.Write(fileBytes)
+					buffer.WriteString("\n")
 
 					packageInfo[pkgName] = pkgVersion
 				}
 			}
 
+			dm.tempStatusFile = buffer.String()
 			dm.packageInfo = packageInfo
 		}
 
@@ -417,13 +424,14 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.IgnoreCache,
 	).Root()
 
+	// Retrieve all package info from image to be patched.
+	jsonPackageData, err := getJSONPackageData(dm.packageInfo)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// In the case of update all packages, only update packages that are not already latest version. Store these packages in packages.txt.
 	if updates == nil {
-		jsonPackageData, err := json.Marshal(dm.packageInfo)
-		if err != nil {
-			return nil, nil, fmt.Errorf("unable to marshal dm.packageInfo %w", err)
-		}
-
 		updated = updated.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
@@ -453,6 +461,124 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			})).Root()
 	}
 
+	/*
+
+		// Replace status file in tooling image with new status file with relevant pacakge info from image to be patched.
+		dpkgdb := updated.Run(
+			llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+			llb.Args([]string{
+				`bash`, `-xec`, `
+						echo "$STATUS_FILE" > status
+					`,
+			})).Root() */
+
+	// Add relevant snapshot repos to tooling image
+	dpkgdb := updated.Run(
+		llb.AddEnv("OS_VERSION", dm.osVersion),
+		llb.AddEnv("OS_TYPE", dm.osType),
+		llb.Args([]string{
+			`bash`, `-xec`, `
+
+					echo "OS_VERSION: $OS_VERSION"
+					echo "OS_TYPE: $OS_TYPE"
+
+					# Map versions to codenames
+					declare -A debian_versions=(
+						["12"]="bookworm"
+						["11"]="bullseye"
+						["10"]="buster"
+						["9"]="stretch"
+						["8"]="jessie"
+						["7"]="wheezy"
+						["6"]="squeeze"
+						["5"]="lenny"
+					)
+
+					UBUNTU_MIRROR="http://archive.ubuntu.com/ubuntu"
+					DEBIAN_MIRROR="http://deb.debian.org/debian"
+					UBUNTU_OLD="http://old-releases.ubuntu.com/ubuntu"
+					DEBIAN_SNAPSHOT="http://snapshot.debian.org/archive/debian"
+					
+					if [[ "$OS_TYPE" == "ubuntu" ]]; then
+						# Update this as EOL version changes
+						if [[ "$OS_VERSION" < "18.04" ]]; then
+							REPO="$UBUNTU_OLD"
+						else
+							REPO="$UBUNTU_MIRROR"
+						fi
+
+						codename=${debian_versions[$OS_VERSION]}
+					
+						echo "Using Ubuntu repository: $REPO"
+						echo -e "deb $REPO ${codename} main restricted universe multiverse\ndeb $REPO ${codename}-updates main restricted universe multiverse\ndeb $REPO $codename-security main restricted universe multiverse" | tee /etc/apt/sources.list > /dev/null
+						
+					elif [[ "$OS_TYPE" == "debian" ]]; then
+						# Update this as EOL version changes
+						 if [[ "$OS_VERSION" < "10" ]]; then
+							REPO="$DEBIAN_SNAPSHOT"
+						else
+							REPO="$DEBIAN_MIRROR"
+						fi
+
+						codename=$(echo -n "${debian_versions[$OS_VERSION]}")
+
+						# Determine security repo format - only exists for LTS versions
+						SECURITY_REPO=""
+						if [[ $codename == "bullseye" || $codename == "bookworm" || $codename == "trixie" ]]; then
+							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}-security main contrib non-free"
+						elif [[ "$OS_VERSION" == "buster" ]]; then
+							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}/updates main contrib non-free"
+						fi
+
+						# it should be this ?
+						# https://www.veeble.com/kb/debian-repo-urls-for-sources-list-file/
+						# echo -e "deb https://deb.debian.org/debian bullseye main\ndeb-src https://deb.debian.org/debian bullseye main\ndeb https://deb.debian.org/debian-security/ bullseye-security main\ndeb-src https://deb.debian.org/debian-security/ bullseye-security main\ndeb https://deb.debian.org/debian bullseye-updates main\ndeb-src https://deb.debian.org/debian bullseye-updates main" | tee /etc/apt/sources.list > /dev/null
+
+						echo "Using Debian repository: $REPO"
+						echo -e "deb $REPO ${codename} main contrib non-free\ndeb $REPO ${codename}-updates main contrib non-free\n$SECURITY_REPO" | tee /etc/apt/sources.list > /dev/null
+					fi
+				`,
+		})).Root()
+
+	// Create a new state for tooling image with all the packages from the image to be patched
+	dpkgdb = dpkgdb.Run(
+		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
+		llb.AddEnv("OS_VERSION", dm.osVersion),
+		llb.AddEnv("OS_TYPE", dm.osType),
+		// llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+		llb.Args([]string{
+			`bash`, `-xec`, `
+							ls
+							cat /etc/apt/sources.list 
+
+							mkdir -p /tmp/debian-rootfs
+							touch /tmp/debian-rootfs/var/lib/dpkg/status
+
+							json_str=$PACKAGES_PRESENT_ALL
+							packages_formatted=""
+
+							while IFS=':' read -r package version; do
+								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+
+								packages_formatted="$packages_formatted $pkg_name-$pkg_version"
+
+							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+							echo "FINAL PACKAGES: $packages_formatted"
+
+							dpkg --configure -a
+
+							# errors out here
+							apt-get update
+							apt-get download --no-install-recommends $packages_formatted
+							
+							dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --install *.deb
+
+							ls /tmp/debian-rootfs/var/lib/dpkg
+					`,
+		})).AddMount("/tmp/debian-rootfs/var/lib/dpkg", llb.Scratch())
+
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
@@ -465,7 +591,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		}
 		downloadCmd = fmt.Sprintf(aptGetDownloadTemplate, strings.Join(pkgStrings, " "))
 	} else {
-		// only update the outdated pacakges from packages.txt
+		// only update the outdated packages from packages.txt
 		downloadCmd = `
 		packages=$(<packages.txt)
 		for package in $packages; do
@@ -477,7 +603,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		`
 	}
 
-	downloaded := updated.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
+	downloaded := dpkgdb.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
