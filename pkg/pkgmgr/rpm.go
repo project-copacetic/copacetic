@@ -281,6 +281,11 @@ func (rm *rpmManager) tryImage(ctx context.Context, imageRef string) (llb.State,
 }
 
 func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		log.Error("unable to get image platform")
@@ -303,7 +308,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
 
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
-	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
+	toolsApplied := imageStateCurrent.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
 		File(llb.Mkdir(inputPath, 0o744, llb.WithParents(true)))
@@ -475,6 +480,11 @@ func parseManifestFile(file string) (map[string]string, error) {
 func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	pkgs := ""
 
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	// If specific updates, provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
@@ -520,7 +530,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
 	}
-	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	installed := imageStateCurrent.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
@@ -568,8 +578,13 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 }
 
 func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) bool {
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
-	stateWithCheck := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+	stateWithCheck := imageStateCurrent.Run(llb.Shlex(checkUpdate)).Root()
 
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
