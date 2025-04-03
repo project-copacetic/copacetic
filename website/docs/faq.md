@@ -103,3 +103,56 @@ Yes, see [best practices](best-practices.md#dependabot) to learn more about usin
 
 ## Does Copa cause a buildup of patched layers on each patch?
 No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
+
+## Why am I getting 404 errors when trying to patch an image?
+
+If you're seeing errors related to missing **Release files** or `404 Not Found` errors during patching, your base image is likely using an End-of-Life (EOL) release of a distribution. Copa cannot patch images based on EOL operating systems where the package repositories have been removed or archived.
+
+### What does "End-of-Life" mean for patching?
+
+When a release of Linux distribution reaches its End-of-Life date:
+
+- Package repositories are typically removed from primary mirrors
+- Security updates are no longer published
+- The distribution maintainers no longer provide patches for vulnerabilities
+
+Without access to these repositories, Copa cannot find or apply security updates.
+
+### How do I identify if my image is using an EOL distribution?
+
+Common indicators include:
+
+- Copa Errors mentioning missing Release files
+- `404` Not Found errors when accessing repository URLs
+- References to old distribution codenames (e.g., Debian "Stretch" or "Buster")
+  - Check the output of `cat /etc/os-release` for codenames like:
+    ```shell
+    PRETTY_NAME="Debian GNU/Linux 9 (stretch)"
+    NAME="Debian GNU/Linux"
+    VERSION_ID="9"
+    VERSION="9 (stretch)"
+    VERSION_CODENAME=stretch
+    ID=debian
+    ```
+
+::: tip Check Distribution End-of-Life Status
+
+Visit [endoflife.date](https://endoflife.date/) to easily check the End-of-Life (EOL) dates for your Linux distribution, programming languages, frameworks, and other software.
+
+:::
+
+### What are my options for handling EOL images?
+
+1. **Preferred: Upgrade to a supported distribution version**
+
+   - Update your Dockerfile to use a newer base image
+   - Example: Change `FROM debian:stretch` to `FROM debian:bookworm`
+
+2. **Alternative: Use archive repositories**
+
+   - Modify your image to use archive.debian.org or similar archive repositories
+
+     > **Note**: Archived repositories won't receive new security updates.
+
+3. **Rebuild from source**
+   - For critical applications, consider rebuilding packages from source with security patches
