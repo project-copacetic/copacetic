@@ -14,6 +14,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -47,6 +48,10 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
+		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
+		mediaType, err := utils.GetMediaType(imageRef)
+		require.NoError(t, err)
+
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
@@ -93,6 +98,15 @@ func TestPatch(t *testing.T) {
 
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
+
+			patchedMediaType, err := utils.GetMediaType(imageRef)
+			require.NoError(t, err)
+			fmt.Println("patchedMediaType: ", patchedMediaType)
+
+			// should be equal to the original image media type
+			if mediaType != patchedMediaType {
+				t.Fatalf("media type mismatch: %s != %s", mediaType, patchedMediaType)
+			}
 
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
@@ -210,6 +224,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
+		"--debug",
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
