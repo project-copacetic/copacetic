@@ -5,12 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/report"
+	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -78,6 +81,82 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	config.Client = c
 
 	return &config, nil
+}
+
+func DiscoverPlatforms(ctx context.Context, c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+	var platforms []ispec.Platform
+
+	reportNames, err := os.ReadDir(reportDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range reportNames {
+		report, err := report.TryParseScanReport(reportDir+"/"+file.Name(), scanner)
+		if err != nil {
+			log.Error("Error parsing report:", err)
+			return nil, err
+		}
+
+		platform := ispec.Platform{
+			OS:           report.Metadata.OS.Type,
+			Architecture: report.Metadata.Config.Arch,
+		}
+		platforms = append(platforms, platform)
+	}
+
+	/*
+		def, err := llb.Image(manifestRef).Marshal(ctx)
+		if err != nil {
+			log.Debug("Error marshalling image:", err)
+			return nil, err
+		}
+
+		res, err := c.Solve(ctx, gwclient.SolveRequest{
+			Evaluate:   true,
+			Definition: def.ToPB(),
+		})
+		if err != nil {
+			// resulting in error: failed to load cache key: no match for platform in manifest: not found
+			log.Debug("Error solving image:", err)
+			return nil, err
+		}
+
+		ref, err := res.SingleRef()
+		if err != nil {
+			log.Debug("Error getting single ref:", err)
+			return nil, err
+		}
+
+		manifestFile, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+			Filename: "/manifest.json",
+		})
+		if err != nil {
+			log.Debug("Error reading manifest file:", err)
+			return nil, err
+		}
+
+		var index v1.Index
+
+		if err := json.Unmarshal(manifestFile, &index); err != nil {
+			log.Debug("Error unmarshalling manifest file:", err)
+			return nil, err
+		}
+
+		var platforms2 []ispec.Platform
+		for _, m := range index.Manifests {
+			platform := ispec.Platform{
+				OS:           m.Platform.OS,
+				Architecture: m.Platform.Architecture,
+			}
+
+			platforms2 = append(platforms2, platform)
+		} */
+
+	log.Debug("Discovered platforms from report:", platforms)
+	//log.Debug("Discovered platforms from manifest:", platforms2)
+
+	return platforms, nil
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {

@@ -42,13 +42,13 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, reportDirectory, missingReport, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, missingReport, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
 	}()
 
 	select {
@@ -73,7 +73,7 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, missingReport, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
@@ -203,6 +203,16 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, pat
 			if err != nil {
 				ch <- err
 				return nil, err
+			}
+
+			// Discover platforms for multi-arch images
+			test, err := buildkit.DiscoverPlatforms(ctx, c, imageName.String(), reportDirectory, scanner)
+			if err != nil {
+				log.Error("Error discovering platforms:", err)
+				ch <- err
+				return nil, err
+			} else {
+				log.Debug("Testing DiscoverPlatforms Utility", test)
 			}
 
 			// Create package manager helper
