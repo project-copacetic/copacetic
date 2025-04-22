@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -12,8 +13,12 @@ import (
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+
 	"github.com/project-copacetic/copacetic/pkg/report"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 type Config struct {
@@ -83,7 +88,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func DiscoverPlatforms(ctx context.Context, c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+func DiscoverPlatformsFromReport(ctx context.Context, c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
 	reportNames, err := os.ReadDir(reportDir)
@@ -94,67 +99,110 @@ func DiscoverPlatforms(ctx context.Context, c gwclient.Client, manifestRef, repo
 	for _, file := range reportNames {
 		report, err := report.TryParseScanReport(reportDir+"/"+file.Name(), scanner)
 		if err != nil {
-			log.Error("Error parsing report:", err)
-			return nil, err
+			return nil, fmt.Errorf("error parsing report %w", err)
+		}
+
+		// use this to confirm that os type (ex/Debian) is linux based and supported since report.Metadata.OS.Type gives specific like "debian" rather than "linux"
+		if !isSupportedOsType(report.Metadata.OS.Type) {
+			continue
 		}
 
 		platform := ispec.Platform{
-			OS:           report.Metadata.OS.Type,
+			OS:           "linux",
 			Architecture: report.Metadata.Config.Arch,
 		}
 		platforms = append(platforms, platform)
 	}
 
-	/*
-		def, err := llb.Image(manifestRef).Marshal(ctx)
+	return platforms, nil
+}
+
+func isSupportedOsType(osType string) bool {
+	switch osType {
+	case "alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
+		return true
+	default:
+		return false
+	}
+}
+
+// This approach will not work for local images, add future support for this
+func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error) {
+	var platforms []ispec.Platform
+
+	ref, err := name.ParseReference(manifestRef)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
+	}
+
+	desc, err := remote.Get(ref)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
+	}
+
+	if desc.MediaType.IsIndex() {
+		index, err := desc.ImageIndex()
 		if err != nil {
-			log.Debug("Error marshalling image:", err)
-			return nil, err
+			return nil, fmt.Errorf("error getting image index %w", err)
 		}
 
-		res, err := c.Solve(ctx, gwclient.SolveRequest{
-			Evaluate:   true,
-			Definition: def.ToPB(),
-		})
+		manifest, err := index.IndexManifest()
 		if err != nil {
-			// resulting in error: failed to load cache key: no match for platform in manifest: not found
-			log.Debug("Error solving image:", err)
-			return nil, err
+			return nil, fmt.Errorf("error getting manifest: %w", err)
 		}
 
-		ref, err := res.SingleRef()
-		if err != nil {
-			log.Debug("Error getting single ref:", err)
-			return nil, err
-		}
-
-		manifestFile, err := ref.ReadFile(ctx, gwclient.ReadRequest{
-			Filename: "/manifest.json",
-		})
-		if err != nil {
-			log.Debug("Error reading manifest file:", err)
-			return nil, err
-		}
-
-		var index v1.Index
-
-		if err := json.Unmarshal(manifestFile, &index); err != nil {
-			log.Debug("Error unmarshalling manifest file:", err)
-			return nil, err
-		}
-
-		var platforms2 []ispec.Platform
-		for _, m := range index.Manifests {
-			platform := ispec.Platform{
+		for _, m := range manifest.Manifests {
+			if m.Platform.OS != "linux" {
+				continue
+			}
+			platforms = append(platforms, ispec.Platform{
 				OS:           m.Platform.OS,
 				Architecture: m.Platform.Architecture,
-			}
+			})
+		}
 
-			platforms2 = append(platforms2, platform)
-		} */
+		return platforms, nil
 
-	log.Debug("Discovered platforms from report:", platforms)
-	//log.Debug("Discovered platforms from manifest:", platforms2)
+	}
+
+	// return nil if not multi-arch, and handle as normal
+	return nil, nil
+}
+
+func DiscoverPlatforms(ctx context.Context, c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+	var platforms []ispec.Platform
+
+	p, err := DiscoverPlatformsFromReference(manifestRef)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errors.New("image is not multi arch")
+	}
+
+	p2, err := DiscoverPlatformsFromReport(ctx, c, manifestRef, reportDir, scanner)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Debug("Discovered platforms from manifest:", p)
+	log.Debug("Discovered platforms from report:", p2)
+
+	// if platform is present in list from reference and report, then we should patch that platform
+	key := func(pl ispec.Platform) string {
+		return pl.OS + "/" + pl.Architecture
+	}
+
+	reportSet := make(map[string]struct{}, len(p2))
+	for _, pl := range p2 {
+		reportSet[key(pl)] = struct{}{}
+	}
+
+	for _, pl := range p {
+		if _, ok := reportSet[key(pl)]; ok {
+			platforms = append(platforms, pl)
+		}
+	}
 
 	return platforms, nil
 }

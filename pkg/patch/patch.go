@@ -207,13 +207,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 
 			// Discover platforms for multi-arch images
 			test, err := buildkit.DiscoverPlatforms(ctx, c, imageName.String(), reportDirectory, scanner)
-			if err != nil {
-				log.Error("Error discovering platforms:", err)
-				ch <- err
-				return nil, err
-			} else {
-				log.Debug("Testing DiscoverPlatforms Utility", test)
-			}
+			fmt.Printf("Testing DiscoverPlatforms Utility - test: %q, err: %w", test, err)
 
 			// Create package manager helper
 			var manager pkgmgr.PackageManager
