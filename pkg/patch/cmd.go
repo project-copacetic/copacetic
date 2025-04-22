@@ -16,19 +16,19 @@ import (
 )
 
 type patchArgs struct {
-	appImage        string
-	reportFile      string
-	reportDirectory string
-	patchedTag      string
-	suffix          string
-	workingFolder   string
-	timeout         time.Duration
-	scanner         string
-	ignoreError     bool
-	format          string
-	output          string
-	bkOpts          buildkit.Opts
-	missingReport   string
+	appImage               string
+	reportFile             string
+	reportDirectory        string
+	patchedTag             string
+	suffix                 string
+	workingFolder          string
+	timeout                time.Duration
+	scanner                string
+	ignoreError            bool
+	format                 string
+	output                 string
+	bkOpts                 buildkit.Opts
+	platformSpecificErrors string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -49,7 +49,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.appImage,
 				ua.reportFile,
 				ua.reportDirectory,
-				ua.missingReport,
+				ua.platformSpecificErrors,
 				ua.patchedTag,
 				ua.suffix,
 				ua.workingFolder,
@@ -76,7 +76,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "", "", "Directory with multi-arch report files")
-	flags.StringVarP(&ua.missingReport, "missing-report", "", "skip", "Behavior for missing data in sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
+	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
