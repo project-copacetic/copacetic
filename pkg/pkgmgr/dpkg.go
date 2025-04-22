@@ -449,122 +449,74 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	/*
-
-		// Replace status file in tooling image with new status file with relevant pacakge info from image to be patched.
-		dpkgdb := updated.Run(
+		// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
+		// Uses latest version rather than actual version from original image since cannot access relevant snapshots.
+		status := updated.Run(
 			llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
 			llb.Args([]string{
 				`bash`, `-xec`, `
-						echo "$STATUS_FILE" > status
-					`,
-			})).Root() */
+								rm /var/lib/dpkg/status
+								echo "$STATUS_FILE" > /var/lib/dpkg/status
+							`,
+			})).AddMount("/var/lib/dpkg", llb.Scratch()) */
 
-	// Add relevant snapshot repos to tooling image
+	// Regenerate /var/lib/dpkg/info files based on relevant pacakges from image to be patched.
 	dpkgdb := updated.Run(
-		llb.AddEnv("OS_VERSION", dm.osVersion),
-		llb.AddEnv("OS_TYPE", dm.osType),
-		llb.Args([]string{
-			`bash`, `-xec`, `
-
-					echo "OS_VERSION: $OS_VERSION"
-					echo "OS_TYPE: $OS_TYPE"
-
-					# Map versions to codenames
-					declare -A debian_versions=(
-						["12"]="bookworm"
-						["11"]="bullseye"
-						["10"]="buster"
-						["9"]="stretch"
-						["8"]="jessie"
-						["7"]="wheezy"
-						["6"]="squeeze"
-						["5"]="lenny"
-					)
-
-					UBUNTU_MIRROR="http://archive.ubuntu.com/ubuntu"
-					DEBIAN_MIRROR="http://deb.debian.org/debian"
-					UBUNTU_OLD="http://old-releases.ubuntu.com/ubuntu"
-					DEBIAN_SNAPSHOT="http://snapshot.debian.org/archive/debian"
-					
-					if [[ "$OS_TYPE" == "ubuntu" ]]; then
-						# Update this as EOL version changes
-						if [[ "$OS_VERSION" < "18.04" ]]; then
-							REPO="$UBUNTU_OLD"
-						else
-							REPO="$UBUNTU_MIRROR"
-						fi
-
-						codename=${debian_versions[$OS_VERSION]}
-					
-						echo "Using Ubuntu repository: $REPO"
-						echo -e "deb $REPO ${codename} main restricted universe multiverse\ndeb $REPO ${codename}-updates main restricted universe multiverse\ndeb $REPO $codename-security main restricted universe multiverse" | tee /etc/apt/sources.list > /dev/null
-						
-					elif [[ "$OS_TYPE" == "debian" ]]; then
-						# Update this as EOL version changes
-						 if [[ "$OS_VERSION" < "10" ]]; then
-							REPO="$DEBIAN_SNAPSHOT"
-						else
-							REPO="$DEBIAN_MIRROR"
-						fi
-
-						codename=$(echo -n "${debian_versions[$OS_VERSION]}")
-
-						# Determine security repo format - only exists for LTS versions
-						SECURITY_REPO=""
-						if [[ $codename == "bullseye" || $codename == "bookworm" || $codename == "trixie" ]]; then
-							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}-security main contrib non-free"
-						elif [[ "$OS_VERSION" == "buster" ]]; then
-							SECURITY_REPO="deb http://security.debian.org/debian-security ${codename}/updates main contrib non-free"
-						fi
-
-						# it should be this ?
-						# https://www.veeble.com/kb/debian-repo-urls-for-sources-list-file/
-						# echo -e "deb https://deb.debian.org/debian bullseye main\ndeb-src https://deb.debian.org/debian bullseye main\ndeb https://deb.debian.org/debian-security/ bullseye-security main\ndeb-src https://deb.debian.org/debian-security/ bullseye-security main\ndeb https://deb.debian.org/debian bullseye-updates main\ndeb-src https://deb.debian.org/debian bullseye-updates main" | tee /etc/apt/sources.list > /dev/null
-
-						echo "Using Debian repository: $REPO"
-						echo -e "deb $REPO ${codename} main contrib non-free\ndeb $REPO ${codename}-updates main contrib non-free\n$SECURITY_REPO" | tee /etc/apt/sources.list > /dev/null
-					fi
-				`,
-		})).Root()
-
-	// Create a new state for tooling image with all the packages from the image to be patched
-	dpkgdb = dpkgdb.Run(
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
-		llb.AddEnv("OS_VERSION", dm.osVersion),
-		llb.AddEnv("OS_TYPE", dm.osType),
-		// llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
+		llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
 		llb.Args([]string{
 			`bash`, `-xec`, `
-							ls
-							cat /etc/apt/sources.list 
-
-							mkdir -p /tmp/debian-rootfs
-							touch /tmp/debian-rootfs/var/lib/dpkg/status
 
 							json_str=$PACKAGES_PRESENT_ALL
-							packages_formatted=""
+
+							rm /var/lib/dpkg/status
+							echo "$STATUS_FILE" > /var/lib/dpkg/status
+
+							rm -r /var/lib/dpkg/info
+							mkdir -p /var/lib/dpkg/info
+							dpkg --clear-avail
+							apt-get update
 
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-
-								packages_formatted="$packages_formatted $pkg_name-$pkg_version"
-
+								apt-get install --reinstall -y $pkg_name
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
-							echo "FINAL PACKAGES: $packages_formatted"
-
 							dpkg --configure -a
+							apt-get check
+						`,
+		})).Root()
+	/*
+		// Create a new state that holds the dpkg database
+		dpkgdb := updated.Run(
+			llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
+			llb.AddEnv("OS_VERSION", dm.osVersion),
+			llb.AddEnv("OS_TYPE", dm.osType),
+			llb.Args([]string{
+				`bash`, `-xec`, `
+										mkdir -p /tmp/debian-rootfs/var/lib/dpkg/
 
-							# errors out here
-							apt-get update
-							apt-get download --no-install-recommends $packages_formatted
-							
-							dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --install *.deb
+										json_str=$PACKAGES_PRESENT_ALL
+										packages_formatted=""
 
-							ls /tmp/debian-rootfs/var/lib/dpkg
-					`,
-		})).AddMount("/tmp/debian-rootfs/var/lib/dpkg", llb.Scratch())
+										while IFS=':' read -r package version; do
+											pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+											packages_formatted="$packages_formatted $pkg_name"
+
+										done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+
+										apt-get update
+										apt-get -f install $packages_formatted
+										apt-get download --no-install-recommends $packages_formatted
+
+										dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --install *.deb
+										dpkg --root=/tmp/debian-rootfs --configure -a
+
+										ls /tmp/debian-rootfs/var/lib/dpkg
+								`,
+			})).AddMount("/tmp/debian-rootfs/var/lib/dpkg", llb.Scratch())
+
+	*/
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -572,7 +524,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	var downloadCmd string
 	pkgStrings := []string{}
 	if updates != nil {
-		aptGetDownloadTemplate := "apt-get download --no-install-recommends %s"
+		// TO DO update for this case too + add error validation
+		aptGetDownloadTemplate := "apt-get install --no-install-recommends -y %s"
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
@@ -580,101 +533,122 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	} else {
 		// only update the outdated packages from packages.txt
 		downloadCmd = `
-		packages=$(<packages.txt)
-		for package in $packages; do
-			output=$(apt-get download --no-install-recommends "$package" 2>&1)
-			if [ $? -ne 0 ]; then
-				echo "$output" >>error_log.txt
-			fi
-		done
-		`
+			cat /var/lib/dpkg/status
+			packages=$(cat /var/cache/apt/archives/packages.txt)
+			apt-get download --no-install-recommends $packages
+			dpkg --root=/tmp/debian-rootfs --admindir=/var/lib/dpkg --force-all --force-confold --install *.deb
+			`
 	}
 
-	downloaded := dpkgdb.Dir(dpkgDownloadPath).Run(llb.Args([]string{"bash", "-c", downloadCmd}), llb.WithProxy(utils.GetProxy())).Root()
-
-	// Validate no errors were encountered if updating all
-	if updates == nil && !ignoreErrors {
-		downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+	errorValidation := "false"
+	if ignoreErrors {
+		errorValidation = "true"
 	}
 
-	diffState := llb.Diff(updated, downloaded)
+	// only need info files  and status files for correct installation
+	// mount those in
+	// mount image rootfs into busy box as well as info and status files
+	// now when we do dpkg install into the temp rootfs, it wont get override any files since openssl.cnf is already there
+	downloaded := updated.Run(
+		llb.AddEnv("IGNORE_ERRORS", errorValidation),
+		buildkit.Sh(downloadCmd),
+		llb.WithProxy(utils.GetProxy()),
+		llb.AddMount("/var/lib/dpkg", dpkgdb, llb.SourcePath("/var/lib/dpkg")), // contains updated versions of info/ and status
+		llb.AddMount("/tmp/debian-rootfs", dm.config.ImageState),               // mounting original state to have access to already configured cnf files
+	).Root()
 
-	// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
-	const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' %s \;`
-	extractCmd := fmt.Sprintf(extractTemplate, dpkgDownloadPath, unpackPath)
-	unpacked := downloaded.Run(llb.AddMount(dpkgDownloadPath, diffState), llb.Shlex(extractCmd)).Root()
-	unpackedToRoot := llb.Scratch().File(llb.Copy(unpacked, unpackPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+	/*
+		// Validate no errors were encountered if updating all
+		if updates == nil && !ignoreErrors {
+			downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+		}
 
-	// Scripted extraction of all debinfo for version checking to separate layer into local mount
-	// Note that target dirs of shell commands need to be created before use
-	mkFolders := downloaded.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).File(llb.Mkdir(dpkgStatusFolder, 0o744, llb.WithParents(true)))
-	const writeFieldsTemplate = `find . -name '*.deb' -exec sh -c "dpkg-deb -f {} > %s" \;`
-	writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, filepath.Join(resultsPath, "{}.fields"))
-	fieldsWritten := mkFolders.Dir(dpkgDownloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
+		diffState := llb.Diff(updated, downloaded)
 
-	// Write the name and version of the packages applied to the results.manifest file for the host
-	const outputResultsTemplate = `find . -name '*.fields' -exec sh -c 'grep "^Package:\|^Version:" {} >> %s' \;`
-	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, resultManifest)
-	resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-	resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
+		// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
+		const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' %s \;`
+		extractCmd := fmt.Sprintf(extractTemplate, dpkgDownloadPath, unpackPath)
+		unpacked := downloaded.Run(llb.AddMount(dpkgDownloadPath, diffState), llb.Shlex(extractCmd)).Root()
+		unpackedToRoot := llb.Scratch().File(llb.Copy(unpacked, unpackPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
 
-	resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
-	if err != nil {
-		return nil, nil, err
-	}
+		// Scripted extraction of all debinfo for version checking to separate layer into local mount
+		// Note that target dirs of shell commands need to be created before use
+		mkFolders := downloaded.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).File(llb.Mkdir(dpkgStatusFolder, 0o744, llb.WithParents(true)))
+		const writeFieldsTemplate = `find . -name '*.deb' -exec sh -c "dpkg-deb -f {} > %s" \;`
+		writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, filepath.Join(resultsPath, "{}.fields"))
+		fieldsWritten := mkFolders.Dir(dpkgDownloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
 
-	// Update the status.d folder with the package info from the applied update packages
-	// Each .fields file contains the control information for the package updated in the status.d folder.
-	// The package name is used as the file name but has to deal with two possible idiosyncrasies:
-	// - Older distroless images had a bug where the file names were base64 encoded. If the base64 versions
-	//   of the names were found in the folder previously, then we use those names.
-	copyStatusTemplate := `find . -name '*.fields' -exec sh -c
-		"awk -v statusDir=%s -v statusdNames=\"%s\"
-			'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2}
-			 END{cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
-			  cmd | getline b64name ;
-			  close(cmd) ;
-			  textname = a[\"Package:\"] ;`
+		// Write the name and version of the packages applied to the results.manifest file for the host
+		const outputResultsTemplate = `find . -name '*.fields' -exec sh -c 'grep "^Package:\|^Version:" {} >> %s' \;`
+		outputResultsCmd := fmt.Sprintf(outputResultsTemplate, resultManifest)
+		resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
+		resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
 
-	// older distroless/base digests appear to be truncated to use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
-	if !strings.Contains(dm.statusdNames, ".") {
+		resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+		if err != nil {
+			return nil, nil, err
+		}
+
+		// Update the status.d folder with the package info from the applied update packages
+		// Each .fields file contains the control information for the package updated in the status.d folder.
+		// The package name is used as the file name but has to deal with two possible idiosyncrasies:
+		// - Older distroless images had a bug where the file names were base64 encoded. If the base64 versions
+		//   of the names were found in the folder previously, then we use those names.
+		copyStatusTemplate := `find . -name '*.fields' -exec sh -c
+							"awk -v statusDir=%s -v statusdNames=\"%s\"
+								'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2}
+								 END{cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
+								  cmd | getline b64name ;
+								  close(cmd) ;
+								  textname = a[\"Package:\"] ;`
+
+		// older distroless/base digests appear to be truncated to use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
+		if !strings.Contains(dm.statusdNames, ".") {
+			copyStatusTemplate += `
+								  gsub(\"\\\\.[^.]*$\", \"\", textname);`
+		}
+
 		copyStatusTemplate += `
-			  gsub(\"\\\\.[^.]*$\", \"\", textname);`
-	}
+								  outname = b64name in b64names ? b64name : textname;
+								  outpath = statusDir \"/\" outname ;
+								  printf \"cp \\\"%%s\\\" \\\"%%s\\\"\\\n\",FILENAME,outpath }'
+							{} | sh" \;`
 
-	copyStatusTemplate += `
-			  outname = b64name in b64names ? b64name : textname;
-			  outpath = statusDir \"/\" outname ;
-			  printf \"cp \\\"%%s\\\" \\\"%%s\\\"\\\n\",FILENAME,outpath }'
-		{} | sh" \;`
+		copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
+		statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
 
-	copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
-	statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
+		// If the image has been patched before, diff the base image and patched image to retain previous patches
+		if dm.config.PatchedConfigData != nil {
+			// Diff the base image and patched image to get previous patches
+			prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
 
-	// If the image has been patched before, diff the base image and patched image to retain previous patches
-	if dm.config.PatchedConfigData != nil {
-		// Diff the base image and patched image to get previous patches
-		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
+			// Diff the manifests for the latest updates
+			manifestsDiff := llb.Diff(fieldsWritten, statusUpdated)
 
-		// Diff the manifests for the latest updates
-		manifestsDiff := llb.Diff(fieldsWritten, statusUpdated)
+			// Merging these two diffs will discard everything in the filesystem that hasn't changed
+			// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+			combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
+			squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 
-		// Merging these two diffs will discard everything in the filesystem that hasn't changed
-		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
-		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
-		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+			// Merge previous and new patches into the base image
+			completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
 
-		// Merge previous and new patches into the base image
-		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
+			return &completePatchMerge, resultsBytes, nil
+		}
 
-		return &completePatchMerge, resultsBytes, nil
-	}
+		// Diff unpacked packages layers from previous and merge with target
+		statusDiff := llb.Diff(fieldsWritten, statusUpdated)
+		merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
 
+	*/
+
+	unpacked := llb.Diff(updated, downloaded)
 	// Diff unpacked packages layers from previous and merge with target
-	statusDiff := llb.Diff(fieldsWritten, statusUpdated)
-	merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
+	//diff := llb.Diff(dm.config.ImageState, unpacked)
+	merged := llb.Merge([]llb.State{llb.Scratch(), dm.config.ImageState, unpacked})
 
-	return &merged, resultsBytes, nil
+	// return &merged, resultsBytes, nil
+	return &merged, nil, nil
 }
 
 func (dm *dpkgManager) GetPackageType() string {
