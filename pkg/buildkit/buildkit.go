@@ -90,7 +90,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func DiscoverPlatformsFromReport(manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
 	reportNames, err := os.ReadDir(reportDir)
@@ -184,7 +184,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform
 	log.Debug("Discovered platforms from manifest:", p)
 
 	if reportDir != "" {
-		p2, err := DiscoverPlatformsFromReport(manifestRef, reportDir, scanner)
+		p2, err := DiscoverPlatformsFromReport(reportDir, scanner)
 		if err != nil {
 			return nil, err
 		}

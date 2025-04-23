@@ -45,7 +45,6 @@ const (
 //
 //nolint:lll
 func Patch(ctx context.Context, timeout time.Duration, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
-
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
