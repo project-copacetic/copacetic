@@ -38,6 +38,8 @@ type Opts struct {
 	KeyPath    string
 }
 
+const linux = "linux"
+
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
@@ -88,7 +90,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func DiscoverPlatformsFromReport(ctx context.Context, c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+func DiscoverPlatformsFromReport(c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
 	reportNames, err := os.ReadDir(reportDir)
@@ -108,7 +110,7 @@ func DiscoverPlatformsFromReport(ctx context.Context, c gwclient.Client, manifes
 		}
 
 		platform := ispec.Platform{
-			OS:           "linux",
+			OS:           linux,
 			Architecture: report.Metadata.Config.Arch,
 		}
 		platforms = append(platforms, platform)
@@ -126,7 +128,7 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// This approach will not work for local images, add future support for this
+// This approach will not work for local images, add future support for this.
 func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
@@ -151,8 +153,10 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error
 			return nil, fmt.Errorf("error getting manifest: %w", err)
 		}
 
-		for _, m := range manifest.Manifests {
-			if m.Platform.OS != "linux" {
+		for i := range manifest.Manifests {
+			m := &manifest.Manifests[i]
+
+			if m.Platform.OS != linux {
 				continue
 			}
 			platforms = append(platforms, ispec.Platform{
@@ -160,16 +164,14 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error
 				Architecture: m.Platform.Architecture,
 			})
 		}
-
 		return platforms, nil
-
 	}
 
 	// return nil if not multi-arch, and handle as normal
 	return nil, nil
 }
 
-func DiscoverPlatforms(ctx context.Context, c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+func DiscoverPlatforms(c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
 	p, err := DiscoverPlatformsFromReference(manifestRef)
@@ -180,7 +182,7 @@ func DiscoverPlatforms(ctx context.Context, c gwclient.Client, manifestRef, repo
 		return nil, errors.New("image is not multi arch")
 	}
 
-	p2, err := DiscoverPlatformsFromReport(ctx, c, manifestRef, reportDir, scanner)
+	p2, err := DiscoverPlatformsFromReport(c, manifestRef, reportDir, scanner)
 	if err != nil {
 		return nil, err
 	}
@@ -277,8 +279,8 @@ func setupLabels(image string, configData []byte) (string, []byte, error) {
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
 	// since platform is obtained from host, override it in the case of Darwin
 	platform := platforms.Normalize(platforms.DefaultSpec())
-	if platform.OS != "linux" {
-		platform.OS = "linux"
+	if platform.OS != linux {
+		platform.OS = linux
 	}
 
 	def, err := st.Marshal(ctx, llb.Platform(platform))

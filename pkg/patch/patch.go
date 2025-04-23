@@ -42,7 +42,9 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(ctx context.Context, timeout time.Duration, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	ignoreError bool, bkOpts buildkit.Opts) error {
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -74,6 +76,8 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
+
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
@@ -206,8 +210,8 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 			}
 
 			// Discover platforms for multi-arch images
-			test, err := buildkit.DiscoverPlatforms(ctx, c, imageName.String(), reportDirectory, scanner)
-			fmt.Printf("Testing DiscoverPlatforms Utility - test: %q, err: %w", test, err)
+			test, err := buildkit.DiscoverPlatforms(c, imageName.String(), reportDirectory, scanner)
+			fmt.Printf("Testing DiscoverPlatforms Utility - test: %q, err: %q", test, err)
 
 			// Create package manager helper
 			var manager pkgmgr.PackageManager
