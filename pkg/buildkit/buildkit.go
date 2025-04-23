@@ -90,7 +90,7 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func DiscoverPlatformsFromReport(c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+func DiscoverPlatformsFromReport(manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
 	reportNames, err := os.ReadDir(reportDir)
@@ -171,7 +171,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error
 	return nil, nil
 }
 
-func DiscoverPlatforms(c gwclient.Client, manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
 	var platforms []ispec.Platform
 
 	p, err := DiscoverPlatformsFromReference(manifestRef)
@@ -182,7 +182,7 @@ func DiscoverPlatforms(c gwclient.Client, manifestRef, reportDir, scanner string
 		return nil, errors.New("image is not multi arch")
 	}
 
-	p2, err := DiscoverPlatformsFromReport(c, manifestRef, reportDir, scanner)
+	p2, err := DiscoverPlatformsFromReport(manifestRef, reportDir, scanner)
 	if err != nil {
 		return nil, err
 	}
