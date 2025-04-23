@@ -181,32 +181,35 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform
 	if p == nil {
 		return nil, errors.New("image is not multi arch")
 	}
-
-	p2, err := DiscoverPlatformsFromReport(manifestRef, reportDir, scanner)
-	if err != nil {
-		return nil, err
-	}
-
 	log.Debug("Discovered platforms from manifest:", p)
-	log.Debug("Discovered platforms from report:", p2)
 
-	// if platform is present in list from reference and report, then we should patch that platform
-	key := func(pl ispec.Platform) string {
-		return pl.OS + "/" + pl.Architecture
-	}
-
-	reportSet := make(map[string]struct{}, len(p2))
-	for _, pl := range p2 {
-		reportSet[key(pl)] = struct{}{}
-	}
-
-	for _, pl := range p {
-		if _, ok := reportSet[key(pl)]; ok {
-			platforms = append(platforms, pl)
+	if reportDir != "" {
+		p2, err := DiscoverPlatformsFromReport(manifestRef, reportDir, scanner)
+		if err != nil {
+			return nil, err
 		}
+		log.Debug("Discovered platforms from report:", p2)
+
+		// if platform is present in list from reference and report, then we should patch that platform
+		key := func(pl ispec.Platform) string {
+			return pl.OS + "/" + pl.Architecture
+		}
+
+		reportSet := make(map[string]struct{}, len(p2))
+		for _, pl := range p2 {
+			reportSet[key(pl)] = struct{}{}
+		}
+
+		for _, pl := range p {
+			if _, ok := reportSet[key(pl)]; ok {
+				platforms = append(platforms, pl)
+			}
+		}
+
+		return platforms, nil
 	}
 
-	return platforms, nil
+	return p, nil
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
