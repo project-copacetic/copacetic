@@ -42,15 +42,18 @@ const (
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
-//
-//nolint:lll
-func Patch(ctx context.Context, timeout time.Duration, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func Patch(
+	ctx context.Context, timeout time.Duration,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	ignoreError, push bool,
+	bkOpts buildkit.Opts,
+) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -76,7 +79,7 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 //nolint:lll
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError, push bool, bkOpts buildkit.Opts) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
 
 	if reportFile == "" && output != "" {
@@ -142,8 +145,26 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	cfg := authprovider.DockerAuthProviderConfig{ConfigFile: dockerConfig}
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
+
+	// create solve options based on whether were pushing to registry or loading to docker
 	solveOpt := client.SolveOpt{
-		Exports: []client.ExportEntry{
+		Frontend: "",         // i.e. we are passing in the llb.Definition directly
+		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+	}
+
+	// set the export options based on push flag
+	if push {
+		solveOpt.Exports = []client.ExportEntry{
+			{
+				Type: client.ExporterImage,
+				Attrs: map[string]string{
+					"name": patchedImageName,
+					"push": "true",
+				},
+			},
+		}
+	} else {
+		solveOpt.Exports = []client.ExportEntry{
 			{
 				Type: client.ExporterDocker,
 				Attrs: map[string]string{
@@ -153,9 +174,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 					return pipeW, nil
 				},
 			},
-		},
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
+		}
 	}
 	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
 	if err != nil {
@@ -324,12 +343,20 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 		return err
 	})
 
-	eg.Go(func() error {
-		if err := dockerLoad(ctx, pipeR); err != nil {
-			return err
-		}
-		return pipeR.Close()
-	})
+	// only load to docker if not pushing
+	if !push {
+		eg.Go(func() error {
+			if err := dockerLoad(ctx, pipeR); err != nil {
+				return err
+			}
+			return pipeR.Close()
+		})
+	} else {
+		// when pushing, we need to close the pipe reader since we wont use it
+		go func() {
+			pipeR.Close()
+		}()
+	}
 
 	err = eg.Wait()
 
