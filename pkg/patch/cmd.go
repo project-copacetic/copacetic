@@ -29,6 +29,7 @@ type patchArgs struct {
 	output                 string
 	bkOpts                 buildkit.Opts
 	platformSpecificErrors string
+	push                   bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -57,6 +58,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.format,
 				ua.output,
 				ua.ignoreError,
+				ua.push,
 				bkopts)
 		},
 	}
@@ -77,6 +79,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "", "", "Directory with multi-arch report files")
 	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
+	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
