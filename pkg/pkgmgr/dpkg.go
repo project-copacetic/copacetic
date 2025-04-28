@@ -444,22 +444,13 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							mkdir /var/cache/apt/archives
 							cd /var/cache/apt/archives
 							echo "$update_packages" > packages.txt
+
+							mkdir -p /tmp/debian-rootfs/var/lib/dpkg
 					`,
 			})).Root()
 	}
 
-	/*
-		// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
-		// Uses latest version rather than actual version from original image since cannot access relevant snapshots.
-		status := updated.Run(
-			llb.AddEnv("STATUS_FILE", dm.tempStatusFile),
-			llb.Args([]string{
-				`bash`, `-xec`, `
-								rm /var/lib/dpkg/status
-								echo "$STATUS_FILE" > /var/lib/dpkg/status
-							`,
-			})).AddMount("/var/lib/dpkg", llb.Scratch()) */
-
+	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
 	// Regenerate /var/lib/dpkg/info files based on relevant pacakges from image to be patched.
 	dpkgdb := updated.Run(
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
@@ -486,37 +477,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							apt-get check
 						`,
 		})).Root()
-	/*
-		// Create a new state that holds the dpkg database
-		dpkgdb := updated.Run(
-			llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
-			llb.AddEnv("OS_VERSION", dm.osVersion),
-			llb.AddEnv("OS_TYPE", dm.osType),
-			llb.Args([]string{
-				`bash`, `-xec`, `
-										mkdir -p /tmp/debian-rootfs/var/lib/dpkg/
-
-										json_str=$PACKAGES_PRESENT_ALL
-										packages_formatted=""
-
-										while IFS=':' read -r package version; do
-											pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-											packages_formatted="$packages_formatted $pkg_name"
-
-										done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
-
-										apt-get update
-										apt-get -f install $packages_formatted
-										apt-get download --no-install-recommends $packages_formatted
-
-										dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --install *.deb
-										dpkg --root=/tmp/debian-rootfs --configure -a
-
-										ls /tmp/debian-rootfs/var/lib/dpkg
-								`,
-			})).AddMount("/tmp/debian-rootfs/var/lib/dpkg", llb.Scratch())
-
-	*/
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -533,10 +493,71 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	} else {
 		// only update the outdated packages from packages.txt
 		downloadCmd = `
-			cat /var/lib/dpkg/status
+			set -ex
+
 			packages=$(cat /var/cache/apt/archives/packages.txt)
-			apt-get download --no-install-recommends $packages
-			dpkg --root=/tmp/debian-rootfs --admindir=/var/lib/dpkg --force-all --force-confold --install *.deb
+			apt-get update > /dev/null 2>&1
+			apt-get download --no-install-recommends $packages > /dev/null 2>&1
+			dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb > /dev/null 2>&1
+			dpkg --root=/tmp/debian-rootfs --configure -a > /dev/null 2>&1
+
+			# create new status.d with contents from status file after updates
+			STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
+			OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
+			mkdir -p "$OUTPUT_DIR"
+
+			package_name=""
+			package_content=""
+			
+			while IFS= read -r line || [ -n "$line" ]; do
+				if [ -z "$line" ]; then
+					# end of a package block
+					if [ -n "$package_name" ]; then
+					 	# handle special case for base-files
+						if [ "$package_name" = "base-files" ]; then
+							output_name="base"
+						else
+							output_name="$package_name"
+						fi
+						# write the collected content to the package file
+						echo "$package_content" > "$OUTPUT_DIR/$output_name"
+					fi
+
+					# re-set for next package
+					package_name=""
+					package_content=""
+				else
+					# add current line to package content
+					if [ -z "$package_content" ]; then
+						package_content="$line"
+					else
+						package_content="$package_content
+$line"
+					fi
+
+					case "$line" in
+						"Package:"*)
+							# extract package name
+							package_name=$(echo "$line" | cut -d' ' -f2)
+							;;
+					esac
+				fi
+			done < "$STATUS_FILE"
+
+			# handle last block if file does not end with a newline
+			if [ -n "$package_name" ] && [ -n "$package_content" ]; then
+				echo "$package_content" > "$OUTPUT_DIR/$package_name"
+			fi
+
+			# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
+			find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
+
+			# write manfiests?
+			# add err valdiation
+			# do same for scan report case
+			# why do i need to push image?
+			# packages have libss1.1
+			# integration tests
 			`
 	}
 
@@ -545,24 +566,18 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		errorValidation = "true"
 	}
 
-	// only need info files  and status files for correct installation
-	// mount those in
-	// mount image rootfs into busy box as well as info and status files
-	// now when we do dpkg install into the temp rootfs, it wont get override any files since openssl.cnf is already there
+	// Only need info files and status files for correct installation - copy those.
+	updated = updated.File(llb.Copy(dpkgdb, "/var/lib/dpkg/", "/tmp/debian-rootfs/var/lib/dpkg"))
+
+	// Mount image rootfs into tooling image.
+	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
-		llb.AddMount("/var/lib/dpkg", dpkgdb, llb.SourcePath("/var/lib/dpkg")), // contains updated versions of info/ and status
-		llb.AddMount("/tmp/debian-rootfs", dm.config.ImageState),               // mounting original state to have access to already configured cnf files
-	).Root()
+	).AddMount("/tmp/debian-rootfs", dm.config.ImageState)
 
 	/*
-		// Validate no errors were encountered if updating all
-		if updates == nil && !ignoreErrors {
-			downloaded = downloaded.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
-		}
-
 		diffState := llb.Diff(updated, downloaded)
 
 		// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
@@ -635,11 +650,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 			return &completePatchMerge, resultsBytes, nil
 		}
-
-		// Diff unpacked packages layers from previous and merge with target
-		statusDiff := llb.Diff(fieldsWritten, statusUpdated)
-		merged := llb.Merge([]llb.State{dm.config.ImageState, unpackedToRoot, statusDiff})
-
 	*/
 
 	unpacked := llb.Diff(updated, downloaded)
