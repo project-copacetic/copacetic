@@ -132,7 +132,7 @@ func TestGetAPTImageName(t *testing.T) {
 	// Run test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getAPTImageName(tc.manifest, tc.manifest.Metadata.OS.Version)
+			got := getAPTImageName(tc.manifest, tc.manifest.Metadata.OS.Version, true)
 			if got != tc.want {
 				t.Errorf("getAPTImageName() = %v, want %v", got, tc.want)
 			}
