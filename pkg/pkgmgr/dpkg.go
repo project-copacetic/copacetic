@@ -242,29 +242,26 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 		dm.statusdNames = strings.ReplaceAll(string(statusdNamesBytes), "\n", " ")
 		dm.statusdNames = strings.TrimSpace(dm.statusdNames)
 
-		// In the case of updating all packages, read each file to save package names and versions
-		if updateAll {
-			namesList := strings.Fields(dm.statusdNames)
-			packageInfo := make(map[string]string)
-			var buffer bytes.Buffer
+		namesList := strings.Fields(dm.statusdNames)
+		packageInfo := make(map[string]string)
+		var buffer bytes.Buffer
 
-			for _, name := range namesList {
-				fileBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
+		for _, name := range namesList {
+			fileBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
+			if err != nil {
+				return err
+			}
+
+			if !strings.HasSuffix(name, ".md5sums") {
+				pkgName, pkgVersion, err := GetPackageInfo(string(fileBytes))
 				if err != nil {
 					return err
 				}
 
-				if !strings.HasSuffix(name, ".md5sums") {
-					pkgName, pkgVersion, err := GetPackageInfo(string(fileBytes))
-					if err != nil {
-						return err
-					}
+				buffer.Write(fileBytes)
+				buffer.WriteString("\n")
 
-					buffer.Write(fileBytes)
-					buffer.WriteString("\n")
-
-					packageInfo[pkgName] = pkgVersion
-				}
+				packageInfo[pkgName] = pkgVersion
 			}
 
 			dm.tempStatusFile = buffer.String()
@@ -444,11 +441,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							mkdir /var/cache/apt/archives
 							cd /var/cache/apt/archives
 							echo "$update_packages" > packages.txt
-
-							mkdir -p /tmp/debian-rootfs/var/lib/dpkg
 					`,
 			})).Root()
 	}
+
+	updated = updated.Run(buildkit.Sh("mkdir -p /tmp/debian-rootfs/var/lib/dpkg")).Root()
 
 	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
 	// Regenerate /var/lib/dpkg/info files based on relevant pacakges from image to be patched.
@@ -732,8 +729,6 @@ $line"
 	*/
 
 	unpacked := llb.Diff(updated, downloaded)
-	// Diff unpacked packages layers from previous and merge with target
-	//diff := llb.Diff(dm.config.ImageState, unpacked)
 	merged := llb.Merge([]llb.State{llb.Scratch(), dm.config.ImageState, unpacked})
 
 	// return &merged, resultsBytes, nil
