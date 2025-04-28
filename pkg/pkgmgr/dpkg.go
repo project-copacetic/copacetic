@@ -470,7 +470,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								apt-get install --reinstall -y $pkg_name
+								apt-get install --reinstall --no-install-recommends -y $pkg_name
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
 							dpkg --configure -a
@@ -484,8 +484,80 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	var downloadCmd string
 	pkgStrings := []string{}
 	if updates != nil {
-		// TO DO update for this case too + add error validation
-		aptGetDownloadTemplate := "apt-get install --no-install-recommends -y %s"
+		aptGetDownloadTemplate := `
+		set -ex
+
+		packages="%s"
+		apt-get update
+
+		output=$(apt-get download --no-install-recommends $packages 2>&1)
+		if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+			exit $?
+		fi
+		
+		output=$(dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb 2>&1)
+		if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+			exit $?
+		fi
+
+		output=$(dpkg --root=/tmp/debian-rootfs --configure -a 2>&1)
+		if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+			exit $?
+		fi
+
+		# create new status.d with contents from status file after updates
+		STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
+		OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
+		mkdir -p "$OUTPUT_DIR"
+
+		package_name=""
+		package_content=""
+		
+		while IFS= read -r line || [ -n "$line" ]; do
+			if [ -z "$line" ]; then
+				# end of a package block
+				if [ -n "$package_name" ]; then
+						# handle special case for base-files
+					if [ "$package_name" = "base-files" ]; then
+						output_name="base"
+					elif [ "$package_name" = "libssl1.1" ]; then
+						output_name="libssl1"
+					else 
+						output_name="$package_name"
+					fi
+					# write the collected content to the package file
+					echo "$package_content" > "$OUTPUT_DIR/$output_name"
+				fi
+
+				# re-set for next package
+				package_name=""
+				package_content=""
+			else
+				# add current line to package content
+				if [ -z "$package_content" ]; then
+					package_content="$line"
+				else
+					package_content="$package_content
+$line"
+				fi
+
+				case "$line" in
+					"Package:"*)
+						# extract package name
+						package_name=$(echo "$line" | cut -d' ' -f2)
+						;;
+				esac
+			fi
+		done < "$STATUS_FILE"
+
+		# handle last block if file does not end with a newline
+		if [ -n "$package_name" ] && [ -n "$package_content" ]; then
+			echo "$package_content" > "$OUTPUT_DIR/$package_name"
+		fi
+
+		# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
+		find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
+		`
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
@@ -496,10 +568,22 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			set -ex
 
 			packages=$(cat /var/cache/apt/archives/packages.txt)
-			apt-get update > /dev/null 2>&1
-			apt-get download --no-install-recommends $packages > /dev/null 2>&1
-			dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb > /dev/null 2>&1
-			dpkg --root=/tmp/debian-rootfs --configure -a > /dev/null 2>&1
+			apt-get update
+
+			output=$(apt-get download --no-install-recommends $packages 2>&1)
+			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+				exit $?
+			fi
+			
+			output=$(dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb 2>&1)
+			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+				exit $?
+			fi
+
+			output=$(dpkg --root=/tmp/debian-rootfs --configure -a 2>&1)
+			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
+				exit $?
+			fi
 
 			# create new status.d with contents from status file after updates
 			STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
@@ -516,7 +600,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 					 	# handle special case for base-files
 						if [ "$package_name" = "base-files" ]; then
 							output_name="base"
-						else
+						elif [ "$package_name" = "libssl1.1" ]; then
+							output_name="libssl1"
+						else 
 							output_name="$package_name"
 						fi
 						# write the collected content to the package file
@@ -551,13 +637,6 @@ $line"
 
 			# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
 			find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
-
-			# write manfiests?
-			# add err valdiation
-			# do same for scan report case
-			# why do i need to push image?
-			# packages have libss1.1
-			# integration tests
 			`
 	}
 
