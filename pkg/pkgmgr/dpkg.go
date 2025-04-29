@@ -482,25 +482,17 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	pkgStrings := []string{}
 	if updates != nil {
 		aptGetDownloadTemplate := `
-		set -ex
+		if [ "$IGNORE_ERRORS" = "true" ]; then
+			set -x
+		else
+			set -ex
+		fi
 
 		packages="%s"
 		apt-get update
-
-		output=$(apt-get download --no-install-recommends $packages 2>&1)
-		if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-			exit $?
-		fi
-		
-		output=$(dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb 2>&1)
-		if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-			exit $?
-		fi
-
-		output=$(dpkg --root=/tmp/debian-rootfs --configure -a 2>&1)
-		if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-			exit $?
-		fi
+		apt-get download --no-install-recommends $packages
+		dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
+		dpkg --root=/tmp/debian-rootfs --configure -a
 
 		# create new status.d with contents from status file after updates
 		STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
@@ -562,25 +554,17 @@ $line"
 	} else {
 		// only update the outdated packages from packages.txt
 		downloadCmd = `
-			set -ex
+			if [ "$IGNORE_ERRORS" = "true" ]; then
+				set -x
+			else
+				set -ex
+			fi
 
 			packages=$(cat /var/cache/apt/archives/packages.txt)
 			apt-get update
-
-			output=$(apt-get download --no-install-recommends $packages 2>&1)
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
-			fi
-			
-			output=$(dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb 2>&1)
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
-			fi
-
-			output=$(dpkg --root=/tmp/debian-rootfs --configure -a 2>&1)
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
-			fi
+			apt-get download --no-install-recommends $packages
+			dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
+			dpkg --root=/tmp/debian-rootfs --configure -a
 
 			# create new status.d with contents from status file after updates
 			STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
