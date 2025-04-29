@@ -690,27 +690,24 @@ $line"
 							{} | sh" \;`
 
 		copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
-		statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root()
+		statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root() 	*/
 
-		// If the image has been patched before, diff the base image and patched image to retain previous patches
-		if dm.config.PatchedConfigData != nil {
-			// Diff the base image and patched image to get previous patches
-			prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if dm.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(dm.config.ImageState, dm.config.PatchedImageState)
 
-			// Diff the manifests for the latest updates
-			manifestsDiff := llb.Diff(fieldsWritten, statusUpdated)
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, downloaded})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 
-			// Merging these two diffs will discard everything in the filesystem that hasn't changed
-			// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
-			combinedPatch := llb.Merge([]llb.State{prevPatchDiff, manifestsDiff, unpackedToRoot})
-			squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
 
-			// Merge previous and new patches into the base image
-			completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
-
-			return &completePatchMerge, resultsBytes, nil
-		}
-	*/
+		//return &completePatchMerge, resultsBytes, nil
+		return &completePatchMerge, nil, nil
+	}
 
 	unpacked := llb.Diff(updated, downloaded)
 	merged := llb.Merge([]llb.State{llb.Scratch(), dm.config.ImageState, unpacked})
