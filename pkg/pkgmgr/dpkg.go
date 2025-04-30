@@ -125,7 +125,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 	if _, err := tryImage(ctx, toolImageName, dm.config.Client); err != nil {
 		toolImageName = getAPTImageName(manifest, dm.osVersion, false)
 	}
-	if err := dm.probeDPKGStatus(ctx, toolImageName, (manifest == nil)); err != nil {
+	if err := dm.probeDPKGStatus(ctx, toolImageName); err != nil {
 		return nil, nil, err
 	}
 
@@ -184,7 +184,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // Probe the target image for:
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
-func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, updateAll bool) error {
+func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
 	imageStateCurrent := dm.config.ImageState
 	if dm.config.PatchedConfigData != nil {
 		imageStateCurrent = dm.config.PatchedImageState
