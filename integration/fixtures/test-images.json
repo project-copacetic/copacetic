@@ -198,7 +198,7 @@
         "tag": "test-debian",
         "digest": "sha256:d673a9207cfe511bf7bfd63854dd5a0582e38fe95ae2cbf51866441b4f751768",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt, libssl1",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
     }
 ]
