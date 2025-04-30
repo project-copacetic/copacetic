@@ -570,6 +570,8 @@ $line"
 		for deb in *.deb; do
 			dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
 		done
+
+		exit 0
 		`
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
@@ -647,6 +649,8 @@ $line"
 			for deb in *.deb; do
 				dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
 			done
+
+			exit 0
 			`
 	}
 
@@ -670,8 +674,6 @@ $line"
 	if err != nil {
 		return nil, nil, err
 	}
-
-	log.Debug(string(resultBytes))
 
 	withoutManifest := downloaded.File(llb.Rm("/manifest"))
 	diffBase := llb.Diff(dm.config.ImageState, withoutManifest)
