@@ -16,17 +16,20 @@ import (
 )
 
 type patchArgs struct {
-	appImage      string
-	reportFile    string
-	patchedTag    string
-	suffix        string
-	workingFolder string
-	timeout       time.Duration
-	scanner       string
-	ignoreError   bool
-	format        string
-	output        string
-	bkOpts        buildkit.Opts
+	appImage               string
+	reportFile             string
+	reportDirectory        string
+	patchedTag             string
+	suffix                 string
+	workingFolder          string
+	timeout                time.Duration
+	scanner                string
+	ignoreError            bool
+	format                 string
+	output                 string
+	bkOpts                 buildkit.Opts
+	platformSpecificErrors string
+	push                   bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -46,6 +49,8 @@ func NewPatchCmd() *cobra.Command {
 				ua.timeout,
 				ua.appImage,
 				ua.reportFile,
+				ua.reportDirectory,
+				ua.platformSpecificErrors,
 				ua.patchedTag,
 				ua.suffix,
 				ua.workingFolder,
@@ -53,6 +58,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.format,
 				ua.output,
 				ua.ignoreError,
+				ua.push,
 				bkopts)
 		},
 	}
@@ -71,6 +77,9 @@ func NewPatchCmd() *cobra.Command {
 	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
+	flags.StringVarP(&ua.reportDirectory, "report-directory", "", "", "Directory with multi-arch report files")
+	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
+	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

@@ -15,7 +15,6 @@ import (
 	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -226,7 +225,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 
 	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion, true)
 	// check if we can resolve the tool image
-	if _, err := rm.tryImage(ctx, toolImageName); err != nil {
+	if _, err := tryImage(ctx, toolImageName, rm.config.Client); err != nil {
 		toolImageName = getRPMImageName(manifest, rm.osType, rm.osVersion, false)
 	}
 
@@ -260,27 +259,12 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	return updatedImageState, errPkgs, nil
 }
 
-// tryImage attempts to create an llb.Image reference and call c.Solve() on it
-// to confirm it exists. If it doesn't, it will return an error so we can fallback.
-func (rm *rpmManager) tryImage(ctx context.Context, imageRef string) (llb.State, error) {
-	st := llb.Image(imageRef)
-	def, err := st.Marshal(ctx)
-	if err != nil {
-		return llb.State{}, err
-	}
-
-	// Evaluate the solve to see if BuildKit can actually resolve it
-	_, err = rm.config.Client.Solve(ctx, client.SolveRequest{
-		Definition: def.ToPB(),
-		Evaluate:   true,
-	})
-	if err != nil {
-		return llb.State{}, fmt.Errorf("failed to resolve %s: %w", imageRef, err)
-	}
-	return st, nil
-}
-
 func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		log.Error("unable to get image platform")
@@ -303,7 +287,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) erro
 	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
 
 	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
-	toolsApplied := rm.config.ImageState.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
+	toolsApplied := imageStateCurrent.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
 		File(llb.Mkdir(inputPath, 0o744, llb.WithParents(true)))
@@ -475,6 +459,11 @@ func parseManifestFile(file string) (map[string]string, error) {
 func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	pkgs := ""
 
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	// If specific updates, provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
@@ -493,15 +482,15 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		if dnfTooling == "" {
 			dnfTooling = rm.rpmTools["dnf"]
 		}
-		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
 		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const dnfInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
+		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
-		checkUpdateTemplate := `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
 		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
@@ -509,7 +498,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
 		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
@@ -520,7 +509,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
 	}
-	installed := rm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	installed := imageStateCurrent.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
@@ -568,8 +557,13 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 }
 
 func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) bool {
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
-	stateWithCheck := rm.config.ImageState.Run(llb.Shlex(checkUpdate)).Root()
+	stateWithCheck := imageStateCurrent.Run(llb.Shlex(checkUpdate)).Root()
 
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")

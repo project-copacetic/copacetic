@@ -79,7 +79,7 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 }
 
 // Map the target image OSType & OSVersion to an appropriate tooling image.
-func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) string {
+func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string, useCachePrefix bool) string {
 	version := osVersion
 	osType := Debian
 
@@ -94,6 +94,9 @@ func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string) str
 	}
 
 	log.Debugf("Using %s:%s as basis for tooling image", osType, version)
+	if !useCachePrefix {
+		return fmt.Sprintf("%s:%s", osType, version)
+	}
 	return fmt.Sprintf("%s/%s:%s", imageCachePrefix, osType, version)
 }
 
@@ -118,7 +121,10 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
 	// Probe for additional information to execute the appropriate update install graphs
-	toolImageName := getAPTImageName(manifest, dm.osVersion)
+	toolImageName := getAPTImageName(manifest, dm.osVersion, true) // check if we can resolve the tool image
+	if _, err := tryImage(ctx, toolImageName, dm.config.Client); err != nil {
+		toolImageName = getAPTImageName(manifest, dm.osVersion, false)
+	}
 	if err := dm.probeDPKGStatus(ctx, toolImageName, (manifest == nil)); err != nil {
 		return nil, nil, err
 	}
@@ -179,6 +185,11 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
 func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, updateAll bool) error {
+	imageStateCurrent := dm.config.ImageState
+	if dm.config.PatchedConfigData != nil {
+		imageStateCurrent = dm.config.PatchedImageState
+	}
+
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		return fmt.Errorf("unable to get image platform %w", err)
@@ -197,7 +208,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, up
 
 	const installBusyBoxCmd = "apt-get install busybox-static"
 	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd), llb.WithProxy(utils.GetProxy())).Root()
-	busyBoxApplied := dm.config.ImageState.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
+	busyBoxApplied := imageStateCurrent.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
 	resultsState := mkFolders.Run(
@@ -307,11 +318,19 @@ func GetPackageInfo(file string) (string, string, error) {
 //
 // Images with neither (i.e. Google Debian Distroless) should be patched with unpackAndMergeUpdates.
 func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
-	aptGetUpdated := dm.config.ImageState.Run(
+	imageStateCurrent := dm.config.ImageState
+	if dm.config.PatchedConfigData != nil {
+		imageStateCurrent = dm.config.PatchedImageState
+	}
+
+	aptGetUpdated := imageStateCurrent.Run(
 		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 	).Root()
+
+	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
+	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
@@ -426,7 +445,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-								latest_version=$(apt-cache show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+								latest_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
 
 								if [ "$latest_version" != "$pkg_version" ]; then
 									update_packages="$update_packages $pkg_name"

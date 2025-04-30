@@ -4,13 +4,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/project-copacetic/copacetic/pkg/report"
+	log "github.com/sirupsen/logrus"
+
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 type Config struct {
@@ -29,6 +37,8 @@ type Opts struct {
 	CertPath   string
 	KeyPath    string
 }
+
+const linux = "linux"
 
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
 	// Initialize buildkit config for the target image
@@ -78,6 +88,128 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	config.Client = c
 
 	return &config, nil
+}
+
+func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, error) {
+	var platforms []ispec.Platform
+
+	reportNames, err := os.ReadDir(reportDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range reportNames {
+		report, err := report.TryParseScanReport(reportDir+"/"+file.Name(), scanner)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing report %w", err)
+		}
+
+		// use this to confirm that os type (ex/Debian) is linux based and supported since report.Metadata.OS.Type gives specific like "debian" rather than "linux"
+		if !isSupportedOsType(report.Metadata.OS.Type) {
+			continue
+		}
+
+		platform := ispec.Platform{
+			OS:           linux,
+			Architecture: report.Metadata.Config.Arch,
+		}
+		platforms = append(platforms, platform)
+	}
+
+	return platforms, nil
+}
+
+func isSupportedOsType(osType string) bool {
+	switch osType {
+	case "alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
+		return true
+	default:
+		return false
+	}
+}
+
+// This approach will not work for local images, add future support for this.
+func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error) {
+	var platforms []ispec.Platform
+
+	ref, err := name.ParseReference(manifestRef)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
+	}
+
+	desc, err := remote.Get(ref)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
+	}
+
+	if desc.MediaType.IsIndex() {
+		index, err := desc.ImageIndex()
+		if err != nil {
+			return nil, fmt.Errorf("error getting image index %w", err)
+		}
+
+		manifest, err := index.IndexManifest()
+		if err != nil {
+			return nil, fmt.Errorf("error getting manifest: %w", err)
+		}
+
+		for i := range manifest.Manifests {
+			m := &manifest.Manifests[i]
+
+			if m.Platform.OS != linux {
+				continue
+			}
+			platforms = append(platforms, ispec.Platform{
+				OS:           m.Platform.OS,
+				Architecture: m.Platform.Architecture,
+			})
+		}
+		return platforms, nil
+	}
+
+	// return nil if not multi-arch, and handle as normal
+	return nil, nil
+}
+
+func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
+	var platforms []ispec.Platform
+
+	p, err := DiscoverPlatformsFromReference(manifestRef)
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
+		return nil, errors.New("image is not multi arch")
+	}
+	log.Debug("Discovered platforms from manifest:", p)
+
+	if reportDir != "" {
+		p2, err := DiscoverPlatformsFromReport(reportDir, scanner)
+		if err != nil {
+			return nil, err
+		}
+		log.Debug("Discovered platforms from report:", p2)
+
+		// if platform is present in list from reference and report, then we should patch that platform
+		key := func(pl ispec.Platform) string {
+			return pl.OS + "/" + pl.Architecture
+		}
+
+		reportSet := make(map[string]struct{}, len(p2))
+		for _, pl := range p2 {
+			reportSet[key(pl)] = struct{}{}
+		}
+
+		for _, pl := range p {
+			if _, ok := reportSet[key(pl)]; ok {
+				platforms = append(platforms, pl)
+			}
+		}
+
+		return platforms, nil
+	}
+
+	return p, nil
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
@@ -150,8 +282,8 @@ func setupLabels(image string, configData []byte) (string, []byte, error) {
 func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
 	// since platform is obtained from host, override it in the case of Darwin
 	platform := platforms.Normalize(platforms.DefaultSpec())
-	if platform.OS != "linux" {
-		platform.OS = "linux"
+	if platform.OS != linux {
+		platform.OS = linux
 	}
 
 	def, err := st.Marshal(ctx, llb.Platform(platform))
