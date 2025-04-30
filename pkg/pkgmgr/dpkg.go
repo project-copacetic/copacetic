@@ -546,6 +546,11 @@ $line"
 
 		# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
 		find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
+
+		# write results manifest for validation
+		for deb in *.deb; do
+			dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
+		done
 		`
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
@@ -618,6 +623,11 @@ $line"
 
 			# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
 			find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
+
+			# write results manifest for validation
+			for deb in *.deb; do
+				dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
+			done
 			`
 	}
 
@@ -637,60 +647,16 @@ $line"
 		llb.WithProxy(utils.GetProxy()),
 	).AddMount("/tmp/debian-rootfs", dm.config.ImageState)
 
-	/*
-		diffState := llb.Diff(updated, downloaded)
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &downloaded, "/manifest")
+	if err != nil {
+		return nil, nil, err
+	}
 
-		// Scripted enumeration and dpkg unpack of all downloaded packages [layer to merge with target]
-		const extractTemplate = `find %s -name '*.deb' -exec dpkg-deb -x '{}' %s \;`
-		extractCmd := fmt.Sprintf(extractTemplate, dpkgDownloadPath, unpackPath)
-		unpacked := downloaded.Run(llb.AddMount(dpkgDownloadPath, diffState), llb.Shlex(extractCmd)).Root()
-		unpackedToRoot := llb.Scratch().File(llb.Copy(unpacked, unpackPath, "/", &llb.CopyInfo{CopyDirContentsOnly: true}))
+	log.Debug(string(resultBytes))
 
-		// Scripted extraction of all debinfo for version checking to separate layer into local mount
-		// Note that target dirs of shell commands need to be created before use
-		mkFolders := downloaded.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).File(llb.Mkdir(dpkgStatusFolder, 0o744, llb.WithParents(true)))
-		const writeFieldsTemplate = `find . -name '*.deb' -exec sh -c "dpkg-deb -f {} > %s" \;`
-		writeFieldsCmd := fmt.Sprintf(writeFieldsTemplate, filepath.Join(resultsPath, "{}.fields"))
-		fieldsWritten := mkFolders.Dir(dpkgDownloadPath).Run(llb.Shlex(writeFieldsCmd)).Root()
-
-		// Write the name and version of the packages applied to the results.manifest file for the host
-		const outputResultsTemplate = `find . -name '*.fields' -exec sh -c 'grep "^Package:\|^Version:" {} >> %s' \;`
-		outputResultsCmd := fmt.Sprintf(outputResultsTemplate, resultManifest)
-		resultsWritten := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-		resultsDiff := llb.Diff(fieldsWritten, resultsWritten)
-
-		resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
-		if err != nil {
-			return nil, nil, err
-		}
-
-		// Update the status.d folder with the package info from the applied update packages
-		// Each .fields file contains the control information for the package updated in the status.d folder.
-		// The package name is used as the file name but has to deal with two possible idiosyncrasies:
-		// - Older distroless images had a bug where the file names were base64 encoded. If the base64 versions
-		//   of the names were found in the folder previously, then we use those names.
-		copyStatusTemplate := `find . -name '*.fields' -exec sh -c
-							"awk -v statusDir=%s -v statusdNames=\"%s\"
-								'BEGIN{split(statusdNames,names); for (n in names) b64names[names[n]]=\"\"} {a[\$1]=\$2}
-								 END{cmd = \"printf \" a[\"Package:\"] \" | base64\" ;
-								  cmd | getline b64name ;
-								  close(cmd) ;
-								  textname = a[\"Package:\"] ;`
-
-		// older distroless/base digests appear to be truncated to use the name up to the first period (e.g. 'libssl1' instead of 'libssl1.1')
-		if !strings.Contains(dm.statusdNames, ".") {
-			copyStatusTemplate += `
-								  gsub(\"\\\\.[^.]*$\", \"\", textname);`
-		}
-
-		copyStatusTemplate += `
-								  outname = b64name in b64names ? b64name : textname;
-								  outpath = statusDir \"/\" outname ;
-								  printf \"cp \\\"%%s\\\" \\\"%%s\\\"\\\n\",FILENAME,outpath }'
-							{} | sh" \;`
-
-		copyStatusCmd := fmt.Sprintf(strings.ReplaceAll(copyStatusTemplate, "\n", ""), dpkgStatusFolder, dm.statusdNames)
-		statusUpdated := fieldsWritten.Dir(resultsPath).Run(llb.Shlex(copyStatusCmd)).Root() 	*/
+	withoutManifest := downloaded.File(llb.Rm("/manifest"))
+	diffBase := llb.Diff(dm.config.ImageState, withoutManifest)
+	downloaded = llb.Merge([]llb.State{diffBase, withoutManifest})
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if dm.config.PatchedConfigData != nil {
@@ -705,15 +671,13 @@ $line"
 		// Merge previous and new patches into the base image
 		completePatchMerge := llb.Merge([]llb.State{dm.config.ImageState, squashedPatch})
 
-		//return &completePatchMerge, resultsBytes, nil
-		return &completePatchMerge, nil, nil
+		return &completePatchMerge, resultBytes, nil
 	}
 
 	unpacked := llb.Diff(updated, downloaded)
 	merged := llb.Merge([]llb.State{llb.Scratch(), dm.config.ImageState, unpacked})
 
-	// return &merged, resultsBytes, nil
-	return &merged, nil, nil
+	return &merged, resultBytes, nil
 }
 
 func (dm *dpkgManager) GetPackageType() string {
