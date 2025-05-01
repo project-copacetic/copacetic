@@ -188,7 +188,7 @@
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
         "tag": "test-rpm",
-        "digest": "sha256:1be767290e29e08ecf00f01cca6b86498d2b98b128f327a010a3264c55b80b7d",
+        "digest": "sha256:a3ce5460b21cefef782ffd5f8b751c18d6b15b96e81da26248bfab032b4db742",
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
         "ignoreErrors": false
@@ -196,7 +196,7 @@
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
         "tag": "test-debian",
-        "digest": "sha256:d673a9207cfe511bf7bfd63854dd5a0582e38fe95ae2cbf51866441b4f751768",
+        "digest": "sha256:453ce8b732afa551d2e8772d131d8b060b765a4532b33c1fc1e7a90569fb2fbb",
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
