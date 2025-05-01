@@ -486,10 +486,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								apt-get install --reinstall -y $pkg_name
+								apt-get install --fix-broken --reinstall -y $pkg_name
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
-							apt --fix-broken install
 							dpkg --configure -a
 							apt-get check
 						`,
