@@ -41,6 +41,11 @@ const (
 	defaultTag      = "latest"
 )
 
+// for testing.
+var (
+	bkNewClient = buildkit.NewClient
+)
+
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
@@ -135,7 +140,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 		log.Debugf("updates to apply: %v", updates)
 	}
 
-	bkClient, err := buildkit.NewClient(ctx, bkOpts)
+	bkClient, err := bkNewClient(ctx, bkOpts)
 	if err != nil {
 		return err
 	}
@@ -313,7 +318,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 		}, buildChannel)
 
 		// Currently can only validate updates if updating via scanner
-		if reportFile != "" && validatedManifest != nil {
+		if err == nil && solveResponse != nil && reportFile != "" && validatedManifest != nil {
 			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
 			// vex document must contain at least one statement
