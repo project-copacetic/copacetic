@@ -482,6 +482,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							rm -r /var/lib/dpkg/info
 							mkdir -p /var/lib/dpkg/info
 							dpkg --clear-avail
+							apt-get clean
+							apt-get autoremove -y
 							apt-get update
 
 							while IFS=':' read -r package version; do
