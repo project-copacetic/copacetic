@@ -478,13 +478,12 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							json_str=$PACKAGES_PRESENT_ALL
 
 							rm /var/lib/dpkg/status
-							mv "$STATUS_FILE" /var/lib/dpkg/status
+							echo "$STATUS_FILE" > /var/lib/dpkg/status
 
 							rm -r /var/lib/dpkg/info
 							mkdir -p /var/lib/dpkg/info
 
 							apt-get clean
-							apt-get autoremove -y
 
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
