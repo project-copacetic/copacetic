@@ -22,7 +22,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.5
-	github.com/quay/claircore v1.5.36
+	github.com/quay/claircore v1.5.37
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
