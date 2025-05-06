@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"strings"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -15,6 +17,7 @@ import (
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -39,6 +42,13 @@ type Opts struct {
 }
 
 const linux = "linux"
+
+// for testing.
+var (
+	readDir  = os.ReadDir
+	readFile = os.ReadFile
+	lookPath = exec.LookPath
+)
 
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
 	// Initialize buildkit config for the target image
@@ -90,8 +100,8 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, error) {
-	var platforms []ispec.Platform
+func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatform, error) {
+	var platforms []types.PatchPlatform
 
 	reportNames, err := os.ReadDir(reportDir)
 	if err != nil {
@@ -99,7 +109,11 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, e
 	}
 
 	for _, file := range reportNames {
-		report, err := report.TryParseScanReport(reportDir+"/"+file.Name(), scanner)
+		filePath := reportDir + "/" + file.Name()
+		if file.IsDir() {
+			continue
+		}
+		report, err := report.TryParseScanReport(filePath, scanner)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}
@@ -109,9 +123,12 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, e
 			continue
 		}
 
-		platform := ispec.Platform{
-			OS:           linux,
-			Architecture: report.Metadata.Config.Arch,
+		platform := types.PatchPlatform{
+			Platform: ispec.Platform{
+				OS:           linux,
+				Architecture: report.Metadata.Config.Arch,
+			},
+			ReportFile: filePath,
 		}
 		platforms = append(platforms, platform)
 	}
@@ -129,8 +146,8 @@ func isSupportedOsType(osType string) bool {
 }
 
 // This approach will not work for local images, add future support for this.
-func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error) {
-	var platforms []ispec.Platform
+func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
+	var platforms []types.PatchPlatform
 
 	ref, err := name.ParseReference(manifestRef)
 	if err != nil {
@@ -159,9 +176,11 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error
 			if m.Platform.OS != linux {
 				continue
 			}
-			platforms = append(platforms, ispec.Platform{
-				OS:           m.Platform.OS,
-				Architecture: m.Platform.Architecture,
+			platforms = append(platforms, types.PatchPlatform{
+				Platform: ispec.Platform{
+					OS:           m.Platform.OS,
+					Architecture: m.Platform.Architecture,
+				},
 			})
 		}
 		return platforms, nil
@@ -171,8 +190,8 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error
 	return nil, nil
 }
 
-func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
-	var platforms []ispec.Platform
+func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
+	var platforms []types.PatchPlatform
 
 	p, err := DiscoverPlatformsFromReference(manifestRef)
 	if err != nil {
@@ -197,11 +216,11 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform
 
 		reportSet := make(map[string]struct{}, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl)] = struct{}{}
+			reportSet[key(pl.Platform)] = struct{}{}
 		}
 
 		for _, pl := range p {
-			if _, ok := reportSet[key(pl)]; ok {
+			if _, ok := reportSet[key(pl.Platform)]; ok {
 				platforms = append(platforms, pl)
 			}
 		}
@@ -333,4 +352,102 @@ func WithFileString(s *llb.State, path, contents string) llb.State {
 
 func WithFileBytes(s *llb.State, path string, contents []byte) llb.State {
 	return s.File(llb.Mkfile(path, 0o600, contents))
+}
+
+func QemuAvailable(p *types.PatchPlatform) bool {
+	if p == nil {
+		return false
+	}
+
+	archKey := mapGoArch(p.Architecture, p.Variant)
+
+	// walk binfmt_misc entries
+	entries, _ := readDir("/proc/sys/fs/binfmt_misc")
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "register" || e.Name() == "status" {
+			continue
+		}
+		data, _ := readFile("/proc/sys/fs/binfmt_misc/" + e.Name())
+		if bytes.Contains(data, []byte("interpreter")) &&
+			bytes.Contains(data, []byte("qemu-"+archKey)) {
+			return true
+		}
+	}
+	// fallback to interpreter binary on PATH (for rootless case)
+	if _, err := lookPath("qemu-" + archKey + "-static"); err == nil {
+		return true
+	}
+	return false
+}
+
+func mapGoArch(arch, variant string) string {
+	switch arch {
+	case "amd64", "amd64p32":
+		return "x86_64"
+
+	case "386":
+		return "i386"
+
+	case "arm64", "arm64be":
+		return "aarch64"
+
+	case "arm":
+		// GOARM=5/6/7 -> qemu-arm
+		// big-endian -> qemu-armeb
+		if strings.HasSuffix(variant, "eb") || strings.HasSuffix(arch, "be") {
+			return "armeb"
+		}
+		return "arm"
+
+	case "mips":
+		if strings.HasSuffix(arch, "le") {
+			return "mipsel"
+		}
+		return "mips"
+
+	case "mips64":
+		if strings.HasSuffix(variant, "n32") {
+			return "mipsn32"
+		}
+		if strings.HasSuffix(arch, "le") {
+			return "mips64el"
+		}
+		return "mips64"
+
+	case "mips64le":
+		if strings.HasSuffix(variant, "n32") {
+			return "mipsn32el"
+		}
+		return "mips64el"
+
+	case "ppc64":
+		if strings.HasSuffix(variant, "le") {
+			return "ppc64le"
+		}
+		return "ppc64"
+
+	case "loong64":
+		return "loongarch64"
+
+	case "sh4":
+		if strings.HasSuffix(variant, "eb") {
+			return "sh4eb"
+		}
+		return "sh4"
+
+	case "xtensa":
+		if strings.HasSuffix(variant, "eb") {
+			return "xtensaeb"
+		}
+		return "xtensa"
+
+	case "microblaze":
+		if strings.HasSuffix(variant, "el") {
+			return "microblazeel"
+		}
+		return "microblaze"
+	}
+
+	// fallback: hope QEMU name == GOARCH
+	return arch
 }
