@@ -1,7 +1,6 @@
 module github.com/project-copacetic/copacetic
 
 go 1.24
-
 toolchain go1.24.1
 
 require (
@@ -31,7 +30,7 @@ require (
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/sync v0.13.0
 	google.golang.org/grpc v1.72.0
-	k8s.io/apimachinery v0.32.3
+	k8s.io/apimachinery v0.33.0
 )
 
 require (
