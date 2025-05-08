@@ -41,6 +41,7 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			config:        config,
 			workingFolder: workingFolder,
 			osVersion:     osVersion,
+			osType:        osType,
 		}, nil
 	case "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
 		return &rpmManager{
