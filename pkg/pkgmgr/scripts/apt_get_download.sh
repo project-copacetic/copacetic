@@ -42,7 +42,8 @@ while IFS= read -r line || [ -n "$line" ]; do
 		if [ -z "$package_content" ]; then
 			package_content="$line"
 		else
-			package_content="$package_content\n$line"
+			package_content="$package_content
+$line"
 		fi
 
 		case "$line" in
