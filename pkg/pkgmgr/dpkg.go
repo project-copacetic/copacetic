@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	_ "embed" // Added for go:embed
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -18,6 +19,12 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
+
+//go:embed scripts/apt_get_download.sh
+var aptGetDownloadScript string
+
+//go:embed scripts/apt_get_download_all_pkgs.sh
+var aptGetDownloadAllScript string
 
 const (
 	dpkgLibPath      = "/var/lib/dpkg"
@@ -253,11 +260,13 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		dm.statusdNames = strings.ReplaceAll(string(statusdNamesBytes), "\n", " ")
 		dm.statusdNames = strings.TrimSpace(dm.statusdNames)
 
-		namesList := strings.Fields(dm.statusdNames)
+		// Use bufio.Scanner with bytes.NewReader to avoid duplicating the list in memory
+		scanner := bufio.NewScanner(bytes.NewReader(statusdNamesBytes))
 		packageInfo := make(map[string]string)
 		var buffer bytes.Buffer
 
-		for _, name := range namesList {
+		for scanner.Scan() {
+			name := scanner.Text()
 			fileBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, name)
 			if err != nil {
 				return err
@@ -274,10 +283,14 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 
 				packageInfo[pkgName] = pkgVersion
 			}
-
-			dm.tempStatusFile = buffer.String()
-			dm.packageInfo = packageInfo
 		}
+
+		if err := scanner.Err(); err != nil {
+			return err
+		}
+
+		dm.tempStatusFile = buffer.String()
+		dm.packageInfo = packageInfo
 
 		log.Infof("Processed status.d: %s", dm.statusdNames)
 		dm.isDistroless = true
@@ -502,158 +515,12 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	var downloadCmd string
 	pkgStrings := []string{}
 	if updates != nil {
-		aptGetDownloadTemplate := `
-		if [ "$IGNORE_ERRORS" = "true" ]; then
-			set -x
-		else
-			set -ex
-		fi
-
-		packages="%s"
-		apt-get update
-		apt-get download --no-install-recommends $packages
-		dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
-		dpkg --root=/tmp/debian-rootfs --configure -a
-
-		# create new status.d with contents from status file after updates
-		STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
-		OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
-		mkdir -p "$OUTPUT_DIR"
-
-		package_name=""
-		package_content=""
-		
-		while IFS= read -r line || [ -n "$line" ]; do
-			if [ -z "$line" ]; then
-				# end of a package block
-				if [ -n "$package_name" ]; then
-						# handle special case for base-files
-					if [ "$package_name" = "base-files" ]; then
-						output_name="base"
-					elif [ "$package_name" = "libssl1.1" ]; then
-						output_name="libssl1"
-					else 
-						output_name="$package_name"
-					fi
-					# write the collected content to the package file
-					echo "$package_content" > "$OUTPUT_DIR/$output_name"
-				fi
-
-				# re-set for next package
-				package_name=""
-				package_content=""
-			else
-				# add current line to package content
-				if [ -z "$package_content" ]; then
-					package_content="$line"
-				else
-					package_content="$package_content
-$line"
-				fi
-
-				case "$line" in
-					"Package:"*)
-						# extract package name
-						package_name=$(echo "$line" | cut -d' ' -f2)
-						;;
-				esac
-			fi
-		done < "$STATUS_FILE"
-
-		# handle last block if file does not end with a newline
-		if [ -n "$package_name" ] && [ -n "$package_content" ]; then
-			echo "$package_content" > "$OUTPUT_DIR/$package_name"
-		fi
-
-		# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
-		find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
-
-		# write results manifest for validation
-		for deb in *.deb; do
-			dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
-		done
-
-		exit 0
-		`
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
-		downloadCmd = fmt.Sprintf(aptGetDownloadTemplate, strings.Join(pkgStrings, " "))
+		downloadCmd = fmt.Sprintf(aptGetDownloadScript, strings.Join(pkgStrings, " "))
 	} else {
-		// only update the outdated packages from packages.txt
-		downloadCmd = `
-			if [ "$IGNORE_ERRORS" = "true" ]; then
-				set -x
-			else
-				set -ex
-			fi
-
-			packages=$(cat /var/cache/apt/archives/packages.txt)
-			apt-get update
-			apt-get download --no-install-recommends $packages
-			dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
-			dpkg --root=/tmp/debian-rootfs --configure -a
-
-			# create new status.d with contents from status file after updates
-			STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
-			OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
-			mkdir -p "$OUTPUT_DIR"
-
-			package_name=""
-			package_content=""
-			
-			while IFS= read -r line || [ -n "$line" ]; do
-				if [ -z "$line" ]; then
-					# end of a package block
-					if [ -n "$package_name" ]; then
-					 	# handle special case for base-files
-						if [ "$package_name" = "base-files" ]; then
-							output_name="base"
-						elif [ "$package_name" = "libssl1.1" ]; then
-							output_name="libssl1"
-						else 
-							output_name="$package_name"
-						fi
-						# write the collected content to the package file
-						echo "$package_content" > "$OUTPUT_DIR/$output_name"
-					fi
-
-					# re-set for next package
-					package_name=""
-					package_content=""
-				else
-					# add current line to package content
-					if [ -z "$package_content" ]; then
-						package_content="$line"
-					else
-						package_content="$package_content
-$line"
-					fi
-
-					case "$line" in
-						"Package:"*)
-							# extract package name
-							package_name=$(echo "$line" | cut -d' ' -f2)
-							;;
-					esac
-				fi
-			done < "$STATUS_FILE"
-
-			# handle last block if file does not end with a newline
-			if [ -n "$package_name" ] && [ -n "$package_content" ]; then
-				echo "$package_content" > "$OUTPUT_DIR/$package_name"
-			fi
-
-			# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
-			find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
-
-			# write results manifest for validation
-			for deb in *.deb; do
-				dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
-			done
-
-			exit 0
-			`
+		downloadCmd = aptGetDownloadAllScript
 	}
 
 	errorValidation := "false"
