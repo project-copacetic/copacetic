@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/distribution/reference"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+
+	buildkitclient "github.com/moby/buildkit/client"
 )
 
 func TestRemoveIfNotDebug(t *testing.T) {
@@ -492,4 +497,31 @@ func TestResolvePatchedTag(t *testing.T) {
 			}
 		})
 	}
+}
+
+func init() {
+	bkNewClient = func(ctx context.Context, _ buildkit.Opts) (*buildkitclient.Client, error) {
+		// a path that certainly does not have a BuildKit daemon listening.
+		return buildkitclient.New(ctx, "unix:///tmp/nowhere.sock")
+	}
+}
+
+func TestPatch_BuildReturnsNilResponse(t *testing.T) {
+	err := Patch(
+		context.Background(),
+		30*time.Second,
+		"alpine:3.19", "", "", "", "", "", "", "", "", "",
+		false, true,
+		buildkit.Opts{},
+	)
+
+	if err == nil {
+		t.Fatalf("expected error from Build(), got nil")
+	}
+
+	if !strings.Contains(err.Error(), "dial unix /tmp/nowhere.sock: connect: no such file or directory") {
+		t.Fatalf("unexpected error from Build(): %v", err)
+	}
+
+	t.Logf("Patch returned error as expected (and did not panic): %v", err)
 }
