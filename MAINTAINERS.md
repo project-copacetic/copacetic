@@ -1,6 +1,6 @@
 # Maintainers
 
-This document lists the current maintainers of Project Copacetic. Maintainers guide project direction, review contributions, and handle releases.
+This document lists the current maintainers of OSS Project Copacetic. Maintainers guide project direction, review contributions, and handle releases.
 
 ## Active Maintainers
 
