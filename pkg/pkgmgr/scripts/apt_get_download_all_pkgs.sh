@@ -8,7 +8,7 @@ fi
 
 packages=$(cat /var/cache/apt/archives/packages.txt)
 apt-get update
-dpkg --root=/tmp/debian-rootfs --configure -a
+# dpkg --root=/tmp/debian-rootfs --configure -a
 apt-get download --no-install-recommends $packages
 dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
 dpkg --root=/tmp/debian-rootfs --configure -a

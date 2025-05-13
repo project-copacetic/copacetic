@@ -532,7 +532,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// gives no such file or directory error in download script?
 
 	// Only need info files and status files for correct installation - copy those.
-	updated = updated.File(llb.Copy(dpkgdb, "/var/lib/dpkg/", "/tmp/debian-rootfs/var/lib/dpkg"))
+	updated = updated.File(llb.Copy(dpkgdb, "/", "/tmp/debian-rootfs/var/lib/dpkg"))
 
 	updated = updated.File(llb.Mkfile("download.sh", 0o777, []byte(downloadCmd)))
 
