@@ -477,7 +477,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			})).Root()
 	}
 
-	updated = updated.Run(buildkit.Sh("mkdir -p /tmp/debian-rootfs/var/lib/dpkg")).Root()
+	updated = updated.File(llb.Mkdir("/tmp/debian-rootfs/var/lib/dpkg", 0o755, llb.WithParents(true)))
+	// updated = updated.Run(buildkit.Sh("mkdir -p /tmp/debian-rootfs/var/lib/dpkg")).Root()
 
 	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
 	// Regenerate /var/lib/dpkg/info files based on relevant pacakges from image to be patched.
@@ -506,7 +507,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 							echo "$STATUS_FILE" > /var/lib/dpkg/status
 						`,
-		})).Root()
+		})).AddMount("/var/lib/dpkg", updated, llb.SourcePath("/var/lib/dpkg"))
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -530,11 +531,13 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Only need info files and status files for correct installation - copy those.
 	updated = updated.File(llb.Copy(dpkgdb, "/var/lib/dpkg/", "/tmp/debian-rootfs/var/lib/dpkg"))
 
+	updated = updated.File(llb.Mkfile("download.sh", 0o777, []byte(downloadCmd)))
+
 	// Mount image rootfs into tooling image.
 	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
-		buildkit.Sh(downloadCmd),
+		buildkit.Sh(`./download.sh`),
 		llb.WithProxy(utils.GetProxy()),
 	).AddMount("/tmp/debian-rootfs", dm.config.ImageState)
 
@@ -544,6 +547,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	withoutManifest := downloaded.File(llb.Rm("/manifest"))
+	// remove /var/lib/dpkg status from image state?
 	diffBase := llb.Diff(dm.config.ImageState, withoutManifest)
 	downloaded = llb.Merge([]llb.State{diffBase, withoutManifest})
 
@@ -564,6 +568,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	unpacked := llb.Diff(updated, downloaded)
+
 	merged := llb.Merge([]llb.State{llb.Scratch(), dm.config.ImageState, unpacked})
 
 	return &merged, resultBytes, nil

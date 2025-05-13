@@ -26,6 +26,8 @@ while IFS= read -r line || [ -n "$line" ]; do
 				# handle special case for base-files
 			if [ "$package_name" = "base-files" ]; then
 				output_name="base"
+			elif [ "$package_name" = "libssl1.1" || "$package_name" = "libssl" ]; then
+				output_name="libssl1.1"
 			else 
 				output_name="$package_name"
 			fi
