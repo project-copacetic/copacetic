@@ -14,6 +14,8 @@ echo "checking debian db"
 ls /tmp/debian-rootfs/var/lib/dpkg
 ls /tmp/debian-rootfs/var/lib/dpkg/status
 
+exit 123
+
 apt-get download --no-install-recommends $packages
 dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
 dpkg --root=/tmp/debian-rootfs --configure -a
