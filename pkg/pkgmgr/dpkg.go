@@ -537,7 +537,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
-		buildkit.Sh(`./download.sh`),
+		buildkit.Sh(`./download.sh; exit 123`),
 		llb.WithProxy(utils.GetProxy()),
 	).AddMount("/tmp/debian-rootfs", dm.config.ImageState)
 

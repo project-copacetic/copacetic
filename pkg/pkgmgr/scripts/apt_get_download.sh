@@ -69,4 +69,3 @@ for deb in *.deb; do
 	dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
 done
 
-exit 0
