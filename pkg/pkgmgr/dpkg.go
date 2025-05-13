@@ -478,8 +478,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			})).Root()
 	}
 
-	updated = updated.File(llb.Mkdir("/tmp/debian-rootfs/var/lib/dpkg", 0o755, llb.WithParents(true)))
-
 	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
 	// Regenerate /var/lib/dpkg/info files based on relevant pacakges from image to be patched.
 	dpkgdb := updated.Run(
@@ -506,8 +504,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							apt-get check
 
 							echo "$STATUS_FILE" > /var/lib/dpkg/status
+							ls -lh /var/lib/dpkg
 						`,
-		})).AddMount("/var/lib/dpkg", updated, llb.SourcePath("/var/lib/dpkg"))
+		})).Root()
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -529,8 +528,13 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	// Only need info files and status files for correct installation - copy those.
-	updated = updated.File(llb.Copy(dpkgdb, "/", "/tmp/debian-rootfs/var/lib/dpkg"))
 	updated = updated.File(llb.Mkfile("download.sh", 0o777, []byte(downloadCmd)))
+
+	withDPkgStatus := dm.config.ImageState.
+		File(llb.Rm("/var/lib/dpkg")).
+		File(
+			llb.Copy(dpkgdb, "/var/lib/dpkg", "/var/lib/dpkg"),
+		)
 
 	// Mount image rootfs into tooling image.
 	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
@@ -539,7 +543,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		buildkit.Sh(`./download.sh`),
 		// buildkit.Sh(`./download.sh; exit 123`),
 		llb.WithProxy(utils.GetProxy()),
-	).AddMount("/tmp/debian-rootfs", dm.config.ImageState)
+	).AddMount("/tmp/debian-rootfs", withDPkgStatus)
 
 	resultBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &downloaded, "/manifest")
 	if err != nil {

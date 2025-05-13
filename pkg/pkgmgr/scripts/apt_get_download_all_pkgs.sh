@@ -6,13 +6,11 @@ fi
 
 # pass map of file name to package 
 
-packages=$(cat /var/cache/apt/archives/packages.txt)
+packages="$(cat /var/cache/apt/archives/packages.txt)"
 apt-get update
 # dpkg --root=/tmp/debian-rootfs --configure -a
 
 echo "checking debian db"
-ls /tmp/debian-rootfs/var/lib/dpkg
-ls /tmp/debian-rootfs/var/lib/dpkg/status
 
 exit 123
 
