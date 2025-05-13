@@ -256,13 +256,19 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 			}
 		}
 
-		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (_ *gwclient.Result, retErr error) {
 			// Configure buildctl/client for use by package manager
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
 			if err != nil {
 				ch <- err
 				return nil, err
 			}
+
+			defer func() {
+				if v := recover(); v != nil {
+					retErr = fmt.Errorf("panic in buildkit solve: %v", v)
+				}
+			}()
 
 			// Discover platforms for multi-arch images
 			test, err := buildkit.DiscoverPlatforms(imageName.String(), reportDirectory, scanner)
