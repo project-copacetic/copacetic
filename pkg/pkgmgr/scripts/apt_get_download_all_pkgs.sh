@@ -1,7 +1,7 @@
 if [ "$IGNORE_ERRORS" = "true" ]; then
     set -x
 else
-    set -ex
+	set -ex
 fi
 
 packages=$(cat /var/cache/apt/archives/packages.txt)
@@ -13,6 +13,7 @@ dpkg --root=/tmp/debian-rootfs --configure -a
 # create new status.d with contents from status file after updates
 STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
 OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
+rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 package_name=""

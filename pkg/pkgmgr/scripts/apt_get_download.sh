@@ -13,6 +13,7 @@ dpkg --root=/tmp/debian-rootfs --configure -a
 # create new status.d with contents from status file after updates
 STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
 OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
+rm -rf "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 
 package_name=""
@@ -25,8 +26,6 @@ while IFS= read -r line || [ -n "$line" ]; do
 				# handle special case for base-files
 			if [ "$package_name" = "base-files" ]; then
 				output_name="base"
-			elif [ "$package_name" = "libssl1.1" ]; then
-				output_name="libssl1"
 			else 
 				output_name="$package_name"
 			fi
