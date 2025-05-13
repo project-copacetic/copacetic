@@ -290,6 +290,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		}
 
 		dm.tempStatusFile = buffer.String()
+		// also store a map of package name to the filename for that package
 		dm.packageInfo = packageInfo
 
 		log.Infof("Processed status.d: %s", dm.statusdNames)
@@ -478,7 +479,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	updated = updated.File(llb.Mkdir("/tmp/debian-rootfs/var/lib/dpkg", 0o755, llb.WithParents(true)))
-	// updated = updated.Run(buildkit.Sh("mkdir -p /tmp/debian-rootfs/var/lib/dpkg")).Root()
 
 	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
 	// Regenerate /var/lib/dpkg/info files based on relevant pacakges from image to be patched.
@@ -528,6 +528,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		errorValidation = "true"
 	}
 
+	// dm.config.ImageState = dm.config.ImageState.File(llb.Rm("/var/lib/dpkg/status"))
+	// gives no such file or directory error in download script?
+
 	// Only need info files and status files for correct installation - copy those.
 	updated = updated.File(llb.Copy(dpkgdb, "/var/lib/dpkg/", "/tmp/debian-rootfs/var/lib/dpkg"))
 
@@ -537,7 +540,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
-		buildkit.Sh(`./download.sh; exit 123`),
+		buildkit.Sh(`./download.sh`),
+		// buildkit.Sh(`./download.sh; exit 123`),
 		llb.WithProxy(utils.GetProxy()),
 	).AddMount("/tmp/debian-rootfs", dm.config.ImageState)
 
@@ -568,7 +572,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	unpacked := llb.Diff(updated, downloaded)
-
 	merged := llb.Merge([]llb.State{llb.Scratch(), dm.config.ImageState, unpacked})
 
 	return &merged, resultBytes, nil
