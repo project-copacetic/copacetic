@@ -18,6 +18,7 @@ import (
 	"github.com/cpuguy83/go-docker/transport"
 	"github.com/cpuguy83/go-docker/version"
 	"github.com/moby/buildkit/client/connhelper"
+	log "github.com/sirupsen/logrus"
 )
 
 func init() {
@@ -52,12 +53,12 @@ func getDockerTransport(addr string) (transport.Doer, error) {
 		}
 	}
 
-	if !strings.Contains(addr, "://") {
+	if !strings.Contains(addr, ":/") {
 		// This is probably a docker context name
 		var err error
 		addr, err = addrFromContext(addr)
 		if err != nil {
-			return nil, fmt.Errorf("error getting docker context %q: %w", addr, err)
+			log.WithError(err).WithField("docker context", addr).Debug("Error getting docker context, assuming connection string")
 		}
 	}
 	return transport.FromConnectionString(addr)
@@ -70,6 +71,7 @@ func addrFromContext(name string) (string, error) {
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		out := string(out)
 		return "", fmt.Errorf("error inspecting docker context %q: %w: %s", name, err, out)
 	}
 
@@ -94,7 +96,6 @@ func AddrFromDockerContext() (_ string, retErr error) {
 	}
 
 	defer func() {
-
 		err := cmd.Wait()
 		if retErr == nil {
 			retErr = err

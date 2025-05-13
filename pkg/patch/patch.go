@@ -485,7 +485,8 @@ func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
 
 func newDockerClient() (dockerClient.APIClient, error) {
 	hostOpt := func(c *dockerClient.Client) error {
-		if os.Getenv("DOCKER_HOST") != "" {
+		if os.Getenv(dockerClient.EnvOverrideHost) != "" {
+			// Fallback to just keep dockerClient.FromEnv whatever was set from
 			return nil
 		}
 		addr, err := connhelpers.AddrFromDockerContext()
@@ -493,8 +494,7 @@ func newDockerClient() (dockerClient.APIClient, error) {
 			log.WithError(err).Error("Error loading docker context, falling back to env")
 			return nil
 		}
-		dockerClient.WithHost(addr)(c)
-		return nil
+		return dockerClient.WithHost(addr)(c)
 	}
 
 	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, hostOpt, dockerClient.WithAPIVersionNegotiation())
