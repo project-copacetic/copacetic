@@ -80,6 +80,11 @@ func addrFromContext(name string) (string, error) {
 }
 
 func AddrFromDockerContext() (_ string, retErr error) {
+	if v := os.Getenv("DOCKER_CONTEXT"); v != "" {
+		// context is defiend in the env, no need to scan for it
+		return addrFromContext(v)
+	}
+
 	cmd := exec.Command("docker", "context", "ls", "--format", "json")
 
 	stdout, err := cmd.StdoutPipe()
