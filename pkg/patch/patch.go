@@ -238,12 +238,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-		defer func() {
-			if v := recover(); v != nil {
-				err = fmt.Errorf("panic in buildkit solve: %v", v)
-			}
-		}()
-
 		var pkgType string
 		var validatedManifest *unversioned.UpdateManifest
 		if updates != nil {
@@ -269,12 +263,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 				ch <- err
 				return nil, err
 			}
-
-			defer func() {
-				if v := recover(); v != nil {
-					retErr = fmt.Errorf("panic in buildkit solve: %v", v)
-				}
-			}()
 
 			// Discover platforms for multi-arch images
 			test, err := buildkit.DiscoverPlatforms(imageName.String(), reportDirectory, scanner)
@@ -393,12 +381,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	// only load to docker if not pushing
 	if !push {
 		eg.Go(func() error {
-			defer func() {
-				if v := recover(); v != nil {
-					err = fmt.Errorf("panic in buildkit solve: %v", v)
-				}
-			}()
-
 			dockerCli, err := newDockerClient()
 			if err != nil {
 				pipeR.CloseWithError(fmt.Errorf("failed to create docker client for loading: %w", err))
