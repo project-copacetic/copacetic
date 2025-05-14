@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed" // Added for go:embed
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -530,7 +531,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		errorValidation = "true"
 	}
 
-	// Only need info files and status files for correct installation - copy those.
+	jsonStatusdFileMap, err := getJSONStatusdFileMap(dm.statusdFileMap)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	updated = updated.File(llb.Mkfile("download.sh", 0o777, []byte(downloadCmd)))
 
 	withDPkgStatus := dm.config.ImageState.
@@ -544,6 +549,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		llb.AddEnv("UPDATE_ALL", updateAll),
+		llb.AddEnv("STATUSD_FILE_MAP", string(jsonStatusdFileMap)),
 		buildkit.Sh(`./download.sh`),
 		llb.WithProxy(utils.GetProxy()),
 	).AddMount("/tmp/debian-rootfs", withDPkgStatus)
@@ -663,4 +669,12 @@ func validateDebianPackageVersions(updates unversioned.UpdatePackages, cmp Versi
 	}
 
 	return errorPkgs, allErrors.ErrorOrNil()
+}
+
+func getJSONStatusdFileMap(statusdFileMap map[string]string) ([]byte, error) {
+	jsonBytes, err := json.Marshal(statusdFileMap)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal statusd file map to JSON: %w", err)
+	}
+	return jsonBytes, nil
 }
