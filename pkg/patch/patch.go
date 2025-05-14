@@ -28,6 +28,7 @@ import (
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -483,7 +484,20 @@ func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
 }
 
 func newDockerClient() (dockerClient.APIClient, error) {
-	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, dockerClient.WithAPIVersionNegotiation())
+	hostOpt := func(c *dockerClient.Client) error {
+		if os.Getenv(dockerClient.EnvOverrideHost) != "" {
+			// Fallback to just keep dockerClient.FromEnv whatever was set from
+			return nil
+		}
+		addr, err := connhelpers.AddrFromDockerContext()
+		if err != nil {
+			log.WithError(err).Error("Error loading docker context, falling back to env")
+			return nil
+		}
+		return dockerClient.WithHost(addr)(c)
+	}
+
+	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, hostOpt, dockerClient.WithAPIVersionNegotiation())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create docker client: %w", err)
 	}
