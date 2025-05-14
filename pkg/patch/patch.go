@@ -238,7 +238,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
-
 		defer func() {
 			if v := recover(); v != nil {
 				err = fmt.Errorf("panic in buildkit solve: %v", v)
