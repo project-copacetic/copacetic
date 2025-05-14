@@ -222,7 +222,6 @@ jobs:
 
           if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
               export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
-              trap '_cleanup' EXIT
           fi
 
           docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
@@ -252,6 +251,7 @@ jobs:
 
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+                trap '_cleanup' EXIT
             fi
       
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
