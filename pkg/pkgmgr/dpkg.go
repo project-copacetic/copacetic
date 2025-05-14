@@ -513,13 +513,16 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
 	var downloadCmd string
 	pkgStrings := []string{}
+	var updateAll string
 	if updates != nil {
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 		downloadCmd = fmt.Sprintf(aptGetDownloadScript, strings.Join(pkgStrings, " "))
+		updateAll = "false"
 	} else {
 		downloadCmd = aptGetDownloadScript
+		updateAll = "true"
 	}
 
 	errorValidation := "false"
@@ -540,8 +543,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
+		llb.AddEnv("UPDATE_ALL", updateAll),
 		buildkit.Sh(`./download.sh`),
-		// buildkit.Sh(`./download.sh; exit 123`),
 		llb.WithProxy(utils.GetProxy()),
 	).AddMount("/tmp/debian-rootfs", withDPkgStatus)
 
