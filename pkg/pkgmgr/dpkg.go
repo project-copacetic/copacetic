@@ -23,9 +23,6 @@ import (
 //go:embed scripts/apt_get_download.sh
 var aptGetDownloadScript string
 
-//go:embed scripts/apt_get_download_all_pkgs.sh
-var aptGetDownloadAllScript string
-
 const (
 	dpkgLibPath      = "/var/lib/dpkg"
 	dpkgStatusPath   = dpkgLibPath + "/status"
@@ -41,6 +38,7 @@ type dpkgManager struct {
 	isDistroless   bool
 	statusdNames   string
 	packageInfo    map[string]string
+	statusdFileMap map[string]string // Maps package names to their status.d filenames
 	osVersion      string
 	osType         string
 	tempStatusFile string
@@ -263,6 +261,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		// Use bufio.Scanner with bytes.NewReader to avoid duplicating the list in memory
 		scanner := bufio.NewScanner(bytes.NewReader(statusdNamesBytes))
 		packageInfo := make(map[string]string)
+		statusdFileMap := make(map[string]string)
 		var buffer bytes.Buffer
 
 		for scanner.Scan() {
@@ -282,6 +281,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 				buffer.WriteString("\n")
 
 				packageInfo[pkgName] = pkgVersion
+				statusdFileMap[pkgName] = name
 			}
 		}
 
@@ -290,8 +290,8 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) er
 		}
 
 		dm.tempStatusFile = buffer.String()
-		// also store a map of package name to the filename for that package
 		dm.packageInfo = packageInfo
+		dm.statusdFileMap = statusdFileMap
 
 		log.Infof("Processed status.d: %s", dm.statusdNames)
 		dm.isDistroless = true
@@ -519,7 +519,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		}
 		downloadCmd = fmt.Sprintf(aptGetDownloadScript, strings.Join(pkgStrings, " "))
 	} else {
-		downloadCmd = aptGetDownloadAllScript
+		downloadCmd = aptGetDownloadScript
 	}
 
 	errorValidation := "false"
