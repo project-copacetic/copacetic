@@ -215,15 +215,10 @@ jobs:
 
             rm "${tmp}"
             docker rm -f test
-      - name: Test Debian validation - symlink
+      - name: Test RPM validation - symlink
         shell: bash
         run: |
           set -eux -o pipefail
-
-          _cleanup() {
-              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
-              sudo rm -rf "$SOCK_DIR"
-          }
 
           if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
               export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
@@ -249,6 +244,11 @@ jobs:
         shell: bash
         run: |
             set -eux -o pipefail
+
+            _cleanup() {
+              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
+              sudo rm -rf "$SOCK_DIR"
+            }
 
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
