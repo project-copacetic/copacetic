@@ -33,6 +33,8 @@ const (
 	rpmManifest1        = "container-manifest-1"
 	rpmManifest2        = "container-manifest-2"
 	rpmManifestWildcard = "container-manifest-*"
+	falseConst          = "false"
+	trueConst           = "true"
 
 	resultQueryFormat = "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"
 )
@@ -730,9 +732,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath /tmp/rpmdb -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > /tmp/rootfs/manifest`
 	}
 
-	errorValidation := "false"
+	errorValidation := falseConst
 	if ignoreErrors {
-		errorValidation = "true"
+		errorValidation = trueConst
 	}
 
 	downloaded := busyboxCopied.Run(
