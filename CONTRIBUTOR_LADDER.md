@@ -23,7 +23,7 @@ Description: A Contributor contributes directly to the project and adds value to
 - Privileges:
   - Invitations to contributor events
   - Shout outs in the project newsletter and milestone blog post announcements
-  - Eligible to become an Organization Member
+  - Eligible to become a Reviewer
 
 ## Reviewer
 
@@ -36,13 +36,11 @@ Reviewers have all the rights and responsibilities of an Organization Member, pl
 - Responsibilities include:
   - Following the reviewing guide
   - Reviewing most Pull Requests against their specific areas of responsibility
-  - Reviewing at least 12 PRs per year
+  - Reviewing at least 3-6 PRs per year
   - Helping other contributors become reviewers
 - Requirements:
   - Experience as a Contributor for at least 3 months
-  - Is an Organization Member
-  - Has reviewed, or helped review, at least 5 Pull Requests
-  - Has analyzed and resolved test failures in their specific area
+  - Has reviewed, or helped review, at least 3 Pull Requests
   - Has demonstrated an in-depth knowledge of the specific area
   - Commits to being responsible for that specific area
   - Is supportive of new and occasional contributors and helps get useful PRs in shape to commit
@@ -63,14 +61,14 @@ Description: Maintainers are very established contributors who are responsible f
 A Maintainer must meet the responsibilities and requirements of a Reviewer, plus:
 
 - Responsibilities include:
-  - Reviewing at least 24 PRs per year, especially PRs that involve multiple parts of the project
+  - Reviewing at least 6-12 PRs per year, especially PRs that involve multiple parts of the project
   - Mentoring new Reviewers
   - Writing refactoring PRs
   - Participating in CNCF maintainer activities
   - Determining strategy and policy for the project
   - Participating in, and leading, community meetings
 - Requirements
-  - Experience as a Reviewer for at least 6 months
+  - Experience as a Reviewer for at least 3 months
   - Demonstrates a broad knowledge of the project across multiple areas
   - Is able to exercise judgment for the good of the project, independent of their employer, friends, or team
   - Mentors other contributors
@@ -87,17 +85,6 @@ Process of becoming a maintainer:
 2. The nominee will add a comment to the PR testifying that they agree to all requirements of becoming a Maintainer.
 3. A majority of the current Maintainers must then approve the PR.
 
-## Inactivity
-
-It is important for contributors to be and stay active to set an example and show commitment to the project. Inactivity is harmful to the project as it may lead to unexpected delays, contributor attrition, and a lost of trust in the project.
-
-- Inactivity is measured by:
-  - Periods of no contributions for longer than 6 months
-  - Periods of no communication for longer than 3 months
-- Consequences of being inactive include:
-  - Involuntary removal or demotion
-  - Being asked to move to Emeritus status
-
 ## Involuntary Removal or Demotion
 
 Involuntary removal/demotion of a contributor happens when responsibilities and requirements aren't being met. This may include repeated patterns of inactivity, extended period of inactivity, a period of failing to meet the requirements of your role, and/or a violation of the Code of Conduct. This process is important because it protects the community and its deliverables while also opens up opportunities for new contributors to step in.
@@ -112,6 +99,4 @@ Contact the Maintainers about changing to Emeritus status, or reducing your cont
 
 ## Contact
 
-TODO
-
-- For inquiries, please reach out to:
+- For inquiries, please reach out to a maintainer on Copa channel in [Slack](https://cloud-native.slack.com): @Jeremy Rickard, @Sertac Ozercan, or @Ashna Mehrotra
