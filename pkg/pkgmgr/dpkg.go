@@ -4,7 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	_ "embed" // Added for go:embed
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -560,7 +560,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	}
 
 	withoutManifest := downloaded.File(llb.Rm("/manifest"))
-	// remove /var/lib/dpkg status from image state?
 	diffBase := llb.Diff(dm.config.ImageState, withoutManifest)
 	downloaded = llb.Merge([]llb.State{diffBase, withoutManifest})
 

@@ -257,7 +257,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 			}
 		}
 
-		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (_ *gwclient.Result, retErr error) {
+		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
 			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
 			if err != nil {
