@@ -202,7 +202,7 @@ jobs:
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
             fi
       
-            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
             
@@ -220,17 +220,11 @@ jobs:
         run: |
           set -eux -o pipefail
 
-          _cleanup() {
-              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
-              sudo rm -rf "$SOCK_DIR"
-          }
-
           if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
               export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
-              trap '_cleanup' EXIT
           fi
 
-          docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-patched /bin/sh
+          docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
           tmp="$(mktemp)"
 
           symlink_path="/sbin"
@@ -245,6 +239,34 @@ jobs:
 
           rm "${tmp}" "${tmp}_symlink"
           docker rm -f test
+      - name: Test Debian validation - noreplace files
+        shell: bash
+        run: |
+            set -eux -o pipefail
+
+            _cleanup() {
+              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
+              sudo rm -rf "$SOCK_DIR"
+            }
+
+            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+                trap '_cleanup' EXIT
+            fi
+      
+            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
+            tmp="$(mktemp)"
+            docker cp test:/etc/ssl/openssl.cnf "${tmp}"
+            
+            if ! grep -q foo "${tmp}"; then
+                echo "Error: openssl.cnf content replaced" >&2
+                rm "${tmp}"
+                docker rm -f test
+                exit 1
+            fi
+
+            rm "${tmp}"
+            docker rm -f test
 
   test-plugin:
     needs: build
