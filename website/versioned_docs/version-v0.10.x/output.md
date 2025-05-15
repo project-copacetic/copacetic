@@ -31,7 +31,7 @@ copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patc
 ```
 :::warning[note]
 
-VEX output requires a vulnerability report. If `-r <report_file>` flag (the "update all" mode) is not specified, no VEX document is generated.
+VEX output requires a vulnerability report. If `-r <report_file>` flag is not specified (the "update all" mode), no VEX document is generated.
 
 :::
 
