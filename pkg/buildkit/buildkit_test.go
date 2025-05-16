@@ -4,20 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"net"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/opencontainers/go-digest"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/project-copacetic/copacetic/pkg/types"
 
 	"github.com/stretchr/testify/mock"
 
 	controlapi "github.com/moby/buildkit/api/services/control"
-	types "github.com/moby/buildkit/api/types"
+	bk_types "github.com/moby/buildkit/api/types"
 	gateway "github.com/moby/buildkit/frontend/gateway/pb"
 	"github.com/moby/buildkit/util/apicaps"
 	caps "github.com/moby/buildkit/util/apicaps/pb"
@@ -31,7 +35,7 @@ type mockControlServer struct {
 
 func (s *mockControlServer) ListWorkers(context.Context, *controlapi.ListWorkersRequest) (*controlapi.ListWorkersResponse, error) {
 	return &controlapi.ListWorkersResponse{
-		Record: []*types.WorkerRecord{},
+		Record: []*bk_types.WorkerRecord{},
 	}, nil
 }
 
@@ -393,4 +397,120 @@ func TestUpdateImageConfigData(t *testing.T) {
 
 		mockClient.AssertExpectations(t)
 	})
+}
+
+func TestMapGoArch(t *testing.T) {
+	cases := []struct {
+		arch, variant, want string
+	}{
+		{"amd64", "", "x86_64"},
+		{"386", "", "i386"},
+		{"arm", "v7", "arm"},
+		{"arm", "v5eb", "armeb"},
+		{"mips64", "n32", "mipsn32"},
+		{"mips64", "", "mips64"},
+		{"ppc64", "le", "ppc64le"},
+		{"loong64", "", "loongarch64"},
+		{"xtensa", "eb", "xtensaeb"},
+		{"unknown", "", "unknown"},
+	}
+	for _, c := range cases {
+		got := mapGoArch(c.arch, c.variant)
+		if got != c.want {
+			t.Errorf("mapGoArch(%q,%q) = %q, want %q", c.arch, c.variant, got, c.want)
+		}
+	}
+}
+
+func TestIsSupportedOsType(t *testing.T) {
+	supported := []string{"alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma"}
+	for _, os := range supported {
+		if !isSupportedOsType(os) {
+			t.Errorf("expected %s to be supported", os)
+		}
+	}
+	unsupported := []string{"windows", "freebsd", "plan9"}
+	for _, os := range unsupported {
+		if isSupportedOsType(os) {
+			t.Errorf("did not expect %s to be supported", os)
+		}
+	}
+}
+
+// minimal DirEntry impl.
+type fakeEntry string
+
+func (f fakeEntry) Name() string             { return string(f) }
+func (fakeEntry) IsDir() bool                { return false }
+func (fakeEntry) Type() fs.FileMode          { return 0 }
+func (fakeEntry) Info() (fs.FileInfo, error) { return nil, nil }
+
+func TestQemuAvailable_Mocked(t *testing.T) {
+	platArm := &types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}
+	platAmd := &types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
+
+	tests := []struct {
+		name     string
+		plat     *types.PatchPlatform
+		stubDir  func(string) ([]os.DirEntry, error)
+		stubRead func(string) ([]byte, error)
+		stubPath func(string) (string, error)
+		want     bool
+	}{
+		{
+			name: "nil platform", plat: nil,
+			want: false,
+		},
+		{
+			name: "binfmt_misc match", plat: platArm,
+			stubDir:  func(string) ([]os.DirEntry, error) { return []os.DirEntry{fakeEntry("arm")}, nil },
+			stubRead: func(string) ([]byte, error) { return []byte("interpreter /usr/bin/qemu-aarch64"), nil },
+			stubPath: func(string) (string, error) { return "", os.ErrNotExist },
+			want:     true,
+		},
+		{
+			name: "lookPath fallback", plat: platArm,
+			stubDir:  func(string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil },
+			stubRead: func(string) ([]byte, error) { return nil, nil },
+			stubPath: func(string) (string, error) { return "/usr/bin/qemu-aarch64-static", nil },
+			want:     true,
+		},
+		{
+			name: "no match at all", plat: platAmd,
+			stubDir:  func(string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil },
+			stubRead: func(string) ([]byte, error) { return nil, nil },
+			stubPath: func(string) (string, error) { return "", os.ErrNotExist },
+			want:     false,
+		},
+	}
+
+	// store originals
+	origDir, origRead, origPath := readDir, readFile, lookPath
+	defer func() { readDir, readFile, lookPath = origDir, origRead, origPath }()
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// override or reset mocks per case
+			if tc.stubDir != nil {
+				readDir = tc.stubDir
+			} else {
+				readDir = origDir
+			}
+			if tc.stubRead != nil {
+				readFile = tc.stubRead
+			} else {
+				readFile = origRead
+			}
+			if tc.stubPath != nil {
+				lookPath = tc.stubPath
+			} else {
+				lookPath = origPath
+			}
+
+			got := QemuAvailable(tc.plat)
+			if got != tc.want {
+				t.Fatalf("QemuAvailable() = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }

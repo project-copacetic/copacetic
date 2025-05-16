@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 
@@ -524,4 +526,58 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	}
 
 	t.Logf("Patch returned error as expected (and did not panic): %v", err)
+}
+
+func TestArchTag(t *testing.T) {
+	cases := []struct {
+		base, arch, variant, want string
+	}{
+		{"patched", "arm64", "", "patched-arm64"},
+		{"patched", "arm", "v7", "patched-arm-v7"},
+		{"patched", "mips64", "n32", "patched-mips64-n32"},
+	}
+	for _, c := range cases {
+		got := archTag(c.base, c.arch, c.variant)
+		if got != c.want {
+			t.Fatalf("archTag(%q,%q,%q) = %q, want %q", c.base, c.arch, c.variant, got, c.want)
+		}
+	}
+}
+
+const LINUX = "linux"
+
+func TestNormalizeConfigForPlatform(t *testing.T) {
+	// minimal starting config (missing fields on purpose)
+	orig := []byte(`{"architecture":"amd64"}`)
+
+	plat := &types.PatchPlatform{}
+	plat.OS = LINUX
+	plat.Architecture = "arm64"
+	plat.Variant = "v8"
+
+	fixed, err := normalizeConfigForPlatform(orig, plat)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var m map[string]string
+	if err := json.Unmarshal(fixed, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if m["architecture"] != "arm64" || m["os"] != LINUX || m["variant"] != "v8" {
+		t.Fatalf("fields not normalised correctly: %#v", m)
+	}
+
+	// when Variant empty, key should be removed
+	var m2 map[string]string
+	plat.Variant = ""
+	fixed, _ = normalizeConfigForPlatform(orig, plat)
+	err = json.Unmarshal(fixed, &m2)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := m2["variant"]; ok {
+		t.Errorf("variant key should be dropped when empty")
+	}
 }
