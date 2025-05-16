@@ -187,18 +187,18 @@
     },
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
-        "tag": "test",
-        "digest": "sha256:164dbe64a682513e341b6262646c8bee2fb72fca3801aedd9f720765704af995",
+        "tag": "test-rpm",
+        "digest": "sha256:a3ce5460b21cefef782ffd5f8b751c18d6b15b96e81da26248bfab032b4db742",
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
         "ignoreErrors": false
     },
     {
-        "image": "ghcr.io/project-copacetic/copacetic/test/tdnf",
-        "tag": "test",
-        "digest": "sha256:2920efc9c8447ad404cde391eaa6f61f39a2c2e7dffb678f241f36be6ede0f33",
-        "distro": "Mariner",
-        "description": "Valid rpm DB, tdnf, yum & rpm present, custom tdnf.conf",
+        "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
+        "tag": "test-debian",
+        "digest": "sha256:453ce8b732afa551d2e8772d131d8b060b765a4532b33c1fc1e7a90569fb2fbb",
+        "distro": "Google Distroless",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
     }
 ]
