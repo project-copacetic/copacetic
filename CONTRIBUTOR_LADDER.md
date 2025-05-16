@@ -36,11 +36,8 @@ Reviewers have all the rights and responsibilities of an Organization Member, pl
 - Responsibilities include:
   - Following the reviewing guide
   - Reviewing most Pull Requests against their specific areas of responsibility
-  - Reviewing at least 3-6 PRs per year
   - Helping other contributors become reviewers
 - Requirements:
-  - Experience as a Contributor for at least 3 months
-  - Has reviewed, or helped review, at least 3 Pull Requests
   - Has demonstrated an in-depth knowledge of the specific area
   - Commits to being responsible for that specific area
   - Is supportive of new and occasional contributors and helps get useful PRs in shape to commit
@@ -61,14 +58,12 @@ Description: Maintainers are very established contributors who are responsible f
 A Maintainer must meet the responsibilities and requirements of a Reviewer, plus:
 
 - Responsibilities include:
-  - Reviewing at least 6-12 PRs per year, especially PRs that involve multiple parts of the project
   - Mentoring new Reviewers
   - Writing refactoring PRs
   - Participating in CNCF maintainer activities
   - Determining strategy and policy for the project
   - Participating in, and leading, community meetings
 - Requirements
-  - Experience as a Reviewer for at least 3 months
   - Demonstrates a broad knowledge of the project across multiple areas
   - Is able to exercise judgment for the good of the project, independent of their employer, friends, or team
   - Mentors other contributors
