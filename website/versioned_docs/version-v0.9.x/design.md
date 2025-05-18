@@ -90,6 +90,5 @@ type PackageManager interface {
    - Overall, the maintenance cost of the project is expected to be non-trivial to address these package manager complexities
 
 3. **Platform Limitations**:
-   - While BuildKit has experimental Windows container support
-   - Windows containers lack a standardized package upgrade mechanism and has limited Windows continer support
+   - While BuildKit has experimental Windows container support, Windows containers lack a standardized package upgrade mechanism
    - This makes package-based patching currently impractical on Windows
