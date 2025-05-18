@@ -33,6 +33,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'github-action',
+        'docker-extension',
         'custom-address',
         'output',
         'scanner-plugins',
@@ -49,6 +50,15 @@ const sidebars = {
         'development-tips',
         'maintainer-guidelines',
         'release',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'Community',
+      collapsed: false,
+      items: [
+        'adopters',
+        'talks-and-presentations',
       ],
     },
   ],

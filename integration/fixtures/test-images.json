@@ -178,11 +178,27 @@
         "description": "Valid microdnf, no yum/dnf/rpm"
     },
     {
-        "image": "docker.io/grafana/grafana-image-renderer",
-        "tag" : "3.4.0",
-        "digest": "sha256:205a39f5b58f96b9ff81a0b523a60c26c86e88e76575696fcd6debde9de02197",
-        "distro": "Alpine",
-        "description": "Valid apk/db, apk present, fail to patch libssl/libcryto",
-        "ignoreErrors": true
+        "image": "docker.io/almalinux",
+        "tag": "9.4-20240923",
+        "digest": "sha256:1c718a4cd7bab3bdb069ddbbd1eb593a390e6932d51d0048a2f6556303bafba7",
+        "distro": "AlmaLinux",
+        "description": "Valid rpm DB, microdnf & rpm present",
+        "ignoreErrors": false
+    },
+    {
+        "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
+        "tag": "test-rpm",
+        "digest": "sha256:a3ce5460b21cefef782ffd5f8b751c18d6b15b96e81da26248bfab032b4db742",
+        "distro": "Mariner Distroless",
+        "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
+        "ignoreErrors": false
+    },
+    {
+        "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
+        "tag": "test-debian",
+        "digest": "sha256:453ce8b732afa551d2e8772d131d8b060b765a4532b33c1fc1e7a90569fb2fbb",
+        "distro": "Google Distroless",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
+        "ignoreErrors": false
     }
 ]

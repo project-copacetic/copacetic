@@ -23,8 +23,12 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: 0.56.2
-  BUILDKIT_VERSION: 0.16.0
+  TRIVY_VERSION: 0.59.1
+  BUILDKIT_VERSION: 0.19.0
+  TRIVY_DISABLE_VEX_NOTICE: "true"
+
+permissions:
+  contents: read
 
 jobs:
   unit-test:
@@ -34,14 +38,14 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@c95a14d0e5bab51a9f56296a4eb0e416910cd350 # v2.3.1
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -53,7 +57,7 @@ jobs:
           CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@1e68e06f1dbfde0e4cefc87efeba9e4643565303 # v5.1.2
+        uses: codecov/codecov-action@ad3126e916f78f00edff4ed0317cf185271ccc2d # v5.4.2
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
@@ -68,13 +72,13 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@c95a14d0e5bab51a9f56296a4eb0e416910cd350 # v2.3.1
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Build copa
         shell: bash
@@ -82,7 +86,7 @@ jobs:
           make build
           make archive
       - name: Upload copa to build artifacts
-        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
@@ -104,22 +108,27 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -128,7 +137,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
       - name: Run functional test
         shell: bash
         run: |
@@ -147,22 +156,27 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.12.0
+        with:
+          egress-policy: audit
+
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -171,13 +185,88 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
       - name: Run functional test
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
           go test -v ./integration --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+      - name: Test RPM validation - noreplace files
+        shell: bash
+        run: |
+            set -eux -o pipefail
+
+            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+            fi
+      
+            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
+            tmp="$(mktemp)"
+            docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
+            
+            if ! grep -q foo "${tmp}"; then
+                echo "Error: openssl.cnf content replaced" >&2
+                rm "${tmp}"
+                docker rm -f test
+                exit 1
+            fi
+
+            rm "${tmp}"
+            docker rm -f test
+      - name: Test RPM validation - symlink
+        shell: bash
+        run: |
+          set -eux -o pipefail
+
+          if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+              export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+          fi
+
+          docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
+          tmp="$(mktemp)"
+
+          symlink_path="/sbin"
+          docker cp test:"$symlink_path" "${tmp}_symlink"
+
+          if [ ! -L "${tmp}_symlink" ]; then
+              echo "Error: The path $symlink_path is not a symlink."
+              rm "${tmp}" "${tmp}_symlink"
+              docker rm -f test
+              exit 1
+          fi
+
+          rm "${tmp}" "${tmp}_symlink"
+          docker rm -f test
+      - name: Test Debian validation - noreplace files
+        shell: bash
+        run: |
+            set -eux -o pipefail
+
+            _cleanup() {
+              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
+              sudo rm -rf "$SOCK_DIR"
+            }
+
+            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
+                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
+                trap '_cleanup' EXIT
+            fi
+      
+            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
+            tmp="$(mktemp)"
+            docker cp test:/etc/ssl/openssl.cnf "${tmp}"
+            
+            if ! grep -q foo "${tmp}"; then
+                echo "Error: openssl.cnf content replaced" >&2
+                rm "${tmp}"
+                docker rm -f test
+                exit 1
+            fi
+
+            rm "${tmp}"
+            docker rm -f test
 
   test-plugin:
     needs: build
@@ -187,14 +276,14 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@c95a14d0e5bab51a9f56296a4eb0e416910cd350 # v2.3.1
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - uses: actions/setup-go@3041bf56c941b39c61721a86cd11f3bb1338122a # v5.2.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
-          go-version: "1.23"
+          go-version: "1.24"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash
@@ -206,7 +295,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -215,10 +304,53 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@53851d14592bedcffcf25ea515637cff71ef929a # v3.3.0
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
       - name: Run e2e tests
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/direct/tcp
-          go test -v ./test/e2e --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+          go test -v ./test/e2e/plugin --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+
+  test-push:
+    needs: build
+    name: Test push
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: read-all
+    steps:
+      - name: Check out code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.24"
+          check-latest: true
+      - name: Add containerd-snapshotter to docker daemon
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+      - name: Install oras CLI
+        uses: oras-project/setup-oras@8d34698a59f5ffe24821f0b48ab62a3de8b64b20 # v1.2.3
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Run e2e tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          go test -v ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"

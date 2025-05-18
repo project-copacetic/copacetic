@@ -1,35 +1,49 @@
-run:
-  timeout: 5m
-
-linters-settings:
-  gocritic:
-    enabled-tags:
-    - performance
-  lll:
-    line-length: 200
-  misspell:
-    locale: US
-
+version: "2"
 linters:
-  disable-all: true
+  default: none
   enable:
-    - errcheck
     - copyloopvar
+    - errcheck
     - forcetypeassert
-    - gocritic
     - goconst
+    - gocritic
     - godot
-    - gofmt
-    - gofumpt
-    - goimports
     - gosec
-    - gosimple
     - govet
     - ineffassign
     - lll
     - misspell
     - revive
     - staticcheck
-    - typecheck
     - unused
     - whitespace
+  settings:
+    gocritic:
+      enabled-tags:
+        - performance
+    lll:
+      line-length: 200
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  enable:
+    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@c95a14d0e5bab51a9f56296a4eb0e416910cd350 # v2.3.1
+        uses: step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0 # v2.3.1
         with:
           egress-policy: audit
 
@@ -34,7 +34,7 @@ jobs:
         run: make version-docs
 
       - name: Create release pull request
-        uses: peter-evans/create-pull-request@67ccf781d68cd99b580ae25a5c18a1cc84ffff1f # v7.0.6
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
         with:
           commit-message: "chore: Generate ${{ env.NEWVERSION }} docs"
           title: "chore: Generate ${{ env.NEWVERSION }} docs"

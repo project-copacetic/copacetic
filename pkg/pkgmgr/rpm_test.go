@@ -115,7 +115,7 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "cbl-mariner",
 			osVersion: "2.0.0",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0",
 		},
 		{
 			name: "CBL-Mariner 1.5",
@@ -129,7 +129,7 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "cbl-mariner",
 			osVersion: "1.5",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:1.5",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:1.5",
 		},
 		{
 			name: "CBL-Mariner 3 (default minor version)",
@@ -143,7 +143,7 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "cbl-mariner",
 			osVersion: "3",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:3.0",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:3.0",
 		},
 		{
 			name: "Azure Linux 3.0",
@@ -157,42 +157,42 @@ func TestGetRPMImageName(t *testing.T) {
 			},
 			osType:    "azurelinux",
 			osVersion: "3.0",
-			image:     "mcr.microsoft.com/azurelinux/base/core:3.0",
+			image:     "ghcr.io/project-copacetic/copacetic/azurelinux/base/core:3.0",
 		},
 		{
 			name:      "Azure Linux 3.0 without update manifest",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "azurelinux",
 			osVersion: "3.0",
-			image:     "mcr.microsoft.com/azurelinux/base/core:3.0",
+			image:     "ghcr.io/project-copacetic/copacetic/azurelinux/base/core:3.0",
 		},
 		{
 			name:      "Azure Linux future version",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "azurelinux",
 			osVersion: "999.0",
-			image:     "mcr.microsoft.com/azurelinux/base/core:999.0",
+			image:     "ghcr.io/project-copacetic/copacetic/azurelinux/base/core:999.0",
 		},
 		{
 			name:      "RedHat (defaults to Azure Linux)",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "redhat",
 			osVersion: "8.4",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 		{
 			name:      "Nil manifest",
 			manifest:  nil,
 			osType:    "",
 			osVersion: "",
-			image:     "mcr.microsoft.com/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 	}
 
 	// Loop over test cases and run getRPMImageName function with each input
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			image := getRPMImageName(tc.manifest, tc.osType, tc.osVersion)
+			image := getRPMImageName(tc.manifest, tc.osType, tc.osVersion, true)
 			assert.Equal(t, tc.image, image)
 		})
 	}
@@ -474,8 +474,8 @@ func TestParseManifestFile(t *testing.T) {
 			name:  "Valid input",
 			input: "package1\t1.0.0.cm2\npackage2\t2.3.4.cm2\n",
 			expected: map[string]string{
-				"package1": "1.0.0",
-				"package2": "2.3.4",
+				"package1": "1.0.0.cm2",
+				"package2": "2.3.4.cm2",
 			},
 			wantErr: false,
 		},
@@ -501,8 +501,8 @@ func TestParseManifestFile(t *testing.T) {
 			name:  "Input with extra tabs",
 			input: "package1\t1.0.0.cm2\textra\npackage2\t2.3.4.cm2\n",
 			expected: map[string]string{
-				"package1": "1.0.0",
-				"package2": "2.3.4",
+				"package1": "1.0.0.cm2",
+				"package2": "2.3.4.cm2",
 			},
 			wantErr: false,
 		},
@@ -717,6 +717,39 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 
 			mockClient.AssertExpectations(t)
 			mockRef.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_getJSONPackageData_RPM(t *testing.T) {
+	tests := []struct {
+		name           string
+		packageInfo    map[string]string
+		wantErr        bool
+		expectedResult []byte
+	}{
+		{
+			name:           "Successful parsing of rm.PackageInfo",
+			wantErr:        false,
+			expectedResult: []byte("{\"filesystem\":\"1.1-19.cm2\",\"mariner-release\":\"2.0-56.cm2\"}"),
+			packageInfo: map[string]string{
+				"filesystem":      "1.1-19.cm2",
+				"mariner-release": "2.0-56.cm2",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := getJSONPackageData(tt.packageInfo)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("getJSONPackageData(%v) error = %v, wantErr %v", err, err, tt.wantErr)
+				return
+			}
+			if !reflect.DeepEqual(result, tt.expectedResult) {
+				t.Errorf("getJSONPackageData() = %v, want %v", result, tt.expectedResult)
+			}
 		})
 	}
 }

@@ -101,7 +101,7 @@ func TestGetAPTImageName(t *testing.T) {
 					},
 				},
 			},
-			want: "ubuntu:20.04",
+			want: "ghcr.io/project-copacetic/copacetic/ubuntu:20.04",
 		},
 		{
 			name: "debian 11.0",
@@ -113,7 +113,7 @@ func TestGetAPTImageName(t *testing.T) {
 					},
 				},
 			},
-			want: "debian:11-slim",
+			want: "ghcr.io/project-copacetic/copacetic/debian:11-slim",
 		},
 		{
 			name: "debian 11.1",
@@ -125,14 +125,14 @@ func TestGetAPTImageName(t *testing.T) {
 					},
 				},
 			},
-			want: "debian:11-slim",
+			want: "ghcr.io/project-copacetic/copacetic/debian:11-slim",
 		},
 	}
 
 	// Run test cases
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := getAPTImageName(tc.manifest, tc.manifest.Metadata.OS.Version)
+			got := getAPTImageName(tc.manifest, tc.manifest.Metadata.OS.Version, true)
 			if got != tc.want {
 				t.Errorf("getAPTImageName() = %v, want %v", got, tc.want)
 			}

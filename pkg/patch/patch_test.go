@@ -4,10 +4,16 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/distribution/reference"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+
+	buildkitclient "github.com/moby/buildkit/client"
 )
 
 func TestRemoveIfNotDebug(t *testing.T) {
@@ -45,6 +51,44 @@ func TestRemoveIfNotDebug(t *testing.T) {
 
 		// Clean up the working folder manually
 		os.RemoveAll(workingFolder)
+	})
+
+	t.Run("RemoveWorkingFolderWhenLogLevelIsInfo", func(t *testing.T) {
+		log.SetLevel(log.InfoLevel)
+		workingFolder := t.TempDir()
+
+		removeIfNotDebug(workingFolder)
+
+		// folder should be removed
+		if _, err := os.Stat(workingFolder); err == nil {
+			t.Errorf("working folder should have been removed but still exists at: %s", workingFolder)
+		}
+	})
+
+	t.Run("KeepWorkingFolderWhenLogLevelIsDebug", func(t *testing.T) {
+		log.SetLevel(log.DebugLevel)
+		workingFolder := t.TempDir()
+
+		removeIfNotDebug(workingFolder)
+
+		// folder should remain
+		if _, err := os.Stat(workingFolder); err != nil {
+			t.Errorf("working folder should have been kept but was removed at: %s", workingFolder)
+		}
+	})
+
+	t.Run("NoopWhenFolderDoesNotExist", func(t *testing.T) {
+		log.SetLevel(log.InfoLevel)
+		// create then remove
+		workingFolder := t.TempDir()
+		os.RemoveAll(workingFolder)
+
+		removeIfNotDebug(workingFolder)
+
+		// still doesn't exist, and no panic
+		if _, err := os.Stat(workingFolder); err == nil {
+			t.Errorf("folder unexpectedly re-created: %s", workingFolder)
+		}
 	})
 }
 
@@ -247,6 +291,55 @@ func TestGetOSType(t *testing.T) {
 			err:            errors.ErrUnsupported,
 			expectedOSType: "",
 		},
+		{
+			osRelease: []byte(`NAME="AlmaLinux"
+			VERSION="9.4 (Seafoam Ocelot)"
+			ID="almalinux"
+			ID_LIKE="rhel centos fedora"
+			VERSION_ID="9.4"
+			PLATFORM_ID="platform:el9"
+			PRETTY_NAME="AlmaLinux 9.4 (Seafoam Ocelot)"
+			ANSI_COLOR="0;34"
+			CPE_NAME="cpe:/o:almalinux:almalinux:9::baseos"
+			HOME_URL="https://almalinux.org/"
+			DOCUMENTATION_URL="https://wiki.almalinux.org/"
+			BUG_REPORT_URL="https://bugs.almalinux.org/"
+
+			SUPPORT_END="2032-06-01"
+			ALMALINUX_MANTISBT_PROJECT="AlmaLinux-9"
+    		ALMALINUX_MANTISBT_PROJECT_VERSION="9.4"
+			REDHAT_SUPPORT_PRODUCT="AlmaLinux"
+			REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`),
+			err:            nil,
+			expectedOSType: "alma",
+		},
+		{
+			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
+			NAME="Debian GNU/Linux"
+			VERSION_ID="11"
+			`),
+			err:            nil,
+			expectedOSType: "debian",
+		},
+		{
+			osRelease: []byte(`NAME="Alpine Linux"
+			ID=alpine
+			VERSION_ID=3.7.3`),
+			err:            nil,
+			expectedOSType: "alpine",
+		},
+		{
+			osRelease: []byte(`NAME="SomeRandomOS"
+			ID=someos
+			VERSION_ID=1.0`),
+			err:            errors.ErrUnsupported,
+			expectedOSType: "",
+		},
+		{
+			osRelease:      nil,
+			err:            errors.ErrUnsupported,
+			expectedOSType: "",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -285,6 +378,18 @@ func TestGetOSVersion(t *testing.T) {
 			errMsg:            "unable to parse os-release data osrelease: malformed line \"Cannot Parse Version_ID\"",
 			expectedOSVersion: "",
 		},
+		{
+			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
+			VERSION_ID="11"
+			ID=debian`),
+			errMsg:            "",
+			expectedOSVersion: "11",
+		},
+		{
+			osRelease:         []byte("Cannot Parse Version_ID"),
+			errMsg:            `unable to parse os-release data osrelease: malformed line "Cannot Parse Version_ID"`,
+			expectedOSVersion: "",
+		},
 	}
 
 	for _, tc := range testCases {
@@ -303,4 +408,120 @@ func TestGetOSVersion(t *testing.T) {
 			assert.Equal(t, tc.errMsg, errMsg)
 		})
 	}
+}
+
+func TestGetRepoNameWithDigest(t *testing.T) {
+	result := getRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
+	if result != "nginx@sha256:mocked-digest" {
+		t.Fatalf("unexpected result: %s", result)
+	}
+	t.Run("WithTagAndDigest", func(t *testing.T) {
+		result := getRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
+		assert.Equal(t, "nginx@sha256:mocked-digest", result)
+	})
+
+	t.Run("NoTagUsesFullImageName", func(t *testing.T) {
+		result := getRepoNameWithDigest("docker.io/library/nginx", "sha256:abc123")
+		// there's no trailing :tag, so we strip library/ prefix -> "nginx@sha256:abc123"
+		assert.Equal(t, "nginx@sha256:abc123", result)
+	})
+
+	t.Run("RandomLocalImageName", func(t *testing.T) {
+		result := getRepoNameWithDigest("localhost:5000/repo/image:mytag", "sha256:abcdef1234")
+		// last portion is "image:mytag" => we only keep "image" for the name portion
+		assert.Equal(t, "image@sha256:abcdef1234", result)
+	})
+
+	t.Run("NoRegistryNoTag", func(t *testing.T) {
+		result := getRepoNameWithDigest("myimage", "sha256:short")
+		// no registry, no tag, just "myimage" => name is "myimage@sha256:short"
+		assert.Equal(t, "myimage@sha256:short", result)
+	})
+}
+
+func TestResolvePatchedTag(t *testing.T) {
+	tests := []struct {
+		name        string
+		image       string
+		explicitTag string
+		suffix      string
+		want        string
+		wantErr     bool
+	}{
+		{
+			name:  "no explicitTag, no suffix, existing base tag",
+			image: "docker.io/library/nginx:1.23",
+			want:  "1.23-patched",
+		},
+		{
+			name:    "no explicitTag, no suffix, no base tag",
+			image:   "docker.io/library/nginx",
+			wantErr: true,
+		},
+		{
+			name:   "explicitTag overrides suffix and base tag",
+			image:  "docker.io/library/nginx:1.23",
+			suffix: "xyz",
+			// user sets an explicit tag, so we don't append the suffix
+			explicitTag: "my-funky-tag",
+			want:        "my-funky-tag",
+		},
+		{
+			name:   "custom suffix with base tag",
+			image:  "docker.io/library/nginx:1.23",
+			suffix: "security",
+			want:   "1.23-security",
+		},
+		{
+			name:    "custom suffix with no base tag",
+			image:   "docker.io/library/nginx",
+			suffix:  "foo",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// tags should always resolve here
+			imageRef, err := reference.ParseNormalizedNamed(tc.image)
+			if err != nil {
+				t.Fatalf("failed to parse image reference: %v", err)
+			}
+
+			got, err := resolvePatchedTag(imageRef, tc.explicitTag, tc.suffix)
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tc.want, got)
+			}
+		})
+	}
+}
+
+func init() {
+	bkNewClient = func(ctx context.Context, _ buildkit.Opts) (*buildkitclient.Client, error) {
+		// a path that certainly does not have a BuildKit daemon listening.
+		return buildkitclient.New(ctx, "unix:///tmp/nowhere.sock")
+	}
+}
+
+func TestPatch_BuildReturnsNilResponse(t *testing.T) {
+	err := Patch(
+		context.Background(),
+		30*time.Second,
+		"alpine:3.19", "", "", "", "", "", "", "", "", "",
+		false, true,
+		buildkit.Opts{},
+	)
+
+	if err == nil {
+		t.Fatalf("expected error from Build(), got nil")
+	}
+
+	if !strings.Contains(err.Error(), "dial unix /tmp/nowhere.sock: connect: no such file or directory") {
+		t.Fatalf("unexpected error from Build(): %v", err)
+	}
+
+	t.Logf("Patch returned error as expected (and did not panic): %v", err)
 }

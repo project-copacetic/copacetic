@@ -1,17 +1,20 @@
 package connhelpers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"net"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/cpuguy83/dockercfg"
 	"github.com/cpuguy83/go-docker"
@@ -45,8 +48,75 @@ func Buildx(u *url.URL) (*connhelper.ConnectionHelper, error) {
 	}, nil
 }
 
+func supportsDialStio(ctx context.Context) bool {
+	cmd := exec.CommandContext(ctx, "docker", "buildx", "dial-stdio", "--help")
+	return cmd.Run() == nil
+}
+
+// buildxDialStdio uses the buildx dial-stdio command to connect to a buildx instance.
+//
+// The way this works is it uses the buildx CLI as a proxy to connect to the buildx instance.
+// The connection is proxied over the stdin/stdout of the buildx CLI.
+//
+// This allows us to support any buildx instance, even if it is not running in a container.
+func buildxDialStdio(ctx context.Context, builder string) (net.Conn, error) {
+	cmd := exec.CommandContext(ctx, "docker", "buildx", "dial-stdio", "--progress=plain")
+	if builder != "" {
+		cmd.Args = append(cmd.Args, "--builder", builder)
+	}
+	cmd.Env = os.Environ()
+
+	c1, c2 := net.Pipe()
+	cmd.Stdin = c1
+	cmd.Stdout = c1
+
+	// Use a pipe to check when the connection is actually complete
+	// Also write all of stderr to an error buffer so we can have more details
+	// in the error message when the command fails.
+	r, w := io.Pipe()
+	errBuf := bytes.NewBuffer(nil)
+	ww := io.MultiWriter(w, errBuf)
+	cmd.Stderr = ww
+
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+
+	go func() {
+		err := cmd.Wait()
+		c1.Close()
+		// pkgerrors.Wrap will return nil if err is nil, otherwise it will give
+		// us a wrapped error with the buffered stderr from he command.
+		w.CloseWithError(fmt.Errorf("%s: %s", err, errBuf))
+	}()
+
+	defer r.Close()
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		txt := strings.ToLower(scanner.Text())
+
+		if strings.HasPrefix(txt, "#1 dialing builder") && strings.HasSuffix(txt, "done") {
+			go func() {
+				// Continue draining stderr so the process does not get blocked
+				_, _ = io.Copy(io.Discard, r)
+			}()
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return c2, nil
+}
+
 func buildxContextDialer(builder string) func(context.Context, string) (net.Conn, error) {
 	return func(ctx context.Context, _ string) (net.Conn, error) {
+		if supportsDialStio(ctx) {
+			return buildxDialStdio(ctx, builder)
+		}
+
 		configPath, err := dockercfg.ConfigPath()
 		if err != nil {
 			return nil, err
