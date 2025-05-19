@@ -34,7 +34,7 @@ Reviewers are responsible for a "specific area." This can be a specific code dir
 Reviewers have all the rights and responsibilities of an Organization Member, plus:
 
 - Responsibilities include:
-  - Following the reviewing guide
+  - Following the [reviewing guide](REVIEWING.md)
   - Reviewing most Pull Requests against their specific areas of responsibility
   - Helping other contributors become reviewers
 - Requirements:
