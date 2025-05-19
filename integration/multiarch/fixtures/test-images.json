@@ -1,0 +1,10 @@
+[
+  {
+    "image": "nginx",
+    "tag": "1.27.0",
+    "distro": "debian",
+    "description": "Multi-arch image for nginx 1.27.0",
+    "ignoreErrors": false,
+    "platforms": ["linux/arm/v5"]
+  }
+]
