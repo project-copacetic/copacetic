@@ -1,10 +1,8 @@
 package patch
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -28,16 +26,13 @@ import (
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 	"github.com/quay/claircore/osrelease"
-
-	dockerTypes "github.com/docker/docker/api/types"
-	dockerClient "github.com/docker/docker/client"
 )
 
 const (
@@ -54,7 +49,7 @@ var (
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -63,7 +58,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -89,7 +84,7 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 //nolint:lll
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError, push bool, bkOpts buildkit.Opts) error {
+func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader string, ignoreError, push bool, bkOpts buildkit.Opts) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
 
 	if reportFile == "" && output != "" {
@@ -382,17 +377,19 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	// only load to docker if not pushing
 	if !push {
 		eg.Go(func() error {
-			dockerCli, err := newDockerClient()
+			loader, err := imageloader.New(ctx, imageloader.Config{Select: loader})
 			if err != nil {
-				pipeR.CloseWithError(fmt.Errorf("failed to create docker client for loading: %w", err))
-				return fmt.Errorf("failed to create docker client for loading: %w", err)
+				err = fmt.Errorf("failed to create loader: %w", err)
+				pipeR.CloseWithError(err)
+				log.Error(err)
+				return err
 			}
-			defer dockerCli.Close()
 
-			err = dockerLoadWithClient(ctx, dockerCli, pipeR)
-			if err != nil {
-				pipeR.CloseWithError(fmt.Errorf("dockerLoadWithClient failed: %w", err))
-				return fmt.Errorf("dockerLoadWithClient failed: %w", err)
+			if err := loader.Load(ctx, pipeR, patchedImageName); err != nil {
+				err = fmt.Errorf("failed to load image: %w", err)
+				pipeR.CloseWithError(err)
+				log.Error(err)
+				return err
 			}
 			return pipeR.Close()
 		})
@@ -481,77 +478,6 @@ func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
 	}
 
 	return osData["VERSION_ID"], nil
-}
-
-func newDockerClient() (dockerClient.APIClient, error) {
-	hostOpt := func(c *dockerClient.Client) error {
-		if os.Getenv(dockerClient.EnvOverrideHost) != "" {
-			// Fallback to just keep dockerClient.FromEnv whatever was set from
-			return nil
-		}
-		addr, err := connhelpers.AddrFromDockerContext()
-		if err != nil {
-			log.WithError(err).Error("Error loading docker context, falling back to env")
-			return nil
-		}
-		return dockerClient.WithHost(addr)(c)
-	}
-
-	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, hostOpt, dockerClient.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create docker client: %w", err)
-	}
-	log.Debug("Docker client initialized successfully")
-	return cli, nil
-}
-
-func dockerLoadWithClient(ctx context.Context, cli dockerClient.APIClient, pipeR io.Reader) error {
-	log.Debugf("Loading image stream using Docker API client")
-	resp, err := cli.ImageLoad(ctx, pipeR, dockerClient.ImageLoadWithQuiet(false))
-	if err != nil {
-		log.Errorf("Docker API ImageLoad failed: %v", err)
-		return fmt.Errorf("docker client ImageLoad: %w", err)
-	}
-	defer resp.Body.Close()
-
-	scanner := bufio.NewScanner(resp.Body)
-	lastLine := ""
-	for scanner.Scan() {
-		line := scanner.Text()
-		lastLine = line
-		log.Debugf("ImageLoad response stream: %s", line)
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Warnf("Error reading ImageLoad response body stream: %v", err)
-	}
-
-	if resp.JSON && lastLine != "" {
-		var jsonResp struct {
-			ErrorResponse *dockerTypes.ErrorResponse `json:"errorResponse"`
-			Error         string                     `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(lastLine), &jsonResp); err == nil {
-			if jsonResp.ErrorResponse != nil {
-				msg := fmt.Sprintf("ImageLoad reported error: %s", jsonResp.ErrorResponse.Message)
-				log.Error(msg)
-				return errors.New(msg)
-			}
-			if jsonResp.Error != "" {
-				// Sometimes the error is directly in the 'error' field
-				msg := fmt.Sprintf("ImageLoad reported error: %s", jsonResp.Error)
-				log.Error(msg)
-				return errors.New(msg)
-			}
-		} else {
-			log.Debugf("Final ImageLoad response line (non-JSON or parse error): %s", lastLine)
-		}
-	} else if lastLine != "" {
-		log.Debugf("Final ImageLoad response line (non-JSON): %s", lastLine)
-	}
-
-	log.Info("Image loaded successfully via Docker API")
-	return nil
 }
 
 // e.g. "docker.io/library/nginx:1.21.6-patched".
