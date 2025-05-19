@@ -1,0 +1,16 @@
+[
+  {
+    "image": "docker.io/nginx",
+    "tag": "1.27.0",
+    "distro": "debian",
+    "description": "Multi-arch image for nginx 1.27.0",
+    "ignoreErrors": false,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm/v5",
+      "linux/arm64",
+      "linux/386",
+      "linux/mips64le"
+    ]
+  }
+]
