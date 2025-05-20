@@ -83,6 +83,18 @@ func createManifestCLI(ctx context.Context, image string, finalTag string, items
 	return cmd.Run()
 }
 
+func createManifestDockerLib(ctx context.Context, image string, finalTag string, items []archDigest) error {
+	ref, _ := reference.ParseNormalizedNamed(image)
+	repo := ref.Name()
+	args := []string{"manifest", "create", "--amend", fmt.Sprintf("%s:%s", repo, finalTag)}
+	for i := range items {
+		args = append(args, items[i].tag)
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
 func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error) {
 	if p == nil {
 		return j, fmt.Errorf("platform is nil")
@@ -485,17 +497,17 @@ func patchSingleArchImage(
 		}, buildChannel)
 
 		// Currently can only validate updates if updating via scanner
-		if err == nil && solveResponse != nil && reportFile != "" && validatedManifest != nil {
+		if err == nil && solveResponse != nil {
 			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 			patchedImageDigest = digest
-			if reportFile != "" && validatedManifest != nil {
-				nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
-				// vex document must contain at least one statement
-				if output != "" && len(validatedManifest.Updates) > 0 {
-					if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-						ch <- err
-						return err
-					}
+		}
+		if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
+			// vex document must contain at least one statement
+			if output != "" && len(validatedManifest.Updates) > 0 {
+				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
+					ch <- err
+					return err
 				}
 			}
 		}
@@ -788,6 +800,10 @@ func patchMultiArchImage(
 
 	if push {
 		if err := createManifestCLI(ctx, image, resolvedTag, archDigests); err != nil {
+			return fmt.Errorf("manifest list creation failed: %w", err)
+		}
+	} else {
+		if err := createManifestDockerLib(ctx, image, resolvedTag, archDigests); err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
 	}
