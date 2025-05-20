@@ -25,12 +25,13 @@ var (
 )
 
 type testImage struct {
-	Image        string   `json:"image"`
-	Tag          string   `json:"tag"`
-	Distro       string   `json:"distro"`
-	Description  string   `json:"description"`
-	IgnoreErrors bool     `json:"ignoreErrors"`
-	Platforms    []string `json:"platforms"`
+	OriginalImage string   `json:"originalImage"`
+	LocalImage    string   `json:"localImage"`
+	Tag           string   `json:"tag"`
+	Distro        string   `json:"distro"`
+	Description   string   `json:"description"`
+	IgnoreErrors  bool     `json:"ignoreErrors"`
+	Platforms     []string `json:"platforms"`
 }
 
 func TestPatch(t *testing.T) {
@@ -43,16 +44,21 @@ func TestPatch(t *testing.T) {
 	err = os.WriteFile(ignoreFile, trivyIgnore, 0o600)
 	require.NoError(t, err)
 
-	for _, img := range images {
-		// download the trivy db before running the tests
-		downloadDB(t)
+	// download the trivy db before running the tests
+	downloadDB(t)
 
+	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
-			reportDir := t.TempDir()
+			// define a few variables
+			ref := fmt.Sprintf("%s:%s", img.LocalImage, img.Tag)
+			originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)
 
-			ref := fmt.Sprintf("%s:%s", img.Image, img.Tag)
+			// copy over the original image to the local image using oras
+			copyImage(t, originalImageRef, ref)
+
+			reportDir := t.TempDir()
 
 			t.Log("creating scan reports for each platform")
 			var wg sync.WaitGroup
@@ -77,7 +83,7 @@ func TestPatch(t *testing.T) {
 			wg.Wait()
 
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", img.Image, tagPatched)
+			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
 
 			t.Log("patching image with multiple architectures")
 			patchMultiArch(t, ref, tagPatched, reportDir, img.IgnoreErrors)
@@ -105,6 +111,7 @@ func TestPatch(t *testing.T) {
 						withIgnoreFile(ignoreFile).
 						withSkipDBUpdate().
 						withImageSrc("docker").
+						withPlatform(platformStr).
 						// here we want a non-zero exit code because we are expecting no vulnerabilities.
 						withExitCode(1).
 						scan(t, patchedArchRef, img.IgnoreErrors)
@@ -165,18 +172,19 @@ func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreError
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+reportDir+"/vex.json",
+		"--debug",
+		"--push",
+		"--platform-specific-errors=fail",
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
-	out, err := cmd.CombinedOutput()
-
-	if strings.Contains(ref, "oracle") && !ignoreErrors {
-		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+
-			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
-	} else {
-		require.NoError(t, err, string(out))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	// out, err := cmd.CombinedOutput()
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("command failed: %v", err)
 	}
 }
 
@@ -273,4 +281,18 @@ func (s *scannerCmd) withExitCode(code int) *scannerCmd {
 func (s *scannerCmd) withPlatform(platform string) *scannerCmd {
 	s.platform = platform
 	return s
+}
+
+// helper to copy an image using oras.
+func copyImage(t *testing.T, src, dst string) {
+	cmd := exec.Command(
+		"oras",
+		"copy",
+		src,
+		dst,
+	)
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
