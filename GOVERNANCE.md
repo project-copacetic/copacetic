@@ -55,44 +55,11 @@ the project succeed.
 The collective team of all Maintainers is known as the Maintainer Council, which
 is the governing body for the project.
 
-### Becoming a Maintainer
+Maintainer responsibilities and other role descriptions can be found in the [contributor ladder](./CONTRIBUTOR_LADDER.md).
 
-To become a Maintainer you need to demonstrate the following:
-
-  * commitment to the project:
-    * participate in discussions, contributions, code and documentation reviews
-      for 3 months or more,
-    * perform reviews for 3 non-trivial pull requests,
-    * contribute 3 non-trivial pull requests and have them merged,
-  * ability to write quality code and/or documentation,
-  * ability to collaborate with the team,
-  * understanding of how the team works (policies, processes for testing and code review, etc),
-  * understanding of the project's code base and coding and documentation style.
-  <!-- add any additional Maintainer requirements here -->
-
-A new Maintainer must be proposed by an existing maintainer by sending a message to the
-[developer mailing list](https://groups.google.com/g/project-copa), or by opening an issue on Github. A simple majority vote of existing Maintainers
-approves the application. If nobody objects in 5 working days (U.S.), the nomination is accepted. Maintainers nominations will be evaluated without prejudice
-to employer or demographics.
-
-Maintainers who are selected will be granted the necessary GitHub rights.
-
-### Removing a Maintainer
-
-Maintainers may resign at any time if they feel that they will not be able to
-continue fulfilling their project duties.
-
-Maintainers may also be removed after being inactive, failure to fulfill their 
-Maintainer responsibilities, violating the Code of Conduct, or other reasons.
-Inactivity is defined as a period of very low or no activity in the project 
-for a year or more, with no definite schedule to return to full Maintainer 
-activity.
-
-A Maintainer may be removed at any time by a 2/3 vote of the remaining maintainers.
-
-Depending on the reason for removal, a Maintainer may be converted to Emeritus
-status.  Emeritus Maintainers will still be consulted on some project matters,
-and can be rapidly returned to Maintainer status if their availability changes.
+## Code Changes
+All code changes should go through the Pull Request (PR) process. PRs should only be merged after receiving approval (via GitHub) from at least one other maintainer.
+We do not vote formally on every code change, but we do expect that every code change merged has the same community support as if the change were approved by a formal vote. When a merge occurs without sufficient community support, the change should be reverted until the dispute is resolved through discussion. Any team member who feels that a technical decision cannot be reached can call for a formal vote following the rules outlined below in either the PR or a separate issue.
 
 ## Meetings
 
@@ -122,7 +89,7 @@ holes and breaches according to the [security policy](./SECURITY.md).
 
 While most business in Project Copacetic is conducted by "[lazy consensus](https://community.apache.org/committers/lazyConsensus.html)", 
 periodically the Maintainers may need to vote on specific actions or changes.
-A vote can be taken on [the developer mailing list](TODO) or
+A vote can be taken on [the developer mailing list](https://groups.google.com/g/project-copa) or
 the private Maintainer mailing list for security or conduct matters.  
 Votes may also be taken at community meetings or through Github Issues.  Any Maintainer may
 demand a vote be taken.
