@@ -206,7 +206,13 @@ func patchWithContext(
 		return err
 	}
 
-	// must be dealing with a directory
+	// must be dealing with a multi-arch image
+	if reportDirectory != "" && !push {
+		log.Warn("Patching multi-arch images is only supported with --push")
+		return fmt.Errorf("patching multi-arch images is only supported with --push")
+	}
+
+	// check the directory
 	f, err := os.Stat(reportDirectory)
 	if err != nil {
 		return err
@@ -766,8 +772,15 @@ func patchMultiArchImage(
 	}
 
 	for _, p := range platforms {
+		// rebind
+		//nolint
+		p := p
 		g.Go(func() error {
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-gctx.Done():
+				return gctx.Err()
+			}
 			defer func() { <-sem }()
 
 			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
