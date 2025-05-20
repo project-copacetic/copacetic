@@ -8,7 +8,11 @@
     "ignoreErrors": false,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5"
+      "linux/arm/v5",
+      "linux/386",
+      "linux/mips64le",
+      "linux/ppc64le",
+      "linux/s390x"
     ]
   }
 ]

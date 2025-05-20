@@ -114,6 +114,7 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			continue
 		}
 		report, err := report.TryParseScanReport(filePath, scanner)
+		fmt.Printf("variant: %s\n", report.Metadata.Config.Variant)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}
@@ -123,10 +124,16 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			continue
 		}
 
+		// if arch is arm64, then variant should be v8
+		if report.Metadata.Config.Arch == "arm64" && report.Metadata.Config.Variant != "v8" {
+			report.Metadata.Config.Variant = "v8"
+		}
+
 		platform := types.PatchPlatform{
 			Platform: ispec.Platform{
 				OS:           linux,
 				Architecture: report.Metadata.Config.Arch,
+				Variant:      report.Metadata.Config.Variant,
 			},
 			ReportFile: filePath,
 		}
@@ -180,6 +187,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 				Platform: ispec.Platform{
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
 				},
 			})
 		}
@@ -211,16 +219,17 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 
 		// if platform is present in list from reference and report, then we should patch that platform
 		key := func(pl ispec.Platform) string {
-			return pl.OS + "/" + pl.Architecture
+			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
 		}
 
-		reportSet := make(map[string]struct{}, len(p2))
+		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl.Platform)] = struct{}{}
+			reportSet[key(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
-			if _, ok := reportSet[key(pl.Platform)]; ok {
+			if rp, ok := reportSet[key(pl.Platform)]; ok {
+				pl.ReportFile = rp
 				platforms = append(platforms, pl)
 			}
 		}

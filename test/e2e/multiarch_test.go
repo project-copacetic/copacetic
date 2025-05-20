@@ -44,7 +44,7 @@ func TestMultiArchPatch(t *testing.T) {
 		"--image", "alpine:3.15",
 		"--report-dir", reportsDir,
 		"--missing-report", "warn",
-		"--tag", "alpine:3.15-test-patched",
+		"--tag", "3.15-test-patched",
 	)
 
 	output, err = copaCmd.CombinedOutput()

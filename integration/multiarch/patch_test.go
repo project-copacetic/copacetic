@@ -95,8 +95,13 @@ func TestPatch(t *testing.T) {
 				go func() {
 					defer wg.Done()
 					// only want the platform string for the scanner
+					parts := strings.Split(platformStr, "/")
 					archStr := strings.Split(platformStr, "/")[1]
 					patchedArchRef := fmt.Sprintf("%s-%s", patchedRef, archStr)
+					if len(parts) > 2 {
+						variantStr := strings.Split(platformStr, "/")[2]
+						patchedArchRef += "-" + variantStr
+					}
 
 					// run the image so the layers are fully loaded. a manifest-only load/push
 					// leaves the tag without its layer blobs; running "true" forces the daemon
@@ -171,7 +176,6 @@ func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreError
 		"--timeout=30m",
 		addrFl,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
-		"--output="+reportDir+"/vex.json",
 		"--debug",
 		"--push",
 		"--platform-specific-errors=fail",
@@ -182,7 +186,7 @@ func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreError
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	// out, err := cmd.CombinedOutput()
+
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("command failed: %v", err)
 	}
