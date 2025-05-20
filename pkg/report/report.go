@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 
+	"github.com/project-copacetic/copacetic/pkg/report/wiz"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/types/v1alpha1"
 )
@@ -21,6 +22,8 @@ type ScanReportParser interface {
 
 func TryParseScanReport(file, scanner string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
+		return defaultParseScanReport(file)
+	} else if scanner == "wiz" {
 		return defaultParseScanReport(file)
 	}
 	return customParseScanReport(file, scanner)
@@ -52,7 +55,8 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 
 func defaultParseScanReport(file string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
-		&TrivyParser{},
+		NewTrivyParser(),
+		wiz.NewWizParser(),
 	}
 	for _, parser := range allParsers {
 		manifest, err := parser.Parse(file)

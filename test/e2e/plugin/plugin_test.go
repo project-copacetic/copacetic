@@ -10,9 +10,10 @@ import (
 
 func TestPlugins(t *testing.T) {
 	testCases := []struct {
-		image  string
-		report string
-		err    error
+		image         string
+		report        string
+		err           error
+		scannerPlugin string
 	}{
 		{
 			image:  "docker.io/library/alpine:3.14.0",
@@ -20,16 +21,23 @@ func TestPlugins(t *testing.T) {
 			err:    fmt.Errorf("exit status 1"),
 		},
 		{
-			image:  "docker.io/library/alpine:3.7.3",
-			report: "./testdata/valid_report.json",
-			err:    nil,
+			image:         "docker.io/library/alpine:3.7.3",
+			report:        "./testdata/trivy_valid_report.json",
+			err:           nil,
+			scannerPlugin: "trivy",
+		},
+		{
+			image:         "docker.io/library/alpine:3.7.3",
+			report:        "./testdata/wiz_valid_report.json",
+			err:           nil,
+			scannerPlugin: "wiz",
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.image, func(t *testing.T) {
 			t.Parallel()
-			_, err := runPatch(tc.image, tc.report)
+			_, err := runPatch(tc.image, tc.report, tc.scannerPlugin)
 			if err != nil {
 				assert.Equal(t, tc.err, fmt.Errorf("%s", err.Error()))
 			} else {
@@ -39,7 +47,7 @@ func TestPlugins(t *testing.T) {
 	}
 }
 
-func runPatch(image, report string) ([]byte, error) {
+func runPatch(image, report string, scannerPlugin string) ([]byte, error) {
 	//#nosec G204
 	cmd := exec.Command(
 		copaPath,
