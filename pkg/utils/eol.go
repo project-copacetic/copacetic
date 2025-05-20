@@ -174,7 +174,7 @@ func CheckEOSL(osType, osVersion string) (bool, string, error) {
 
 	isEffectivelyEOL := releaseData.IsEOL || !releaseData.IsMaintained
 	displayEOLDate := releaseData.EOLDate
-	if displayEOLDate == "" || strings.ToLower(displayEOLDate) == "null" {
+	if displayEOLDate == "" || strings.EqualFold(displayEOLDate, "null") {
 		displayEOLDate = "Unknown"
 	}
 

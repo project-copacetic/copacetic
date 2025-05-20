@@ -78,11 +78,14 @@ func TestCheckEOSL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			server := newEOLAPIMockServer(func(w http.ResponseWriter, r *http.Request) {
+			server := newEOLAPIMockServer(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(tt.mockAPIStatusCode)
 				if tt.mockAPIStatusCode == http.StatusOK && tt.mockAPIResponse != nil {
 					if eolResp, ok := tt.mockAPIResponse.(EOLAPIResponse); ok {
-						json.NewEncoder(w).Encode(eolResp)
+						err := json.NewEncoder(w).Encode(eolResp)
+						if err != nil {
+							_ = err
+						}
 					}
 				}
 			})
