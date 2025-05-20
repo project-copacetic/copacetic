@@ -43,14 +43,16 @@ const sidebars = {
       type: 'category',
       label: 'Contributing',
       collapsed: false,
-      items: [
-        'contributing',
-        'code-of-conduct',
-        'design',
-        'development-tips',
-        'maintainer-guidelines',
-        'release',
-      ],
+      "items": [
+        "contributing",
+        "code-of-conduct",
+        "contributor-ladder",
+        "design",
+        "development-tips",
+        "maintainer-guidelines",
+        "release",
+        "reviewing-guide"
+      ]
     },
     {
       type: 'category',

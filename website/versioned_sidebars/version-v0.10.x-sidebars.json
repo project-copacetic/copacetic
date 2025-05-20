@@ -17,12 +17,7 @@
       "type": "category",
       "label": "Features",
       "collapsed": false,
-      "items": [
-        "github-action",
-        "custom-address",
-        "output",
-        "scanner-plugins"
-      ]
+      "items": ["github-action", "custom-address", "output", "scanner-plugins"]
     },
     {
       "type": "category",
@@ -31,20 +26,19 @@
       "items": [
         "contributing",
         "code-of-conduct",
+        "contributor-ladder",
         "design",
         "development-tips",
         "maintainer-guidelines",
-        "release"
+        "release",
+        "reviewing-guide"
       ]
     },
     {
       "type": "category",
       "label": "Community",
       "collapsed": false,
-      "items": [
-        "adopters",
-        "talks-and-presentations"
-      ]
+      "items": ["adopters", "talks-and-presentations"]
     }
   ]
 }
