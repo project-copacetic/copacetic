@@ -326,7 +326,7 @@ func patchSingleArchImage(
 		log.Warnf("unable to determine media type, defaulting to docker, err: %v", err)
 
 	default:
-		log.Warnf("unable to determine media type, defaulting to docker")
+		log.Warnf("resolved media type is Docker")
 	}
 
 	pipeR, pipeW := io.Pipe()
@@ -764,8 +764,7 @@ func patchMultiArchImage(
 		return fmt.Errorf("no patchable platforms found for image %s", image)
 	}
 
-	maxParallel := runtime.NumCPU()
-	sem := make(chan struct{}, maxParallel)
+	sem := make(chan struct{}, runtime.NumCPU())
 	g, gctx := errgroup.WithContext(ctx)
 
 	var mu sync.Mutex
