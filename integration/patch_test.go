@@ -109,7 +109,7 @@ func TestPatch(t *testing.T) {
 			}
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile, img.Description)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -201,7 +201,7 @@ func dockerCmd(t *testing.T, args ...string) {
 	require.NoError(t, err, string(out))
 }
 
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
+func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool, description string) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
@@ -231,6 +231,12 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	out, err := cmd.CombinedOutput()
+	outputStr := string(out)
+
+	if description == "EOL Check: Log WARN message without blocking patching" {
+		expectedEOLWarning := "The operating system debian 9 appears to be End-Of-Support-Life"
+		assert.Contains(t, outputStr, expectedEOLWarning, "EOL warning for Debian 9 not found in copa output")
+	}
 
 	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
 		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+

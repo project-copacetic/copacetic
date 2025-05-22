@@ -200,5 +200,14 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
+    },
+    {
+        "image": "docker.io/library/debian", 
+        "tag": "stretch",
+        "localName": "",
+        "distro": "debian",
+        "digest": "sha256:16ee3e11da473f6565ef94a715f1a38b3079e0664913be78869c336a71cb6085", 
+        "description": "EOL Check: Log WARN message without blocking patching",
+        "ignoreErrors": true
     }
 ]
