@@ -35,6 +35,7 @@ const sidebars = {
         'github-action',
         'docker-extension',
         'custom-address',
+        'manual-patching',
         'output',
         'scanner-plugins',
       ],

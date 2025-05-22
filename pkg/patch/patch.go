@@ -107,7 +107,7 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, manualRule string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -116,7 +116,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, manualRule, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -144,11 +144,19 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, manualRule string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
+	var rule *ManualRule
+	if manualRule != "" {
+		var err error
+		rule, err = loadManualRule(manualRule)
+		if err != nil {
+			return err
+		}
+	}
 	if reportFile != "" && reportDirectory != "" {
 		return fmt.Errorf("both report file and directory provided, please provide only one")
 	}
@@ -178,7 +186,7 @@ func patchWithContext(
 		if platform.OS != "linux" {
 			platform.OS = "linux"
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, rule, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
 		}
@@ -187,7 +195,7 @@ func patchWithContext(
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, rule, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
 		}
@@ -210,6 +218,7 @@ func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
 	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string,
+	rule *ManualRule,
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
@@ -403,6 +412,28 @@ func patchSingleArchImage(
 			if err != nil {
 				ch <- err
 				return nil, err
+			}
+
+			if rule != nil {
+				patchedState, err := applyManualRule(ctx, c, config, rule)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+				def, err := patchedState.Marshal(ctx, llb.Platform(targetPlatform.Platform))
+				if err != nil {
+					ch <- err
+					return nil, fmt.Errorf("unable to marshal manual patch state %w", err)
+				}
+				res, err := c.Solve(ctx, gwclient.SolveRequest{
+					Definition: def.ToPB(),
+					Evaluate:   true,
+				})
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+				return res, nil
 			}
 
 			// Create package manager helper
@@ -758,7 +789,7 @@ func patchMultiArchImage(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, nil, p, ignoreError, push, bkOpts, true)
 			if err != nil {
 				return handlePlatformErr(p, err)
 			}
