@@ -236,9 +236,11 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	if description == "EOL Check: Log WARN message without blocking patching" {
 		expectedEOLWarning := "The operating system debian 9 appears to be End-Of-Support-Life"
 		assert.Contains(t, outputStr, expectedEOLWarning, "EOL warning for Debian 9 not found in copa output")
-	}
-
-	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
+		assert.Error(t, err, "copa patch command should have failed when attempting to patch EOL Debian Stretch")
+		if err != nil {
+			assert.Contains(t, outputStr, "process \"apt-get update\" did not complete successfully", "Expected 'apt-get update' failure message")
+		}
+	} else if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
 		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+
 			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
 	} else {
