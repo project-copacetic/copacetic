@@ -63,8 +63,8 @@ We do not vote formally on every code change, but we do expect that every code c
 
 ## Meetings
 
-Time zones permitting, Maintainers are expected to participate in the public
-developer meeting, which occurs
+Time zones permitting, Maintainers are expected to participate in the [public
+developer meeting]((https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit#heading=h.294j02tlxam)), which occurs
 at a bi-weekly cadence.  
 
 Maintainers will also have closed meetings in order to discuss security reports
