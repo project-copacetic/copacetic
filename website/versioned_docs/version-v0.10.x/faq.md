@@ -114,7 +114,7 @@ No. To prevent a buildup of layers, Copa discards the previous patch layer with 
 
 If you're seeing errors related to missing **Release files** or `404 Not Found` errors during patching, your base image is likely using an End-of-Life (EOL) release of a distribution. Copa cannot patch images based on EOL operating systems where the package repositories have been removed or archived.
 
-### What does "End-of-Life" mean for patching?
+## What does "End-of-Life" mean for patching?
 
 When a release of Linux distribution reaches its End-of-Life date:
 
@@ -124,7 +124,7 @@ When a release of Linux distribution reaches its End-of-Life date:
 
 Without access to these repositories, Copa cannot find or apply security updates.
 
-### How do I identify if my image is using an EOL distribution?
+## How do I identify if my image is using an EOL distribution?
 
 Common indicators include:
 
@@ -147,7 +147,7 @@ Visit [endoflife.date](https://endoflife.date/) to easily check the End-of-Life 
 
 :::
 
-### What are my options for handling EOL images?
+## What are my options for handling EOL images?
 
 1. **Preferred: Upgrade to a supported distribution version**
 
