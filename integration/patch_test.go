@@ -114,7 +114,7 @@ func TestPatch(t *testing.T) {
 			switch {
 			case strings.Contains(img.Image, "oracle"):
 				t.Log("Oracle image detected. Skipping Trivy scan.")
-			case img.Description == "EOL Check: Log WARN message without blocking patching":
+			case strings.Contains(img.Description, "EOL"):
 				t.Log("EOL Image Detected. Skipping Trivy scan.")
 			case reportFile:
 				t.Log("scanning patched image")
@@ -236,8 +236,8 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	outputStr := string(out)
 
 	if description == "EOL Check: Log WARN message without blocking patching" {
-		expectedEOLWarning := "The operating system debian 9 appears to be End-Of-Support-Life"
-		assert.Contains(t, outputStr, expectedEOLWarning, "EOL warning for Debian 9 not found in copa output")
+		expectedEOLWarning := "The operating system ubuntu 18.04 appears to be End-Of-Support-Life"
+		assert.Contains(t, outputStr, expectedEOLWarning, "EOL warning for ubuntu 18.04 not found in copa output")
 		assert.Error(t, err, "copa patch command should have failed when attempting to patch EOL Debian Stretch")
 		if err != nil {
 			assert.Contains(t, outputStr, "process \"apt-get update\" did not complete successfully", "Expected 'apt-get update' failure message")

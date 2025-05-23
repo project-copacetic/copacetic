@@ -202,12 +202,11 @@
         "ignoreErrors": false
     },
     {
-        "image": "docker.io/library/debian", 
-        "tag": "stretch",
-        "localName": "",
-        "distro": "debian",
-        "digest": "sha256:16ee3e11da473f6565ef94a715f1a38b3079e0664913be78869c336a71cb6085", 
+        "image": "docker.io/library/ubuntu", 
+        "tag": "18.04",
+        "distro": "ubuntu",
+        "digest": "sha256:dca176c9663a7ba4c1f0e710986f5a25e672842963d95b960191e2d9f7185ebe", 
         "description": "EOL Check: Log WARN message without blocking patching",
-        "ignoreErrors": true
+        "ignoreErrors": false
     }
 ]
