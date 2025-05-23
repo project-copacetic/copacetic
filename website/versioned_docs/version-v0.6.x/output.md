@@ -29,6 +29,11 @@ To generate a VEX document using OpenVEX, use `--format="openvex"` flag, and use
 ```bash
 copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --format="openvex" --output "nginx.1.21.6-vex.json"
 ```
+:::warning[note]
+
+VEX output requires a vulnerability report. If `-r <report_file>` flag is not specified (the "update all" mode), no VEX document is generated.
+
+:::
 
 This will generate a VEX Document that looks like:
 
