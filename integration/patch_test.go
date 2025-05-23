@@ -114,6 +114,8 @@ func TestPatch(t *testing.T) {
 			switch {
 			case strings.Contains(img.Image, "oracle"):
 				t.Log("Oracle image detected. Skipping Trivy scan.")
+			case img.Description == "EOL Check: Log WARN message without blocking patching":
+				t.Log("EOL Image Detected. Skipping Trivy scan.")
 			case reportFile:
 				t.Log("scanning patched image")
 				scanner().
@@ -240,7 +242,9 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		if err != nil {
 			assert.Contains(t, outputStr, "process \"apt-get update\" did not complete successfully", "Expected 'apt-get update' failure message")
 		}
-	} else if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
+	}
+
+	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
 		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+
 			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
 	} else {
