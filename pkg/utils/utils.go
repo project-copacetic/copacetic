@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -51,4 +53,21 @@ func GetProxy() llb.ProxyEnv {
 		AllProxy:   getEnvAny("HTTP_PROXY"),
 	}
 	return proxy
+}
+
+func GetLocalImageDigest(ctx context.Context, imageRef string) (string, error) {
+	cli, err := newClient()
+	if err != nil {
+		return "", err
+	}
+	defer cli.Close()
+
+	distInspect, err := cli.ImageInspect(ctx, imageRef)
+	if err != nil {
+		return "", err
+	}
+	if distInspect.Descriptor == nil {
+		return "", errors.New("descriptor is nil")
+	}
+	return distInspect.Descriptor.Digest.String(), nil
 }

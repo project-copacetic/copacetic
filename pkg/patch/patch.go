@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/containerd/platforms"
@@ -31,6 +34,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
@@ -50,6 +54,55 @@ const (
 var (
 	bkNewClient = buildkit.NewClient
 )
+
+type archDigest struct {
+	tag    string
+	digest string
+	plat   types.PatchPlatform
+}
+
+// archTag returns "patched-arm64" or "patched-arm-v7" etc.
+func archTag(base, arch, variant string) string {
+	if variant != "" {
+		return fmt.Sprintf("%s-%s-%s", base, arch, variant)
+	}
+	return fmt.Sprintf("%s-%s", base, arch)
+}
+
+// createManifestCLI creates a manifest list for the given image and final tag.
+func createManifestCLI(ctx context.Context, image string, finalTag string, items []archDigest) error {
+	ref, _ := reference.ParseNormalizedNamed(image)
+	repo := ref.Name()
+	args := []string{"buildx", "imagetools", "create", "--tag", fmt.Sprintf("%s:%s", repo, finalTag)}
+	for i := range items {
+		ref := fmt.Sprintf("%s@sha256:%s", items[i].tag, items[i].digest)
+		args = append(args, ref)
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error) {
+	if p == nil {
+		return j, fmt.Errorf("platform is nil")
+	}
+
+	var m map[string]any
+	if err := json.Unmarshal(j, &m); err != nil {
+		return nil, err
+	}
+
+	m["architecture"] = p.Architecture
+	if p.Variant != "" {
+		m["variant"] = p.Variant
+	} else {
+		delete(m, "variant")
+	}
+	m["os"] = p.OS
+
+	return json.Marshal(m)
+}
 
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
@@ -88,30 +141,113 @@ func removeIfNotDebug(workingFolder string) {
 	}
 }
 
-//nolint:lll
-func patchWithContext(ctx context.Context, ch chan error, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string, ignoreError, push bool, bkOpts buildkit.Opts) error {
+func patchWithContext(
+	ctx context.Context,
+	ch chan error,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	ignoreError, push bool,
+	bkOpts buildkit.Opts,
+) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
+	if reportFile != "" && reportDirectory != "" {
+		return fmt.Errorf("both report file and directory provided, please provide only one")
+	}
 
+	// try report file
+	if reportFile != "" {
+		// check if reportFile exists
+		if _, err := os.Stat(reportFile); os.IsNotExist(err) {
+			return fmt.Errorf("report file %s does not exist", reportFile)
+		}
+		// check if reportFile is a file
+		f, err := os.Stat(reportFile)
+		if err != nil {
+			// handle common errors
+			if os.IsNotExist(err) {
+				return fmt.Errorf("report file %s does not exist", reportFile)
+			}
+			return fmt.Errorf("failed to stat report file %s: %w", reportFile, err)
+		}
+		if f.IsDir() {
+			return fmt.Errorf("report file %s is a directory, please provide a file", reportFile)
+		}
+		log.Debugf("Using report file: %s", reportFile)
+		platform := types.PatchPlatform{
+			Platform: platforms.Normalize(platforms.DefaultSpec()),
+		}
+		if platform.OS != "linux" {
+			platform.OS = "linux"
+		}
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		if err == nil && result != nil {
+			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
+		}
+		return err
+	} else if reportDirectory == "" && reportFile == "" {
+		platform := types.PatchPlatform{
+			Platform: platforms.Normalize(platforms.DefaultSpec()),
+		}
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		if err == nil && result != nil {
+			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
+		}
+		return err
+	}
+
+	// must be dealing with a directory
+	f, err := os.Stat(reportDirectory)
+	if err != nil {
+		return err
+	}
+	if !f.IsDir() {
+		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
+	}
+
+	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+}
+
+func patchSingleArchImage(
+	ctx context.Context,
+	ch chan error,
+	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	ignoreError, push bool,
+	bkOpts buildkit.Opts,
+	multiArch bool,
+) (*types.PatchResult, error) {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
+	}
+
+	// if the target platform is different from the host platform, we need to check if emulation is enabled
+	osEqual := platforms.DefaultSpec().OS == targetPlatform.OS
+	archEqual := platforms.DefaultSpec().Architecture == targetPlatform.Architecture
+	if osEqual && archEqual {
+		log.Debugf("Host platform %+v matches target platform %+v", platforms.DefaultSpec(), targetPlatform)
+	} else {
+		log.Debugf("Host platform %+v does not match target platform %+v", platforms.DefaultSpec(), targetPlatform)
+		// check if emulation is enabled
+
+		if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
+			return nil, fmt.Errorf("emulation is not enabled for platform %s", targetPlatform.OS+"/"+targetPlatform.Architecture)
+		}
+		log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
 	}
 
 	// parse the image reference
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
-		return fmt.Errorf("failed to parse reference: %w", err)
+		return nil, fmt.Errorf("failed to parse reference: %w", err)
 	}
 
 	// resolve final patched tag
 	patchedTag, err = resolvePatchedTag(imageName, patchedTag, suffix)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
-	// create the patched image name
-	_, err = reference.WithTag(imageName, patchedTag)
-	if err != nil {
-		return fmt.Errorf("invalid patched tag: %w with patched tag %s", err, patchedTag)
+	if multiArch {
+		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
 
@@ -120,16 +256,16 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 		var err error
 		workingFolder, err = os.MkdirTemp("", "copa-*")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		defer removeIfNotDebug(workingFolder)
 		if err = os.Chmod(workingFolder, 0o744); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
 		if isNew, err := utils.EnsurePath(workingFolder, 0o744); err != nil {
 			log.Errorf("failed to create workingFolder %s", workingFolder)
-			return err
+			return nil, err
 		} else if isNew {
 			defer removeIfNotDebug(workingFolder)
 		}
@@ -140,14 +276,14 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	if reportFile != "" {
 		updates, err = report.TryParseScanReport(reportFile, scanner)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		log.Debugf("updates to apply: %v", updates)
 	}
 
 	bkClient, err := bkNewClient(ctx, bkOpts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer bkClient.Close()
 
@@ -214,7 +350,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 	}
 	solveOpt.SourcePolicy, err = build.ReadSourcePolicy()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if solveOpt.SourcePolicy != nil {
@@ -222,20 +358,24 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "redhat"):
 			err = errors.New("RedHat is not supported via source policies due to BusyBox not being in the RHEL repos\n" +
 				"Please use a different RPM-based image")
-			return err
+			return nil, err
 
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "rockylinux"):
 			err = errors.New("RockyLinux is not supported via source policies due to BusyBox not being in the RockyLinux repos\n" +
 				"Please use a different RPM-based image")
-			return err
+			return nil, err
 
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "alma"):
 			err = errors.New("AlmaLinux is not supported via source policies due to BusyBox not being in the AlmaLinux repos\n" +
 				"Please use a different RPM-based image")
-			return err
+			return nil, err
 		}
 	}
 
+	// create a variable to hold the patched image digest
+	var patchedImageDigest string
+
+	// Create a channel to receive the patched image digest
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 	eg.Go(func() error {
@@ -264,10 +404,6 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 				ch <- err
 				return nil, err
 			}
-
-			// Discover platforms for multi-arch images
-			test, err := buildkit.DiscoverPlatforms(imageName.String(), reportDirectory, scanner)
-			fmt.Printf("Testing DiscoverPlatforms Utility - test: %q, err: %q", test, err)
 
 			// Create package manager helper
 			var manager pkgmgr.PackageManager
@@ -313,12 +449,7 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 				return nil, err
 			}
 
-			platform := platforms.Normalize(platforms.DefaultSpec())
-			if platform.OS != "linux" {
-				platform.OS = "linux"
-			}
-
-			def, err := patchedImageState.Marshal(ctx, llb.Platform(platform))
+			def, err := patchedImageState.Marshal(ctx, llb.Platform(targetPlatform.Platform))
 			if err != nil {
 				ch <- err
 				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
@@ -333,7 +464,12 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 				return nil, err
 			}
 
-			res.AddMeta(exptypes.ExporterImageConfigKey, config.ConfigData)
+			fixed, err := normalizeConfigForPlatform(config.ConfigData, &targetPlatform)
+			if err != nil {
+				ch <- err
+				return nil, err
+			}
+			res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
 
 			// for the vex document, only include updates that were successfully applied
 			pkgType = manager.GetPackageType()
@@ -351,12 +487,15 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 		// Currently can only validate updates if updating via scanner
 		if err == nil && solveResponse != nil && reportFile != "" && validatedManifest != nil {
 			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
-			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
-			// vex document must contain at least one statement
-			if output != "" && len(validatedManifest.Updates) > 0 {
-				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-					ch <- err
-					return err
+			patchedImageDigest = digest
+			if reportFile != "" && validatedManifest != nil {
+				nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
+				// vex document must contain at least one statement
+				if output != "" && len(validatedManifest.Updates) > 0 {
+					if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
+						ch <- err
+						return err
+					}
 				}
 			}
 		}
@@ -397,15 +536,30 @@ func patchWithContext(ctx context.Context, ch chan error, image, reportFile, rep
 			return pipeR.Close()
 		})
 	} else {
-		// when pushing, we need to close the pipe reader since we wont use it
 		go func() {
 			pipeR.Close()
 		}()
 	}
 
 	err = eg.Wait()
+	if err != nil {
+		return nil, err
+	}
 
-	return err
+	// Get the solve response from channel
+	if patchedImageDigest == "" && !push {
+		if d, err := utils.GetLocalImageDigest(ctx, patchedImageName); err == nil {
+			patchedImageDigest = d
+		} else {
+			log.Errorf("failed to get image digest: %v", err)
+		}
+	}
+
+	return &types.PatchResult{
+		OriginalImage: image,
+		PatchedImage:  patchedImageName,
+		Digest:        patchedImageDigest,
+	}, nil
 }
 
 // resolvePatchedTag merges explicit tag & suffix rules, returning the final patched tag.
@@ -563,4 +717,79 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	}
 	nameWithDigest := fmt.Sprintf("%s@%s", last, imageDigest)
 	return nameWithDigest
+}
+
+func patchMultiArchImage(
+	ctx context.Context,
+	ch chan error,
+	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
+	ignoreError, push bool,
+	bkOpts buildkit.Opts,
+) error {
+	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
+	if err != nil {
+		return err
+	}
+	if len(platforms) == 0 {
+		return fmt.Errorf("no patchable platforms found for image %s", image)
+	}
+
+	maxParallel := runtime.NumCPU()
+	sem := make(chan struct{}, maxParallel)
+	g, gctx := errgroup.WithContext(ctx)
+
+	var mu sync.Mutex
+	archDigests := []archDigest{}
+
+	handlePlatformErr := func(p types.PatchPlatform, err error) error {
+		switch platformSpecificErrors {
+		case "ignore":
+			return nil
+		case "skip":
+			log.Warnf("Ignoring error for platform %s: %v", p.OS+"/"+p.Architecture, err)
+			return nil
+		default:
+			return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
+		}
+	}
+
+	for _, p := range platforms {
+		g.Go(func() error {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			if err != nil {
+				return handlePlatformErr(p, err)
+			}
+
+			mu.Lock()
+			archDigests = append(archDigests, archDigest{tag: res.PatchedImage, digest: strings.TrimPrefix(res.Digest, "sha256:"), plat: p})
+			mu.Unlock()
+			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedImage)
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	// resolve image ref
+	imageName, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return fmt.Errorf("failed to parse reference: %w", err)
+	}
+
+	resolvedTag, err := resolvePatchedTag(imageName, patchedTag, suffix)
+	if err != nil {
+		return err
+	}
+
+	if push {
+		if err := createManifestCLI(ctx, image, resolvedTag, archDigests); err != nil {
+			return fmt.Errorf("manifest list creation failed: %w", err)
+		}
+	}
+	return nil
 }
