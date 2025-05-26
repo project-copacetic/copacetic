@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -23,6 +22,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/distribution/reference"
+	"github.com/docker/buildx/util/imagetools"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -55,12 +55,6 @@ var (
 	bkNewClient = buildkit.NewClient
 )
 
-type archDigest struct {
-	tag    string
-	digest string
-	plat   types.PatchPlatform
-}
-
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
 	if variant != "" {
@@ -69,30 +63,41 @@ func archTag(base, arch, variant string) string {
 	return fmt.Sprintf("%s-%s", base, arch)
 }
 
-// createManifestCLI creates a manifest list for the given image and final tag.
-func createManifestCLI(ctx context.Context, image string, finalTag string, items []archDigest) error {
-	ref, _ := reference.ParseNormalizedNamed(image)
-	repo := ref.Name()
-	args := []string{"buildx", "imagetools", "create", "--tag", fmt.Sprintf("%s:%s", repo, finalTag)}
-	for i := range items {
-		ref := fmt.Sprintf("%s@sha256:%s", items[i].tag, items[i].digest)
-		args = append(args, ref)
-	}
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
-}
+// createMultiArchManifest assembles a multi-arch manifest list and pushes it
+// via Buildx's imagetools helper (equivalent to
+// `docker buildx imagetools create --tag … img@sha256:d1 img@sha256:d2 …`).
+func createMultiArchManifest(
+	ctx context.Context,
+	imageName reference.NamedTagged,
+	items []types.PatchResult,
+) error {
+	resolver := imagetools.New(imagetools.Opt{
+		Auth: config.LoadDefaultConfigFile(os.Stderr),
+	})
 
-func createManifestDockerLib(ctx context.Context, image string, finalTag string, items []archDigest) error {
-	ref, _ := reference.ParseNormalizedNamed(image)
-	repo := ref.Name()
-	args := []string{"manifest", "create", "--amend", fmt.Sprintf("%s:%s", repo, finalTag)}
-	for i := range items {
-		args = append(args, items[i].tag)
+	// Source references (repo@sha256:digest) – one per architecture.
+	srcRefs := make([]*imagetools.Source, 0, len(items))
+	for _, it := range items {
+		if it.PatchedDesc == nil {
+			return fmt.Errorf("patched descriptor is nil for %s", it.OriginalRef.String())
+		}
+		srcRefs = append(srcRefs, &imagetools.Source{
+			Ref:  it.PatchedRef,
+			Desc: *it.PatchedDesc,
+		})
 	}
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-	return cmd.Run()
+
+	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, map[exptypes.AnnotationKey]string{}, false)
+	if err != nil {
+		return fmt.Errorf("failed to combine sources into manifest list: %w", err)
+	}
+
+	err = resolver.Push(ctx, imageName, desc, idxBytes)
+	if err != nil {
+		return fmt.Errorf("failed to push multi-arch manifest list: %w", err)
+	}
+
+	return nil
 }
 
 func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error) {
@@ -192,7 +197,7 @@ func patchWithContext(
 		}
 		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
+			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 		}
 		return err
 	} else if reportDirectory == "" && reportFile == "" {
@@ -200,16 +205,10 @@ func patchWithContext(
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
 		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
-		if err == nil && result != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
+		if err == nil && result != nil && result.PatchedRef != nil {
+			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 		}
 		return err
-	}
-
-	// must be dealing with a multi-arch image
-	if reportDirectory != "" && !push {
-		log.Warn("Patching multi-arch images is only supported with --push")
-		return fmt.Errorf("patching multi-arch images is only supported with --push")
 	}
 
 	// check the directory
@@ -267,7 +266,10 @@ func patchSingleArchImage(
 	if multiArch {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	patchedImageName, err := reference.WithTag(imageName, patchedTag)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse patched image name: %w", err)
+	}
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -342,7 +344,7 @@ func patchSingleArchImage(
 
 	// determine which attributes to set for the export
 	attrs := map[string]string{
-		"name": patchedImageName,
+		"name": patchedImageName.String(),
 	}
 	if shouldExportOCI {
 		attrs["oci-mediatypes"] = "true"
@@ -520,7 +522,7 @@ func patchSingleArchImage(
 			patchedImageDigest = digest
 		}
 		if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
-			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
+			nameDigestOrTag := getRepoNameWithDigest(patchedImageName.String(), patchedImageDigest)
 			// vex document must contain at least one statement
 			if output != "" && len(validatedManifest.Updates) > 0 {
 				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
@@ -576,19 +578,16 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	// Get the solve response from channel
-	if patchedImageDigest == "" && !push {
-		if d, err := utils.GetLocalImageDigest(ctx, patchedImageName); err == nil {
-			patchedImageDigest = d
-		} else {
-			log.Errorf("failed to get image digest: %v", err)
-		}
+	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName.String())
+	if err != nil { // dont necessarily need to fail if we can't get the descriptor
+		prettyPlatform := platforms.Format(targetPlatform.Platform)
+		log.Warnf("failed to get patched image descriptor for platform '%s':  %v", prettyPlatform, err)
 	}
 
 	return &types.PatchResult{
-		OriginalImage: image,
-		PatchedImage:  patchedImageName,
-		Digest:        patchedImageDigest,
+		OriginalRef: imageName,
+		PatchedRef:  reference.TagNameOnly(patchedImageName),
+		PatchedDesc: patchedDesc,
 	}, nil
 }
 
@@ -768,7 +767,7 @@ func patchMultiArchImage(
 	g, gctx := errgroup.WithContext(ctx)
 
 	var mu sync.Mutex
-	archDigests := []archDigest{}
+	patchResults := []types.PatchResult{}
 
 	handlePlatformErr := func(p types.PatchPlatform, err error) error {
 		switch platformSpecificErrors {
@@ -784,8 +783,7 @@ func patchMultiArchImage(
 
 	for _, p := range platforms {
 		// rebind
-		//nolint
-		p := p
+		p := p //nolint
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -797,12 +795,14 @@ func patchMultiArchImage(
 			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
 			if err != nil {
 				return handlePlatformErr(p, err)
+			} else if res == nil {
+				return fmt.Errorf("patchSingleArchImage returned nil result for platform %s", p.OS+"/"+p.Architecture)
 			}
 
 			mu.Lock()
-			archDigests = append(archDigests, archDigest{tag: res.PatchedImage, digest: strings.TrimPrefix(res.Digest, "sha256:"), plat: p})
+			patchResults = append(patchResults, *res)
 			mu.Unlock()
-			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedImage)
+			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
 			return nil
 		})
 	}
@@ -817,19 +817,37 @@ func patchMultiArchImage(
 		return fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	resolvedTag, err := resolvePatchedTag(imageName, patchedTag, suffix)
+	resolvedPatchedTag, err := resolvePatchedTag(imageName, patchedTag, suffix)
 	if err != nil {
 		return err
 	}
+	patchedImageName, err := reference.WithTag(imageName, resolvedPatchedTag)
+	if err != nil {
+		return fmt.Errorf("failed to parse patched image name: %w", err)
+	}
 
 	if push {
-		if err := createManifestCLI(ctx, image, resolvedTag, archDigests); err != nil {
-			return fmt.Errorf("manifest list creation failed: %w", err)
-		}
-	} else {
-		if err := createManifestDockerLib(ctx, image, resolvedTag, archDigests); err != nil {
+		err = createMultiArchManifest(ctx, patchedImageName, patchResults)
+		if err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
 	}
+
+	if !push {
+		log.Info("To push the individual architecture images, run:")
+		for _, result := range patchResults {
+			log.Infof("  docker push %s", result.PatchedRef.String())
+		}
+		log.Infof("To create and push the multi-arch manifest, run:")
+		refs := make([]string, len(patchResults))
+		for i, result := range patchResults {
+			refs[i] = result.PatchedRef.String()
+		}
+		log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
+		log.Infof("  docker manifest push %s", patchedImageName.String())
+	}
+
+	log.Infof("Multi-arch image patched with tag %s", patchedImageName.String())
+
 	return nil
 }
