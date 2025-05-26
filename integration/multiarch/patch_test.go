@@ -27,6 +27,7 @@ var (
 type testImage struct {
 	OriginalImage string   `json:"originalImage"`
 	LocalImage    string   `json:"localImage"`
+	Push          bool     `json:"push"`
 	Tag           string   `json:"tag"`
 	Distro        string   `json:"distro"`
 	Description   string   `json:"description"`
@@ -86,7 +87,7 @@ func TestPatch(t *testing.T) {
 			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
 
 			t.Log("patching image with multiple architectures")
-			patchMultiArch(t, ref, tagPatched, reportDir, img.IgnoreErrors)
+			patchMultiArch(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
 
 			t.Log("scanning patched image for each platform")
 			wg = sync.WaitGroup{}
@@ -159,26 +160,32 @@ func (w *addrWrapper) env() []string {
 	return []string{fmt.Sprintf("DOCKER_HOST=%s", a)}
 }
 
-func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors bool) {
+func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
 	}
 
+	args := []string{
+		"patch",
+		"-i=" + ref,
+		"-t=" + patchedTag,
+		"--report-directory=" + reportDir,
+		"-s=" + scannerPlugin,
+		"--timeout=30m",
+		addrFl,
+		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
+		"--debug",
+		"--platform-specific-errors=fail",
+	}
+	if push {
+		args = append(args, "--push")
+	}
+
 	//#nosec G204
 	cmd := exec.Command(
 		copaPath,
-		"patch",
-		"-i="+ref,
-		"-t="+patchedTag,
-		"--report-directory="+reportDir,
-		"-s="+scannerPlugin,
-		"--timeout=30m",
-		addrFl,
-		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
-		"--debug",
-		"--push",
-		"--platform-specific-errors=fail",
+		args...,
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
