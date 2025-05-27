@@ -15,7 +15,7 @@ Basic Command Structure:
 ```bash
 copa patch \
   --image <your-multi-arch-image> \
-  --report-dir <path-to-your-reports-directory> \
+  --report-directory <path-to-your-reports-directory> \
   --tag <desired-patched-image-tag> \
   [--push] \
   [--platform-specific-errors <fail|warn|skip>] \
@@ -23,7 +23,7 @@ copa patch \
 
 Key Flags for Multi-Arch Patching:
 
-- `--report-dir <directory_path>`: Specifies the directory containing platform-specific vulnerability reports.
+- `--report-directory <directory_path>`: Specifies the directory containing platform-specific vulnerability reports.
 - `--tag <final_tag>`: The tag for the final, reassembled multi-arch manifest (e.g., `1.0-patched`).
 - `--push` (optional): If included, Copa pushes the final multi-arch manifest to the registry.
 - `--platform-specific-errors <fail|warn|skip>` (optional, default: `skip`): Determines how Copa handles errors encountered while patching an individual platform's sub-image.
@@ -35,12 +35,18 @@ To patch a multi-arch image `myregistry.io/app:1.2` using reports from the `./sc
 ```bash
 copa patch \
   --image myregistry.io/app:1.2 \
-  --report-dir ./scan_results \
+  --report-directory ./scan_results \
   --tag 1.2-patched \
   --push
 ```
 
-When patching `myregistry.io/app:1.2`, Copa first identifies all architectures supported by the image. It then examines the specified report directory to find scan reports for these architectures. Copa will only patch the architectures that are both present in the image and have a corresponding report in the directory.
+When patching `myregistry.io/app:1.2`, Copa first determines the image’s supported architectures, then walks the report directory and patches only those scan reports whose architectures match.
+
+### Things to Keep in Mind
+
+If you don't include the `--report-directory` flag, Copa will not perform multi-arch patching and will instead only patch the image for the architecture of the host machine.
+
+If `--push` is not specified, the individual patched images will be saved locally, and you can push them to your registry later using `docker push` and then `docker manifest create/push` to create the multi-arch manifest.
 
 ---
 
