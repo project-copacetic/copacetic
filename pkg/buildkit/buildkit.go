@@ -124,11 +124,6 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			continue
 		}
 
-		// if arch is arm64, then variant should be v8
-		if report.Metadata.Config.Arch == "arm64" && report.Metadata.Config.Variant != "v8" {
-			report.Metadata.Config.Variant = "v8"
-		}
-
 		platform := types.PatchPlatform{
 			Platform: ispec.Platform{
 				OS:           linux,
@@ -183,13 +178,20 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			if m.Platform.OS != linux {
 				continue
 			}
-			platforms = append(platforms, types.PatchPlatform{
+
+			patchPlatform := types.PatchPlatform{
 				Platform: ispec.Platform{
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
 					Variant:      m.Platform.Variant,
 				},
-			})
+			}
+			if m.Platform.Architecture == "arm64" && m.Platform.Variant == "v8" {
+				// trivy does not add v8 to arm64 reports, so we
+				// need to remove it here to maintain consistency
+				patchPlatform.Platform.Variant = ""
+			}
+			platforms = append(platforms, patchPlatform)
 		}
 		return platforms, nil
 	}
@@ -208,14 +210,14 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 	if p == nil {
 		return nil, errors.New("image is not multi arch")
 	}
-	log.Debug("Discovered platforms from manifest:", p)
+	log.WithField("platforms", p).Debug("Discovered platforms from manifest")
 
 	if reportDir != "" {
 		p2, err := DiscoverPlatformsFromReport(reportDir, scanner)
 		if err != nil {
 			return nil, err
 		}
-		log.Debug("Discovered platforms from report:", p2)
+		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
 		// if platform is present in list from reference and report, then we should patch that platform
 		key := func(pl ispec.Platform) string {

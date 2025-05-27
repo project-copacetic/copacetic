@@ -27,9 +27,17 @@ type PatchPlatform struct {
 	ReportFile string `json:"reportFile"`
 }
 
+// String returns a string representation of the PatchPlatform.
+func (p PatchPlatform) String() string {
+	if p.Variant == "" {
+		return p.OS + "/" + p.Architecture
+	}
+	return p.OS + "/" + p.Architecture + "/" + p.Variant
+}
+
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalRef  reference.Named
-	PatchedDesc  *ispec.Descriptor
-	PatchedRef   reference.Named
+	OriginalRef reference.Named
+	PatchedDesc *ispec.Descriptor
+	PatchedRef  reference.Named
 }
