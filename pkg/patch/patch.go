@@ -211,7 +211,7 @@ func patchWithContext(
 		return err
 	}
 
-	// check the directory
+	// must be dealing with a multi-arch image, check the directory
 	f, err := os.Stat(reportDirectory)
 	if err != nil {
 		return err
@@ -266,10 +266,8 @@ func patchSingleArchImage(
 	if multiArch {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
-	patchedImageName, err := reference.WithTag(imageName, patchedTag)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse patched image name: %w", err)
-	}
+	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	log.Infof("Patched image name: %s", patchedImageName)
 
 	// Ensure working folder exists for call to InstallUpdates
 	if workingFolder == "" {
@@ -344,7 +342,7 @@ func patchSingleArchImage(
 
 	// determine which attributes to set for the export
 	attrs := map[string]string{
-		"name": patchedImageName.String(),
+		"name": patchedImageName,
 	}
 	if shouldExportOCI {
 		attrs["oci-mediatypes"] = "true"
@@ -391,9 +389,6 @@ func patchSingleArchImage(
 			return nil, err
 		}
 	}
-
-	// create a variable to hold the patched image digest
-	var patchedImageDigest string
 
 	// Create a channel to receive the patched image digest
 	buildChannel := make(chan *client.SolveStatus)
@@ -517,12 +512,13 @@ func patchSingleArchImage(
 		}, buildChannel)
 
 		// Currently can only validate updates if updating via scanner
+		var patchedImageDigest string
 		if err == nil && solveResponse != nil {
 			digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 			patchedImageDigest = digest
 		}
 		if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
-			nameDigestOrTag := getRepoNameWithDigest(patchedImageName.String(), patchedImageDigest)
+			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
 			// vex document must contain at least one statement
 			if output != "" && len(validatedManifest.Updates) > 0 {
 				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
@@ -578,15 +574,21 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName.String())
+	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName)
 	if err != nil { // dont necessarily need to fail if we can't get the descriptor
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s':  %v", prettyPlatform, err)
 	}
 
+	patchedRef, err := reference.ParseNamed(patchedImageName)
+	log.Debugf("Patched image name: %s", patchedImageName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse patched image name %s: %w", patchedImageName, err)
+	}
+
 	return &types.PatchResult{
 		OriginalRef: imageName,
-		PatchedRef:  reference.TagNameOnly(patchedImageName),
+		PatchedRef:  patchedRef,
 		PatchedDesc: patchedDesc,
 	}, nil
 }

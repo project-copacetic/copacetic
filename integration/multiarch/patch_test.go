@@ -50,8 +50,6 @@ func TestPatch(t *testing.T) {
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
-			t.Parallel()
-
 			// define a few variables
 			ref := fmt.Sprintf("%s:%s", img.LocalImage, img.Tag)
 			originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)

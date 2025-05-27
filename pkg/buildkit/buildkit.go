@@ -114,7 +114,6 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			continue
 		}
 		report, err := report.TryParseScanReport(filePath, scanner)
-		fmt.Printf("variant: %s\n", report.Metadata.Config.Variant)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}
@@ -189,7 +188,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			if m.Platform.Architecture == "arm64" && m.Platform.Variant == "v8" {
 				// trivy does not add v8 to arm64 reports, so we
 				// need to remove it here to maintain consistency
-				patchPlatform.Platform.Variant = ""
+				patchPlatform.Variant = ""
 			}
 			platforms = append(platforms, patchPlatform)
 		}
