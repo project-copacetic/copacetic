@@ -1,0 +1,17 @@
+rules:
+  - target:
+      path: /usr/share/nginx/html/index.html
+      sha256: ""
+    replacement:
+      source: docker.io/library/busybox:latest
+      internalPath: /bin/true
+      sha256: ""
+      mode: 0755
+  - target:
+      path: /usr/share/nginx/html/50x.html
+      sha256: ""
+    replacement:
+      source: docker.io/library/busybox:latest
+      internalPath: /bin/false
+      sha256: ""
+      mode: 0755

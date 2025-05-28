@@ -149,16 +149,21 @@ func patchWithContext(
 	bkOpts buildkit.Opts,
 ) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
-	var rule *ManualRule
+	var rules *ManualRules
 	if manualRule != "" {
 		var err error
-		rule, err = loadManualRule(manualRule)
+		rules, err = loadManualRules(manualRule)
 		if err != nil {
 			return err
 		}
 	}
 	if reportFile != "" && reportDirectory != "" {
 		return fmt.Errorf("both report file and directory provided, please provide only one")
+	}
+
+	// Check for mutually exclusive options
+	if manualRule != "" && (reportFile != "" || reportDirectory != "") {
+		log.Warn("Manual rules and vulnerability reports are mutually exclusive. When using --manual-rule, vulnerability scanning is skipped.")
 	}
 
 	// try report file
@@ -186,7 +191,7 @@ func patchWithContext(
 		if platform.OS != "linux" {
 			platform.OS = "linux"
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, rule, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, rules, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
 		}
@@ -195,7 +200,7 @@ func patchWithContext(
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, rule, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, rules, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
 		}
@@ -218,7 +223,7 @@ func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
 	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string,
-	rule *ManualRule,
+	rules *ManualRules,
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
@@ -414,8 +419,8 @@ func patchSingleArchImage(
 				return nil, err
 			}
 
-			if rule != nil {
-				patchedState, err := applyManualRule(ctx, c, config, rule)
+			if rules != nil {
+				patchedState, err := applyManualRules(ctx, c, config, rules)
 				if err != nil {
 					ch <- err
 					return nil, err

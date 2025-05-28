@@ -1,0 +1,9 @@
+rules:
+  - target:
+      path: /etc/alpine-release
+      sha256: "{{SHA256}}"
+    replacement:
+      source: docker.io/library/busybox:latest
+      internalPath: /bin/echo
+      sha256: ""
+      mode: 0644

@@ -14,7 +14,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type ManualRule struct {
+// ManualRuleEntry represents a single file replacement rule.
+type ManualRuleEntry struct {
 	Target struct {
 		Path   string `yaml:"path"`
 		Sha256 string `yaml:"sha256"`
@@ -23,11 +24,16 @@ type ManualRule struct {
 		Source       string `yaml:"source"`
 		InternalPath string `yaml:"internalPath"`
 		Sha256       string `yaml:"sha256"`
-		Mode         int    `yaml:"mode"`
+		Mode         uint32 `yaml:"mode"`
 	} `yaml:"replacement"`
 }
 
-func loadManualRule(path string) (*ManualRule, error) {
+// ManualRules represents a collection of manual replacement rules.
+type ManualRules struct {
+	Rules []ManualRuleEntry `yaml:"rules"`
+}
+
+func loadManualRules(path string) (*ManualRules, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -37,11 +43,11 @@ func loadManualRule(path string) (*ManualRule, error) {
 	if err != nil {
 		return nil, err
 	}
-	var r ManualRule
-	if err := yaml.Unmarshal(b, &r); err != nil {
+	var rules ManualRules
+	if err := yaml.Unmarshal(b, &rules); err != nil {
 		return nil, err
 	}
-	return &r, nil
+	return &rules, nil
 }
 
 func verifySha(data []byte, expected string) error {
@@ -56,30 +62,61 @@ func verifySha(data []byte, expected string) error {
 	return nil
 }
 
-func applyManualRule(ctx context.Context, c gwclient.Client, cfg *buildkit.Config, rule *ManualRule) (llb.State, error) {
-	// verify current file hash if provided
-	if rule.Target.Path != "" && rule.Target.Sha256 != "" {
-		data, err := buildkit.ExtractFileFromState(ctx, c, &cfg.ImageState, rule.Target.Path)
-		if err != nil {
-			return llb.State{}, err
-		}
-		if err := verifySha(data, rule.Target.Sha256); err != nil {
-			return llb.State{}, err
-		}
+func applyManualRules(ctx context.Context, c gwclient.Client, cfg *buildkit.Config, rules *ManualRules) (llb.State, error) {
+	if len(rules.Rules) == 0 {
+		return cfg.ImageState, nil
 	}
 
-	replacement := llb.Image(rule.Replacement.Source)
-	patched := cfg.ImageState.File(llb.Copy(replacement, rule.Replacement.InternalPath, rule.Target.Path))
+	currentState := cfg.ImageState
 
+	for i, rule := range rules.Rules {
+		if rule.Target.Path != "" && rule.Target.Sha256 != "" {
+			data, err := buildkit.ExtractFileFromState(ctx, c, &currentState, rule.Target.Path)
+			if err != nil {
+				return llb.State{}, fmt.Errorf("rule %d: failed to extract %s: %w", i, rule.Target.Path, err)
+			}
+			if err := verifySha(data, rule.Target.Sha256); err != nil {
+				return llb.State{}, fmt.Errorf("rule %d: %w", i, err)
+			}
+		}
+
+		replacement := llb.Image(rule.Replacement.Source)
+
+		// Validate replacement file SHA256 if provided
+		if rule.Replacement.Sha256 != "" {
+			replacementData, err := buildkit.ExtractFileFromState(ctx, c, &replacement, rule.Replacement.InternalPath)
+			if err != nil {
+				return llb.State{}, fmt.Errorf("rule %d: failed to extract replacement file %s from %s: %w", i, rule.Replacement.InternalPath, rule.Replacement.Source, err)
+			}
+			if err := verifySha(replacementData, rule.Replacement.Sha256); err != nil {
+				return llb.State{}, fmt.Errorf("rule %d: replacement file SHA256 validation failed: %w", i, err)
+			}
+		}
+
+		copyAction := llb.Copy(
+			replacement,
+			rule.Replacement.InternalPath,
+			rule.Target.Path,
+			llb.ChmodOpt{Mode: os.FileMode(rule.Replacement.Mode)},
+		)
+
+		patchedState := currentState.File(copyAction)
+
+		diff := llb.Diff(currentState, patchedState)
+		currentState = llb.Merge([]llb.State{currentState, diff})
+	}
+
+	// if there was already a patched state from previous operations (e.g. vulnerability updates)
+	// we need to merge our changes with those
 	if cfg.PatchedConfigData != nil {
 		prevPatchDiff := llb.Diff(cfg.ImageState, cfg.PatchedImageState)
-		combined := llb.Merge([]llb.State{prevPatchDiff, patched})
+		manualPatchDiff := llb.Diff(cfg.ImageState, currentState)
+
+		combined := llb.Merge([]llb.State{prevPatchDiff, manualPatchDiff})
 		squashed := llb.Scratch().File(llb.Copy(combined, "/", "/"))
 		merged := llb.Merge([]llb.State{cfg.ImageState, squashed})
 		return merged, nil
 	}
 
-	diff := llb.Diff(cfg.ImageState, patched)
-	merged := llb.Merge([]llb.State{llb.Scratch(), cfg.ImageState, diff})
-	return merged, nil
+	return currentState, nil
 }

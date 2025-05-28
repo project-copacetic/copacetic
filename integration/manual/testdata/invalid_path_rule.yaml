@@ -1,0 +1,9 @@
+rules:
+  - target:
+      path: /nonexistent/file.txt
+      sha256: "deadbeef"
+    replacement:
+      source: docker.io/library/busybox:latest
+      internalPath: /bin/echo
+      sha256: ""
+      mode: 0644
