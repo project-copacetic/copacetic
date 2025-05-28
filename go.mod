@@ -28,7 +28,7 @@ require (
 	github.com/tonistiigi/fsutil v0.0.0-20250417144416-3f76f8130144
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/sync v0.14.0
-	google.golang.org/grpc v1.72.1
+	google.golang.org/grpc v1.72.2
 	k8s.io/apimachinery v0.33.1
 )
 
