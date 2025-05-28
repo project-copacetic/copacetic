@@ -8,7 +8,7 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/go-docker v0.3.0
 	github.com/distribution/reference v0.6.0
-	github.com/docker/buildx v0.23.0
+	github.com/docker/buildx v0.24.0
 	github.com/docker/cli v28.1.1+incompatible
 	github.com/docker/docker v28.1.1+incompatible
 	github.com/google/go-containerregistry v0.20.5
