@@ -11,7 +11,7 @@ require (
 	github.com/docker/buildx v0.23.0
 	github.com/docker/cli v28.1.1+incompatible
 	github.com/docker/docker v28.1.1+incompatible
-	github.com/google/go-containerregistry v0.20.3
+	github.com/google/go-containerregistry v0.20.5
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
@@ -128,13 +128,13 @@ require (
 	go.opentelemetry.io/proto/otlp v1.5.0 // indirect
 	go.uber.org/mock v0.5.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
+	golang.org/x/crypto v0.38.0 // indirect
 	golang.org/x/mod v0.24.0 // indirect
-	golang.org/x/net v0.39.0 // indirect
-	golang.org/x/sys v0.32.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/net v0.40.0 // indirect
+	golang.org/x/sys v0.33.0 // indirect
+	golang.org/x/text v0.25.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
-	golang.org/x/tools v0.32.0 // indirect
+	golang.org/x/tools v0.33.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250303144028-a0af3efb3deb // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250313205543-e70fdf4c4cb4 // indirect
