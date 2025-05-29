@@ -28,6 +28,7 @@ If you have any issues with a specific plugin, please open an issue in the appli
 
 :::
 
+- Wiz : https://github.com/gitsofaryan/copa-wiz
 - Grype: https://github.com/anubhav06/copa-grype
 
 # Writing a Scanner Plugin
