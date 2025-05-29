@@ -41,7 +41,7 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 			return nil, fmt.Errorf("error running scanner %s: %w", scanner, err)
 		}
 	} else {
-		// Read the file directly if scanner is "native"
+		// Read the file directly if they are in v1alpha1 format
 		scannerOutput, err = os.ReadFile(file)
 		if err != nil {
 			return nil, fmt.Errorf("error reading file %s: %w", file, err)
