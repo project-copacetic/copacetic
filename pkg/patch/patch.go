@@ -427,6 +427,18 @@ func patchSingleArchImage(
 					return nil, err
 				}
 
+				isEOL, eolDate, err := utils.CheckEOSL(osType, osVersion)
+				if err != nil {
+					log.Warnf("Failed to check EOL status for %s %s: %v. Patch attempt will proceed.", osType, osVersion, err)
+				} else if isEOL {
+					eolMsg := fmt.Sprintf("The operating system %s %s appears to be End-Of-Support-Life.", osType, osVersion)
+					if eolDate != "Unknown" && eolDate != "Not in EOL DB" && eolDate != "Normalization Failed" && eolDate != "API Rate Limited" {
+						eolMsg += fmt.Sprintf(" (EOL date: %s)", eolDate)
+					}
+					eolMsg += " Patching may fail, be incomplete, or use archived repositories. Consider upgrading the base image."
+					log.Warn(eolMsg)
+				}
+
 				// get package manager based on os family type
 				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
 				if err != nil {
