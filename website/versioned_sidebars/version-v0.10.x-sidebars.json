@@ -17,12 +17,7 @@
       "type": "category",
       "label": "Features",
       "collapsed": false,
-      "items": [
-        "github-action",
-        "custom-address",
-        "output",
-        "scanner-plugins"
-      ]
+      "items": ["github-action", "custom-address", "output", "scanner-plugins"]
     },
     {
       "type": "category",
@@ -41,10 +36,7 @@
       "type": "category",
       "label": "Community",
       "collapsed": false,
-      "items": [
-        "adopters",
-        "talks-and-presentations"
-      ]
+      "items": ["adopters", "talks-and-presentations"]
     }
   ]
 }
