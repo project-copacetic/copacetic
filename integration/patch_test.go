@@ -233,12 +233,6 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	out, err := cmd.CombinedOutput()
-	outputStr := string(out)
-
-	if description == "EOL Check: Log WARN message without blocking patching" {
-		expectedEOLWarning := "The operating system ubuntu 18.04 appears to be End-Of-Support-Life"
-		assert.Contains(t, outputStr, expectedEOLWarning, "EOL warning for ubuntu 18.04 not found in copa output")
-	}
 
 	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
 		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+

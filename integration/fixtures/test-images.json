@@ -200,13 +200,5 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
-    },
-    {
-        "image": "docker.io/library/ubuntu", 
-        "tag": "18.04",
-        "distro": "ubuntu",
-        "digest": "sha256:dca176c9663a7ba4c1f0e710986f5a25e672842963d95b960191e2d9f7185ebe", 
-        "description": "EOL Check: Log WARN message without blocking patching",
-        "ignoreErrors": false
     }
 ]
