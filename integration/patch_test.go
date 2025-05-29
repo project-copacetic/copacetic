@@ -109,7 +109,7 @@ func TestPatch(t *testing.T) {
 			}
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile, img.Description)
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -203,7 +203,7 @@ func dockerCmd(t *testing.T, args ...string) {
 	require.NoError(t, err, string(out))
 }
 
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool, description string) {
+func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
