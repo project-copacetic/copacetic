@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -27,13 +28,24 @@ func TryParseScanReport(file, scanner string) (*unversioned.UpdateManifest, erro
 }
 
 func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, error) {
-	// Execute the plugin binary
-	cmd := "copa-" + scanner
-	scannerCommand := exec.Command(cmd, file)
-	// Capture the output
-	scannerOutput, err := scannerCommand.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("error running scanner %s: %w", scanner, err)
+	var scannerOutput []byte
+	var err error
+
+	if scanner != "native" {
+		// Execute the plugin binary
+		cmd := "copa-" + scanner
+		scannerCommand := exec.Command(cmd, file)
+		// Capture the output
+		scannerOutput, err = scannerCommand.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("error running scanner %s: %w", scanner, err)
+		}
+	} else {
+		// Read the file directly if they are in v1alpha1 format
+		scannerOutput, err = os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("error reading file %s: %w", file, err)
+		}
 	}
 
 	var m map[string]interface{}
