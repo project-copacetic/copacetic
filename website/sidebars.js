@@ -46,12 +46,10 @@ const sidebars = {
       "items": [
         "contributing",
         "code-of-conduct",
-        "contributor-ladder",
         "design",
         "development-tips",
         "maintainer-guidelines",
-        "release",
-        "reviewing-guide"
+        "release"
       ]
     },
     {
