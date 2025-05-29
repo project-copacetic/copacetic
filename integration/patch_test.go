@@ -114,8 +114,6 @@ func TestPatch(t *testing.T) {
 			switch {
 			case strings.Contains(img.Image, "oracle"):
 				t.Log("Oracle image detected. Skipping Trivy scan.")
-			case strings.Contains(img.Description, "EOL"):
-				t.Log("EOL Image Detected. Skipping Trivy scan.")
 			case reportFile:
 				t.Log("scanning patched image")
 				scanner().
