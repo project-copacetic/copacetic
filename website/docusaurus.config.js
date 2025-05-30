@@ -80,6 +80,12 @@ const config = {
         theme: lightCodeTheme,
         darkTheme: darkCodeTheme,
       },
+      algolia: {
+        appId: 'V764HJRQUN',
+        apiKey: 'd590e629131c1318f2b996bc14efdfa8',
+        indexName: 'project-copaceticio',
+        contextualSearch: true,
+      }
     }),
 };
 
