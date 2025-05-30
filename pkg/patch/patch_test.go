@@ -544,8 +544,6 @@ func TestArchTag(t *testing.T) {
 	}
 }
 
-const LINUX = "linux"
-
 func TestNormalizeConfigForPlatform(t *testing.T) {
 	// minimal starting config (missing fields on purpose)
 	orig := []byte(`{"architecture":"amd64"}`)
