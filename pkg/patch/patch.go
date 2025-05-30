@@ -48,6 +48,7 @@ const (
 	copaProduct     = "copa"
 	defaultRegistry = "docker.io"
 	defaultTag      = "latest"
+	LINUX           = "linux"
 )
 
 // for testing.
@@ -165,7 +166,6 @@ func patchWithContext(
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
-	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
 	if reportFile != "" && reportDirectory != "" {
 		return fmt.Errorf("both report file and directory provided, please provide only one")
 	}
@@ -192,8 +192,8 @@ func patchWithContext(
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
-		if platform.OS != "linux" {
-			platform.OS = "linux"
+		if platform.OS != LINUX {
+			platform.OS = LINUX
 		}
 		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
@@ -203,6 +203,9 @@ func patchWithContext(
 	} else if reportDirectory == "" && reportFile == "" {
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
+		}
+		if platform.OS != LINUX {
+			platform.OS = LINUX
 		}
 		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil && result.PatchedRef != nil {
@@ -238,18 +241,22 @@ func patchSingleArchImage(
 	}
 
 	// if the target platform is different from the host platform, we need to check if emulation is enabled
-	osEqual := platforms.DefaultSpec().OS == targetPlatform.OS
-	archEqual := platforms.DefaultSpec().Architecture == targetPlatform.Architecture
-	if osEqual && archEqual {
-		log.Debugf("Host platform %+v matches target platform %+v", platforms.DefaultSpec(), targetPlatform)
-	} else {
-		log.Debugf("Host platform %+v does not match target platform %+v", platforms.DefaultSpec(), targetPlatform)
-		// check if emulation is enabled
+	// only need to do this check if were patching a multi-arch image
+	if multiArch {
+		hostPlatform := platforms.DefaultSpec()
+		platformsEqual := hostPlatform.OS == targetPlatform.OS &&
+			hostPlatform.Architecture == targetPlatform.Architecture
+		if platformsEqual {
+			log.Debugf("Host platform %+v matches target platform %+v", platforms.DefaultSpec(), targetPlatform)
+		} else {
+			log.Debugf("Host platform %+v does not match target platform %+v", platforms.DefaultSpec(), targetPlatform)
+			// check if emulation is enabled
 
-		if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
-			return nil, fmt.Errorf("emulation is not enabled for platform %s", targetPlatform.OS+"/"+targetPlatform.Architecture)
+			if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
+				return nil, fmt.Errorf("emulation is not enabled for platform %s", targetPlatform.OS+"/"+targetPlatform.Architecture)
+			}
+			log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
 		}
-		log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
 	}
 
 	// parse the image reference
@@ -757,6 +764,7 @@ func patchMultiArchImage(
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
+	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
 	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
 	if err != nil {
 		return err
