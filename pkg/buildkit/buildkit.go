@@ -127,6 +127,7 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			Platform: ispec.Platform{
 				OS:           linux,
 				Architecture: report.Metadata.Config.Arch,
+				Variant:      report.Metadata.Config.Variant,
 			},
 			ReportFile: filePath,
 		}
@@ -176,12 +177,20 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			if m.Platform.OS != linux {
 				continue
 			}
-			platforms = append(platforms, types.PatchPlatform{
+
+			patchPlatform := types.PatchPlatform{
 				Platform: ispec.Platform{
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
 				},
-			})
+			}
+			if m.Platform.Architecture == "arm64" && m.Platform.Variant == "v8" {
+				// trivy does not add v8 to arm64 reports, so we
+				// need to remove it here to maintain consistency
+				patchPlatform.Variant = ""
+			}
+			platforms = append(platforms, patchPlatform)
 		}
 		return platforms, nil
 	}
@@ -200,27 +209,28 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 	if p == nil {
 		return nil, errors.New("image is not multi arch")
 	}
-	log.Debug("Discovered platforms from manifest:", p)
+	log.WithField("platforms", p).Debug("Discovered platforms from manifest")
 
 	if reportDir != "" {
 		p2, err := DiscoverPlatformsFromReport(reportDir, scanner)
 		if err != nil {
 			return nil, err
 		}
-		log.Debug("Discovered platforms from report:", p2)
+		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
 		// if platform is present in list from reference and report, then we should patch that platform
 		key := func(pl ispec.Platform) string {
-			return pl.OS + "/" + pl.Architecture
+			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
 		}
 
-		reportSet := make(map[string]struct{}, len(p2))
+		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl.Platform)] = struct{}{}
+			reportSet[key(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
-			if _, ok := reportSet[key(pl.Platform)]; ok {
+			if rp, ok := reportSet[key(pl.Platform)]; ok {
+				pl.ReportFile = rp
 				platforms = append(platforms, pl)
 			}
 		}
