@@ -20,6 +20,7 @@ import (
 type apkManager struct {
 	config        *buildkit.Config
 	workingFolder string
+	configPath    string
 }
 
 // Depending on go-apk-version lib for APK version comparison rules.
@@ -126,6 +127,17 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		}
 		// add validation in the future
 		return updatedImageState, nil, nil
+	}
+
+	imageStateCurrent := am.config.ImageState
+	if am.configPath != "" {
+		imageStateCurrent = imageStateCurrent.File(
+			llb.Mkfile{
+				"/etc/apk/repositories",
+				0644, // is this permission correct
+				[]byte(readFile(am.configPath))
+			}
+		)
 	}
 
 	// Resolve set of unique packages to update

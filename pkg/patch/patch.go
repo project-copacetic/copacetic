@@ -109,14 +109,14 @@ func Patch(
 	ctx context.Context, timeout time.Duration,
 	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
-	bkOpts buildkit.Opts,
+	bkOpts buildkit.Opts, apkConfig string,
 ) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, apkConfig)
 	}()
 
 	select {
@@ -146,7 +146,7 @@ func patchWithContext(
 	ch chan error,
 	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
-	bkOpts buildkit.Opts,
+	bkOpts buildkit.Opts, apkConfig string,
 ) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
 	if reportFile != "" && reportDirectory != "" {
@@ -178,7 +178,7 @@ func patchWithContext(
 		if platform.OS != "linux" {
 			platform.OS = "linux"
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, apkConfig false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
 		}
@@ -187,7 +187,7 @@ func patchWithContext(
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, apkConfig false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedImage)
 		}
@@ -203,7 +203,7 @@ func patchWithContext(
 		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
 	}
 
-	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, apkConfig)
 }
 
 func patchSingleArchImage(
@@ -215,6 +215,7 @@ func patchSingleArchImage(
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 	multiArch bool,
+	apkConfig string,
 ) (*types.PatchResult, error) {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -441,6 +442,12 @@ func patchSingleArchImage(
 
 				// get package manager based on os family type
 				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
+				if manager.getPackageType() == "apk"{
+					if apkConfig != "" {
+						manager.configPath = apkConfig
+					}
+				}
+
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -448,6 +455,11 @@ func patchSingleArchImage(
 			} else {
 				// get package manager based on os family type
 				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
+				if manager.getPackageType() == "apk"{
+					if apkConfig != "" {
+						manager.configPath = apkConfig
+					}
+				}
 				if err != nil {
 					ch <- err
 					return nil, err
@@ -736,7 +748,7 @@ func patchMultiArchImage(
 	ch chan error,
 	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
-	bkOpts buildkit.Opts,
+	bkOpts buildkit.Opts, apkConfig string
 ) error {
 	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
 	if err != nil {
@@ -770,7 +782,7 @@ func patchMultiArchImage(
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, apkConfig true)
 			if err != nil {
 				return handlePlatformErr(p, err)
 			}
