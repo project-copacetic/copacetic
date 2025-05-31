@@ -30,6 +30,7 @@ type patchArgs struct {
 	bkOpts                 buildkit.Opts
 	platformSpecificErrors string
 	push                   bool
+	apkConfig              string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -59,6 +60,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.output,
 				ua.ignoreError,
 				ua.push,
+				ua.apkConfig,
 				bkopts)
 		},
 	}
@@ -80,6 +82,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "", "", "Directory with multi-arch report files")
 	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+	flags.StringVarP(&ua.apkConfig, "apk-config", "", "", "Path to custom APK configuration file")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

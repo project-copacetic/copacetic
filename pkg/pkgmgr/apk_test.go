@@ -270,6 +270,17 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			expectedPkgs:  []string{"package1"},
 			expectedError: "",
 		},
+		{
+			name: "Use Custom APK config path",
+			manifest: nil
+			ignoreErrors: false
+			mockSetup: nil
+			expectedState: false
+			expectedPkgs: nil
+			expectedError: nil
+			
+
+		}
 	}
 
 	for _, tt := range tests {
