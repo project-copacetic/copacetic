@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/containerd/platforms"
@@ -41,7 +42,10 @@ type Opts struct {
 	KeyPath    string
 }
 
-const linux = "linux"
+const (
+	linux = "linux"
+	arm64 = "arm64"
+)
 
 // for testing.
 var (
@@ -127,8 +131,15 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			Platform: ispec.Platform{
 				OS:           linux,
 				Architecture: report.Metadata.Config.Arch,
+				Variant:      report.Metadata.Config.Variant,
 			},
 			ReportFile: filePath,
+		}
+
+		if platform.Architecture == arm64 && platform.Variant == "v8" {
+			// removing this to maintain consistency since we do
+			// the same for the platforms discovered from reports
+			platform.Variant = ""
 		}
 		platforms = append(platforms, platform)
 	}
@@ -176,12 +187,20 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			if m.Platform.OS != linux {
 				continue
 			}
-			platforms = append(platforms, types.PatchPlatform{
+
+			patchPlatform := types.PatchPlatform{
 				Platform: ispec.Platform{
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
 				},
-			})
+			}
+			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+				// some scanners may not add v8 to arm64 reports, so we
+				// need to remove it here to maintain consistency
+				patchPlatform.Variant = ""
+			}
+			platforms = append(platforms, patchPlatform)
 		}
 		return platforms, nil
 	}
@@ -200,27 +219,28 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 	if p == nil {
 		return nil, errors.New("image is not multi arch")
 	}
-	log.Debug("Discovered platforms from manifest:", p)
+	log.WithField("platforms", p).Debug("Discovered platforms from manifest")
 
 	if reportDir != "" {
 		p2, err := DiscoverPlatformsFromReport(reportDir, scanner)
 		if err != nil {
 			return nil, err
 		}
-		log.Debug("Discovered platforms from report:", p2)
+		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
 		// if platform is present in list from reference and report, then we should patch that platform
 		key := func(pl ispec.Platform) string {
-			return pl.OS + "/" + pl.Architecture
+			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
 		}
 
-		reportSet := make(map[string]struct{}, len(p2))
+		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl.Platform)] = struct{}{}
+			reportSet[key(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
-			if _, ok := reportSet[key(pl.Platform)]; ok {
+			if rp, ok := reportSet[key(pl.Platform)]; ok {
+				pl.ReportFile = rp
 				platforms = append(platforms, pl)
 			}
 		}
@@ -359,10 +379,26 @@ func QemuAvailable(p *types.PatchPlatform) bool {
 		return false
 	}
 
+	// check if were on macos or windows
+	switch runtime.GOOS {
+	case "darwin":
+		// on macos, we cant directly check binfmt_misc on the host
+		// we assume docker desktop handles emulation
+		log.Warn("Running on macOS, assuming Docker Desktop handles emulation.")
+		return true
+	case "windows":
+		log.Warn("Running on Windows, assuming Docker Desktop handles emulation.")
+		return true
+	}
+
 	archKey := mapGoArch(p.Architecture, p.Variant)
 
 	// walk binfmt_misc entries
-	entries, _ := readDir("/proc/sys/fs/binfmt_misc")
+	entries, err := readDir("/proc/sys/fs/binfmt_misc")
+	if err != nil {
+		return false
+	}
+
 	for _, e := range entries {
 		if e.IsDir() || e.Name() == "register" || e.Name() == "status" {
 			continue
