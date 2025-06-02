@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/containerd/platforms"
@@ -41,7 +42,10 @@ type Opts struct {
 	KeyPath    string
 }
 
-const linux = "linux"
+const (
+	linux = "linux"
+	arm64 = "arm64"
+)
 
 // for testing.
 var (
@@ -131,6 +135,12 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 			},
 			ReportFile: filePath,
 		}
+
+		if platform.Architecture == arm64 && platform.Variant == "v8" {
+			// removing this to maintain consistency since we do
+			// the same for the platforms discovered from reports
+			platform.Variant = ""
+		}
 		platforms = append(platforms, platform)
 	}
 
@@ -185,8 +195,8 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					Variant:      m.Platform.Variant,
 				},
 			}
-			if m.Platform.Architecture == "arm64" && m.Platform.Variant == "v8" {
-				// trivy does not add v8 to arm64 reports, so we
+			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+				// some scanners may not add v8 to arm64 reports, so we
 				// need to remove it here to maintain consistency
 				patchPlatform.Variant = ""
 			}
@@ -369,10 +379,26 @@ func QemuAvailable(p *types.PatchPlatform) bool {
 		return false
 	}
 
+	// check if were on macos or windows
+	switch runtime.GOOS {
+	case "darwin":
+		// on macos, we cant directly check binfmt_misc on the host
+		// we assume docker desktop handles emulation
+		log.Warn("Running on macOS, assuming Docker Desktop handles emulation.")
+		return true
+	case "windows":
+		log.Warn("Running on Windows, assuming Docker Desktop handles emulation.")
+		return true
+	}
+
 	archKey := mapGoArch(p.Architecture, p.Variant)
 
 	// walk binfmt_misc entries
-	entries, _ := readDir("/proc/sys/fs/binfmt_misc")
+	entries, err := readDir("/proc/sys/fs/binfmt_misc")
+	if err != nil {
+		return false
+	}
+
 	for _, e := range entries {
 		if e.IsDir() || e.Name() == "register" || e.Name() == "status" {
 			continue

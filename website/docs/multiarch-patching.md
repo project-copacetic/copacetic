@@ -24,7 +24,7 @@ copa patch \
 Key Flags for Multi-Arch Patching:
 
 - `--report-directory <directory_path>`: Specifies the directory containing platform-specific vulnerability reports.
-- `--tag <final_tag>`: The tag for the final, reassembled multi-arch manifest (e.g., `1.0-patched`).
+- `--tag <final_tag>` (optional): The tag for the final, reassembled multi-arch manifest (e.g., `1.0-patched`).
 - `--push` (optional): If included, Copa pushes the final multi-arch manifest to the registry.
 - `--platform-specific-errors <fail|warn|skip>` (optional, default: `skip`): Determines how Copa handles errors encountered while patching an individual platform's sub-image.
 
@@ -63,9 +63,11 @@ Copa leverages **BuildKit**, which in turn can use **QEMU** for emulation. QEMU 
 
 ### Setting up QEMU:
 
-For BuildKit to perform cross-platform builds/patches effectively, your host system (where the `copa` command and BuildKit daemon are running) needs to have QEMU static binaries registered with the kernel's `binfmt_misc` handler. This allows the kernel to automatically invoke QEMU when it encounters a binary for a foreign architecture.
+**Docker Desktop (macOS and Windows) comes pre-configured with QEMU emulation support and requires no additional setup.**
 
-**Installation Steps (General Guidance):**
+For Linux hosts or when using BuildKit outside of Docker Desktop, your host system  (where the `copa` command and BuildKit daemon are running) needs to have QEMU static binaries registered with the kernel's `binfmt_misc` handler. This allows the kernel to automatically invoke QEMU when it encounters a binary for a foreign architecture.
+
+**Installation Steps (Linux/Non-Docker Desktop environments):**
 
 One way to set this up, especially in Dockerized environments or on Linux hosts, is to use the `multiarch/qemu-user-static` image:
 

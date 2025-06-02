@@ -243,13 +243,16 @@ func patchSingleArchImage(
 	// if the target platform is different from the host platform, we need to check if emulation is enabled
 	// only need to do this check if were patching a multi-arch image
 	if multiArch {
-		hostPlatform := platforms.DefaultSpec()
+		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
+		if hostPlatform.OS != LINUX {
+			hostPlatform.OS = LINUX
+		}
 		platformsEqual := hostPlatform.OS == targetPlatform.OS &&
 			hostPlatform.Architecture == targetPlatform.Architecture
 		if platformsEqual {
-			log.Debugf("Host platform %+v matches target platform %+v", platforms.DefaultSpec(), targetPlatform)
+			log.Debugf("Host platform %+v matches target platform %+v", hostPlatform, targetPlatform)
 		} else {
-			log.Debugf("Host platform %+v does not match target platform %+v", platforms.DefaultSpec(), targetPlatform)
+			log.Debugf("Host platform %+v does not match target platform %+v", hostPlatform, targetPlatform)
 			// check if emulation is enabled
 
 			if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
@@ -844,17 +847,21 @@ func patchMultiArchImage(
 	}
 
 	if !push {
-		log.Info("To push the individual architecture images, run:")
-		for _, result := range patchResults {
-			log.Infof("  docker push %s", result.PatchedRef.String())
+		if len(patchResults) > 0 {
+			log.Info("To push the individual architecture images, run:")
+			for _, result := range patchResults {
+				log.Infof("  docker push %s", result.PatchedRef.String())
+			}
+			log.Infof("To create and push the multi-arch manifest, run:")
+			refs := make([]string, len(patchResults))
+			for i, result := range patchResults {
+				refs[i] = result.PatchedRef.String()
+			}
+			log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
+			log.Infof("  docker manifest push %s", patchedImageName.String())
+		} else {
+			return fmt.Errorf("no patched images were created, check the logs for errors")
 		}
-		log.Infof("To create and push the multi-arch manifest, run:")
-		refs := make([]string, len(patchResults))
-		for i, result := range patchResults {
-			refs[i] = result.PatchedRef.String()
-		}
-		log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
-		log.Infof("  docker manifest push %s", patchedImageName.String())
 	}
 
 	log.Infof("Multi-arch image patched with tag %s", patchedImageName.String())
