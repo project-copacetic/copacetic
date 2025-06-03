@@ -1,6 +1,7 @@
 package types
 
 import (
+	"github.com/distribution/reference"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -26,9 +27,17 @@ type PatchPlatform struct {
 	ReportFile string `json:"reportFile"`
 }
 
+// String returns a string representation of the PatchPlatform.
+func (p PatchPlatform) String() string {
+	if p.Variant == "" {
+		return p.OS + "/" + p.Architecture
+	}
+	return p.OS + "/" + p.Architecture + "/" + p.Variant
+}
+
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalImage string
-	PatchedImage  string
-	Digest        string
+	OriginalRef reference.Named
+	PatchedDesc *ispec.Descriptor
+	PatchedRef  reference.Named
 }
