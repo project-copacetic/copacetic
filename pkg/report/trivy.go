@@ -55,7 +55,8 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 				Version: report.Metadata.OS.Name,
 			},
 			Config: unversioned.Config{
-				Arch: report.Metadata.ImageConfig.Architecture,
+				Arch:    report.Metadata.ImageConfig.Architecture,
+				Variant: report.Metadata.ImageConfig.Variant,
 			},
 		},
 	}

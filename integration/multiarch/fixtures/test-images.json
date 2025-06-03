@@ -1,0 +1,32 @@
+[
+  {
+    "originalImage": "docker.io/library/nginx",
+    "localImage": "localhost:5000/nginx",
+    "tag": "1.27.0",
+    "distro": "debian",
+    "description": "Multi-arch nginx 1.27.0, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm/v5",
+      "linux/386",
+      "linux/mips64le",
+      "linux/s390x",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "docker.io/library/nginx",
+    "localImage": "localhost:5000/nginx",
+    "tag": "1.27.0",
+    "distro": "debian",
+    "description": "Multi-arch nginx 1.27.0, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm/v5"
+    ]
+  }
+]

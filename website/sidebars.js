@@ -37,20 +37,21 @@ const sidebars = {
         'custom-address',
         'output',
         'scanner-plugins',
+        "multiarch-patching",
       ],
     },
     {
       type: 'category',
       label: 'Contributing',
       collapsed: false,
-      items: [
-        'contributing',
-        'code-of-conduct',
-        'design',
-        'development-tips',
-        'maintainer-guidelines',
-        'release',
-      ],
+      "items": [
+        "contributing",
+        "code-of-conduct",
+        "design",
+        "development-tips",
+        "maintainer-guidelines",
+        "release"
+      ]
     },
     {
       type: 'category',
