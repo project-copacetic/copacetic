@@ -32,6 +32,7 @@ import (
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
+	"github.com/project-copacetic/copacetic/pkg/langmgr"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -456,6 +457,20 @@ func patchSingleArchImage(
 
 			// Export the patched image state to Docker
 			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
+			if err != nil {
+				ch <- err
+				return nil, err
+			}
+
+			// Create language package manager helper
+			// TODO: ability to pass in multiple languages since a container can have multiple
+			langmgr, err := langmgr.GetLanguageManager(config, workingFolder)
+			if err != nil {
+				return nil, err
+			}
+
+			// Export the patched image state to Docker
+			patchedImageState, errPkgs, err = langmgr.InstallUpdates(ctx, updates, ignoreError)
 			if err != nil {
 				ch <- err
 				return nil, err

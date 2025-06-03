@@ -9,15 +9,20 @@ type UpdatePackage struct {
 	InstalledVersion string `json:"installedVersion"`
 	FixedVersion     string `json:"fixedVersion"`
 	VulnerabilityID  string `json:"vulnerabilityID"`
+	Type             string `json:"type"`
+	Class            string `json:"class"`
 }
 
 type UpdatePackages []UpdatePackage
 
+type LangUpdatePackages []UpdatePackage
+
 type UpdateManifest struct {
-	OSType    string         `json:"osType"`
-	OSVersion string         `json:"osVersion"`
-	Arch      string         `json:"arch"`
-	Updates   UpdatePackages `json:"updates"`
+	OSType      string             `json:"osType"`
+	OSVersion   string             `json:"osVersion"`
+	Arch        string             `json:"arch"`
+	Updates     UpdatePackages     `json:"updates"`
+	LangUpdates LangUpdatePackages `json:"langupdates"`
 }
 
 // PatchPlatform is an extension of ispec.Platform but with a reportFile.
