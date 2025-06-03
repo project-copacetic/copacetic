@@ -17,6 +17,11 @@ For example, if you have a scanner plugin binary called `copa-foo` in `$PATH`, y
 ```bash
 copa patch --scanner foo --image $IMAGE ...
 ```
+:::note
+
+You can also a submit scan report in native `v1alpha1` format (interface mentioned below) by using `--scanner native` flag along with `-r <report>` flag.
+
+:::
 
 # Scanner Plugins from the Community
 
