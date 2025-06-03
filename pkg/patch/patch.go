@@ -394,7 +394,8 @@ func patchSingleArchImage(
 						Arch: updates.Metadata.Config.Arch,
 					},
 				},
-				Updates: []unversioned.UpdatePackage{},
+				OSUpdates: []unversioned.UpdatePackage{},
+				LangUpdates: []unversioned.UpdatePackage{},
 			}
 		}
 
@@ -501,9 +502,9 @@ func patchSingleArchImage(
 			// for the vex document, only include updates that were successfully applied
 			pkgType = manager.GetPackageType()
 			if validatedManifest != nil {
-				for _, update := range updates.Updates {
+				for _, update := range updates.OSUpdates {
 					if !slices.Contains(errPkgs, update.Name) {
-						validatedManifest.Updates = append(validatedManifest.Updates, update)
+						validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, update)
 					}
 				}
 			}
@@ -518,7 +519,7 @@ func patchSingleArchImage(
 			if reportFile != "" && validatedManifest != nil {
 				nameDigestOrTag := getRepoNameWithDigest(patchedImageName, digest)
 				// vex document must contain at least one statement
-				if output != "" && len(validatedManifest.Updates) > 0 {
+				if output != "" && len(validatedManifest.OSUpdates) > 0 {
 					if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
 						ch <- err
 						return err

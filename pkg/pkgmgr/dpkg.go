@@ -155,7 +155,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 	// Else update according to specified updates
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
+	updates, err := GetUniqueLatestUpdates(manifest.OSUpdates, debComparer, ignoreErrors)
 	if err != nil {
 		return nil, nil, err
 	}

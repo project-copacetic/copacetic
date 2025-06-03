@@ -2,7 +2,7 @@ package unversioned
 
 type UpdateManifest struct {
 	Metadata    Metadata           `json:"metadata"`
-	Updates     UpdatePackages     `json:"updates"`
+	OSUpdates   UpdatePackages     `json:"osupdates"`
 	LangUpdates LangUpdatePackages `json:"langupdates"`
 }
 

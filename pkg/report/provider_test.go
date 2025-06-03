@@ -28,7 +28,7 @@ func TestDummyProvider(t *testing.T) {
 						Arch: "amd64",
 					},
 				},
-				Updates: []unversioned.UpdatePackage{
+				OSUpdates: []unversioned.UpdatePackage{
 					{
 						Name:             "apk-tools",
 						InstalledVersion: "2.12.6-r0",

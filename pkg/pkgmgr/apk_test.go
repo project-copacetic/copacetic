@@ -235,7 +235,7 @@ func Test_InstallUpdates_APK(t *testing.T) {
 				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)
 			},
 			manifest: &unversioned.UpdateManifest{
-				Updates: unversioned.UpdatePackages{
+				OSUpdates: unversioned.UpdatePackages{
 					{Name: "package1", FixedVersion: "1.0.1"},
 					{Name: "package2", FixedVersion: "2.0.1"},
 				},
@@ -258,7 +258,7 @@ func Test_InstallUpdates_APK(t *testing.T) {
 		{
 			name: "Ignore errors",
 			manifest: &unversioned.UpdateManifest{
-				Updates: unversioned.UpdatePackages{
+				OSUpdates: unversioned.UpdatePackages{
 					{Name: "package1", FixedVersion: "2.0.0"},
 				},
 			},

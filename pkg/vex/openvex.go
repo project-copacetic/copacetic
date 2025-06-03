@@ -52,7 +52,7 @@ func (o *OpenVex) CreateVEXDocument(
 		},
 	}
 
-	for _, u := range updates.Updates {
+	for _, u := range updates.OSUpdates {
 		subComponent := vex.Subcomponent{
 			Component: vex.Component{
 				// syntax is "pkg:<pkgType>/<osType>/<packageName>@<installedVersion>?arch=<arch>"

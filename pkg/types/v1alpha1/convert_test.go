@@ -26,7 +26,7 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 						"arch": "amd64"
 					}
 				},
-				"updates": [
+				"osupdates": [
 					{
 						"name": "openssl",
 						"installedVersion": "1.1.1f-1ubuntu2.16",
@@ -45,7 +45,7 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 						Arch: "amd64",
 					},
 				},
-				Updates: unversioned.UpdatePackages{
+				OSUpdates: unversioned.UpdatePackages{
 					{
 						Name:             "openssl",
 						InstalledVersion: "1.1.1f-1ubuntu2.16",

@@ -58,11 +58,13 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 			for v := range r.Vulnerabilities {
 				vuln := &r.Vulnerabilities[v]
 				if vuln.FixedVersion != "" {
-					updates.Updates = append(updates.Updates, unversioned.UpdatePackage{
+					updates.OSUpdates = append(updates.OSUpdates, unversioned.UpdatePackage{
 						Name: vuln.PkgName,
 						Type: string(r.Type),
 						Class: string(r.Class),
 						FixedVersion: vuln.FixedVersion,
+						InstalledVersion: vuln.InstalledVersion,
+						VulnerabilityID: vuln.VulnerabilityID,
 					})
 				}
 			}
@@ -88,20 +90,6 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 					}
 				}
 			}
-		}
-	}
-
-
-
-	for i := range result.Vulnerabilities {
-		vuln := &result.Vulnerabilities[i]
-		if vuln.FixedVersion != "" {
-			updates.Updates = append(updates.Updates, unversioned.UpdatePackage{
-				Name:             vuln.PkgName,
-				InstalledVersion: vuln.InstalledVersion,
-				FixedVersion:     vuln.FixedVersion,
-				VulnerabilityID:  vuln.VulnerabilityID,
-			})
 		}
 	}
 
