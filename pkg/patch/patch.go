@@ -394,7 +394,7 @@ func patchSingleArchImage(
 						Arch: updates.Metadata.Config.Arch,
 					},
 				},
-				OSUpdates: []unversioned.UpdatePackage{},
+				OSUpdates:   []unversioned.UpdatePackage{},
 				LangUpdates: []unversioned.UpdatePackage{},
 			}
 		}

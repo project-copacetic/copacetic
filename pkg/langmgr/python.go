@@ -3,6 +3,7 @@ package langmgr
 import (
 	"bufio" // Added for validatePythonPackageVersions
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -175,7 +176,7 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 			errMsg := fmt.Sprintf("package %s was not found in pip freeze output after update attempt", expectedPkg.Name)
 			validationIssues = append(validationIssues, errMsg)
 			failedPackages = append(failedPackages, expectedPkg.Name)
-			log.Warnf(errMsg)
+			log.Warnf("%s", errMsg)
 			continue
 		}
 
@@ -183,7 +184,7 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 			errMsg := fmt.Sprintf("package %s has an invalid actual version format: %s", expectedPkg.Name, actualVersion)
 			validationIssues = append(validationIssues, errMsg)
 			failedPackages = append(failedPackages, expectedPkg.Name)
-			log.Warnf(errMsg)
+			log.Warnf("%s", errMsg)
 			continue
 		}
 
@@ -192,7 +193,7 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 				errMsg := fmt.Sprintf("package %s has an invalid expected fixed version format: %s", expectedPkg.Name, expectedPkg.FixedVersion)
 				validationIssues = append(validationIssues, errMsg)
 				failedPackages = append(failedPackages, expectedPkg.Name)
-				log.Warnf(errMsg)
+				log.Warnf("%s", errMsg)
 				continue
 			}
 
@@ -203,7 +204,7 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 				errMsg := fmt.Sprintf("package %s: expected version %s, but found %s", expectedPkg.Name, expectedPkg.FixedVersion, actualVersion)
 				validationIssues = append(validationIssues, errMsg)
 				failedPackages = append(failedPackages, expectedPkg.Name)
-				log.Warnf(errMsg)
+				log.Warnf("%s", errMsg)
 			}
 		} else {
 			if expectedPkg.InstalledVersion != "" && isValidPythonVersion(expectedPkg.InstalledVersion) {
@@ -214,7 +215,7 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 						errMsg := fmt.Sprintf("package %s: upgraded to version %s, which is older than installed version %s", expectedPkg.Name, actualVersion, expectedPkg.InstalledVersion)
 						validationIssues = append(validationIssues, errMsg)
 						failedPackages = append(failedPackages, expectedPkg.Name)
-						log.Warnf(errMsg)
+						log.Warnf("%s", errMsg)
 					} else if vActual.Equal(vInstalled) {
 						log.Infof("Package %s version %s remained unchanged after upgrade attempt.", expectedPkg.Name, actualVersion)
 					} else {
@@ -241,7 +242,7 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 	}
 
 	if len(validationIssues) > 0 {
-		summaryError := fmt.Errorf(strings.Join(validationIssues, "; "))
+		summaryError := errors.New(strings.Join(validationIssues, "; "))
 		if !ignoreErrors {
 			return uniqueFailedPkgsList, summaryError
 		}
@@ -253,7 +254,6 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 
 func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversioned.LangUpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	installPkgArgs := []string{}
-	freezePkgNames := []string{}
 	for _, u := range updates {
 		if u.FixedVersion != "" {
 			installPkgArgs = append(installPkgArgs, fmt.Sprintf("%s==%s", u.Name, u.FixedVersion))
@@ -264,7 +264,6 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 			installPkgArgs = append(installPkgArgs, u.Name)
 			log.Warnf("No FixedVersion available for Python package %s, attempting upgrade.", u.Name)
 		}
-		freezePkgNames = append(freezePkgNames, u.Name)
 	}
 
 	if len(installPkgArgs) == 0 {

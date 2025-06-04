@@ -41,11 +41,10 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 				Version: report.Metadata.OS.Name,
 			},
 			Config: unversioned.Config{
-				Arch:    report.Metadata.ImageConfig.Architecture,
+				Arch: report.Metadata.ImageConfig.Architecture,
 			},
 		},
 	}
-
 
 	// Precondition check
 	result := trivyTypes.Result{}
@@ -59,12 +58,12 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 				vuln := &r.Vulnerabilities[v]
 				if vuln.FixedVersion != "" {
 					updates.OSUpdates = append(updates.OSUpdates, unversioned.UpdatePackage{
-						Name: vuln.PkgName,
-						Type: string(r.Type),
-						Class: string(r.Class),
-						FixedVersion: vuln.FixedVersion,
+						Name:             vuln.PkgName,
+						Type:             string(r.Type),
+						Class:            string(r.Class),
+						FixedVersion:     vuln.FixedVersion,
 						InstalledVersion: vuln.InstalledVersion,
-						VulnerabilityID: vuln.VulnerabilityID,
+						VulnerabilityID:  vuln.VulnerabilityID,
 					})
 				}
 			}
@@ -82,9 +81,9 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 						}
 
 						updates.LangUpdates = append(updates.LangUpdates, unversioned.UpdatePackage{
-							Name: vuln.PkgName,
-							Type: string(r.Type),
-							Class: string(r.Class),
+							Name:         vuln.PkgName,
+							Type:         string(r.Type),
+							Class:        string(r.Class),
 							FixedVersion: vuln.FixedVersion,
 						})
 					}
