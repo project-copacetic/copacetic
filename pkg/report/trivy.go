@@ -82,15 +82,17 @@ func compareVersions(v1, v2 string) int {
 	return 0
 }
 
-// findOptimalFixedVersion finds the minimum version that fixes all CVEs for a package.
-// It prefers patch versions over minor versions, and minor versions over major versions.
+// findOptimalFixedVersion finds the best version that fixes all CVEs while being most compatible.
+// The algorithm prefers patch versions over minor versions over major versions.
+// When multiple CVEs require different versions, it picks the highest version to ensure all are fixed.
 func findOptimalFixedVersion(installedVersion string, fixedVersions []string) string {
 	if len(fixedVersions) == 0 {
 		return ""
 	}
 
-	// Flatten comma-separated versions
-	var allVersions []string
+	// Collect all possible fixed versions
+	var allCandidates []string
+
 	for _, versionStr := range fixedVersions {
 		if strings.Contains(versionStr, ",") {
 			// Split comma-separated versions
@@ -98,76 +100,62 @@ func findOptimalFixedVersion(installedVersion string, fixedVersions []string) st
 			for _, part := range parts {
 				trimmed := strings.TrimSpace(part)
 				if trimmed != "" {
-					allVersions = append(allVersions, trimmed)
+					allCandidates = append(allCandidates, trimmed)
 				}
 			}
 		} else {
 			trimmed := strings.TrimSpace(versionStr)
 			if trimmed != "" {
-				allVersions = append(allVersions, trimmed)
+				allCandidates = append(allCandidates, trimmed)
 			}
 		}
 	}
 
-	if len(allVersions) == 0 {
+	if len(allCandidates) == 0 {
 		return ""
 	}
 
-	if len(allVersions) == 1 {
-		return allVersions[0]
+	// Filter out versions that are not higher than installed version
+	var validCandidates []string
+	for _, version := range allCandidates {
+		if compareVersions(version, installedVersion) > 0 {
+			validCandidates = append(validCandidates, version)
+		}
 	}
 
-	// Parse installed version to understand current major.minor.patch
-	installedMajor, installedMinor, _, err := parseVersion(installedVersion)
-	if err != nil {
-		// If we can't parse the installed version, just return the first fixed version
-		return allVersions[0]
-	}
-
-	// Sort fixed versions
-	sortedVersions := make([]string, len(allVersions))
-	copy(sortedVersions, allVersions)
-
-	// Sort using our custom comparison
-	for i := 0; i < len(sortedVersions)-1; i++ {
-		for j := i + 1; j < len(sortedVersions); j++ {
-			if compareVersions(sortedVersions[i], sortedVersions[j]) > 0 {
-				sortedVersions[i], sortedVersions[j] = sortedVersions[j], sortedVersions[i]
+	if len(validCandidates) == 0 {
+		// If no valid candidates, return the highest available version
+		highestVersion := allCandidates[0]
+		for _, v := range allCandidates[1:] {
+			if compareVersions(v, highestVersion) > 0 {
+				highestVersion = v
 			}
 		}
+		return highestVersion
 	}
 
-	// Find versions that fix the vulnerability, prioritizing by type
-	// Collect all valid patch, minor, and major versions
-	var patchVersions, minorVersions, majorVersions []string
-
-	for _, version := range sortedVersions {
-		if compareVersions(version, installedVersion) <= 0 {
-			continue // This version doesn't fix the vulnerability
-		}
-
-		fixedMajor, fixedMinor, _, err := parseVersion(version)
-		if err != nil {
-			continue
-		}
-
-		// Collect patch versions in same major.minor
-		if fixedMajor == installedMajor && fixedMinor == installedMinor {
-			patchVersions = append(patchVersions, version)
-		}
-
-		// Collect minor versions in same major
-		if fixedMajor == installedMajor {
-			minorVersions = append(minorVersions, version)
-		}
-
-		// Collect all versions that fix it
-		majorVersions = append(majorVersions, version)
+	if len(validCandidates) == 1 {
+		return validCandidates[0]
 	}
 
-	// Return the highest version in order of preference
-	// For patch versions, pick the highest one (assumes it fixes the most CVEs)
+	// Find the most compatible version among valid candidates
+	// Priority: patch versions > minor versions > major versions
+	// Within each category, prefer the highest version to ensure all CVEs are fixed
+
+	installedParts := parseVersionParts(installedVersion)
+
+	// Find all patch-level upgrades (same major.minor)
+	var patchVersions []string
+	for _, v := range validCandidates {
+		vParts := parseVersionParts(v)
+		if len(vParts) >= 2 && len(installedParts) >= 2 &&
+		   vParts[0] == installedParts[0] && vParts[1] == installedParts[1] {
+			patchVersions = append(patchVersions, v)
+		}
+	}
+
 	if len(patchVersions) > 0 {
+		// Among patch versions, pick the highest to ensure all CVEs are fixed
 		highestPatch := patchVersions[0]
 		for _, v := range patchVersions[1:] {
 			if compareVersions(v, highestPatch) > 0 {
@@ -177,18 +165,69 @@ func findOptimalFixedVersion(installedVersion string, fixedVersions []string) st
 		return highestPatch
 	}
 
-	// For minor versions, pick the lowest one (smallest upgrade)
+	// Find all minor-level upgrades (same major)
+	var minorVersions []string
+	for _, v := range validCandidates {
+		vParts := parseVersionParts(v)
+		if len(vParts) >= 1 && len(installedParts) >= 1 && vParts[0] == installedParts[0] {
+			minorVersions = append(minorVersions, v)
+		}
+	}
+
 	if len(minorVersions) > 0 {
-		return minorVersions[0]
+		// Among minor versions, pick the highest to ensure all CVEs are fixed
+		highestMinor := minorVersions[0]
+		for _, v := range minorVersions[1:] {
+			if compareVersions(v, highestMinor) > 0 {
+				highestMinor = v
+			}
+		}
+		return highestMinor
 	}
 
-	// For major versions, pick the lowest one (smallest upgrade)
-	if len(majorVersions) > 0 {
-		return majorVersions[0]
+	// All remaining are major version upgrades, pick the highest
+	highestMajor := validCandidates[0]
+	for _, v := range validCandidates[1:] {
+		if compareVersions(v, highestMajor) > 0 {
+			highestMajor = v
+		}
+	}
+	return highestMajor
+}
+
+// parseVersionParts parses a version string into integer parts.
+func parseVersionParts(version string) []int {
+	// Remove common prefixes like 'v'
+	version = strings.TrimPrefix(version, "v")
+
+	// Split by dots and parse each part as integer
+	parts := strings.Split(version, ".")
+	var intParts []int
+
+	for _, part := range parts {
+		// Handle parts that might have additional suffixes like "-r1", "-alpha", etc.
+		// Take only the numeric prefix
+		var numStr string
+		for _, char := range part {
+			if char >= '0' && char <= '9' {
+				numStr += string(char)
+			} else {
+				break
+			}
+		}
+
+		if numStr != "" {
+			if num, err := strconv.Atoi(numStr); err == nil {
+				intParts = append(intParts, num)
+			} else {
+				intParts = append(intParts, 0)
+			}
+		} else {
+			intParts = append(intParts, 0)
+		}
 	}
 
-	// Fallback to the first (smallest) fixed version
-	return sortedVersions[0]
+	return intParts
 }
 
 func parseTrivyReport(file string) (*trivyTypes.Report, error) {

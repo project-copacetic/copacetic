@@ -1,7 +1,7 @@
 package langmgr
 
 import (
-	"bufio" // Added for validatePythonPackageVersions
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -273,7 +273,7 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 
 	// Install all requested update packages
 	var pipInstalled llb.State
-	
+
 	if ignoreErrors {
 		// When ignoring errors, install packages individually in a single layer
 		var installCommands []string
