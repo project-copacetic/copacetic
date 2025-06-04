@@ -457,24 +457,75 @@ func patchSingleArchImage(
 			}
 
 			// Export the patched image state to Docker
-			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
+			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError) // OS Package Manager updates
 			if err != nil {
 				ch <- err
 				return nil, err
 			}
 
-			// Create language package manager helper
-			// TODO: ability to pass in multiple languages since a container can have multiple
-			langmgr, err := langmgr.GetLanguageManager(config, workingFolder)
-			if err != nil {
-				return nil, err
-			}
+			// Handle Language Specific Updates
+			if updates != nil && len(updates.LangUpdates) > 0 {
+				languageManagers := langmgr.GetLanguageManagers(config, workingFolder)
+				var langErrPkgsFromAllManagers []string
+				var combinedLangError error
 
-			// Export the patched image state to Docker
-			patchedImageState, errPkgs, err = langmgr.InstallUpdates(ctx, updates, ignoreError)
-			if err != nil {
-				ch <- err
-				return nil, err
+				currentProcessingState := patchedImageState // Start with the state after OS updates
+
+				for _, individualLangManager := range languageManagers {
+					log.Debugf("Applying language updates using manager: %T", individualLangManager)
+					var tempErrPkgs []string
+					var tempErr error
+
+					// Call InstallUpdates on the individual language manager instance
+					newState, tempErrPkgs, tempErr := individualLangManager.InstallUpdates(ctx, updates, ignoreError)
+
+					if newState != nil {
+						currentProcessingState = newState // Update state for the next manager or final result
+					}
+
+					if tempErr != nil {
+						log.Errorf("Error applying updates with language manager %T: %v", individualLangManager, tempErr)
+						if combinedLangError == nil {
+							combinedLangError = tempErr
+						} else {
+							combinedLangError = fmt.Errorf("%w; %v", combinedLangError, tempErr)
+						}
+						if !ignoreError {
+							ch <- combinedLangError
+							return nil, combinedLangError
+						}
+					}
+					if len(tempErrPkgs) > 0 {
+						langErrPkgsFromAllManagers = append(langErrPkgsFromAllManagers, tempErrPkgs...)
+					}
+				}
+
+				// Update the main patchedImageState with the result of all language managers
+				patchedImageState = currentProcessingState
+
+				// Merge OS-level error packages with language-level error packages, ensuring uniqueness
+				if len(langErrPkgsFromAllManagers) > 0 {
+					if errPkgs == nil {
+						errPkgs = []string{}
+					}
+					combinedReportedPkgs := append(errPkgs, langErrPkgsFromAllManagers...)
+					uniqueErrPkgsMap := make(map[string]bool)
+					var tempUniqueSlice []string
+					for _, item := range combinedReportedPkgs {
+						if _, value := uniqueErrPkgsMap[item]; !value {
+							uniqueErrPkgsMap[item] = true
+							tempUniqueSlice = append(tempUniqueSlice, item)
+						}
+					}
+					errPkgs = tempUniqueSlice
+				}
+
+				if combinedLangError != nil && !ignoreError {
+					ch <- combinedLangError
+					return nil, combinedLangError
+				}
+			} else {
+				log.Debug("No language-specific updates found in the manifest.")
 			}
 
 			def, err := patchedImageState.Marshal(ctx, llb.Platform(targetPlatform.Platform))

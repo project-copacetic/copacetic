@@ -25,11 +25,20 @@ type LangManager interface {
 	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
 }
 
-func GetLanguageManager(config *buildkit.Config, workingFolder string) (LangManager, error) {
-	// TODO(sertac): implement scaffolding for multiple language managers
-	// we need to pass in language type with multiple language managers working at the same time or sequentially
-	// python is the only supported language manager for now
-	return &pythonManager{config: config, workingFolder: workingFolder}, nil
+// GetLanguageManagers returns a list of all available language managers.
+// As new language managers are implemented, they should be added to this list.
+func GetLanguageManagers(config *buildkit.Config, workingFolder string) []LangManager {
+	var managers []LangManager
+
+	// Add Python manager
+	managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
+
+	// TODO: When adding new language managers, instantiate and append them here.
+	// For example:
+	// managers = append(managers, &nodeManager{config: config, workingFolder: workingFolder})
+	// managers = append(managers, &rubyManager{config: config, workingFolder: workingFolder})
+
+	return managers
 }
 
 // Utility functions for package manager implementations to share
