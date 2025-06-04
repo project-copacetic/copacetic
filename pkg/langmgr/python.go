@@ -279,17 +279,9 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 	pipInstalled := pm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Write updates-manifest to host for post-patch validation
-	// pip freeze should use just the package names for filtering, if desired.
-	const outputResultsTemplate = `sh -c 'pip freeze %s > %s; if [ $? -ne 0 ]; then echo "WARN: pip freeze returned $?"; fi'`
-	pkgsForFreeze := strings.Join(freezePkgNames, " ")
-	// If freezePkgNames is empty, pip freeze will list all packages.
-	// If we want to ensure it only freezes the packages we touched, and freezePkgNames could be empty
-	// (e.g. if installPkgArgs was empty and we returned early), this part might need adjustment
-	// or ensure freezePkgNames is appropriately populated even if installPkgArgs is empty.
-	// However, given the check `if len(installPkgArgs) == 0`, this path won't be hit with empty pkgsForFreeze
-	// unless installPkgArgs was populated but freezePkgNames was not (which current logic prevents).
+	const outputResultsTemplate = `sh -c 'pip freeze --all > %s; if [ $? -ne 0 ]; then echo "WARN: pip freeze returned $?"; fi'`
 
-	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, pkgsForFreeze, resultManifest)
+	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, resultManifest)
 	mkFolders := pipInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(pipInstalled, resultsWritten)
