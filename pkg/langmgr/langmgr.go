@@ -33,11 +33,6 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string) []LangMa
 	// Add Python manager
 	managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
 
-	// TODO: When adding new language managers, instantiate and append them here.
-	// For example:
-	// managers = append(managers, &nodeManager{config: config, workingFolder: workingFolder})
-	// managers = append(managers, &rubyManager{config: config, workingFolder: workingFolder})
-
 	return managers
 }
 

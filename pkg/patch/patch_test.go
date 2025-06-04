@@ -514,6 +514,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 		30*time.Second,
 		"alpine:3.19", "", "", "", "", "", "", "", "", "",
 		false, true,
+		"os",
 		buildkit.Opts{},
 	)
 
