@@ -45,7 +45,7 @@ type VersionComparer struct {
 
 func GetUniqueLatestUpdates(updates unversioned.LangUpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.LangUpdatePackages, error) {
 	if len(updates) == 0 {
-		return nil, fmt.Errorf("no patchable vulnerabilities found")
+		return unversioned.LangUpdatePackages{}, nil
 	}
 
 	dict := make(map[string]string)
