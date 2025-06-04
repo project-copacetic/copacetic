@@ -275,17 +275,16 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 	var pipInstalled llb.State
 	
 	if ignoreErrors {
-		// When ignoring errors, install packages individually so that failures don't stop other packages
-		currentState := pm.config.ImageState
+		// When ignoring errors, install packages individually in a single layer
+		var installCommands []string
 		for _, pkgArg := range installPkgArgs {
-			const pipInstallTemplate = `sh -c 'pip install %s || { echo "WARN: pip install failed for %s with exit code $?"; true; }'`
-			installCmd := fmt.Sprintf(pipInstallTemplate, pkgArg, pkgArg)
-			currentState = currentState.Run(
-				llb.Shlex(installCmd),
-				llb.WithProxy(utils.GetProxy()),
-			).Root()
+			installCommands = append(installCommands, fmt.Sprintf(`pip install %s || echo "WARN: pip install failed for %s"`, pkgArg, pkgArg))
 		}
-		pipInstalled = currentState
+		installCmd := fmt.Sprintf(`sh -c '%s'`, strings.Join(installCommands, "; "))
+		pipInstalled = pm.config.ImageState.Run(
+			llb.Shlex(installCmd),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
 	} else {
 		// Normal pip install that will fail on errors - install all packages at once
 		const pipInstallTemplate = `pip install %s`
