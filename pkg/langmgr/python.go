@@ -272,10 +272,29 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 	}
 
 	// Install all requested update packages
-	// The template now expects package arguments like "package1==1.0.0 package2==2.0.0"
-	const pipInstallTemplate = `pip install %s`
-	installCmd := fmt.Sprintf(pipInstallTemplate, strings.Join(installPkgArgs, " "))
-	pipInstalled := pm.config.ImageState.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	var pipInstalled llb.State
+	
+	if ignoreErrors {
+		// When ignoring errors, install packages individually so that failures don't stop other packages
+		currentState := pm.config.ImageState
+		for _, pkgArg := range installPkgArgs {
+			const pipInstallTemplate = `sh -c 'pip install %s || { echo "WARN: pip install failed for %s with exit code $?"; true; }'`
+			installCmd := fmt.Sprintf(pipInstallTemplate, pkgArg, pkgArg)
+			currentState = currentState.Run(
+				llb.Shlex(installCmd),
+				llb.WithProxy(utils.GetProxy()),
+			).Root()
+		}
+		pipInstalled = currentState
+	} else {
+		// Normal pip install that will fail on errors - install all packages at once
+		const pipInstallTemplate = `pip install %s`
+		installCmd := fmt.Sprintf(pipInstallTemplate, strings.Join(installPkgArgs, " "))
+		pipInstalled = pm.config.ImageState.Run(
+			llb.Shlex(installCmd),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
+	}
 
 	// Write updates-manifest to host for post-patch validation
 	const outputResultsTemplate = `sh -c 'pip freeze --all > %s; if [ $? -ne 0 ]; then echo "WARN: pip freeze returned $?"; fi'`
