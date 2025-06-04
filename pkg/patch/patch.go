@@ -76,7 +76,7 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 
 	types := strings.Split(pkgTypesStr, ",")
 	validTypes := []string{}
-	
+
 	for _, t := range types {
 		t = strings.TrimSpace(t)
 		if t == PkgTypeOS || t == PkgTypeLibrary {
@@ -98,7 +98,7 @@ func shouldIncludeOSUpdates(pkgTypes []string) bool {
 	return slices.Contains(pkgTypes, PkgTypeOS)
 }
 
-// shouldIncludeLibraryUpdates returns true if library updates should be included based on package types  
+// shouldIncludeLibraryUpdates returns true if library updates should be included based on package types
 func shouldIncludeLibraryUpdates(pkgTypes []string) bool {
 	return slices.Contains(pkgTypes, PkgTypeLibrary)
 }
@@ -338,7 +338,7 @@ func patchSingleArchImage(
 				updates.OSUpdates = []unversioned.UpdatePackage{}
 			}
 
-			// Filter library updates  
+			// Filter library updates
 			if !shouldIncludeLibraryUpdates(pkgTypesList) {
 				log.Debugf("Filtering out library updates based on pkg-types: %v", pkgTypesList)
 				updates.LangUpdates = []unversioned.UpdatePackage{}

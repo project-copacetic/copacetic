@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"os"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -82,7 +83,14 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "d", "", "Directory with multi-arch report files")
 	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
-	flags.StringVar(&ua.pkgTypes, "pkg-types", "os", "Package types to patch, comma-separated list of 'os' and 'library'. Defaults to 'os' for OS vulnerabilities only")
+
+	// Experimental flag - only available when COPA_EXPERIMENTAL=1
+	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
+		flags.StringVar(&ua.pkgTypes, "pkg-types", "os", "[EXPERIMENTAL] Package types to patch, comma-separated list of 'os' and 'library'. Defaults to 'os' for OS vulnerabilities only")
+	} else {
+		// Set default value when experimental flag is not enabled
+		ua.pkgTypes = "os"
+	}
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
