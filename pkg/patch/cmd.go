@@ -82,7 +82,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "d", "", "Directory with multi-arch report files")
 	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
-	flags.StringVarP(&ua.loader, "loader", "l", "docker", "Loader to use for loading images, defaults to 'docker', options: 'docker', or 'podman'")
+	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
