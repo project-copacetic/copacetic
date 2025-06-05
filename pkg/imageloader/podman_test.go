@@ -16,7 +16,7 @@ func TestPodmanLoader_Load_Success(t *testing.T) {
 	cleanup := makeFakePodman(t, 0)
 	defer cleanup()
 
-	ldr, err := New(ctx, Config{Select: "podman"})
+	ldr, err := New(ctx, Config{Loader: "podman"})
 	if err != nil {
 		t.Fatalf("New() with Select: \"podman\" failed unexpectedly: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestPodmanLoader_Load_Error(t *testing.T) {
 	cleanup := makeFakePodman(t, 1)
 	defer cleanup()
 
-	ldr, err := New(ctx, Config{Select: "podman"})
+	ldr, err := New(ctx, Config{Loader: "podman"})
 	if err != nil {
 		t.Fatalf("New() with Select: \"podman\" failed unexpectedly: %v", err)
 	}

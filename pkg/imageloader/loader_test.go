@@ -14,7 +14,7 @@ func TestNew_DockerUnavailable(t *testing.T) {
 	t.Cleanup(func() { _ = os.Setenv("DOCKER_HOST", oldHost) })
 	_ = os.Setenv("DOCKER_HOST", "unix:///definitely/not/there.sock")
 
-	_, err := New(ctx, Config{Select: "docker"})
+	_, err := New(ctx, Config{Loader: "docker"})
 	if err == nil || !strings.Contains(err.Error(), "docker socket not reachable") {
 		t.Fatalf("expected docker socket not reachable error, got %v", err)
 	}
@@ -27,7 +27,7 @@ func TestNew_PodmanUnavailable(t *testing.T) {
 	t.Cleanup(func() { _ = os.Setenv("PATH", oldPath) })
 	_ = os.Setenv("PATH", "")
 
-	_, err := New(ctx, Config{Select: "podman"})
+	_, err := New(ctx, Config{Loader: "podman"})
 	if err == nil || !strings.Contains(err.Error(), "podman socket not reachable") {
 		t.Fatalf("expected podman socket not reachable error, got %v", err)
 	}
@@ -47,7 +47,7 @@ func TestNew_DefaultSelectFallback_HappyPath(t *testing.T) {
 
 func TestNew_UnknownLoader(t *testing.T) {
 	ctx := context.Background()
-	_, err := New(ctx, Config{Select: "nonExistentLoader"})
+	_, err := New(ctx, Config{Loader: "nonExistentLoader"})
 	if err == nil {
 		t.Fatal("expected an error for unknown loader, got nil")
 	}
@@ -69,7 +69,7 @@ func TestNew_DockerFails_PodmanSucceeds_ImplicitSelect(t *testing.T) {
 	cleanupPodman := makeFakePodman(t, 0)
 	defer cleanupPodman()
 
-	loader, err := New(ctx, Config{Select: ""})
+	loader, err := New(ctx, Config{Loader: ""})
 	if err != nil {
 		t.Fatalf("New() failed when Podman should have been selected: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -51,6 +52,30 @@ const (
 var (
 	bkNewClient = buildkit.NewClient
 )
+
+// detectLoaderFromBuildkitAddr attempts to determine the appropriate loader.
+// based on the buildkit connection address scheme.
+func detectLoaderFromBuildkitAddr(addr string) string {
+	if addr == "" {
+		return ""
+	}
+
+	u, err := url.Parse(addr)
+	if err != nil {
+		log.Debugf("Failed to parse buildkit address %q: %v", addr, err)
+		return ""
+	}
+
+	switch u.Scheme {
+	case "podman-container":
+		return "podman"
+	case "docker-container", "docker", "buildx":
+		return "docker"
+	default:
+		// Unknown scheme, let imageloader auto-detect
+		return ""
+	}
+}
 
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
@@ -121,7 +146,7 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -158,7 +183,7 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -191,7 +216,7 @@ func patchWithContext(
 		if platform.OS != LINUX {
 			platform.OS = LINUX
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 		}
@@ -203,7 +228,7 @@ func patchWithContext(
 		if platform.OS != LINUX {
 			platform.OS = LINUX
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil && result.PatchedRef != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 		}
@@ -219,13 +244,13 @@ func patchWithContext(
 		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
 	}
 
-	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts)
 }
 
 func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
@@ -555,7 +580,16 @@ func patchSingleArchImage(
 	// only load to docker if not pushing
 	if !push {
 		eg.Go(func() error {
-			loader, err := imageloader.New(ctx, imageloader.Config{Select: loader})
+			// auto-detect loader from buildkit address if not explicitly set
+			loaderType := loader
+			if loaderType == "" {
+				loaderType = detectLoaderFromBuildkitAddr(bkOpts.Addr)
+				if loaderType != "" {
+					log.Debugf("Auto-detected loader type %q from buildkit address %q", loaderType, bkOpts.Addr)
+				}
+			}
+
+			imgLoader, err := imageloader.New(ctx, imageloader.Config{Loader: loaderType})
 			if err != nil {
 				err = fmt.Errorf("failed to create loader: %w", err)
 				pipeR.CloseWithError(err)
@@ -563,7 +597,7 @@ func patchSingleArchImage(
 				return err
 			}
 
-			if err := loader.Load(ctx, pipeR, patchedImageName); err != nil {
+			if err := imgLoader.Load(ctx, pipeR, patchedImageName); err != nil {
 				err = fmt.Errorf("failed to load image: %w", err)
 				pipeR.CloseWithError(err)
 				log.Error(err)
@@ -690,7 +724,7 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 func patchMultiArchImage(
 	ctx context.Context,
 	ch chan error,
-	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
+	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -732,7 +766,7 @@ func patchMultiArchImage(
 			}
 			defer func() { <-sem }()
 
-			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, p, ignoreError, push, bkOpts, true)
 			if err != nil {
 				return handlePlatformErr(p, err)
 			} else if res == nil {
