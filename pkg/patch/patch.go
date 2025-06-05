@@ -99,6 +99,14 @@ func shouldIncludeLibraryUpdates(pkgTypes []string) bool {
 	return slices.Contains(pkgTypes, PkgTypeLibrary)
 }
 
+// validateLibraryPkgTypesRequireReport validates that library package types require a scanner report.
+func validateLibraryPkgTypesRequireReport(pkgTypes []string, reportProvided bool) error {
+	if shouldIncludeLibraryUpdates(pkgTypes) && !reportProvided {
+		return fmt.Errorf("library package types require a scanner report file to be provided")
+	}
+	return nil
+}
+
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
 	if variant != "" {
@@ -213,6 +221,18 @@ func patchWithContext(
 ) error {
 	if reportFile != "" && reportDirectory != "" {
 		return fmt.Errorf("both report file and directory provided, please provide only one")
+	}
+
+	// Parse and validate package types early
+	pkgTypesList, err := parsePkgTypes(pkgTypes)
+	if err != nil {
+		return fmt.Errorf("invalid package types: %w", err)
+	}
+
+	// Validate that library package types require a scanner report
+	reportProvided := reportFile != "" || reportDirectory != ""
+	if err := validateLibraryPkgTypesRequireReport(pkgTypesList, reportProvided); err != nil {
+		return err
 	}
 
 	// try report file
