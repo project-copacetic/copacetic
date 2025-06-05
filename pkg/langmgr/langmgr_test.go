@@ -13,9 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testWorkingFolder = "/tmp/test"
+
 func TestGetLanguageManagers(t *testing.T) {
 	config := &buildkit.Config{}
-	workingFolder := "/tmp/test"
+	workingFolder := testWorkingFolder
 
 	managers := GetLanguageManagers(config, workingFolder)
 
@@ -244,7 +246,7 @@ func (m *mockPackageInfoReader) GetVersion(filename string) (string, error) {
 	return versionPart, nil
 }
 
-// Test constants
+// Test constants.
 func TestConstants(t *testing.T) {
 	assert.Equal(t, "copa-", copaPrefix)
 	assert.Equal(t, "/copa-out", resultsPath)

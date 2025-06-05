@@ -43,7 +43,11 @@ func isLessThanPythonVersion(v1, v2 string) bool {
 	return ver1.LessThan(ver2)
 }
 
-func (pm *pythonManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+func (pm *pythonManager) InstallUpdates(
+	ctx context.Context,
+	manifest *unversioned.UpdateManifest,
+	ignoreErrors bool,
+) (*llb.State, []string, error) {
 	var errPkgsReported []string // Packages that will be reported as problematic
 
 	pythonComparer := VersionComparer{isValidPythonVersion, isLessThanPythonVersion}
@@ -80,7 +84,8 @@ func (pm *pythonManager) InstallUpdates(ctx context.Context, manifest *unversion
 	}
 
 	// If upgradePackages succeeded, upgradeErr is nil. Now validate.
-	failedValidationPkgs, validationErr := pm.validatePythonPackageVersions(ctx, resultsBytes, updatesToAttempt, ignoreErrors)
+	failedValidationPkgs, validationErr := pm.validatePythonPackageVersions(
+		ctx, resultsBytes, updatesToAttempt, ignoreErrors)
 
 	if len(failedValidationPkgs) > 0 {
 		log.Warnf("Python packages failed version validation: %v", failedValidationPkgs)
@@ -119,7 +124,12 @@ func (pm *pythonManager) InstallUpdates(ctx context.Context, manifest *unversion
 // resultsBytes: content of 'pip freeze' for the relevant packages.
 // expectedUpdates: list of packages that were attempted to be updated.
 // ignoreErrors: if true, validation failures are logged as warnings instead of returning an error.
-func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, resultsBytes []byte, expectedUpdates unversioned.LangUpdatePackages, ignoreErrors bool) ([]string, error) {
+func (pm *pythonManager) validatePythonPackageVersions(
+	_ context.Context,
+	resultsBytes []byte,
+	expectedUpdates unversioned.LangUpdatePackages,
+	ignoreErrors bool,
+) ([]string, error) {
 	var failedPackages []string
 	var validationIssues []string
 
@@ -140,7 +150,8 @@ func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, result
 						uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
 					}
 				}
-				return uniqueFailedPkgsList, fmt.Errorf("failed to validate python packages: %s", strings.Join(validationIssues, "; "))
+				return uniqueFailedPkgsList, fmt.Errorf(
+					"failed to validate python packages: %s", strings.Join(validationIssues, "; "))
 			}
 		}
 		return failedPackages, nil
@@ -194,7 +205,8 @@ func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, result
 
 		if expectedPkg.FixedVersion != "" {
 			if !isValidPythonVersion(expectedPkg.FixedVersion) {
-				errMsg := fmt.Sprintf("package %s has an invalid expected fixed version format: %s", expectedPkg.Name, expectedPkg.FixedVersion)
+				errMsg := fmt.Sprintf("package %s has an invalid expected fixed version format: %s",
+					expectedPkg.Name, expectedPkg.FixedVersion)
 				validationIssues = append(validationIssues, errMsg)
 				failedPackages = append(failedPackages, expectedPkg.Name)
 				log.Warnf("%s", errMsg)
@@ -205,7 +217,8 @@ func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, result
 			vExpected, _ := pep440.Parse(expectedPkg.FixedVersion)
 
 			if !vActual.Equal(vExpected) {
-				errMsg := fmt.Sprintf("package %s: expected version %s, but found %s", expectedPkg.Name, expectedPkg.FixedVersion, actualVersion)
+				errMsg := fmt.Sprintf("package %s: expected version %s, but found %s",
+					expectedPkg.Name, expectedPkg.FixedVersion, actualVersion)
 				validationIssues = append(validationIssues, errMsg)
 				failedPackages = append(failedPackages, expectedPkg.Name)
 				log.Warnf("%s", errMsg)
@@ -217,20 +230,25 @@ func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, result
 				if errInstalled == nil {
 					switch {
 					case vActual.LessThan(vInstalled):
-						errMsg := fmt.Sprintf("package %s: upgraded to version %s, which is older than installed version %s", expectedPkg.Name, actualVersion, expectedPkg.InstalledVersion)
+						errMsg := fmt.Sprintf(
+							"package %s: upgraded to version %s, which is older than installed version %s",
+							expectedPkg.Name, actualVersion, expectedPkg.InstalledVersion)
 						validationIssues = append(validationIssues, errMsg)
 						failedPackages = append(failedPackages, expectedPkg.Name)
 						log.Warnf("%s", errMsg)
 					case vActual.Equal(vInstalled):
 						log.Infof("Package %s version %s remained unchanged after upgrade attempt.", expectedPkg.Name, actualVersion)
 					default:
-						log.Infof("Package %s successfully upgraded from %s to %s.", expectedPkg.Name, expectedPkg.InstalledVersion, actualVersion)
+						log.Infof("Package %s successfully upgraded from %s to %s.",
+							expectedPkg.Name, expectedPkg.InstalledVersion, actualVersion)
 					}
 				} else {
-					log.Infof("Package %s updated to %s (InstalledVersion %s was not parsable for comparison).", expectedPkg.Name, actualVersion, expectedPkg.InstalledVersion)
+					log.Infof("Package %s updated to %s (InstalledVersion %s was not parsable for comparison).",
+						expectedPkg.Name, actualVersion, expectedPkg.InstalledVersion)
 				}
 			} else {
-				log.Infof("Package %s updated to %s (no valid InstalledVersion for comparison or no FixedVersion specified).", expectedPkg.Name, actualVersion)
+				log.Infof("Package %s updated to %s (no valid InstalledVersion for comparison or no FixedVersion specified).",
+					expectedPkg.Name, actualVersion)
 			}
 		}
 	}
@@ -257,7 +275,11 @@ func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, result
 	return uniqueFailedPkgsList, nil
 }
 
-func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversioned.LangUpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
+func (pm *pythonManager) upgradePackages(
+	ctx context.Context,
+	updates unversioned.LangUpdatePackages,
+	ignoreErrors bool,
+) (*llb.State, []byte, error) {
 	installPkgArgs := []string{}
 	for _, u := range updates {
 		if u.FixedVersion != "" {
@@ -283,7 +305,8 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 		// When ignoring errors, install packages individually in a single layer
 		var installCommands []string
 		for _, pkgArg := range installPkgArgs {
-			installCommands = append(installCommands, fmt.Sprintf(`pip install %s || echo "WARN: pip install failed for %s"`, pkgArg, pkgArg))
+			installCommands = append(installCommands,
+				fmt.Sprintf(`pip install %s || echo "WARN: pip install failed for %s"`, pkgArg, pkgArg))
 		}
 		installCmd := fmt.Sprintf(`sh -c '%s'`, strings.Join(installCommands, "; "))
 		pipInstalled = pm.config.ImageState.Run(
@@ -301,14 +324,16 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 	}
 
 	// Write updates-manifest to host for post-patch validation
-	const outputResultsTemplate = `sh -c 'pip freeze --all > %s; if [ $? -ne 0 ]; then echo "WARN: pip freeze returned $?"; fi'`
+	const outputResultsTemplate = `sh -c 'pip freeze --all > %s; ` +
+		`if [ $? -ne 0 ]; then echo "WARN: pip freeze returned $?"; fi'`
 
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, resultManifest)
 	mkFolders := pipInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
 	resultsDiff := llb.Diff(pipInstalled, resultsWritten)
 
-	resultsBytes, err := buildkit.ExtractFileFromState(ctx, pm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+	resultsBytes, err := buildkit.ExtractFileFromState(
+		ctx, pm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
 	if err != nil {
 		return nil, nil, err
 	}

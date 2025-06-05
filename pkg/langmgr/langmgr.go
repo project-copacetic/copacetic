@@ -43,7 +43,11 @@ type VersionComparer struct {
 	LessThan func(string, string) bool
 }
 
-func GetUniqueLatestUpdates(updates unversioned.LangUpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.LangUpdatePackages, error) {
+func GetUniqueLatestUpdates(
+	updates unversioned.LangUpdatePackages,
+	cmp VersionComparer,
+	ignoreErrors bool,
+) (unversioned.LangUpdatePackages, error) {
 	if len(updates) == 0 {
 		return unversioned.LangUpdatePackages{}, nil
 	}
@@ -88,7 +92,12 @@ type PackageInfoReader interface {
 
 type UpdateMap map[string]*UpdatePackageInfo
 
-func GetValidatedUpdatesMap(updates unversioned.LangUpdatePackages, cmp VersionComparer, reader PackageInfoReader, stagingPath string) (UpdateMap, error) {
+func GetValidatedUpdatesMap(
+	updates unversioned.LangUpdatePackages,
+	cmp VersionComparer,
+	reader PackageInfoReader,
+	stagingPath string,
+) (UpdateMap, error) {
 	m := make(UpdateMap)
 	for _, update := range updates {
 		m[update.Name] = &UpdatePackageInfo{Version: update.FixedVersion}
