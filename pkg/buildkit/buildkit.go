@@ -153,15 +153,6 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// Represents a platform manifest entry
-type manifestEntry struct {
-	Platform struct {
-		Architecture string `json:"architecture"`
-		OS           string `json:"os"`
-		Variant      string `json:"variant,omitempty"`
-	} `json:"platform"`
-}
-
 // DiscoverPlatformsFromReference discovers platforms from either a remote or local image reference
 func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
 	// using CLI allows us to check for local manifest lists in addition to remote, but these local manifest lists have references to remote images
@@ -169,10 +160,10 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	output, err := cmd.Output()
 	if err != nil {
 		// check docker image inspect
-		cmd := exec.Command("docker", "manifest", "inspect", manifestRef)
+		cmd := exec.Command("docker", "image", "inspect", manifestRef)
 		_, err := cmd.Output()
 		if err == nil {
-			// this is a single image manifest, not a manifest list
+			// this is a single image reference, not a manifest list
 			return nil, nil
 		}
 		return nil, fmt.Errorf("no image or manifest list found: %w", err)
