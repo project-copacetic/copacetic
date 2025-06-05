@@ -135,13 +135,13 @@ func TestGetValidatedUpdatesMap(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		updates      unversioned.LangUpdatePackages
-		stagingPath  string
-		reader       PackageInfoReader
-		expected     UpdateMap
-		expectError  bool
-		expectNil    bool
+		name        string
+		updates     unversioned.LangUpdatePackages
+		stagingPath string
+		reader      PackageInfoReader
+		expected    UpdateMap
+		expectError bool
+		expectNil   bool
 	}{
 		{
 			name: "successful validation",
