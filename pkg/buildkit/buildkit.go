@@ -20,9 +20,6 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
-
-	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 type Config struct {
@@ -167,71 +164,18 @@ type manifestEntry struct {
 
 // DiscoverPlatformsFromReference discovers platforms from either a remote or local image reference
 func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
-	ref, err := name.ParseReference(manifestRef)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
-	}
-
-	// Check if local manifest is on daemon first
-	localPlatforms, err := discoverPlatformsFromLocalImage(manifestRef)
-	if err == nil && localPlatforms != nil {
-		log.Debug("local manifest platforms: ", localPlatforms)
-		return localPlatforms, nil
-	}
-
-	// If local inspection failed, try remote
-	var platforms []types.PatchPlatform
-	desc, err := remote.Get(ref)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
-	}
-
-	if !desc.MediaType.IsIndex() {
-		// Not multi-arch
-		return nil, nil
-	}
-
-	index, err := desc.ImageIndex()
-	if err != nil {
-		return nil, fmt.Errorf("error getting image index %w", err)
-	}
-
-	manifest, err := index.IndexManifest()
-	if err != nil {
-		return nil, fmt.Errorf("error getting manifest: %w", err)
-	}
-
-	for i := range manifest.Manifests {
-		m := &manifest.Manifests[i]
-
-		if m.Platform.OS != linux {
-			continue
-		}
-
-		patchPlatform := types.PatchPlatform{
-			Platform: ispec.Platform{
-				OS:           m.Platform.OS,
-				Architecture: m.Platform.Architecture,
-				Variant:      m.Platform.Variant,
-			},
-		}
-		if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
-			// some scanners may not add v8 to arm64 reports, so we
-			// need to remove it here to maintain consistency
-			patchPlatform.Variant = ""
-		}
-		platforms = append(platforms, patchPlatform)
-	}
-
-	return platforms, nil
-}
-
-func discoverPlatformsFromLocalImage(manifestRef string) ([]types.PatchPlatform, error) {
+	// using CLI allows us to check for local manifest lists in addition to remote, but these local manifest lists have references to remote images
 	cmd := exec.Command("docker", "manifest", "inspect", manifestRef)
 	output, err := cmd.Output()
 	if err != nil {
-		// No local manifest list found - could be single-platform image or remote
-		return nil, fmt.Errorf("no local manifest list found: %w", err)
+		// check docker image inspect
+		cmd := exec.Command("docker", "manifest", "inspect", manifestRef)
+		_, err := cmd.Output()
+		if err == nil {
+			// this is a single image manifest, not a manifest list
+			return nil, nil
+		}
+		return nil, fmt.Errorf("no image or manifest list found: %w", err)
 	}
 
 	// Parse the manifest list JSON
@@ -251,7 +195,14 @@ func discoverPlatformsFromLocalImage(manifestRef string) ([]types.PatchPlatform,
 		return nil, fmt.Errorf("failed to parse manifest list: %w", err)
 	}
 
-	// Check manifests exisst
+	// Check if the mediaType indicates this is a manifest list, not a single image
+	if manifestList.MediaType != "application/vnd.docker.distribution.manifest.list.v2+json" &&
+		manifestList.MediaType != "application/vnd.oci.image.index.v1+json" {
+		// This is a single image manifest, not a manifest list
+		return nil, nil
+	}
+
+	// Check manifests exists
 	if len(manifestList.Manifests) == 0 {
 		return nil, nil
 	}

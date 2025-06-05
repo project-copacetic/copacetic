@@ -200,13 +200,34 @@ func patchWithContext(
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 		}
 		return err
-	} else if reportDirectory == "" && reportFile == "" {
-		platform := types.PatchPlatform{
-			Platform: platforms.Normalize(platforms.DefaultSpec()),
+	} else if reportDirectory != "" {
+
+		// check if reportDirectory exists
+		f, err := os.Stat(reportDirectory)
+		if err != nil {
+			return err
 		}
-		if platform.OS != LINUX {
-			platform.OS = LINUX
+		if !f.IsDir() {
+			return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
 		}
+
+		return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+	}
+
+	// if both reportFile and reportDirectory are empty, check if reference is a manifest list for multi-arch patching or image for single-arch patching
+	platform := types.PatchPlatform{
+		Platform: platforms.Normalize(platforms.DefaultSpec()),
+	}
+
+	if platform.OS != LINUX {
+		platform.OS = LINUX
+	}
+
+	platforms, err := buildkit.DiscoverPlatformsFromReference(image)
+
+	// if no platforms found and no error, then the mediaType suggested it is a single-arch image ref
+	if platforms == nil && err == nil {
+		// perform single-architecture patching with update all approach since reportFile was not provided
 		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil && result.PatchedRef != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
@@ -214,15 +235,11 @@ func patchWithContext(
 		return err
 	}
 
-	// must be dealing with a multi-arch image, check the directory
-	f, err := os.Stat(reportDirectory)
 	if err != nil {
 		return err
 	}
-	if !f.IsDir() {
-		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
-	}
 
+	// otherwise, perform multi-arch patching with update all approach for all existing architectures since reportDirectory was not provided
 	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 }
 
