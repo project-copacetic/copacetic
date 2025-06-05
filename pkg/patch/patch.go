@@ -50,11 +50,11 @@ const (
 	defaultRegistry = "docker.io"
 	defaultTag      = "latest"
 
-	// Package types
+	// Package types.
 	PkgTypeOS      = "os"
 	PkgTypeLibrary = "library"
 
-	LINUX           = "linux"
+	LINUX = "linux"
 )
 
 // for testing.
@@ -62,15 +62,9 @@ var (
 	bkNewClient = buildkit.NewClient
 )
 
-type archDigest struct {
-	tag    string
-	digest string
-	plat   types.PatchPlatform
-}
-
 // Package types supported by copa
 
-// parsePkgTypes parses a comma-separated string of package types and validates them
+// parsePkgTypes parses a comma-separated string of package types and validates them.
 func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	if pkgTypesStr == "" {
 		return []string{PkgTypeOS}, nil // default to OS
@@ -95,12 +89,12 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	return validTypes, nil
 }
 
-// shouldIncludeOSUpdates returns true if OS updates should be included based on package types
+// shouldIncludeOSUpdates returns true if OS updates should be included based on package types.
 func shouldIncludeOSUpdates(pkgTypes []string) bool {
 	return slices.Contains(pkgTypes, PkgTypeOS)
 }
 
-// shouldIncludeLibraryUpdates returns true if library updates should be included based on package types
+// shouldIncludeLibraryUpdates returns true if library updates should be included based on package types.
 func shouldIncludeLibraryUpdates(pkgTypes []string) bool {
 	return slices.Contains(pkgTypes, PkgTypeLibrary)
 }
@@ -606,10 +600,10 @@ func patchSingleArchImage(
 					if errPkgs == nil {
 						errPkgs = []string{}
 					}
-					combinedReportedPkgs := append(errPkgs, langErrPkgsFromAllManagers...)
+					errPkgs = append(errPkgs, langErrPkgsFromAllManagers...)
 					uniqueErrPkgsMap := make(map[string]bool)
 					var tempUniqueSlice []string
-					for _, item := range combinedReportedPkgs {
+					for _, item := range errPkgs {
 						if _, value := uniqueErrPkgsMap[item]; !value {
 							uniqueErrPkgsMap[item] = true
 							tempUniqueSlice = append(tempUniqueSlice, item)

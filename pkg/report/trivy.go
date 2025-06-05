@@ -149,7 +149,7 @@ func findOptimalFixedVersion(installedVersion string, fixedVersions []string) st
 	for _, v := range validCandidates {
 		vParts := parseVersionParts(v)
 		if len(vParts) >= 2 && len(installedParts) >= 2 &&
-		   vParts[0] == installedParts[0] && vParts[1] == installedParts[1] {
+			vParts[0] == installedParts[0] && vParts[1] == installedParts[1] {
 			patchVersions = append(patchVersions, v)
 		}
 	}
@@ -315,11 +315,11 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	for pkgName, vulns := range langPackageVulns {
 		var fixedVersions []string
 
-		for _, vuln := range vulns {
-			if vuln.FixedVersion != "" {
+		for i := range vulns {
+			if vulns[i].FixedVersion != "" {
 				// Handle comma-separated fixed versions
-				if strings.Contains(vuln.FixedVersion, ",") {
-					versions := strings.Split(vuln.FixedVersion, ",")
+				if strings.Contains(vulns[i].FixedVersion, ",") {
+					versions := strings.Split(vulns[i].FixedVersion, ",")
 					for _, v := range versions {
 						v = strings.TrimSpace(v)
 						if v != "" {
@@ -327,7 +327,7 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 						}
 					}
 				} else {
-					fixedVersions = append(fixedVersions, vuln.FixedVersion)
+					fixedVersions = append(fixedVersions, vulns[i].FixedVersion)
 				}
 			}
 		}

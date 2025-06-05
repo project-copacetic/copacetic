@@ -123,7 +123,7 @@ func TestOptimalVersionSelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := findOptimalFixedVersion(tc.installedVersion, tc.fixedVersions)
 			if result != tc.expected {
-			    t.Errorf("got %s, want %s", result, tc.expected)
+				t.Errorf("got %s, want %s", result, tc.expected)
 			}
 		})
 	}

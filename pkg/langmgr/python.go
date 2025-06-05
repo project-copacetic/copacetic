@@ -115,7 +115,7 @@ func (pm *pythonManager) InstallUpdates(ctx context.Context, manifest *unversion
 // resultsBytes: content of 'pip freeze' for the relevant packages.
 // expectedUpdates: list of packages that were attempted to be updated.
 // ignoreErrors: if true, validation failures are logged as warnings instead of returning an error.
-func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resultsBytes []byte, expectedUpdates unversioned.LangUpdatePackages, ignoreErrors bool) ([]string, error) {
+func (pm *pythonManager) validatePythonPackageVersions(_ context.Context, resultsBytes []byte, expectedUpdates unversioned.LangUpdatePackages, ignoreErrors bool) ([]string, error) {
 	var failedPackages []string
 	var validationIssues []string
 
@@ -211,14 +211,15 @@ func (pm *pythonManager) validatePythonPackageVersions(ctx context.Context, resu
 				vActual, _ := pep440.Parse(actualVersion)
 				vInstalled, errInstalled := pep440.Parse(expectedPkg.InstalledVersion)
 				if errInstalled == nil {
-					if vActual.LessThan(vInstalled) {
+					switch {
+					case vActual.LessThan(vInstalled):
 						errMsg := fmt.Sprintf("package %s: upgraded to version %s, which is older than installed version %s", expectedPkg.Name, actualVersion, expectedPkg.InstalledVersion)
 						validationIssues = append(validationIssues, errMsg)
 						failedPackages = append(failedPackages, expectedPkg.Name)
 						log.Warnf("%s", errMsg)
-					} else if vActual.Equal(vInstalled) {
+					case vActual.Equal(vInstalled):
 						log.Infof("Package %s version %s remained unchanged after upgrade attempt.", expectedPkg.Name, actualVersion)
-					} else {
+					default:
 						log.Infof("Package %s successfully upgraded from %s to %s.", expectedPkg.Name, expectedPkg.InstalledVersion, actualVersion)
 					}
 				} else {
