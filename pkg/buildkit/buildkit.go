@@ -156,57 +156,130 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// This approach will not work for local images, add future support for this.
-func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
-	var platforms []types.PatchPlatform
+// Represents a platform manifest entry
+type manifestEntry struct {
+	Platform struct {
+		Architecture string `json:"architecture"`
+		OS           string `json:"os"`
+		Variant      string `json:"variant,omitempty"`
+	} `json:"platform"`
+}
 
+// DiscoverPlatformsFromReference discovers platforms from either a remote or local image reference
+func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
 	ref, err := name.ParseReference(manifestRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
+	// Check if local manifest is on daemon first
+	localPlatforms, err := discoverPlatformsFromLocalImage(manifestRef)
+	if err == nil && localPlatforms != nil {
+		log.Debug("local manifest platforms: ", localPlatforms)
+		return localPlatforms, nil
+	}
+
+	// If local inspection failed, try remote
+	var platforms []types.PatchPlatform
 	desc, err := remote.Get(ref)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
 	}
 
-	if desc.MediaType.IsIndex() {
-		index, err := desc.ImageIndex()
-		if err != nil {
-			return nil, fmt.Errorf("error getting image index %w", err)
-		}
-
-		manifest, err := index.IndexManifest()
-		if err != nil {
-			return nil, fmt.Errorf("error getting manifest: %w", err)
-		}
-
-		for i := range manifest.Manifests {
-			m := &manifest.Manifests[i]
-
-			if m.Platform.OS != linux {
-				continue
-			}
-
-			patchPlatform := types.PatchPlatform{
-				Platform: ispec.Platform{
-					OS:           m.Platform.OS,
-					Architecture: m.Platform.Architecture,
-					Variant:      m.Platform.Variant,
-				},
-			}
-			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
-				// some scanners may not add v8 to arm64 reports, so we
-				// need to remove it here to maintain consistency
-				patchPlatform.Variant = ""
-			}
-			platforms = append(platforms, patchPlatform)
-		}
-		return platforms, nil
+	if !desc.MediaType.IsIndex() {
+		// Not multi-arch
+		return nil, nil
 	}
 
-	// return nil if not multi-arch, and handle as normal
-	return nil, nil
+	index, err := desc.ImageIndex()
+	if err != nil {
+		return nil, fmt.Errorf("error getting image index %w", err)
+	}
+
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		return nil, fmt.Errorf("error getting manifest: %w", err)
+	}
+
+	for i := range manifest.Manifests {
+		m := &manifest.Manifests[i]
+
+		if m.Platform.OS != linux {
+			continue
+		}
+
+		patchPlatform := types.PatchPlatform{
+			Platform: ispec.Platform{
+				OS:           m.Platform.OS,
+				Architecture: m.Platform.Architecture,
+				Variant:      m.Platform.Variant,
+			},
+		}
+		if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+			// some scanners may not add v8 to arm64 reports, so we
+			// need to remove it here to maintain consistency
+			patchPlatform.Variant = ""
+		}
+		platforms = append(platforms, patchPlatform)
+	}
+
+	return platforms, nil
+}
+
+func discoverPlatformsFromLocalImage(manifestRef string) ([]types.PatchPlatform, error) {
+	cmd := exec.Command("docker", "manifest", "inspect", manifestRef)
+	output, err := cmd.Output()
+	if err != nil {
+		// No local manifest list found - could be single-platform image or remote
+		return nil, fmt.Errorf("no local manifest list found: %w", err)
+	}
+
+	// Parse the manifest list JSON
+	var manifestList struct {
+		MediaType string `json:"mediaType"`
+		Manifests []struct {
+			MediaType string `json:"mediaType"`
+			Platform  struct {
+				Architecture string `json:"architecture"`
+				OS           string `json:"os"`
+				Variant      string `json:"variant,omitempty"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(output, &manifestList); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest list: %w", err)
+	}
+
+	// Check manifests exisst
+	if len(manifestList.Manifests) == 0 {
+		return nil, nil
+	}
+
+	var platforms []types.PatchPlatform
+	for _, m := range manifestList.Manifests {
+		if m.Platform.OS != linux {
+			continue
+		}
+
+		patchPlatform := types.PatchPlatform{
+			Platform: ispec.Platform{
+				OS:           m.Platform.OS,
+				Architecture: m.Platform.Architecture,
+				Variant:      m.Platform.Variant,
+			},
+		}
+
+		if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+			// some scanners may not add v8 to arm64 reports, so we
+			// need to remove it here to maintain consistency
+			patchPlatform.Variant = ""
+		}
+
+		platforms = append(platforms, patchPlatform)
+	}
+
+	return platforms, nil
 }
 
 func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
