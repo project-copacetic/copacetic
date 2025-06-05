@@ -49,12 +49,16 @@ func (pm *pythonManager) InstallUpdates(ctx context.Context, manifest *unversion
 	pythonComparer := VersionComparer{isValidPythonVersion, isLessThanPythonVersion}
 	updatesToAttempt, err := GetUniqueLatestUpdates(manifest.LangUpdates, pythonComparer, ignoreErrors)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to determine unique latest Python updates: %w", err)
+		// Collect error packages when GetUniqueLatestUpdates fails
+		for _, u := range manifest.LangUpdates {
+			errPkgsReported = append(errPkgsReported, u.Name)
+		}
+		return &pm.config.ImageState, errPkgsReported, fmt.Errorf("failed to determine unique latest Python updates: %w", err)
 	}
 
 	if len(updatesToAttempt) == 0 {
 		log.Warn("No Python update packages were specified to apply.")
-		return &pm.config.ImageState, nil, nil
+		return &pm.config.ImageState, []string{}, nil
 	}
 	log.Debugf("Attempting to update latest unique pips: %v", updatesToAttempt)
 
@@ -269,7 +273,7 @@ func (pm *pythonManager) upgradePackages(ctx context.Context, updates unversione
 
 	if len(installPkgArgs) == 0 {
 		log.Info("No Python packages to install or upgrade.")
-		return &pm.config.ImageState, nil, nil
+		return &pm.config.ImageState, []byte{}, nil
 	}
 
 	// Install all requested update packages
