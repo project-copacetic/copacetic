@@ -21,7 +21,8 @@ type OS struct {
 }
 
 type Config struct {
-	Arch string `json:"arch"`
+	Arch    string `json:"arch"`
+	Variant string `json:"variant"`
 }
 
 type UpdatePackage struct {
