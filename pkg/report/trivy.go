@@ -86,15 +86,15 @@ func compareVersions(v1, v2 string) int {
 // The algorithm prefers patch versions over minor versions over major versions.
 // When multiple CVEs require different versions, it picks the highest version to ensure all are fixed.
 func findOptimalFixedVersion(installedVersion string, fixedVersions []string) string {
-	return findOptimalFixedVersionWithPatchLevel(installedVersion, fixedVersions, "patch")
+	return FindOptimalFixedVersionWithPatchLevel(installedVersion, fixedVersions, "patch")
 }
 
-// findOptimalFixedVersionWithPatchLevel finds the best version that fixes all CVEs based on library patch level preference.
+// FindOptimalFixedVersionWithPatchLevel finds the best version that fixes all CVEs based on library patch level preference.
 // libraryPatchLevel can be "patch", "minor", or "major":
-// - "patch": prefers patch versions, then minor, then major (maximum compatibility)
-// - "minor": prefers minor versions, then major, then patch (balanced approach)
-// - "major": prefers major versions to remove all CVEs (maximum security)
-func findOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
+// - "patch": only updates to patch versions (same major.minor), no fallback to minor/major
+// - "minor": only updates to patch or minor versions, never major versions
+// - "major": allows all version types and chooses the highest available version
+func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
 	if len(fixedVersions) == 0 {
 		return ""
 	}
@@ -133,14 +133,8 @@ func findOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 	}
 
 	if len(validCandidates) == 0 {
-		// If no valid candidates, return the highest available version
-		highestVersion := allCandidates[0]
-		for _, v := range allCandidates[1:] {
-			if compareVersions(v, highestVersion) > 0 {
-				highestVersion = v
-			}
-		}
-		return highestVersion
+		// If no valid candidates (no versions higher than installed), do not update
+		return ""
 	}
 
 	if len(validCandidates) == 1 {
@@ -153,7 +147,7 @@ func findOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 
 	for _, v := range validCandidates {
 		vParts := parseVersionParts(v)
-		
+
 		// Patch-level upgrade (same major.minor)
 		if len(vParts) >= 2 && len(installedParts) >= 2 &&
 			vParts[0] == installedParts[0] && vParts[1] == installedParts[1] {
@@ -170,44 +164,39 @@ func findOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 	// Apply library patch level preference
 	switch libraryPatchLevel {
 	case "patch":
-		// Prefer patch, then minor, then major (maximum compatibility)
+		// Only update to patch versions, no fallback to minor/major
+		if len(patchVersions) > 0 {
+			return getHighestVersion(patchVersions)
+		}
+		// If no patch versions available, do not update
+		return ""
+
+	case "minor":
+		// Only update to patch or minor versions, never major
 		if len(patchVersions) > 0 {
 			return getHighestVersion(patchVersions)
 		}
 		if len(minorVersions) > 0 {
 			return getHighestVersion(minorVersions)
 		}
-		return getHighestVersion(majorVersions)
-		
-	case "minor":
-		// Prefer minor, then major, then patch (balanced approach)
-		if len(minorVersions) > 0 {
-			return getHighestVersion(minorVersions)
-		}
-		if len(majorVersions) > 0 {
-			return getHighestVersion(majorVersions)
-		}
-		return getHighestVersion(patchVersions)
-		
+		// Do not fall back to major versions
+		return ""
+
 	case "major":
-		// Prefer major, then minor, then patch (maximum security)
-		if len(majorVersions) > 0 {
-			return getHighestVersion(majorVersions)
+		// Allow all version types and choose the highest overall version
+		allVersions := append(append(patchVersions, minorVersions...), majorVersions...)
+		if len(allVersions) > 0 {
+			return getHighestVersion(allVersions)
 		}
-		if len(minorVersions) > 0 {
-			return getHighestVersion(minorVersions)
-		}
-		return getHighestVersion(patchVersions)
-		
+		return ""
+
 	default:
 		// Default to patch behavior for invalid values
 		if len(patchVersions) > 0 {
 			return getHighestVersion(patchVersions)
 		}
-		if len(minorVersions) > 0 {
-			return getHighestVersion(minorVersions)
-		}
-		return getHighestVersion(majorVersions)
+		// If no patch versions available, do not update
+		return ""
 	}
 }
 
@@ -216,7 +205,7 @@ func getHighestVersion(versions []string) string {
 	if len(versions) == 0 {
 		return ""
 	}
-	
+
 	highest := versions[0]
 	for _, v := range versions[1:] {
 		if compareVersions(v, highest) > 0 {
@@ -370,7 +359,14 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		if len(fixedVersions) > 0 {
 			info := langPackageInfo[pkgName]
-			optimalVersion := findOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, libraryPatchLevel)
+
+			// Special handling for certifi package - always use major patch level to get latest version
+			patchLevelToUse := libraryPatchLevel
+			if pkgName == "certifi" {
+				patchLevelToUse = "major"
+			}
+
+			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)
 			info.FixedVersion = optimalVersion
 			updates.LangUpdates = append(updates.LangUpdates, info)
 		}

@@ -55,7 +55,11 @@ func GetUniqueLatestUpdates(
 	dict := make(map[string]string)
 	var allErrors *multierror.Error
 	for _, u := range updates {
-		if cmp.IsValid(u.FixedVersion) {
+		if u.FixedVersion == "" {
+			// No suitable version found due to patch level restrictions, skip this update
+			log.Debugf("Skipping package %s: no suitable version found according to patch level restrictions", u.Name)
+			continue
+		} else if cmp.IsValid(u.FixedVersion) {
 			ver, ok := dict[u.Name]
 			if !ok {
 				dict[u.Name] = u.FixedVersion

@@ -167,6 +167,16 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			expectedError: "invalid version invalid found for package pkg1",
 		},
 		{
+			name: "empty fixed version - should be skipped due to patch level restrictions",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: ""},
+				{Name: "pkg2", FixedVersion: "2.0"},
+			},
+			ignoreErrors:  false,
+			want:          unversioned.UpdatePackages{{Name: "pkg2", FixedVersion: "2.0"}},
+			expectedError: "",
+		},
+		{
 			name: "ignore errors",
 			updates: unversioned.UpdatePackages{
 				{Name: "pkg1", FixedVersion: "invalid"},

@@ -98,6 +98,18 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			},
 		},
 		{
+			name: "empty fixed version - should be skipped due to patch level restrictions",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "package1", FixedVersion: ""},
+				{Name: "package2", FixedVersion: "1.0.0"},
+			},
+			comparer:     mockVersionComparer(),
+			ignoreErrors: false,
+			expected: unversioned.LangUpdatePackages{
+				{Name: "package2", FixedVersion: "1.0.0"},
+			},
+		},
+		{
 			name: "invalid version without ignore errors",
 			updates: unversioned.LangUpdatePackages{
 				{Name: "package1", FixedVersion: "invalid"},

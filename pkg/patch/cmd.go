@@ -48,7 +48,7 @@ func NewPatchCmd() *cobra.Command {
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
 			}
-			
+
 			bkopts := buildkit.Opts{
 				Addr:       ua.bkOpts.Addr,
 				CACertPath: ua.bkOpts.CACertPath,
@@ -118,16 +118,16 @@ func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 		"minor": true,
 		"major": true,
 	}
-	
+
 	// Check if the provided level is valid
 	if !validLevels[libraryPatchLevel] {
 		return fmt.Errorf("invalid library patch level '%s': must be one of 'patch', 'minor', or 'major'", libraryPatchLevel)
 	}
-	
+
 	// If library patch level is specified and not the default, ensure library is in pkg-types
 	if libraryPatchLevel != "patch" && !strings.Contains(pkgTypes, "library") {
 		return fmt.Errorf("--library-patch-level can only be used when 'library' is included in --pkg-types")
 	}
-	
+
 	return nil
 }

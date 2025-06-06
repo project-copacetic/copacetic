@@ -100,15 +100,15 @@ func TestOptimalVersionSelection(t *testing.T) {
 			name:             "minor_version_preference",
 			installedVersion: "1.25.5",
 			fixedVersions:    []string{"1.26.19", "2.0.6", "1.27.1"},
-			expected:         "1.27.1", // Should pick highest minor version that fixes all CVEs
-			description:      "Should prefer minor version over major version bump",
+			expected:         "", // Should not fall back to minor/major when patch level is default
+			description:      "Should not fall back to minor/major versions in strict patch mode",
 		},
 		{
 			name:             "major_version_when_needed",
 			installedVersion: "1.25.5",
 			fixedVersions:    []string{"2.0.6", "2.2.2"},
-			expected:         "2.2.2", // Should pick highest major version when no other option
-			description:      "Should pick highest major version when no other choice",
+			expected:         "", // Should not fall back to major when patch level is default
+			description:      "Should not fall back to major versions in strict patch mode",
 		},
 		{
 			name:             "comma_separated_versions",
@@ -124,6 +124,207 @@ func TestOptimalVersionSelection(t *testing.T) {
 			result := findOptimalFixedVersion(tc.installedVersion, tc.fixedVersions)
 			if result != tc.expected {
 				t.Errorf("got %s, want %s", result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestOptimalVersionSelectionWithPatchLevel tests the library patch level specific logic.
+func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		patchLevel       string
+		expected         string
+		description      string
+	}{
+		// Patch level tests
+		{
+			name:             "patch_level_only_patch_versions",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.17", "1.26.19"},
+			patchLevel:       "patch",
+			expected:         "1.26.19",
+			description:      "Should pick highest patch version when patch level is specified",
+		},
+		{
+			name:             "patch_level_with_mixed_versions_no_fallback",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.27.1", "2.0.6"}, // only minor and major available
+			patchLevel:       "patch",
+			expected:         "",
+			description:      "Should not fall back to minor/major when patch level is specified",
+		},
+		{
+			name:             "patch_level_comma_separated_mixed",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.18, 1.27.1, 2.0.6"},
+			patchLevel:       "patch",
+			expected:         "1.26.18",
+			description:      "Should keep to patch level only with comma-separated values",
+		},
+
+		// Minor level tests
+		{
+			name:             "minor_level_prefers_patch",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
+			patchLevel:       "minor",
+			expected:         "1.26.19",
+			description:      "Should prefer patch over minor when minor level is specified",
+		},
+		{
+			name:             "minor_level_uses_minor_when_no_patch",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.27.1", "2.0.6"},
+			patchLevel:       "minor",
+			expected:         "1.27.1",
+			description:      "Should use minor when no patch available and minor level is specified",
+		},
+		{
+			name:             "minor_level_no_major_fallback",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6", "2.1.0"},
+			patchLevel:       "minor",
+			expected:         "",
+			description:      "Should not fall back to major when minor level is specified",
+		},
+
+		// Major level tests
+		{
+			name:             "major_level_choose_highest_overall",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
+			patchLevel:       "major",
+			expected:         "2.0.6",
+			description:      "Should choose highest version overall when major level is specified",
+		},
+		{
+			name:             "major_level_use_major_when_only_option",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6", "2.1.0"},
+			patchLevel:       "major",
+			expected:         "2.1.0",
+			description:      "Should use major when it's the only option and major level is specified",
+		},
+		{
+			name:             "major_level_comma_separated_choose_highest",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.18, 2.0.6"},
+			patchLevel:       "major",
+			expected:         "2.0.6",
+			description:      "Should choose highest version from comma-separated values when major level is specified",
+		},
+		{
+			name:             "major_level_only_minor_available",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.27.1", "1.28.0"},
+			patchLevel:       "major",
+			expected:         "1.28.0",
+			description:      "Should use minor when multiple minor options and major level is specified",
+		},
+
+		// Edge cases
+		{
+			name:             "patch_level_empty_when_no_valid_versions",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.15", "1.25.0"}, // older versions
+			patchLevel:       "patch",
+			expected:         "",
+			description:      "Should return empty when no valid patch versions available",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, tc.patchLevel)
+			if result != tc.expected {
+				t.Errorf("%s: got %s, want %s", tc.description, result, tc.expected)
+			}
+		})
+	}
+}
+
+// Test for certifi exception - should always get latest version regardless of patch level setting
+func TestCertifiExceptionWithMockData(t *testing.T) {
+	// Test the core logic using direct function calls since we can't easily mock file parsing
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		patchLevel       string
+		packageName      string
+		expected         string
+		description      string
+	}{
+		{
+			name:             "certifi_patch_level_gets_major",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       "patch",
+			packageName:      "certifi",
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version even with patch level",
+		},
+		{
+			name:             "certifi_minor_level_gets_major",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       "minor",
+			packageName:      "certifi",
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version even with minor level",
+		},
+		{
+			name:             "certifi_major_level_gets_major",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       "major",
+			packageName:      "certifi",
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version with major level (no change)",
+		},
+		{
+			name:             "other_package_respects_patch_level",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
+			patchLevel:       "patch",
+			packageName:      "requests",
+			expected:         "2.25.2",
+			description:      "non-certifi packages should respect patch level restrictions",
+		},
+		{
+			name:             "other_package_respects_minor_level",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
+			patchLevel:       "minor",
+			packageName:      "requests",
+			expected:         "2.25.2",
+			description:      "non-certifi packages should prefer patch over minor with minor level",
+		},
+		{
+			name:             "other_package_uses_minor_when_no_patch",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.26.0", "2.27.0", "3.0.0"},
+			patchLevel:       "minor",
+			packageName:      "requests",
+			expected:         "2.27.0",
+			description:      "non-certifi packages should use highest minor when no patch available",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Simulate the logic that would be used in ParseWithLibraryPatchLevel
+			patchLevelToUse := tc.patchLevel
+			if tc.packageName == "certifi" {
+				patchLevelToUse = "major"
+			}
+
+			result := FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, patchLevelToUse)
+			if result != tc.expected {
+				t.Errorf("%s: got %s, want %s", tc.description, result, tc.expected)
 			}
 		})
 	}
