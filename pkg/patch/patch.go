@@ -884,7 +884,7 @@ func patchMultiArchImage(
 
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERNCE\tERROR")
+	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tERROR")
 
 	for _, p := range platforms {
 		platformKey := p.OS + "/" + p.Architecture
