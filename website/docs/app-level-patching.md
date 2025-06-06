@@ -21,13 +21,13 @@ Please note that app-level patching requires scanner results that identify vulne
 Copa supports filtering between different types of packages using the `--pkg-types` flag:
 
 ```bash
-# Patch only OS packages
+# Patch only OS packages (default)
 copa patch -i $IMAGE --pkg-types os ...
 
 # Patch only library/app-level packages
 copa patch -i $IMAGE --pkg-types library ...
 
-# Patch both OS and library packages (default)
+# Patch both OS and library packages
 copa patch -i $IMAGE --pkg-types os,library ...
 ```
 
@@ -95,17 +95,81 @@ Some packages have special handling due to their nature:
 
 ## Usage Examples
 
+To use app-level patching, you need to have a scanner result file that contains vulnerabilities for application-level packages. Below is an example of how to scan a Python image and then apply patches using Copa.
+
 ```bash
 export COPA_EXPERIMENTAL=1
 export IMAGE=python:3.11.0
 
 # Scan for Python package vulnerabilities
 trivy image --vuln-type os,library --ignore-unfixed -f json -o python-scan.json $IMAGE
+```
 
-# Apply conservative Python package updates
+### Basic Usage
+
+```bash
+# Apply patch-level Python package updates only
 copa patch \
     -i $IMAGE \
     -r python-scan.json \
     --pkg-types os,library \
     --library-patch-level patch
 ```
+
+### Ignoring Errors
+
+Sometimes, certain packages may not be compatible with the patching process or may not have available updates. In such cases, you can use the `--ignore-errors` flag to allow Copa to continue patching other packages even if some fail. This is useful in environments where you want to apply as many updates as possible without failing the entire patching process.
+
+```bash
+# Apply patch-level Python package updates, ignoring errors
+copa patch \
+    -i $IMAGE \
+    -r python-scan.json \
+    --pkg-types os,library \
+    --library-patch-level major \
+    --ignore-errors
+```
+
+## Limitations
+
+Due to nature of app-level patching, it may not be as comprehensive as OS-level patching. Some known limitations are:
+
+### Python
+
+#### Dependency Resolution
+
+Copa does not perform dependency resolution for application-level packages. It applies updates based on the scanner results without checking for compatibility with other packages in the environment. This means that while Copa can update vulnerable packages, it may not resolve all dependency conflicts that arise from those updates.
+
+For example, if a package has a strict version requirement that conflicts with the updated version, you may encounter errors like:
+
+```shell
+#8 8.971 ERROR: Cannot install azure-cli and paramiko==3.4.0 because these package versions have conflicting dependencies.
+#8 8.971
+#8 8.971 The conflict is caused by:
+#8 8.971     The user requested paramiko==3.4.0
+#8 8.971     azure-cli-core 2.40.0 depends on paramiko<3.0.0 and >=2.0.8
+#8 8.971
+#8 8.971 To fix this you could try to:
+#8 8.971 1. loosen the range of package versions you've specified
+#8 8.971 2. remove package versions to allow pip attempt to solve the dependency conflict
+```
+
+#### Python Version Compatibility
+
+Copa does not check whether the updated Python packages are compatible with the Python version in the image. For example, if you update a package that requires Python 3.12 to a version that is not compatible with Python 3.11, you may encounter runtime or dependency resolution errors.
+
+#### Testing and Validation
+
+Due to the nature of app-level patching, it is *highly recommended* to thoroughly test your application after applying updates. Copa does not perform any automated testing or validation of the patched application, so you should ensure that your application functions correctly with the updated dependencies.
+
+#### Non Existent Versions
+
+Trivy provides vulnerability data for Python dependencies using [GitHub Security Advisories](https://github.com/advisories) (GHSA). However, it does not check whether the patched version exists in the [Python Package Index](https://pypi.org) (PyPI). For example, [`GHSA-3749-ghw9-m3mg`](https://github.com/advisories/GHSA-3749-ghw9-m3mg) contains a vulnerability for torch package, but the patched version `2.0.2.7.1-rc1` does not exist in PyPI at the time of this writing.
+
+#### Virtual Environment and Package Manager Support
+
+Currently, only Python packages managed by `pip` are supported. We have not evaluated or implemented support for virtual environments, or other Python package managers like `conda` or `poetry` and others. This might break compatibility with applications that use these package managers.
+
+#### Replacing PyPI
+
+Copa does not support replacing the default [Python Package Index](https://pypi.org) (PyPI) with a custom index or mirror. This means that all package updates are fetched from the official PyPI repository, which may not be suitable for all environments, especially those with strict network policies or private package registries.
