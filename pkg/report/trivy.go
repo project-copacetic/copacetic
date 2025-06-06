@@ -93,7 +93,7 @@ func findOptimalFixedVersion(installedVersion string, fixedVersions []string) st
 // libraryPatchLevel can be "patch", "minor", or "major":
 // - "patch": only updates to patch versions (same major.minor), no fallback to minor/major
 // - "minor": only updates to patch or minor versions, never major versions
-// - "major": allows all version types and chooses the highest available version
+// - "major": allows all version types and chooses the highest available version.
 func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
 	if len(fixedVersions) == 0 {
 		return ""
@@ -148,10 +148,10 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 		if len(vParts) >= 2 && len(installedParts) >= 2 &&
 			vParts[0] == installedParts[0] && vParts[1] == installedParts[1] {
 			patchVersions = append(patchVersions, v)
-		// Minor-level upgrade (same major)
+			// Minor-level upgrade (same major)
 		} else if len(vParts) >= 1 && len(installedParts) >= 1 && vParts[0] == installedParts[0] {
 			minorVersions = append(minorVersions, v)
-		// Major-level upgrade
+			// Major-level upgrade
 		} else {
 			majorVersions = append(majorVersions, v)
 		}

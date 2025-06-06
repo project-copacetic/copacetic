@@ -247,7 +247,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 	}
 }
 
-// Test for certifi exception - should always get latest version regardless of patch level setting
+// Test for certifi exception - should always get latest version regardless of patch level setting.
 func TestCertifiExceptionWithMockData(t *testing.T) {
 	// Test the core logic using direct function calls since we can't easily mock file parsing
 	testCases := []struct {
@@ -436,11 +436,11 @@ func TestPkgTypesFiltering(t *testing.T) {
 	testFile := "testdata/pkg_types_test.json"
 
 	testCases := []struct {
-		name                     string
-		pkgTypes                 string
-		expectedOSUpdates        int
-		expectedLibraryUpdates   int
-		description              string
+		name                   string
+		pkgTypes               string
+		expectedOSUpdates      int
+		expectedLibraryUpdates int
+		description            string
 	}{
 		{
 			name:                   "include_library_and_os",
@@ -603,4 +603,3 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 		})
 	}
 }
-

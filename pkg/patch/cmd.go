@@ -110,7 +110,7 @@ func NewPatchCmd() *cobra.Command {
 	return patchCmd
 }
 
-// validateLibraryPatchLevel validates the library patch level flag and its usage
+// validateLibraryPatchLevel validates the library patch level flag and its usage.
 func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 	// Valid library patch levels
 	validLevels := map[string]bool{
