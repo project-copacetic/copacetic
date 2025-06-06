@@ -8,10 +8,6 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 modes=()
 for i in ${SCRIPT_DIR}/buildkitenvs/*; do
     base="${i##*/}"
-    # Skip podman directory from main matrix to avoid adding testing load
-    if [[ "${base}" == "podman" ]]; then
-        continue
-    fi
     for j in "${i}"/*; do
         modes+=(${base}/${j##*/})
     done
