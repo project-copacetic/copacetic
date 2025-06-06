@@ -20,9 +20,6 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
-
-	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 )
 
 type Config struct {
@@ -156,57 +153,75 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// This approach will not work for local images, add future support for this.
+// DiscoverPlatformsFromReference discovers platforms from either a remote or local image reference
 func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
+	// using CLI allows us to check for local manifest lists in addition to remote, but these local manifest lists have references to remote images
+	cmd := exec.Command("docker", "manifest", "inspect", manifestRef)
+	output, err := cmd.Output()
+	if err != nil {
+		// check docker image inspect
+		cmd := exec.Command("docker", "image", "inspect", manifestRef)
+		_, err := cmd.Output()
+		if err == nil {
+			// this is a single image reference, not a manifest list
+			return nil, nil
+		}
+		return nil, fmt.Errorf("no image or manifest list found: %w", err)
+	}
+
+	// Parse the manifest list JSON
+	var manifestList struct {
+		MediaType string `json:"mediaType"`
+		Manifests []struct {
+			MediaType string `json:"mediaType"`
+			Platform  struct {
+				Architecture string `json:"architecture"`
+				OS           string `json:"os"`
+				Variant      string `json:"variant,omitempty"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(output, &manifestList); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest list: %w", err)
+	}
+
+	// Check if the mediaType indicates this is a manifest list, not a single image
+	if manifestList.MediaType != "application/vnd.docker.distribution.manifest.list.v2+json" &&
+		manifestList.MediaType != "application/vnd.oci.image.index.v1+json" {
+		// This is a single image manifest, not a manifest list
+		return nil, nil
+	}
+
+	// Check manifests exists
+	if len(manifestList.Manifests) == 0 {
+		return nil, nil
+	}
+
 	var platforms []types.PatchPlatform
-
-	ref, err := name.ParseReference(manifestRef)
-	if err != nil {
-		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
-	}
-
-	desc, err := remote.Get(ref)
-	if err != nil {
-		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
-	}
-
-	if desc.MediaType.IsIndex() {
-		index, err := desc.ImageIndex()
-		if err != nil {
-			return nil, fmt.Errorf("error getting image index %w", err)
+	for _, m := range manifestList.Manifests {
+		if m.Platform.OS != linux {
+			continue
 		}
 
-		manifest, err := index.IndexManifest()
-		if err != nil {
-			return nil, fmt.Errorf("error getting manifest: %w", err)
+		patchPlatform := types.PatchPlatform{
+			Platform: ispec.Platform{
+				OS:           m.Platform.OS,
+				Architecture: m.Platform.Architecture,
+				Variant:      m.Platform.Variant,
+			},
 		}
 
-		for i := range manifest.Manifests {
-			m := &manifest.Manifests[i]
-
-			if m.Platform.OS != linux {
-				continue
-			}
-
-			patchPlatform := types.PatchPlatform{
-				Platform: ispec.Platform{
-					OS:           m.Platform.OS,
-					Architecture: m.Platform.Architecture,
-					Variant:      m.Platform.Variant,
-				},
-			}
-			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
-				// some scanners may not add v8 to arm64 reports, so we
-				// need to remove it here to maintain consistency
-				patchPlatform.Variant = ""
-			}
-			platforms = append(platforms, patchPlatform)
+		if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+			// some scanners may not add v8 to arm64 reports, so we
+			// need to remove it here to maintain consistency
+			patchPlatform.Variant = ""
 		}
-		return platforms, nil
+
+		platforms = append(platforms, patchPlatform)
 	}
 
-	// return nil if not multi-arch, and handle as normal
-	return nil, nil
+	return platforms, nil
 }
 
 func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
