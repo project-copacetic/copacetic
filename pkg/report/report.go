@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/types/v1alpha1"
@@ -18,11 +19,12 @@ func (e *ErrorUnsupported) Error() string { return e.err.Error() }
 
 type ScanReportParser interface {
 	Parse(string) (*unversioned.UpdateManifest, error)
+	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
-func TryParseScanReport(file, scanner string) (*unversioned.UpdateManifest, error) {
+func TryParseScanReport(file, scanner, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
-		return defaultParseScanReport(file)
+		return defaultParseScanReport(file, libraryPatchLevel, pkgTypes)
 	}
 	return customParseScanReport(file, scanner)
 }
@@ -62,13 +64,24 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 	return updateManifest, nil
 }
 
-func defaultParseScanReport(file string) (*unversioned.UpdateManifest, error) {
+func defaultParseScanReport(file, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
 	}
 	for _, parser := range allParsers {
-		manifest, err := parser.Parse(file)
+		manifest, err := parser.ParseWithLibraryPatchLevel(file, libraryPatchLevel)
 		if err == nil {
+			// Filter updates based on pkg-types early
+			if manifest != nil {
+				// Only process library updates if "library" is in pkg-types
+				if !strings.Contains(pkgTypes, "library") {
+					manifest.LangUpdates = []unversioned.UpdatePackage{}
+				}
+				// Only process OS updates if "os" is in pkg-types
+				if !strings.Contains(pkgTypes, "os") {
+					manifest.OSUpdates = []unversioned.UpdatePackage{}
+				}
+			}
 			return manifest, nil
 		} else if _, ok := err.(*ErrorUnsupported); ok {
 			continue

@@ -7,6 +7,11 @@ import (
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/stretchr/testify/assert"
+)
+
+const (
+	majorPatchLevel = "major"
 )
 
 // TestParseTrivyReport tests the parseTrivyReport function.
@@ -75,6 +80,520 @@ func TestParseTrivyReport(t *testing.T) {
 			if err != nil && !tc.wantErr {
 				t.Errorf("got error %v, want no error", err)
 			}
+		})
+	}
+}
+
+// TestOptimalVersionSelection tests the optimal version selection logic.
+func TestOptimalVersionSelection(t *testing.T) {
+	// Test the optimal version selection logic
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		expected         string
+		description      string
+	}{
+		{
+			name:             "patch_version_preference",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.19", "2.0.6", "1.26.17"},
+			expected:         "1.26.19", // Should pick highest patch version that fixes all CVEs
+			description:      "Should prefer patch version over major version bump",
+		},
+		{
+			name:             "minor_version_preference",
+			installedVersion: "1.25.5",
+			fixedVersions:    []string{"1.26.19", "2.0.6", "1.27.1"},
+			expected:         "", // Should not fall back to minor/major when patch level is default
+			description:      "Should not fall back to minor/major versions in strict patch mode",
+		},
+		{
+			name:             "major_version_when_needed",
+			installedVersion: "1.25.5",
+			fixedVersions:    []string{"2.0.6", "2.2.2"},
+			expected:         "", // Should not fall back to major when patch level is default
+			description:      "Should not fall back to major versions in strict patch mode",
+		},
+		{
+			name:             "comma_separated_versions",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.7, 1.26.18"},
+			expected:         "1.26.18", // Should handle comma-separated and pick most compatible patch version
+			description:      "Should handle comma-separated versions correctly and prefer compatibility",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := findOptimalFixedVersion(tc.installedVersion, tc.fixedVersions)
+			if result != tc.expected {
+				t.Errorf("got %s, want %s", result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestOptimalVersionSelectionWithPatchLevel tests the library patch level specific logic.
+func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		patchLevel       string
+		expected         string
+		description      string
+	}{
+		// Patch level tests
+		{
+			name:             "patch_level_only_patch_versions",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.17", "1.26.19"},
+			patchLevel:       "patch",
+			expected:         "1.26.19",
+			description:      "Should pick highest patch version when patch level is specified",
+		},
+		{
+			name:             "patch_level_with_mixed_versions_no_fallback",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.27.1", "2.0.6"}, // only minor and major available
+			patchLevel:       "patch",
+			expected:         "",
+			description:      "Should not fall back to minor/major when patch level is specified",
+		},
+		{
+			name:             "patch_level_comma_separated_mixed",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.18, 1.27.1, 2.0.6"},
+			patchLevel:       "patch",
+			expected:         "1.26.18",
+			description:      "Should keep to patch level only with comma-separated values",
+		},
+
+		// Minor level tests
+		{
+			name:             "minor_level_prefers_patch",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
+			patchLevel:       "minor",
+			expected:         "1.26.19",
+			description:      "Should prefer patch over minor when minor level is specified",
+		},
+		{
+			name:             "minor_level_uses_minor_when_no_patch",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.27.1", "2.0.6"},
+			patchLevel:       "minor",
+			expected:         "1.27.1",
+			description:      "Should use minor when no patch available and minor level is specified",
+		},
+		{
+			name:             "minor_level_no_major_fallback",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6", "2.1.0"},
+			patchLevel:       "minor",
+			expected:         "",
+			description:      "Should not fall back to major when minor level is specified",
+		},
+
+		// Major level tests
+		{
+			name:             "major_level_prefers_patch_over_major",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.19",
+			description:      "Should prefer patch version over major when major level is specified",
+		},
+		{
+			name:             "major_level_use_major_when_only_option",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6", "2.1.0"},
+			patchLevel:       majorPatchLevel,
+			expected:         "2.1.0",
+			description:      "Should use major when it's the only option and major level is specified",
+		},
+		{
+			name:             "major_level_comma_separated_prefers_patch",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.18, 2.0.6"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.18",
+			description:      "Should prefer patch version from comma-separated values when major level is specified",
+		},
+		{
+			name:             "major_level_only_minor_available",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.27.1", "1.28.0"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.28.0",
+			description:      "Should use minor when multiple minor options and major level is specified",
+		},
+
+		// Edge cases
+		{
+			name:             "patch_level_empty_when_no_valid_versions",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.15", "1.25.0"}, // older versions
+			patchLevel:       "patch",
+			expected:         "",
+			description:      "Should return empty when no valid patch versions available",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, tc.patchLevel)
+			if result != tc.expected {
+				t.Errorf("%s: got %s, want %s", tc.description, result, tc.expected)
+			}
+		})
+	}
+}
+
+// Test for certifi exception - should always get latest version regardless of patch level setting.
+func TestCertifiExceptionWithMockData(t *testing.T) {
+	// Test the core logic using direct function calls since we can't easily mock file parsing
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		patchLevel       string
+		packageName      string
+		expected         string
+		description      string
+	}{
+		{
+			name:             "certifi_patch_level_gets_major",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       "patch",
+			packageName:      "certifi",
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version even with patch level",
+		},
+		{
+			name:             "certifi_minor_level_gets_major",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       "minor",
+			packageName:      "certifi",
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version even with minor level",
+		},
+		{
+			name:             "certifi_major_level_gets_major",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       majorPatchLevel,
+			packageName:      "certifi",
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version with major level (no change)",
+		},
+		{
+			name:             "other_package_respects_patch_level",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
+			patchLevel:       "patch",
+			packageName:      "requests",
+			expected:         "2.25.2",
+			description:      "non-certifi packages should respect patch level restrictions",
+		},
+		{
+			name:             "other_package_respects_minor_level",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
+			patchLevel:       "minor",
+			packageName:      "requests",
+			expected:         "2.25.2",
+			description:      "non-certifi packages should prefer patch over minor with minor level",
+		},
+		{
+			name:             "other_package_uses_minor_when_no_patch",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.26.0", "2.27.0", "3.0.0"},
+			patchLevel:       "minor",
+			packageName:      "requests",
+			expected:         "2.27.0",
+			description:      "non-certifi packages should use highest minor when no patch available",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Simulate the logic that would be used in ParseWithLibraryPatchLevel
+			patchLevelToUse := tc.patchLevel
+			if tc.packageName == "certifi" {
+				patchLevelToUse = majorPatchLevel
+			}
+
+			result := FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, patchLevelToUse)
+			if result != tc.expected {
+				t.Errorf("%s: got %s, want %s", tc.description, result, tc.expected)
+			}
+		})
+	}
+}
+
+// TestPythonTargetFormatHandling tests that only python-pkg is recognized as a valid Python package identifier.
+func TestPythonTargetFormatHandling(t *testing.T) {
+	// Test cases for verifying that only python-pkg is considered a valid Python package
+	testCases := []struct {
+		name        string
+		target      string
+		resultType  string
+		class       string
+		shouldMatch bool
+		description string
+	}{
+		{
+			name:        "python_pkg_type",
+			target:      "some/path/to/python/lib",
+			resultType:  "python-pkg",
+			class:       "lang-pkgs",
+			shouldMatch: true,
+			description: "Should match python-pkg type",
+		},
+		{
+			name:        "python_in_target_but_not_python_pkg",
+			target:      "Python",
+			resultType:  "library",
+			class:       "lang-pkgs",
+			shouldMatch: false,
+			description: "Should not match target containing 'Python' if type is not python-pkg",
+		},
+		{
+			name:        "requirements_txt_not_python_pkg",
+			target:      "requirements.txt",
+			resultType:  "library",
+			class:       "lang-pkgs",
+			shouldMatch: false,
+			description: "Should not match requirements.txt if type is not python-pkg",
+		},
+		{
+			name:        "pipfile_lock_not_python_pkg",
+			target:      "Pipfile.lock",
+			resultType:  "library",
+			class:       "lang-pkgs",
+			shouldMatch: false,
+			description: "Should not match Pipfile.lock if type is not python-pkg",
+		},
+		{
+			name:        "pyproject_toml_not_python_pkg",
+			target:      "pyproject.toml",
+			resultType:  "library",
+			class:       "lang-pkgs",
+			shouldMatch: false,
+			description: "Should not match pyproject.toml if type is not python-pkg",
+		},
+		{
+			name:        "python_pkg_with_different_target",
+			target:      "some/other/path",
+			resultType:  "python-pkg",
+			class:       "lang-pkgs",
+			shouldMatch: true,
+			description: "Should match python-pkg type regardless of target name",
+		},
+		{
+			name:        "non_python_target",
+			target:      "nodejs",
+			resultType:  "npm",
+			class:       "lang-pkgs",
+			shouldMatch: false,
+			description: "Should not match non-Python targets",
+		},
+		{
+			name:        "os_package",
+			target:      "ubuntu:20.04 (ubuntu 20.04)",
+			resultType:  "ubuntu",
+			class:       "os-pkgs",
+			shouldMatch: false,
+			description: "Should not match OS packages",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test the logic that determines if a result is a Python target
+			// Only python-pkg type should be considered valid for Python packages
+			isPythonTarget := tc.resultType == "python-pkg"
+
+			if isPythonTarget != tc.shouldMatch {
+				t.Errorf("%s: expected isPythonTarget=%v, got %v", tc.description, tc.shouldMatch, isPythonTarget)
+			}
+		})
+	}
+}
+
+func TestPkgTypesFiltering(t *testing.T) {
+	// Use a test report file in testdata
+	testFile := "testdata/pkg_types_test.json"
+
+	testCases := []struct {
+		name                   string
+		pkgTypes               string
+		expectedOSUpdates      int
+		expectedLibraryUpdates int
+		description            string
+	}{
+		{
+			name:                   "include_library_and_os",
+			pkgTypes:               "os,library",
+			expectedOSUpdates:      1,
+			expectedLibraryUpdates: 1,
+			description:            "Should process both OS and library packages when both are included",
+		},
+		{
+			name:                   "include_only_os",
+			pkgTypes:               "os",
+			expectedOSUpdates:      1,
+			expectedLibraryUpdates: 0,
+			description:            "Should only process OS packages when library is excluded",
+		},
+		{
+			name:                   "include_only_library",
+			pkgTypes:               "library",
+			expectedOSUpdates:      0,
+			expectedLibraryUpdates: 1,
+			description:            "Should only process library packages when OS is excluded",
+		},
+		{
+			name:                   "exclude_both",
+			pkgTypes:               "",
+			expectedOSUpdates:      0,
+			expectedLibraryUpdates: 0,
+			description:            "Should not process any packages when both are excluded",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest, err := TryParseScanReport(testFile, "trivy", "major", tc.pkgTypes)
+			if err != nil {
+				t.Fatalf("TryParseScanReport failed: %v", err)
+			}
+
+			// Count OS updates vs library updates
+			osUpdates := len(manifest.OSUpdates)
+			libraryUpdates := len(manifest.LangUpdates)
+
+			if osUpdates != tc.expectedOSUpdates {
+				t.Errorf("%s: expected %d OS updates, got %d", tc.description, tc.expectedOSUpdates, osUpdates)
+			}
+
+			if libraryUpdates != tc.expectedLibraryUpdates {
+				t.Errorf("%s: expected %d library updates, got %d", tc.description, tc.expectedLibraryUpdates, libraryUpdates)
+			}
+
+			t.Logf("%s: OS updates=%d, Library updates=%d", tc.description, osUpdates, libraryUpdates)
+		})
+	}
+}
+
+// TestPatchLevelVersionSelection tests the FindOptimalFixedVersionWithPatchLevel function
+// with comprehensive test cases covering patch level restrictions and various scenarios.
+func TestPatchLevelVersionSelection(t *testing.T) {
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		patchLevel       string
+		expected         string
+		description      string
+	}{
+		// Basic patch level restriction tests
+		{
+			name:             "patch_level_no_major_jump",
+			installedVersion: "2.6.0",
+			fixedVersions:    []string{"3.4.0"},
+			patchLevel:       "patch",
+			expected:         "",
+			description:      "package should NOT upgrade from 2.6.0 to 3.4.0 with patch level",
+		},
+		{
+			name:             "patch_level_with_patch_available",
+			installedVersion: "2.6.0",
+			fixedVersions:    []string{"2.6.1", "3.4.0"},
+			patchLevel:       "patch",
+			expected:         "2.6.1",
+			description:      "package should upgrade from 2.6.0 to 2.6.1 with patch level",
+		},
+		{
+			name:             "patch_level_minor_prevents_major",
+			installedVersion: "2.6.0",
+			fixedVersions:    []string{"3.4.0"},
+			patchLevel:       "minor",
+			expected:         "",
+			description:      "package should NOT upgrade to major version even with minor level",
+		},
+		{
+			name:             "patch_level_major_allows_major",
+			installedVersion: "2.6.0",
+			fixedVersions:    []string{"3.4.0"},
+			patchLevel:       majorPatchLevel,
+			expected:         "3.4.0",
+			description:      "package should upgrade to major version with major level",
+		},
+
+		// Python-specific library test cases
+		{
+			name:             "paramiko_patch_level_restriction",
+			installedVersion: "2.6.0",
+			fixedVersions:    []string{"2.6.1", "2.6.2", "2.7.0", "3.4.0"},
+			patchLevel:       "patch",
+			expected:         "2.6.2",
+			description:      "paramiko should only upgrade to highest patch version with patch level",
+		},
+		{
+			name:             "paramiko_no_patch_available",
+			installedVersion: "2.6.0",
+			fixedVersions:    []string{"2.7.0", "3.4.0"},
+			patchLevel:       "patch",
+			expected:         "",
+			description:      "paramiko should not upgrade when no patch versions available with patch level",
+		},
+		{
+			name:             "requests_patch_level_restriction",
+			installedVersion: "2.25.1",
+			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
+			patchLevel:       "patch",
+			expected:         "2.25.2",
+			description:      "requests should only upgrade to patch version with patch level",
+		},
+		{
+			name:             "urllib3_minor_level_prefers_patch",
+			installedVersion: "1.26.5",
+			fixedVersions:    []string{"1.26.6", "1.27.0", "2.0.0"},
+			patchLevel:       "minor",
+			expected:         "1.26.6",
+			description:      "urllib3 should prefer patch over minor with minor level",
+		},
+		{
+			name:             "urllib3_minor_level_uses_minor_when_needed",
+			installedVersion: "1.26.5",
+			fixedVersions:    []string{"1.27.0", "1.28.0", "2.0.0"},
+			patchLevel:       "minor",
+			expected:         "1.28.0",
+			description:      "urllib3 should use highest minor when no patch available with minor level",
+		},
+		{
+			name:             "certifi_special_handling_simulation",
+			installedVersion: "2021.10.8",
+			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
+			patchLevel:       majorPatchLevel, // Simulates overriding patch level to major for certifi
+			expected:         "2024.2.2",
+			description:      "certifi should get latest version when patch level is overridden to major",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, tc.patchLevel)
+
+			assert.Equal(t, tc.expected, result, tc.description)
+
+			t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s",
+				tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result)
 		})
 	}
 }

@@ -2,6 +2,9 @@ package patch
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -30,6 +33,8 @@ type patchArgs struct {
 	bkOpts                 buildkit.Opts
 	platformSpecificErrors string
 	push                   bool
+	pkgTypes               string
+	libraryPatchLevel      string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -39,6 +44,11 @@ func NewPatchCmd() *cobra.Command {
 		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
 		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
 		RunE: func(_ *cobra.Command, _ []string) error {
+			// Validate library patch level
+			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
+				return err
+			}
+
 			bkopts := buildkit.Opts{
 				Addr:       ua.bkOpts.Addr,
 				CACertPath: ua.bkOpts.CACertPath,
@@ -59,6 +69,8 @@ func NewPatchCmd() *cobra.Command {
 				ua.output,
 				ua.ignoreError,
 				ua.push,
+				ua.pkgTypes,
+				ua.libraryPatchLevel,
 				bkopts)
 		},
 	}
@@ -66,9 +78,11 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
-	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
+	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched",
+		"Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
-	flags.StringVarP(&ua.bkOpts.Addr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
+	flags.StringVarP(&ua.bkOpts.Addr, "addr", "a", "",
+		"Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.StringVarP(&ua.bkOpts.CACertPath, "cacert", "", "", "Absolute path to buildkitd CA certificate")
 	flags.StringVarP(&ua.bkOpts.CertPath, "cert", "", "", "Absolute path to buildkit client certificate")
 	flags.StringVarP(&ua.bkOpts.KeyPath, "key", "", "", "Absolute path to buildkit client key")
@@ -78,12 +92,49 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "d", "", "Directory with multi-arch report files")
-	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
+	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip",
+		"Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+
+	// Experimental flags - only available when COPA_EXPERIMENTAL=1
+	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
+		flags.StringVar(&ua.pkgTypes, "pkg-types", "os",
+			"[EXPERIMENTAL] Package types to patch, comma-separated list of 'os' and 'library'. "+
+				"Defaults to 'os' for OS vulnerabilities only")
+		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", "patch",
+			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
+				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
+	} else {
+		// Set default values when experimental flags are not enabled
+		ua.pkgTypes = "os"
+		ua.libraryPatchLevel = "patch"
+	}
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
 	}
 
 	return patchCmd
+}
+
+// validateLibraryPatchLevel validates the library patch level flag and its usage.
+func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
+	// Valid library patch levels
+	validLevels := map[string]bool{
+		"patch": true,
+		"minor": true,
+		"major": true,
+	}
+
+	// Check if the provided level is valid
+	if !validLevels[libraryPatchLevel] {
+		return fmt.Errorf("invalid library patch level '%s': must be one of 'patch', 'minor', or 'major'", libraryPatchLevel)
+	}
+
+	// If library patch level is specified and not the default, ensure library is in pkg-types
+	if libraryPatchLevel != "patch" && !strings.Contains(pkgTypes, "library") {
+		return fmt.Errorf("--library-patch-level can only be used when 'library' is included in --pkg-types")
+	}
+
+	return nil
 }
