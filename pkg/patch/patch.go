@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/containerd/platforms"
@@ -776,10 +777,15 @@ func patchMultiPlatformImage(
 		log.Warnf("Error for platform %s: %v", p.OS+"/"+p.Architecture, err)
 		return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
 	}
+	summaryMap := make(map[string]*types.MultiArchSummary)
 
 	for _, p := range platforms {
 		// rebind
 		p := p //nolint
+		platformKey := p.OS + "/" + p.Architecture
+		if p.Variant != "" {
+			platformKey += "/" + p.Variant
+		}
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -789,14 +795,38 @@ func patchMultiPlatformImage(
 			defer func() { <-sem }()
 
 			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			mu.Lock()
 			if err != nil {
-				return handlePlatformErr(p, err)
+				status := "Error"
+				if platformSpecificErrors == "skip" {
+					status = "Skipped"
+				} else if platformSpecificErrors == "ignore" {
+					status = "Ignored"
+				}
+				summaryMap[platformKey] = &types.MultiArchSummary{
+					Platform: platformKey,
+					Status:   status,
+					Ref:      "",
+					Error:    err.Error(),
+				}
+				return nil
 			} else if res == nil {
-				return fmt.Errorf("patchSingleArchImage returned nil result for platform %s", p.OS+"/"+p.Architecture)
+				summaryMap[platformKey] = &types.MultiArchSummary{
+					Platform: platformKey,
+					Status:   "Error",
+					Ref:      "",
+					Error:    "patchSingleArchImage returned nil result",
+				}
+				return nil
 			}
 
-			mu.Lock()
 			patchResults = append(patchResults, *res)
+			summaryMap[platformKey] = &types.MultiArchSummary{
+				Platform: platformKey,
+				Status:   "Patched",
+				Ref:      res.PatchedRef.String(),
+				Error:    "",
+			}
 			mu.Unlock()
 			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
 			return nil
@@ -847,7 +877,26 @@ func patchMultiPlatformImage(
 		}
 	}
 
-	log.Infof("Multi-platform image patched with tag %s", patchedImageName.String())
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERNCE\tERROR")
+
+	for _, p := range platforms {
+		platformKey := p.OS + "/" + p.Architecture
+		if p.Variant != "" {
+			platformKey += "/" + p.Variant
+		}
+		s := summaryMap[platformKey]
+		if s != nil {
+			ref := s.Ref
+			if ref == "" {
+				ref = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Platform, s.Status, ref, s.Error)
+		}
+	}
+	w.Flush()
+	log.Info("\nMulti-arch patch summary:\n" + b.String())
 
 	return nil
 }
