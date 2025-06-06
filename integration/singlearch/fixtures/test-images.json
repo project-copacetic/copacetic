@@ -200,5 +200,14 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
+    },
+    {
+        "image": "docker.io/grafana/grafana",
+        "tag": "8.5.0",
+        "digest": "sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present - podman test",
+        "ignoreErrors": false,
+        "podmanTest": true
     }
 ]
