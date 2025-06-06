@@ -54,5 +54,31 @@
       "linux/amd64",
       "linux/arm64"
     ]
+  },
+  {
+    "originalImage": "mcr.microsoft.com/azure-cli",
+    "localImage": "localhost:5000/azure-cli",
+    "tag": "2.50.0",
+    "distro": "debian",
+    "description": "Multi-arch Azure CLI 2.50.0 for Python package testing, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "mcr.microsoft.com/azure-cli",
+    "localImage": "localhost:5000/azure-cli",
+    "tag": "2.50.0",
+    "distro": "debian",
+    "description": "Multi-arch Azure CLI 2.50.0 for Python package testing, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
   }
 ]
