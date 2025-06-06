@@ -3,6 +3,7 @@
 
 const lightCodeTheme = require('prism-react-renderer').themes.github;
 const darkCodeTheme = require('prism-react-renderer').themes.dracula;
+require('dotenv').config()
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -81,8 +82,8 @@ const config = {
         darkTheme: darkCodeTheme,
       },
       algolia: {
-        appId: 'V764HJRQUN',
-        apiKey: 'd590e629131c1318f2b996bc14efdfa8',
+        appId: process.env.ALGOLIA_ID,
+        apiKey: process.env.ALGOLIA_API_KEY,
         indexName: 'project-copaceticio',
         contextualSearch: true,
       }
