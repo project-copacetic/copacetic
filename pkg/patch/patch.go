@@ -486,6 +486,35 @@ func patchSingleArchImage(
 				return nil, err
 			}
 
+			// Check for Node.js updates in the manifest
+			if updates != nil && len(updates.NodeUpdates) > 0 {
+				log.Infof("Found %d Node.js vulnerabilities to patch", len(updates.NodeUpdates))
+
+				// Create npm manager for Node.js updates
+				npmMgr := pkgmgr.NewNpmManager(config, workingFolder)
+
+				// Create a manifest with Node updates
+				nodeManifest := &unversioned.UpdateManifest{
+					Metadata: updates.Metadata,
+					Updates:  updates.NodeUpdates,
+				}
+
+				// Apply Node.js patches to the already-patched state
+				config.ImageState = *patchedImageState
+				nodePatchedState, nodeErrPkgs, nodeErr := npmMgr.InstallUpdates(ctx, nodeManifest, ignoreError)
+				if nodeErr != nil {
+					if !ignoreError {
+						ch <- nodeErr
+						return nil, nodeErr
+					}
+					log.Warnf("Failed to apply Node.js patches (ignoring error): %v", nodeErr)
+				} else {
+					patchedImageState = nodePatchedState
+					log.Infof("Successfully applied %d Node.js package updates",
+						len(updates.NodeUpdates)-len(nodeErrPkgs))
+				}
+			}
+
 			def, err := patchedImageState.Marshal(ctx, llb.Platform(targetPlatform.Platform))
 			if err != nil {
 				ch <- err

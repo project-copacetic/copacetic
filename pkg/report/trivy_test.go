@@ -7,6 +7,7 @@ import (
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestParseTrivyReport tests the parseTrivyReport function.
@@ -74,6 +75,71 @@ func TestParseTrivyReport(t *testing.T) {
 
 			if err != nil && !tc.wantErr {
 				t.Errorf("got error %v, want no error", err)
+			}
+		})
+	}
+}
+
+// TestTrivyParserParse tests the TrivyParser.Parse method with Node.js packages.
+func TestTrivyParserParse(t *testing.T) {
+	tests := []struct {
+		name            string
+		file            string
+		wantOSUpdates   int
+		wantNodeUpdates int
+		wantErr         bool
+	}{
+		{
+			name:            "OS packages only",
+			file:            "testdata/trivy_valid.json",
+			wantOSUpdates:   1,
+			wantNodeUpdates: 0,
+			wantErr:         false,
+		},
+		{
+			name:            "OS and Node.js packages",
+			file:            "testdata/trivy_node_valid.json",
+			wantOSUpdates:   1,
+			wantNodeUpdates: 2,
+			wantErr:         false,
+		},
+		{
+			name:            "invalid file",
+			file:            "testdata/invalid.json",
+			wantOSUpdates:   0,
+			wantNodeUpdates: 0,
+			wantErr:         true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := &TrivyParser{}
+			manifest, err := parser.Parse(tc.file)
+
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, manifest)
+			assert.Equal(t, tc.wantOSUpdates, len(manifest.Updates))
+			assert.Equal(t, tc.wantNodeUpdates, len(manifest.NodeUpdates))
+
+			// Validate specific content for Node.js test
+			if tc.name == "OS and Node.js packages" {
+				// Check OS package
+				assert.Equal(t, "protobuf-c", manifest.Updates[0].Name)
+
+				// Check Node.js packages
+				assert.Equal(t, "ansi-regex", manifest.NodeUpdates[0].Name)
+				assert.Equal(t, "3.0.0", manifest.NodeUpdates[0].InstalledVersion)
+				assert.Equal(t, "3.0.1", manifest.NodeUpdates[0].FixedVersion)
+
+				assert.Equal(t, "follow-redirects", manifest.NodeUpdates[1].Name)
+				assert.Equal(t, "1.14.7", manifest.NodeUpdates[1].InstalledVersion)
+				assert.Equal(t, "1.14.8", manifest.NodeUpdates[1].FixedVersion)
 			}
 		})
 	}
