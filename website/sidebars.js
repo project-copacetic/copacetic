@@ -32,6 +32,7 @@ const sidebars = {
       label: 'Features',
       collapsed: false,
       items: [
+        'app-level-patching',
         'github-action',
         'docker-extension',
         'custom-address',
