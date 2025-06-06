@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"text/tabwriter"
 	"time"
 
 	"github.com/distribution/reference"
@@ -577,5 +578,70 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 	}
 	if _, ok := m2["variant"]; ok {
 		t.Errorf("variant key should be dropped when empty")
+	}
+}
+
+func TestMultiArchSummaryTable(t *testing.T) {
+	platforms := []struct {
+		OS           string
+		Architecture string
+		Variant      string
+	}{
+		{"linux", "amd64", ""},
+		{"linux", "arm64", ""},
+		{"linux", "arm", "v7"},
+	}
+
+	summaryMap := map[string]*types.MultiArchSummary{
+		"linux/amd64": {
+			Platform: "linux/amd64",
+			Status:   "Patched",
+			Ref:      "docker.io/library/nginx:patched-amd64",
+			Error:    "",
+		},
+		"linux/arm64": {
+			Platform: "linux/arm64",
+			Status:   "Error",
+			Ref:      "",
+			Error:    "emulation is not enabled for platform linux/arm64",
+		},
+		"linux/arm/v7": {
+			Platform: "linux/arm/v7",
+			Status:   "Skipped",
+			Ref:      "",
+			Error:    "",
+		},
+	}
+
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tERROR\n"))
+	for _, p := range platforms {
+		platformKey := p.OS + "/" + p.Architecture
+		if p.Variant != "" {
+			platformKey += "/" + p.Variant
+		}
+		s := summaryMap[platformKey]
+		if s != nil {
+			ref := s.Ref
+			if ref == "" {
+				ref = "-"
+			}
+			_, _ = w.Write([]byte(
+				s.Platform + "\t" + s.Status + "\t" + ref + "\t" + s.Error + "\n",
+			))
+		}
+	}
+	w.Flush()
+
+	got := b.String()
+	expected := `PLATFORM      STATUS   REFERENCE                              ERROR
+linux/amd64     Patched  docker.io/library/nginx:patched-amd64  
+linux/arm64     Error    -                                      emulation is not enabled for platform linux/arm64
+linux/arm/v7    Skipped  -                                      
+`
+
+	if got != expected {
+		t.Errorf("summary table output mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
 	}
 }
