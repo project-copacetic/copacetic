@@ -167,8 +167,12 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 	// If updating all packages, check for upgrades before proceeding with patch
 	if updates == nil {
-		checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" || exit 1"`
+		checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" > /upgradable.txt || exit 1"`
 		apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+		_, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &apkUpdated, "/upgradable.txt")
+		if err != nil {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
 	}
 
 	var apkInstalled llb.State
