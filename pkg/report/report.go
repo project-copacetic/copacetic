@@ -17,11 +17,12 @@ func (e *ErrorUnsupported) Error() string { return e.err.Error() }
 
 type ScanReportParser interface {
 	Parse(string) (*unversioned.UpdateManifest, error)
+	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
-func TryParseScanReport(file, scanner string) (*unversioned.UpdateManifest, error) {
+func TryParseScanReport(file, scanner, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
-		return defaultParseScanReport(file)
+		return defaultParseScanReport(file, libraryPatchLevel)
 	}
 	return customParseScanReport(file, scanner)
 }
@@ -50,12 +51,12 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 	return updateManifest, nil
 }
 
-func defaultParseScanReport(file string) (*unversioned.UpdateManifest, error) {
+func defaultParseScanReport(file, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
 	}
 	for _, parser := range allParsers {
-		manifest, err := parser.Parse(file)
+		manifest, err := parser.ParseWithLibraryPatchLevel(file, libraryPatchLevel)
 		if err == nil {
 			return manifest, nil
 		} else if _, ok := err.(*ErrorUnsupported); ok {
