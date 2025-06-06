@@ -636,9 +636,9 @@ func TestMultiArchSummaryTable(t *testing.T) {
 
 	got := b.String()
 	expected := `PLATFORM      STATUS   REFERENCE                              ERROR
-linux/amd64     Patched  docker.io/library/nginx:patched-amd64  
-linux/arm64     Error    -                                      emulation is not enabled for platform linux/arm64
-linux/arm/v7    Skipped  -                                      
+linux/amd64   Patched  docker.io/library/nginx:patched-amd64  
+linux/arm64   Error    -                                      emulation is not enabled for platform linux/arm64
+linux/arm/v7  Skipped  -                                      
 `
 
 	if got != expected {
