@@ -78,9 +78,11 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
-	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
+	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched",
+		"Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
-	flags.StringVarP(&ua.bkOpts.Addr, "addr", "a", "", "Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
+	flags.StringVarP(&ua.bkOpts.Addr, "addr", "a", "",
+		"Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
 	flags.StringVarP(&ua.bkOpts.CACertPath, "cacert", "", "", "Absolute path to buildkitd CA certificate")
 	flags.StringVarP(&ua.bkOpts.CertPath, "cert", "", "", "Absolute path to buildkit client certificate")
 	flags.StringVarP(&ua.bkOpts.KeyPath, "key", "", "", "Absolute path to buildkit client key")
@@ -90,13 +92,18 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.StringVarP(&ua.reportDirectory, "report-directory", "d", "", "Directory with multi-arch report files")
-	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
+	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip",
+		"Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
-		flags.StringVar(&ua.pkgTypes, "pkg-types", "os", "[EXPERIMENTAL] Package types to patch, comma-separated list of 'os' and 'library'. Defaults to 'os' for OS vulnerabilities only")
-		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", "patch", "[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
+		flags.StringVar(&ua.pkgTypes, "pkg-types", "os",
+			"[EXPERIMENTAL] Package types to patch, comma-separated list of 'os' and 'library'. "+
+				"Defaults to 'os' for OS vulnerabilities only")
+		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", "patch",
+			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
+				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
 	} else {
 		// Set default values when experimental flags are not enabled
 		ua.pkgTypes = "os"

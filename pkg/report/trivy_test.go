@@ -10,6 +10,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	majorPatchLevel = "major"
+)
+
 // TestParseTrivyReport tests the parseTrivyReport function.
 func TestParseTrivyReport(t *testing.T) {
 	// Define a table of test cases with inputs and expected outputs
@@ -197,7 +201,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "major_level_prefers_patch_over_major",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
-			patchLevel:       "major",
+			patchLevel:       majorPatchLevel,
 			expected:         "1.26.19",
 			description:      "Should prefer patch version over major when major level is specified",
 		},
@@ -205,7 +209,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "major_level_use_major_when_only_option",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"2.0.6", "2.1.0"},
-			patchLevel:       "major",
+			patchLevel:       majorPatchLevel,
 			expected:         "2.1.0",
 			description:      "Should use major when it's the only option and major level is specified",
 		},
@@ -213,7 +217,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "major_level_comma_separated_prefers_patch",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.18, 2.0.6"},
-			patchLevel:       "major",
+			patchLevel:       majorPatchLevel,
 			expected:         "1.26.18",
 			description:      "Should prefer patch version from comma-separated values when major level is specified",
 		},
@@ -221,7 +225,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "major_level_only_minor_available",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "1.28.0"},
-			patchLevel:       "major",
+			patchLevel:       majorPatchLevel,
 			expected:         "1.28.0",
 			description:      "Should use minor when multiple minor options and major level is specified",
 		},
@@ -281,7 +285,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "certifi_major_level_gets_major",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       "major",
+			patchLevel:       majorPatchLevel,
 			packageName:      "certifi",
 			expected:         "2024.2.2",
 			description:      "certifi should get latest version with major level (no change)",
@@ -320,7 +324,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			// Simulate the logic that would be used in ParseWithLibraryPatchLevel
 			patchLevelToUse := tc.patchLevel
 			if tc.packageName == "certifi" {
-				patchLevelToUse = "major"
+				patchLevelToUse = majorPatchLevel
 			}
 
 			result := FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, patchLevelToUse)
@@ -331,9 +335,9 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 	}
 }
 
-// TestPythonTargetFormatHandling tests that different Python target formats are properly recognized.
+// TestPythonTargetFormatHandling tests that only python-pkg is recognized as a valid Python package identifier.
 func TestPythonTargetFormatHandling(t *testing.T) {
-	// Test cases for different Python target formats that Trivy might produce
+	// Test cases for verifying that only python-pkg is considered a valid Python package
 	testCases := []struct {
 		name        string
 		target      string
@@ -351,52 +355,44 @@ func TestPythonTargetFormatHandling(t *testing.T) {
 			description: "Should match python-pkg type",
 		},
 		{
-			name:        "pip_type",
-			target:      "pip packages",
-			resultType:  "pip",
-			class:       "lang-pkgs",
-			shouldMatch: true,
-			description: "Should match pip type",
-		},
-		{
-			name:        "python_in_target",
+			name:        "python_in_target_but_not_python_pkg",
 			target:      "Python",
 			resultType:  "library",
 			class:       "lang-pkgs",
-			shouldMatch: true,
-			description: "Should match target containing 'Python'",
+			shouldMatch: false,
+			description: "Should not match target containing 'Python' if type is not python-pkg",
 		},
 		{
-			name:        "requirements_txt",
+			name:        "requirements_txt_not_python_pkg",
 			target:      "requirements.txt",
 			resultType:  "library",
 			class:       "lang-pkgs",
-			shouldMatch: true,
-			description: "Should match requirements.txt target",
+			shouldMatch: false,
+			description: "Should not match requirements.txt if type is not python-pkg",
 		},
 		{
-			name:        "pipfile_lock",
+			name:        "pipfile_lock_not_python_pkg",
 			target:      "Pipfile.lock",
 			resultType:  "library",
 			class:       "lang-pkgs",
-			shouldMatch: true,
-			description: "Should match Pipfile.lock target",
+			shouldMatch: false,
+			description: "Should not match Pipfile.lock if type is not python-pkg",
 		},
 		{
-			name:        "pyproject_toml",
+			name:        "pyproject_toml_not_python_pkg",
 			target:      "pyproject.toml",
 			resultType:  "library",
 			class:       "lang-pkgs",
-			shouldMatch: true,
-			description: "Should match pyproject.toml target",
+			shouldMatch: false,
+			description: "Should not match pyproject.toml if type is not python-pkg",
 		},
 		{
-			name:        "case_insensitive_python",
-			target:      "some/python/package",
-			resultType:  "library",
+			name:        "python_pkg_with_different_target",
+			target:      "some/other/path",
+			resultType:  "python-pkg",
 			class:       "lang-pkgs",
 			shouldMatch: true,
-			description: "Should match case-insensitive python in target",
+			description: "Should match python-pkg type regardless of target name",
 		},
 		{
 			name:        "non_python_target",
@@ -419,10 +415,8 @@ func TestPythonTargetFormatHandling(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Test the logic that determines if a result is a Python target
-			isPythonTarget := false
-			if tc.class == "lang-pkgs" {
-				isPythonTarget = tc.resultType == "python-pkg"
-			}
+			// Only python-pkg type should be considered valid for Python packages
+			isPythonTarget := tc.resultType == "python-pkg"
 
 			if isPythonTarget != tc.shouldMatch {
 				t.Errorf("%s: expected isPythonTarget=%v, got %v", tc.description, tc.shouldMatch, isPythonTarget)
@@ -536,7 +530,7 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 			name:             "patch_level_major_allows_major",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"3.4.0"},
-			patchLevel:       "major",
+			patchLevel:       majorPatchLevel,
 			expected:         "3.4.0",
 			description:      "package should upgrade to major version with major level",
 		},
@@ -586,7 +580,7 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 			name:             "certifi_special_handling_simulation",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       "major", // Simulates overriding patch level to major for certifi
+			patchLevel:       majorPatchLevel, // Simulates overriding patch level to major for certifi
 			expected:         "2024.2.2",
 			description:      "certifi should get latest version when patch level is overridden to major",
 		},

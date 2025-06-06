@@ -172,4 +172,4 @@ Currently, only Python packages managed by `pip` are supported. We have not eval
 
 #### Replacing PyPI
 
-Copa does not support replacing the default [Python Package Index](https://pypi.org) (PyPI) with a custom index or mirror. This means that all package updates are fetched from the official PyPI repository, which may not be suitable for all environments, especially those with strict network policies or private package registries.
+Copa does not support replacing the default [Python Package Index](https://pypi.org) (PyPI) with a custom index or mirror at this time. This means that all package updates are fetched from the official PyPI repository, which may not be suitable for all environments, especially those with strict network policies or private package registries.

@@ -144,15 +144,17 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 	for _, v := range validCandidates {
 		vParts := parseVersionParts(v)
 
-		// Patch-level upgrade (same major.minor)
-		if len(vParts) >= 2 && len(installedParts) >= 2 &&
-			vParts[0] == installedParts[0] && vParts[1] == installedParts[1] {
+		// Categorize version by upgrade type
+		switch {
+		case len(vParts) >= 2 && len(installedParts) >= 2 &&
+			vParts[0] == installedParts[0] && vParts[1] == installedParts[1]:
+			// Patch-level upgrade (same major.minor)
 			patchVersions = append(patchVersions, v)
+		case len(vParts) >= 1 && len(installedParts) >= 1 && vParts[0] == installedParts[0]:
 			// Minor-level upgrade (same major)
-		} else if len(vParts) >= 1 && len(installedParts) >= 1 && vParts[0] == installedParts[0] {
 			minorVersions = append(minorVersions, v)
+		default:
 			// Major-level upgrade
-		} else {
 			majorVersions = append(majorVersions, v)
 		}
 	}
