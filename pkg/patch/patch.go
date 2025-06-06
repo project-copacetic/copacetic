@@ -368,7 +368,7 @@ func patchSingleArchImage(
 	var updates *unversioned.UpdateManifest
 	// Parse report for update packages
 	if reportFile != "" {
-		updates, err = report.TryParseScanReport(reportFile, scanner, libraryPatchLevel)
+		updates, err = report.TryParseScanReport(reportFile, scanner, libraryPatchLevel, pkgTypes)
 		if err != nil {
 			return nil, err
 		}

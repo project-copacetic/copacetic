@@ -117,7 +117,7 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 		if file.IsDir() {
 			continue
 		}
-		report, err := report.TryParseScanReport(filePath, scanner, "patch")
+		report, err := report.TryParseScanReport(filePath, scanner, "patch", "os")
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}

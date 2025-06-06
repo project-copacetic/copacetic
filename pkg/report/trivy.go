@@ -137,11 +137,7 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 		return ""
 	}
 
-	if len(validCandidates) == 1 {
-		return validCandidates[0]
-	}
-
-	// Group versions by upgrade type
+	// Group versions by upgrade type (even for single candidates to respect patch level)
 	installedParts := parseVersionParts(installedVersion)
 	var patchVersions, minorVersions, majorVersions []string
 
@@ -183,10 +179,15 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 		return ""
 
 	case "major":
-		// Allow all version types and choose the highest overall version
-		allVersions := append(append(patchVersions, minorVersions...), majorVersions...)
-		if len(allVersions) > 0 {
-			return getHighestVersion(allVersions)
+		// Allow all version types, but prefer patch > minor > major
+		if len(patchVersions) > 0 {
+			return getHighestVersion(patchVersions)
+		}
+		if len(minorVersions) > 0 {
+			return getHighestVersion(minorVersions)
+		}
+		if len(majorVersions) > 0 {
+			return getHighestVersion(majorVersions)
 		}
 		return ""
 
@@ -316,7 +317,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		// Process Language packages with optimal version selection
 		if r.Class == "lang-pkgs" {
-			if r.Target == "Python" {
+			// Check if this is a Python-related target
+			if r.Type == "python-pkg" {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {

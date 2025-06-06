@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/types/v1alpha1"
@@ -20,9 +21,9 @@ type ScanReportParser interface {
 	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
-func TryParseScanReport(file, scanner, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
+func TryParseScanReport(file, scanner, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
-		return defaultParseScanReport(file, libraryPatchLevel)
+		return defaultParseScanReport(file, libraryPatchLevel, pkgTypes)
 	}
 	return customParseScanReport(file, scanner)
 }
@@ -51,13 +52,24 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 	return updateManifest, nil
 }
 
-func defaultParseScanReport(file, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
+func defaultParseScanReport(file, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
 	}
 	for _, parser := range allParsers {
 		manifest, err := parser.ParseWithLibraryPatchLevel(file, libraryPatchLevel)
 		if err == nil {
+			// Filter updates based on pkg-types early
+			if manifest != nil {
+				// Only process library updates if "library" is in pkg-types
+				if !strings.Contains(pkgTypes, "library") {
+					manifest.LangUpdates = []unversioned.UpdatePackage{}
+				}
+				// Only process OS updates if "os" is in pkg-types
+				if !strings.Contains(pkgTypes, "os") {
+					manifest.OSUpdates = []unversioned.UpdatePackage{}
+				}
+			}
 			return manifest, nil
 		} else if _, ok := err.(*ErrorUnsupported); ok {
 			continue

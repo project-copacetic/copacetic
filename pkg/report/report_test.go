@@ -38,6 +38,7 @@ func TestTryParseScanReport(t *testing.T) {
 						Class:            "os-pkgs",
 					},
 				},
+				LangUpdates: []unversioned.UpdatePackage{},
 			},
 			err: nil,
 		},
@@ -51,7 +52,7 @@ func TestTryParseScanReport(t *testing.T) {
 	// Loop over test cases and run TryParseScanReport function with each input file
 	for _, tc := range testCases {
 		t.Run(tc.file, func(t *testing.T) {
-			manifest, err := TryParseScanReport(tc.file, "trivy", "patch")
+			manifest, err := TryParseScanReport(tc.file, "trivy", "patch", "os")
 
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.manifest, manifest)
