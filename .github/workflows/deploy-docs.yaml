@@ -60,13 +60,7 @@ jobs:
           echo '${{ toJson(secrets) }}' | sed 's/"[^"]*"/***HIDDEN***/g' 2>/dev/null || echo "Could not parse secrets"
           if [ -z "$ALGOLIA_ID" ]; then echo "ALGOLIA_ID is empty or not set"; else echo "ALGOLIA_ID is set (first 4: ${ALGOLIA_ID:0:4}***)"; fi
           if [ -z "$ALGOLIA_API_KEY" ]; then echo "ALGOLIA_API_KEY is empty or not set"; else echo "ALGOLIA_API_KEY is set (first 4: ${ALGOLIA_API_KEY:0:4}***)"; fi
-          echo "GITHUB_REF: $GITHUB_REF"
-          echo "GITHUB_SHA: $GITHUB_SHA"
-          echo "GITHUB_REPOSITORY: $GITHUB_REPOSITORY"
-          echo "GITHUB_EVENT_NAME: $GITHUB_EVENT_NAME"
-          echo "HOME: $HOME"
-          echo "PATH: $PATH"
-          echo "CI: $CI"
+          echo '${{ toJson(vars) }}'
         env:
           ALGOLIA_ID: ${{ secrets.ALGOLIA_ID}}
           ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY}}
