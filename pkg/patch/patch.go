@@ -472,6 +472,17 @@ func patchSingleArchImage(
 				}
 			} else {
 				// get package manager based on os family type
+				if updates.Metadata.OS.Type == "" || updates.Metadata.OS.Version == "" {
+					osType, osVersion, err := determineOSFamily(ctx, c, config)
+					updates.Metadata.OS.Type = osType
+					updates.Metadata.OS.Version = osVersion
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
+				}
+
+				// get package manager based on os family type
 				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
 				if err != nil {
 					ch <- err
@@ -629,6 +640,30 @@ func resolvePatchedTag(imageRef reference.Named, explicitTag, suffix string) (st
 
 	// otherwise, combine them
 	return fmt.Sprintf("%s-%s", baseTag, suffix), nil
+}
+
+func determineOSFamily(ctx context.Context, c gwclient.Client, config *buildkit.Config) (string, string, error) {
+	// determine OS family
+	ch := make(chan error)
+	fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+	if err != nil {
+		ch <- err
+		return "", "", fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
+	}
+
+	osType, err := getOSType(ctx, fileBytes)
+	if err != nil {
+		ch <- err
+		return "", "", err
+	}
+
+	osVersion, err := getOSVersion(ctx, fileBytes)
+	if err != nil {
+		ch <- err
+		return "", "", err
+	}
+
+	return osType, osVersion, nil
 }
 
 func getOSType(ctx context.Context, osreleaseBytes []byte) (string, error) {
