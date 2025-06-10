@@ -196,21 +196,20 @@ func patchWithContext(
 		// Handle directory - multi-platform patching
 		log.Debugf("Using report directory: %s", reportPath)
 		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
-	} else {
-		// Handle file - single-arch patching
-		log.Debugf("Using report file: %s", reportPath)
-		platform := types.PatchPlatform{
-			Platform: platforms.Normalize(platforms.DefaultSpec()),
-		}
-		if platform.OS != LINUX {
-			platform.OS = LINUX
-		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
-		if err == nil && result != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
-		}
-		return err
 	}
+	// Handle file - single-arch patching
+	log.Debugf("Using report file: %s", reportPath)
+	platform := types.PatchPlatform{
+		Platform: platforms.Normalize(platforms.DefaultSpec()),
+	}
+	if platform.OS != LINUX {
+		platform.OS = LINUX
+	}
+	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+	if err == nil && result != nil {
+		log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
+	}
+	return err
 }
 
 func patchSingleArchImage(
@@ -773,10 +772,9 @@ func patchMultiPlatformImage(
 		if ignoreError {
 			log.Warnf("Ignoring error for platform %s: %v", p.OS+"/"+p.Architecture, err)
 			return nil
-		} else {
-			log.Warnf("Error for platform %s: %v", p.OS+"/"+p.Architecture, err)
-			return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
 		}
+		log.Warnf("Error for platform %s: %v", p.OS+"/"+p.Architecture, err)
+		return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
 	}
 
 	for _, p := range platforms {
