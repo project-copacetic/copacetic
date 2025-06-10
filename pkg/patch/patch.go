@@ -125,7 +125,7 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportPath, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -134,7 +134,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -162,7 +162,7 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportPath, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -195,7 +195,7 @@ func patchWithContext(
 	if f.IsDir() {
 		// Handle directory - multi-platform patching
 		log.Debugf("Using report directory: %s", reportPath)
-		return patchMultiPlatformImage(ctx, ch, platformSpecificErrors, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 	} else {
 		// Handle file - single-arch patching
 		log.Debugf("Using report file: %s", reportPath)
@@ -750,11 +750,11 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
-	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
-	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
+	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
 	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
 	if err != nil {
 		return err
@@ -770,13 +770,11 @@ func patchMultiPlatformImage(
 	patchResults := []types.PatchResult{}
 
 	handlePlatformErr := func(p types.PatchPlatform, err error) error {
-		switch platformSpecificErrors {
-		case "ignore":
-			return nil
-		case "skip":
+		if ignoreError {
 			log.Warnf("Ignoring error for platform %s: %v", p.OS+"/"+p.Architecture, err)
 			return nil
-		default:
+		} else {
+			log.Warnf("Error for platform %s: %v", p.OS+"/"+p.Architecture, err)
 			return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
 		}
 	}

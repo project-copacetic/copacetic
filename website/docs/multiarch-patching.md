@@ -18,7 +18,7 @@ copa patch \
   --report <path-to-your-reports-directory> \
   --tag <desired-patched-image-tag> \
   [--push] \
-  [--platform-specific-errors <fail|warn|skip>] \
+  [--ignore-errors] \
 ```
 
 Key Flags for Multi-Platform Patching:
@@ -26,7 +26,7 @@ Key Flags for Multi-Platform Patching:
 - `--report <directory_path>`: Specifies the directory containing platform-specific vulnerability reports.
 - `--tag <final_tag>` (optional): The tag for the final, reassembled multi-platform manifest (e.g., `1.0-patched`).
 - `--push` (optional): If included, Copa pushes the final multi-platform manifest to the registry.
-- `--platform-specific-errors <fail|warn|skip>` (optional, default: `skip`): Determines how Copa handles errors encountered while patching an individual platform's sub-image.
+- `--ignore-errors` (optional, default: `false`): When `false` (default), Copa warns about errors and fails if any platform encounters an error. When `true`, Copa warns about errors but continues processing other platforms.
 
 ### Example:
 

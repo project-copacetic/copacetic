@@ -174,7 +174,6 @@ func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreE
 		addrFl,
 		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
 		"--debug",
-		"--platform-specific-errors=fail",
 	}
 	if push {
 		args = append(args, "--push")
