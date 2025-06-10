@@ -214,7 +214,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		}
 
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
-		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
+		updates, err = GetUniqueLatestUpdates(manifest.OSUpdates, rpmComparer, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -723,7 +723,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' \
 		| tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
-		 
+
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm

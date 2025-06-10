@@ -28,7 +28,7 @@ func TestDummyProvider(t *testing.T) {
 						Arch: "amd64",
 					},
 				},
-				Updates: []unversioned.UpdatePackage{
+				OSUpdates: []unversioned.UpdatePackage{
 					{
 						Name:             "apk-tools",
 						InstalledVersion: "2.12.6-r0",
@@ -47,7 +47,7 @@ func TestDummyProvider(t *testing.T) {
 	// Loop over test cases and run TryParseScanReport function with each input file
 	for _, tc := range testCases {
 		t.Run(tc.file, func(t *testing.T) {
-			_, err := TryParseScanReport(tc.file, "dummy")
+			_, err := TryParseScanReport(tc.file, "dummy", "patch", "os")
 
 			// We will get error from dummy provider because the binary "copa-dummy" does not exist
 			assert.EqualError(t, err, tc.err.Error())

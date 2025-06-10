@@ -32,6 +32,7 @@ import (
 	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
+	"github.com/project-copacetic/copacetic/pkg/langmgr"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -48,13 +49,63 @@ const (
 	copaProduct     = "copa"
 	defaultRegistry = "docker.io"
 	defaultTag      = "latest"
-	LINUX           = "linux"
+
+	// Package types.
+	PkgTypeOS      = "os"
+	PkgTypeLibrary = "library"
+
+	LINUX = "linux"
 )
 
 // for testing.
 var (
 	bkNewClient = buildkit.NewClient
 )
+
+// Package types supported by copa
+
+// parsePkgTypes parses a comma-separated string of package types and validates them.
+func parsePkgTypes(pkgTypesStr string) ([]string, error) {
+	if pkgTypesStr == "" {
+		return []string{PkgTypeOS}, nil // default to OS
+	}
+
+	types := strings.Split(pkgTypesStr, ",")
+	validTypes := []string{}
+
+	for _, t := range types {
+		t = strings.TrimSpace(t)
+		if t == PkgTypeOS || t == PkgTypeLibrary {
+			validTypes = append(validTypes, t)
+		} else {
+			return nil, fmt.Errorf("invalid package type '%s'. Valid types are: %s, %s", t, PkgTypeOS, PkgTypeLibrary)
+		}
+	}
+
+	if len(validTypes) == 0 {
+		return []string{PkgTypeOS}, nil // default to OS
+	}
+
+	return validTypes, nil
+}
+
+// shouldIncludeOSUpdates returns true if OS updates should be included based on package types.
+func shouldIncludeOSUpdates(pkgTypes []string) bool {
+	return slices.Contains(pkgTypes, PkgTypeOS)
+}
+
+// shouldIncludeLibraryUpdates returns true if library updates should be included based on package types.
+func shouldIncludeLibraryUpdates(pkgTypes []string) bool {
+	return slices.Contains(pkgTypes, PkgTypeLibrary)
+}
+
+// validateLibraryPkgTypesRequireReport validates that library package types require a scanner report.
+func validateLibraryPkgTypesRequireReport(pkgTypes []string, reportProvided bool) error {
+	if shouldIncludeLibraryUpdates(pkgTypes) && !reportProvided {
+		return fmt.Errorf("library package types require a scanner report file to be provided")
+	}
+	return nil
+}
 
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
@@ -125,8 +176,10 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner,
+	format, output string,
 	ignoreError, push bool,
+	pkgTypes, libraryPatchLevel string,
 	bkOpts buildkit.Opts,
 ) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -134,7 +187,9 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors,
+			patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, pkgTypes,
+			libraryPatchLevel, bkOpts)
 	}()
 
 	select {
@@ -162,12 +217,26 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner,
+	format, output string,
 	ignoreError, push bool,
+	pkgTypes, libraryPatchLevel string,
 	bkOpts buildkit.Opts,
 ) error {
 	if reportFile != "" && reportDirectory != "" {
 		return fmt.Errorf("both report file and directory provided, please provide only one")
+	}
+
+	// Parse and validate package types early
+	pkgTypesList, err := parsePkgTypes(pkgTypes)
+	if err != nil {
+		return fmt.Errorf("invalid package types: %w", err)
+	}
+
+	// Validate that library package types require a scanner report
+	reportProvided := reportFile != "" || reportDirectory != ""
+	if err := validateLibraryPkgTypesRequireReport(pkgTypesList, reportProvided); err != nil {
+		return err
 	}
 
 	// try report file
@@ -195,7 +264,8 @@ func patchWithContext(
 		if platform.OS != LINUX {
 			platform.OS = LINUX
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder,
+			scanner, format, output, platform, ignoreError, push, pkgTypes, libraryPatchLevel, bkOpts, false)
 		if err == nil && result != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 		}
@@ -207,7 +277,8 @@ func patchWithContext(
 		if platform.OS != LINUX {
 			platform.OS = LINUX
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder,
+			scanner, format, output, platform, ignoreError, push, pkgTypes, libraryPatchLevel, bkOpts, false)
 		if err == nil && result != nil && result.PatchedRef != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 		}
@@ -223,7 +294,9 @@ func patchWithContext(
 		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
 	}
 
-	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory,
+		patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push,
+		pkgTypes, libraryPatchLevel, bkOpts)
 }
 
 func patchSingleArchImage(
@@ -233,6 +306,7 @@ func patchSingleArchImage(
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
+	pkgTypes, libraryPatchLevel string,
 	bkOpts buildkit.Opts,
 	multiArch bool,
 ) (*types.PatchResult, error) {
@@ -256,7 +330,8 @@ func patchSingleArchImage(
 			// check if emulation is enabled
 
 			if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
-				return nil, fmt.Errorf("emulation is not enabled for platform %s", targetPlatform.OS+"/"+targetPlatform.Architecture)
+				return nil, fmt.Errorf("emulation is not enabled for platform %s",
+					targetPlatform.OS+"/"+targetPlatform.Architecture)
 			}
 			log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
 		}
@@ -302,11 +377,33 @@ func patchSingleArchImage(
 	var updates *unversioned.UpdateManifest
 	// Parse report for update packages
 	if reportFile != "" {
-		updates, err = report.TryParseScanReport(reportFile, scanner)
+		updates, err = report.TryParseScanReport(reportFile, scanner, libraryPatchLevel, pkgTypes)
 		if err != nil {
 			return nil, err
 		}
 		log.Debugf("updates to apply: %v", updates)
+
+		// Filter updates based on package types
+		pkgTypesList, err := parsePkgTypes(pkgTypes)
+		if err != nil {
+			return nil, fmt.Errorf("invalid package types: %w", err)
+		}
+
+		if updates != nil {
+			// Filter OS updates
+			if !shouldIncludeOSUpdates(pkgTypesList) {
+				log.Debugf("Filtering out OS updates based on pkg-types: %v", pkgTypesList)
+				updates.OSUpdates = []unversioned.UpdatePackage{}
+			}
+
+			// Filter library updates
+			if !shouldIncludeLibraryUpdates(pkgTypesList) {
+				log.Debugf("Filtering out library updates based on pkg-types: %v", pkgTypesList)
+				updates.LangUpdates = []unversioned.UpdatePackage{}
+			}
+
+			log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
+		}
 	}
 
 	bkClient, err := bkNewClient(ctx, bkOpts)
@@ -389,7 +486,8 @@ func patchSingleArchImage(
 			return nil, err
 
 		case strings.Contains(solveOpt.SourcePolicy.Rules[0].Updates.Identifier, "rockylinux"):
-			err = errors.New("RockyLinux is not supported via source policies due to BusyBox not being in the RockyLinux repos\n" +
+			err = errors.New("RockyLinux is not supported via source policies due to " +
+				"BusyBox not being in the RockyLinux repos\n" +
 				"Please use a different RPM-based image")
 			return nil, err
 
@@ -418,108 +516,177 @@ func patchSingleArchImage(
 						Arch: updates.Metadata.Config.Arch,
 					},
 				},
-				Updates: []unversioned.UpdatePackage{},
+				OSUpdates:   []unversioned.UpdatePackage{},
+				LangUpdates: []unversioned.UpdatePackage{},
 			}
 		}
 
-		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-			// Configure buildctl/client for use by package manager
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
-
-			// Create package manager helper
-			var manager pkgmgr.PackageManager
-			if reportFile == "" {
-				// determine OS family
-				fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
-				if err != nil {
-					ch <- err
-					return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
-				}
-
-				osType, err := getOSType(ctx, fileBytes)
+		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct,
+			func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+				// Configure buildctl/client for use by package manager
+				config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
 				if err != nil {
 					ch <- err
 					return nil, err
 				}
 
-				osVersion, err := getOSVersion(ctx, fileBytes)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-
-				isEOL, eolDate, err := utils.CheckEOSL(osType, osVersion)
-				if err != nil {
-					log.Warnf("Failed to check EOL status for %s %s: %v. Patch attempt will proceed.", osType, osVersion, err)
-				} else if isEOL {
-					eolMsg := fmt.Sprintf("The operating system %s %s appears to be End-Of-Support-Life.", osType, osVersion)
-					if eolDate != "Unknown" && eolDate != "Not in EOL DB" && eolDate != "Normalization Failed" && eolDate != "API Rate Limited" {
-						eolMsg += fmt.Sprintf(" (EOL date: %s)", eolDate)
+				// Create package manager helper
+				var manager pkgmgr.PackageManager
+				if reportFile == "" {
+					// determine OS family
+					fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+					if err != nil {
+						ch <- err
+						return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
 					}
-					eolMsg += " Patching may fail, be incomplete, or use archived repositories. Consider upgrading the base image."
-					log.Warn(eolMsg)
-				}
 
-				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-			} else {
-				// get package manager based on os family type
-				manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type, updates.Metadata.OS.Version, config, workingFolder)
-				if err != nil {
-					ch <- err
-					return nil, err
-				}
-			}
+					osType, err := getOSType(ctx, fileBytes)
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
 
-			// Export the patched image state to Docker
-			patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError)
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
+					osVersion, err := getOSVersion(ctx, fileBytes)
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
 
-			def, err := patchedImageState.Marshal(ctx, llb.Platform(targetPlatform.Platform))
-			if err != nil {
-				ch <- err
-				return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
-			}
+					isEOL, eolDate, err := utils.CheckEOSL(osType, osVersion)
+					if err != nil {
+						log.Warnf("Failed to check EOL status for %s %s: %v. Patch attempt will proceed.", osType, osVersion, err)
+					} else if isEOL {
+						eolMsg := fmt.Sprintf("The operating system %s %s appears to be End-Of-Support-Life.", osType, osVersion)
+						if eolDate != "Unknown" && eolDate != "Not in EOL DB" &&
+							eolDate != "Normalization Failed" && eolDate != "API Rate Limited" {
+							eolMsg += fmt.Sprintf(" (EOL date: %s)", eolDate)
+						}
+						eolMsg += " Patching may fail, be incomplete, or use archived repositories. Consider upgrading the base image."
+						log.Warn(eolMsg)
+					}
 
-			res, err := c.Solve(ctx, gwclient.SolveRequest{
-				Definition: def.ToPB(),
-				Evaluate:   true,
-			})
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
-
-			fixed, err := normalizeConfigForPlatform(config.ConfigData, &targetPlatform)
-			if err != nil {
-				ch <- err
-				return nil, err
-			}
-			res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
-
-			// for the vex document, only include updates that were successfully applied
-			pkgType = manager.GetPackageType()
-			if validatedManifest != nil {
-				for _, update := range updates.Updates {
-					if !slices.Contains(errPkgs, update.Name) {
-						validatedManifest.Updates = append(validatedManifest.Updates, update)
+					// get package manager based on os family type
+					manager, err = pkgmgr.GetPackageManager(osType, osVersion, config, workingFolder)
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
+				} else {
+					// get package manager based on os family type
+					manager, err = pkgmgr.GetPackageManager(updates.Metadata.OS.Type,
+						updates.Metadata.OS.Version, config, workingFolder)
+					if err != nil {
+						ch <- err
+						return nil, err
 					}
 				}
-			}
 
-			return res, nil
-		}, buildChannel)
+				// Export the patched image state to Docker
+				patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, updates, ignoreError) // OS Package Manager updates
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+
+				// Handle Language Specific Updates
+				if updates != nil && len(updates.LangUpdates) > 0 {
+					languageManagers := langmgr.GetLanguageManagers(config, workingFolder)
+					var langErrPkgsFromAllManagers []string
+					var combinedLangError error
+
+					currentProcessingState := patchedImageState // Start with the state after OS updates
+
+					for _, individualLangManager := range languageManagers {
+						log.Debugf("Applying language updates using manager: %T", individualLangManager)
+						var tempErrPkgs []string
+						var tempErr error
+
+						// Call InstallUpdates on the individual language manager instance
+						newState, tempErrPkgs, tempErr := individualLangManager.InstallUpdates(ctx, updates, ignoreError)
+
+						if newState != nil {
+							currentProcessingState = newState // Update state for the next manager or final result
+						}
+
+						if tempErr != nil {
+							log.Errorf("Error applying updates with language manager %T: %v", individualLangManager, tempErr)
+							if combinedLangError == nil {
+								combinedLangError = tempErr
+							} else {
+								combinedLangError = fmt.Errorf("%w; %v", combinedLangError, tempErr)
+							}
+							if !ignoreError {
+								ch <- combinedLangError
+								return nil, combinedLangError
+							}
+						}
+						if len(tempErrPkgs) > 0 {
+							langErrPkgsFromAllManagers = append(langErrPkgsFromAllManagers, tempErrPkgs...)
+						}
+					}
+
+					// Update the main patchedImageState with the result of all language managers
+					patchedImageState = currentProcessingState
+
+					// Merge OS-level error packages with language-level error packages, ensuring uniqueness
+					if len(langErrPkgsFromAllManagers) > 0 {
+						if errPkgs == nil {
+							errPkgs = []string{}
+						}
+						errPkgs = append(errPkgs, langErrPkgsFromAllManagers...)
+						uniqueErrPkgsMap := make(map[string]bool)
+						var tempUniqueSlice []string
+						for _, item := range errPkgs {
+							if _, value := uniqueErrPkgsMap[item]; !value {
+								uniqueErrPkgsMap[item] = true
+								tempUniqueSlice = append(tempUniqueSlice, item)
+							}
+						}
+						errPkgs = tempUniqueSlice
+					}
+
+					if combinedLangError != nil && !ignoreError {
+						ch <- combinedLangError
+						return nil, combinedLangError
+					}
+				} else {
+					log.Debug("No language-specific updates found in the manifest.")
+				}
+
+				def, err := patchedImageState.Marshal(ctx, llb.Platform(targetPlatform.Platform))
+				if err != nil {
+					ch <- err
+					return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
+				}
+
+				res, err := c.Solve(ctx, gwclient.SolveRequest{
+					Definition: def.ToPB(),
+					Evaluate:   true,
+				})
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+
+				fixed, err := normalizeConfigForPlatform(config.ConfigData, &targetPlatform)
+				if err != nil {
+					ch <- err
+					return nil, err
+				}
+				res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
+
+				// for the vex document, only include updates that were successfully applied
+				pkgType = manager.GetPackageType()
+				if validatedManifest != nil {
+					for _, update := range updates.OSUpdates {
+						if !slices.Contains(errPkgs, update.Name) {
+							validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, update)
+						}
+					}
+				}
+
+				return res, nil
+			}, buildChannel)
 
 		// Currently can only validate updates if updating via scanner
 		var patchedImageDigest string
@@ -530,7 +697,7 @@ func patchSingleArchImage(
 		if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
 			nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
 			// vex document must contain at least one statement
-			if output != "" && len(validatedManifest.Updates) > 0 {
+			if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
 					ch <- err
 					return err
@@ -765,6 +932,7 @@ func patchMultiArchImage(
 	ch chan error,
 	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
+	pkgTypes, libraryPatchLevel string,
 	bkOpts buildkit.Opts,
 ) error {
 	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
@@ -805,7 +973,9 @@ func patchMultiArchImage(
 			}
 			defer func() { <-sem }()
 
-			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix,
+				workingFolder, scanner, format, output, p, ignoreError, push, pkgTypes,
+				libraryPatchLevel, bkOpts, true)
 			if err != nil {
 				return handlePlatformErr(p, err)
 			} else if res == nil {
