@@ -52,14 +52,8 @@ jobs:
             ${{ runner.os }}-website-
 
       - run: yarn install --frozen-lockfile
-      
-      - name: Debug Github secrets
-        run: |
-          echo "Secrets context keys:"
-          echo '${{ toJson(secrets) }}'
-          if [ -z "$ALGOLIA_ID" ]; then echo "ALGOLIA_ID is empty or not set"; else echo "ALGOLIA_ID is set (first 4: ${ALGOLIA_ID:0:4}***)"; fi
-          if [ -z "$ALGOLIA_API_KEY" ]; then echo "ALGOLIA_API_KEY is empty or not set"; else echo "ALGOLIA_API_KEY is set (first 4: ${ALGOLIA_API_KEY:0:4}***)"; fi
-          echo '${{ toJson(vars) }}'
+      - name: Build Website
+        run: yarn build
         env:
           ALGOLIA_ID: ${{ secrets.ALGOLIA_ID }}
           ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY }}
