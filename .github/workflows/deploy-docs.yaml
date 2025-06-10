@@ -56,14 +56,13 @@ jobs:
       - name: Debug Github secrets
         run: |
           echo "Secrets context keys:"
-          echo '${{ toJson(secrets) }}' | jq -r 'keys[]' 2>/dev/null || echo "jq not available, showing raw:"
-          echo '${{ toJson(secrets) }}' | sed 's/"[^"]*"/***HIDDEN***/g' 2>/dev/null || echo "Could not parse secrets"
+          echo '${{ toJson(secrets) }}'
           if [ -z "$ALGOLIA_ID" ]; then echo "ALGOLIA_ID is empty or not set"; else echo "ALGOLIA_ID is set (first 4: ${ALGOLIA_ID:0:4}***)"; fi
           if [ -z "$ALGOLIA_API_KEY" ]; then echo "ALGOLIA_API_KEY is empty or not set"; else echo "ALGOLIA_API_KEY is set (first 4: ${ALGOLIA_API_KEY:0:4}***)"; fi
           echo '${{ toJson(vars) }}'
         env:
-          ALGOLIA_ID: ${{ secrets.ALGOLIA_ID}}
-          ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY}}
+          ALGOLIA_ID: ${{ secrets.algolia.ALGOLIA_ID}}
+          ALGOLIA_API_KEY: ${{ secrets.algolia.ALGOLIA_API_KEY}}
 
       # deploy only after PR is merged to main
       - name: Deploy to GitHub Pages
