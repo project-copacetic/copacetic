@@ -356,9 +356,9 @@ jobs:
           go test -v ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"
 
           
-  test-patch-multiarch:
+  test-patch-multiplatform:
     needs: build
-    name: Test patch with multiarch
+    name: Test patch with multiplatform
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: read-all
@@ -404,9 +404,9 @@ jobs:
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
-      - name: Install multiarch tooling
+      - name: Install multiplatform tooling
         shell: bash
-        run: .github/workflows/scripts/download-multiarch-tooling.sh
+        run: .github/workflows/scripts/download-multiplatform-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

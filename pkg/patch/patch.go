@@ -64,10 +64,10 @@ func archTag(base, arch, variant string) string {
 	return fmt.Sprintf("%s-%s", base, arch)
 }
 
-// createMultiArchManifest assembles a multi-arch manifest list and pushes it
+// createMultiPlatformManifest assembles a multi-platform manifest list and pushes it
 // via Buildx's imagetools helper (equivalent to
 // `docker buildx imagetools create --tag … img@sha256:d1 img@sha256:d2 …`).
-func createMultiArchManifest(
+func createMultiPlatformManifest(
 	ctx context.Context,
 	imageName reference.NamedTagged,
 	items []types.PatchResult,
@@ -95,7 +95,7 @@ func createMultiArchManifest(
 
 	err = resolver.Push(ctx, imageName, desc, idxBytes)
 	if err != nil {
-		return fmt.Errorf("failed to push multi-arch manifest list: %w", err)
+		return fmt.Errorf("failed to push multi-platform manifest list: %w", err)
 	}
 
 	return nil
@@ -193,9 +193,9 @@ func patchWithContext(
 	}
 
 	if f.IsDir() {
-		// Handle directory - multi-arch patching
+		// Handle directory - multi-platform patching
 		log.Debugf("Using report directory: %s", reportPath)
-		return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		return patchMultiPlatformImage(ctx, ch, platformSpecificErrors, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 	} else {
 		// Handle file - single-arch patching
 		log.Debugf("Using report file: %s", reportPath)
@@ -221,15 +221,15 @@ func patchSingleArchImage(
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
-	multiArch bool,
+	multiPlatform bool,
 ) (*types.PatchResult, error) {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
 
 	// if the target platform is different from the host platform, we need to check if emulation is enabled
-	// only need to do this check if were patching a multi-arch image
-	if multiArch {
+	// only need to do this check if were patching a multi-platform image
+	if multiPlatform {
 		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
 		if hostPlatform.OS != LINUX {
 			hostPlatform.OS = LINUX
@@ -260,7 +260,7 @@ func patchSingleArchImage(
 	if err != nil {
 		return nil, err
 	}
-	if multiArch {
+	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
@@ -747,7 +747,7 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	return nameWithDigest
 }
 
-func patchMultiArchImage(
+func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
 	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
@@ -827,7 +827,7 @@ func patchMultiArchImage(
 	}
 
 	if push {
-		err = createMultiArchManifest(ctx, patchedImageName, patchResults)
+		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults)
 		if err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
@@ -839,7 +839,7 @@ func patchMultiArchImage(
 			for _, result := range patchResults {
 				log.Infof("  docker push %s", result.PatchedRef.String())
 			}
-			log.Infof("To create and push the multi-arch manifest, run:")
+			log.Infof("To create and push the multi-platform manifest, run:")
 			refs := make([]string, len(patchResults))
 			for i, result := range patchResults {
 				refs[i] = result.PatchedRef.String()
@@ -851,7 +851,7 @@ func patchMultiArchImage(
 		}
 	}
 
-	log.Infof("Multi-arch image patched with tag %s", patchedImageName.String())
+	log.Infof("Multi-platform image patched with tag %s", patchedImageName.String())
 
 	return nil
 }

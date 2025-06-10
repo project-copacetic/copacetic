@@ -205,7 +205,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return platforms, nil
 	}
 
-	// return nil if not multi-arch, and handle as normal
+	// return nil if not multi-platform, and handle as normal
 	return nil, nil
 }
 
@@ -217,7 +217,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		return nil, err
 	}
 	if p == nil {
-		return nil, errors.New("image is not multi arch")
+		return nil, errors.New("image is not multi platform")
 	}
 	log.WithField("platforms", p).Debug("Discovered platforms from manifest")
 
