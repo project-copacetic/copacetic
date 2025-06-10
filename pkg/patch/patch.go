@@ -125,7 +125,7 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -134,7 +134,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -162,68 +162,55 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
-	if reportFile != "" && reportDirectory != "" {
-		return fmt.Errorf("both report file and directory provided, please provide only one")
-	}
-
-	// try report file
-	if reportFile != "" {
-		// check if reportFile exists
-		if _, err := os.Stat(reportFile); os.IsNotExist(err) {
-			return fmt.Errorf("report file %s does not exist", reportFile)
-		}
-		// check if reportFile is a file
-		f, err := os.Stat(reportFile)
-		if err != nil {
-			// handle common errors
-			if os.IsNotExist(err) {
-				return fmt.Errorf("report file %s does not exist", reportFile)
-			}
-			return fmt.Errorf("failed to stat report file %s: %w", reportFile, err)
-		}
-		if f.IsDir() {
-			return fmt.Errorf("report file %s is a directory, please provide a file", reportFile)
-		}
-		log.Debugf("Using report file: %s", reportFile)
+	// Handle empty report path - single-arch patching without report
+	if reportPath == "" {
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
 		if platform.OS != LINUX {
 			platform.OS = LINUX
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
-		if err == nil && result != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
-		}
-		return err
-	} else if reportDirectory == "" && reportFile == "" {
-		platform := types.PatchPlatform{
-			Platform: platforms.Normalize(platforms.DefaultSpec()),
-		}
-		if platform.OS != LINUX {
-			platform.OS = LINUX
-		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil && result.PatchedRef != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 		}
 		return err
 	}
 
-	// must be dealing with a multi-arch image, check the directory
-	f, err := os.Stat(reportDirectory)
-	if err != nil {
-		return err
-	}
-	if !f.IsDir() {
-		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
+	// Check if reportPath exists
+	if _, err := os.Stat(reportPath); os.IsNotExist(err) {
+		return fmt.Errorf("report path %s does not exist", reportPath)
 	}
 
-	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+	// Get file info to determine if it's a file or directory
+	f, err := os.Stat(reportPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat report path %s: %w", reportPath, err)
+	}
+
+	if f.IsDir() {
+		// Handle directory - multi-arch patching
+		log.Debugf("Using report directory: %s", reportPath)
+		return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+	} else {
+		// Handle file - single-arch patching
+		log.Debugf("Using report file: %s", reportPath)
+		platform := types.PatchPlatform{
+			Platform: platforms.Normalize(platforms.DefaultSpec()),
+		}
+		if platform.OS != LINUX {
+			platform.OS = LINUX
+		}
+		result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+		if err == nil && result != nil {
+			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
+		}
+		return err
+	}
 }
 
 func patchSingleArchImage(

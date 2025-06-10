@@ -168,7 +168,7 @@ func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreError
 		"patch",
 		"-i=" + ref,
 		"-t=" + patchedTag,
-		"--report-directory=" + reportDir,
+		"--report=" + reportDir,
 		"-s=" + scannerPlugin,
 		"--timeout=30m",
 		addrFl,
