@@ -152,8 +152,8 @@ func TestPythonManagerInstallUpdates(t *testing.T) {
 			name: "valid updates",
 			manifest: &unversioned.UpdateManifest{
 				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "requests", FixedVersion: "2.28.0"},
-					{Name: "urllib3", FixedVersion: "1.26.12"},
+					{Name: "requests", FixedVersion: "2.28.0", Type: "python-pkg"},
+					{Name: "urllib3", FixedVersion: "1.26.12", Type: "python-pkg"},
 				},
 			},
 			ignoreErrors: false,
@@ -164,7 +164,7 @@ func TestPythonManagerInstallUpdates(t *testing.T) {
 			name: "invalid version",
 			manifest: &unversioned.UpdateManifest{
 				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "requests", FixedVersion: "invalid-version"},
+					{Name: "requests", FixedVersion: "invalid-version", Type: "python-pkg"},
 				},
 			},
 			ignoreErrors: false,
@@ -174,11 +174,32 @@ func TestPythonManagerInstallUpdates(t *testing.T) {
 			name: "invalid version with ignore errors",
 			manifest: &unversioned.UpdateManifest{
 				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "requests", FixedVersion: "invalid-version"},
+					{Name: "requests", FixedVersion: "invalid-version", Type: "python-pkg"},
 				},
 			},
 			ignoreErrors: true,
 			expectError:  false, // Should not error when ignoring errors
+		},
+		{
+			name: "mixed package types - should ignore non-python",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "requests", FixedVersion: "2.28.0", Type: "python-pkg"},
+					{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: "dotnet-core"}, // Should be ignored
+				},
+			},
+			ignoreErrors: false,
+			expectError:  true, // Will error due to buildkit, but should only process python packages
+		},
+		{
+			name: "only non-python packages - should return success",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: "dotnet-core"},
+				},
+			},
+			ignoreErrors: false,
+			expectError:  false, // Should return successfully since no python packages to process
 		},
 	}
 
@@ -343,9 +364,9 @@ func TestPythonManagerType(t *testing.T) {
 	// Test that pythonManager implements LangManager interface
 	var _ LangManager = pm
 
-	// Test that GetLanguageManagers returns a pythonManager
+	// Test that GetLanguageManagers returns both pythonManager and dotnetManager
 	managers := GetLanguageManagers(config, workingFolder)
-	require.Len(t, managers, 1)
+	require.Len(t, managers, 2)
 
 	pythonMgr, ok := managers[0].(*pythonManager)
 	assert.True(t, ok, "First manager should be a pythonManager")

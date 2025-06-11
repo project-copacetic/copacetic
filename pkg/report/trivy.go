@@ -319,8 +319,11 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		// Process Language packages with optimal version selection
 		if r.Class == "lang-pkgs" {
-			// Check if this is a Python-related target
-			if r.Type == "python-pkg" {
+			// Check if this is a supported language package type
+			isSupportedLangPkg := r.Type == "python-pkg" ||
+				r.Type == "dotnet-core" // consider adding "nuget" type?
+
+			if isSupportedLangPkg {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {

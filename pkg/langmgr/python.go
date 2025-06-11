@@ -50,11 +50,26 @@ func (pm *pythonManager) InstallUpdates(
 ) (*llb.State, []string, error) {
 	var errPkgsReported []string // Packages that will be reported as problematic
 
+	// Filter for Python packages only
+	var pythonUpdates unversioned.LangUpdatePackages
+	for _, pkg := range manifest.LangUpdates {
+		if pkg.Type == "python-pkg" {
+			pythonUpdates = append(pythonUpdates, pkg)
+		}
+	}
+
+	if len(pythonUpdates) == 0 {
+		log.Debug("No Python packages found in language updates.")
+		return &pm.config.ImageState, []string{}, nil
+	}
+
+	log.Debugf("Found %d Python packages to process: %v", len(pythonUpdates), pythonUpdates)
+
 	pythonComparer := VersionComparer{isValidPythonVersion, isLessThanPythonVersion}
-	updatesToAttempt, err := GetUniqueLatestUpdates(manifest.LangUpdates, pythonComparer, ignoreErrors)
+	updatesToAttempt, err := GetUniqueLatestUpdates(pythonUpdates, pythonComparer, ignoreErrors)
 	if err != nil {
 		// Collect error packages when GetUniqueLatestUpdates fails
-		for _, u := range manifest.LangUpdates {
+		for _, u := range pythonUpdates {
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
 		return &pm.config.ImageState, errPkgsReported, fmt.Errorf("failed to determine unique latest Python updates: %w", err)

@@ -33,6 +33,9 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string) []LangMa
 	// Add Python manager
 	managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
 
+	// Add .NET manager
+	managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
+
 	return managers
 }
 
