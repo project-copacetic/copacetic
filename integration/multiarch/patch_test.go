@@ -85,7 +85,7 @@ func TestPatch(t *testing.T) {
 			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
 
 			t.Log("patching image with multiple architectures")
-			patchMultiArch(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
+			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
 
 			t.Log("scanning patched image for each platform")
 			wg = sync.WaitGroup{}
@@ -158,7 +158,7 @@ func (w *addrWrapper) env() []string {
 	return []string{fmt.Sprintf("DOCKER_HOST=%s", a)}
 }
 
-func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
+func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
@@ -168,13 +168,12 @@ func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreError
 		"patch",
 		"-i=" + ref,
 		"-t=" + patchedTag,
-		"--report-directory=" + reportDir,
+		"--report=" + reportDir,
 		"-s=" + scannerPlugin,
 		"--timeout=30m",
 		addrFl,
 		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
 		"--debug",
-		"--platform-specific-errors=fail",
 	}
 	if push {
 		args = append(args, "--push")
