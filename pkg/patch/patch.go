@@ -769,14 +769,6 @@ func patchMultiPlatformImage(
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
 
-	handlePlatformErr := func(p types.PatchPlatform, err error) error {
-		if ignoreError {
-			log.Warnf("Ignoring error for platform %s: %v", p.OS+"/"+p.Architecture, err)
-			return nil
-		}
-		log.Warnf("Error for platform %s: %v", p.OS+"/"+p.Architecture, err)
-		return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
-	}
 	summaryMap := make(map[string]*types.MultiArchSummary)
 
 	for _, p := range platforms {
@@ -798,9 +790,7 @@ func patchMultiPlatformImage(
 			mu.Lock()
 			if err != nil {
 				status := "Error"
-				if platformSpecificErrors == "skip" {
-					status = "Skipped"
-				} else if platformSpecificErrors == "ignore" {
+				if ignoreError {
 					status = "Ignored"
 				}
 				summaryMap[platformKey] = &types.MultiArchSummary{
