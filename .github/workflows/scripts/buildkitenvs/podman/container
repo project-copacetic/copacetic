@@ -6,7 +6,15 @@ set -eu -o pipefail
 CONTAINER_NAME="copa-buildkitd-$(date +%s)"
 echo "Starting Podman buildkit container: ${CONTAINER_NAME}" >&2
 
-podman run -d --rm --name "${CONTAINER_NAME}" --privileged docker.io/moby/buildkit:latest >/dev/null
+# Start buildkit with host network for proper connectivity
+# Note: buildkitd needs special args when running in podman to ensure
+# proper DNS resolution for containers it creates during builds
+podman run -d --rm --name "${CONTAINER_NAME}" \
+    --privileged \
+    --network=host \
+    docker.io/moby/buildkit:latest \
+    --oci-worker-net=host \
+    --oci-worker-snapshotter=native >/dev/null
 
 # Wait for container to be ready
 echo "Waiting for buildkit container to be ready..." >&2
