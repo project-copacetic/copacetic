@@ -136,7 +136,7 @@ jobs:
         run: |
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
-      - name: Install Podman (if needed)
+      - name: Install Podman
         if: contains(matrix.buildkit_mode, 'podman')
         shell: bash
         run: |

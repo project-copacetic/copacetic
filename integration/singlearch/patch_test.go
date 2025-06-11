@@ -22,13 +22,6 @@ import (
 //go:embed fixtures/test-images.json
 var testImages []byte
 
-func init() {
-	// Initialize DockerDINDAddress from environment if available
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-		common.DockerDINDAddress.Set(strings.TrimPrefix(addr, "docker://"))
-	}
-}
-
 type testImage struct {
 	Image        string        `json:"image"`
 	Tag          string        `json:"tag"`
@@ -50,18 +43,7 @@ func TestPatch(t *testing.T) {
 	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
 	require.NoError(t, err)
 
-	// Check if we're running with podman based on buildkit address
-	isPodmanTest := strings.Contains(os.Getenv("COPA_BUILDKIT_ADDR"), "podman-container://")
-
 	for _, img := range images {
-		// Skip podman tests when not using podman, and vice versa
-		if img.PodmanTest && !isPodmanTest {
-			continue
-		}
-		if !img.PodmanTest && isPodmanTest {
-			continue
-		}
-
 		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 		mediaType, err := utils.GetMediaType(imageRef)
 		require.NoError(t, err)

@@ -17,9 +17,16 @@ var DockerDINDAddress AddrWrapper
 func (w *AddrWrapper) Addr() string {
 	w.m.Lock()
 	defer w.m.Unlock()
-	if w.address == nil {
-		return ""
+
+	if w.address != nil {
+		return *w.address
 	}
+
+	w.address = new(string)
+	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
+		*w.address = strings.TrimPrefix(addr, "docker://")
+	}
+
 	return *w.address
 }
 

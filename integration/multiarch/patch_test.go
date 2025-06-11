@@ -19,13 +19,6 @@ import (
 //go:embed fixtures/test-images.json
 var testImages []byte
 
-func init() {
-	// Initialize DockerDINDAddress from environment if available
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-		common.DockerDINDAddress.Set(strings.TrimPrefix(addr, "docker://"))
-	}
-}
-
 type testImage struct {
 	OriginalImage string   `json:"originalImage"`
 	LocalImage    string   `json:"localImage"`
