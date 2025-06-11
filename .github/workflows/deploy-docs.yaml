@@ -52,7 +52,11 @@ jobs:
             ${{ runner.os }}-website-
 
       - run: yarn install --frozen-lockfile
-      - run: yarn build
+      - name: Build Website
+        run: yarn build
+        env:
+          ALGOLIA_ID: ${{ secrets.ALGOLIA_ID }}
+          ALGOLIA_API_KEY: ${{ secrets.ALGOLIA_API_KEY }}
 
       # deploy only after PR is merged to main
       - name: Deploy to GitHub Pages
