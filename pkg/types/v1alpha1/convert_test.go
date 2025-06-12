@@ -68,6 +68,64 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 			want:    nil,
 			wantErr: true,
 		},
+		{
+			name: "With NodeUpdates",
+			input: []byte(`{
+				"metadata": {
+					"os": {
+						"type": "linux",
+						"version": "4.19"
+					},
+					"config": {
+						"arch": "amd64"
+					}
+				},
+				"updates": [
+					{
+						"name": "openssl",
+						"installedVersion": "1.1.1f-1ubuntu2.16",
+						"fixedVersion": "1.1.1f-1ubuntu2.17",
+						"vulnerabilityID": "CVE-2023-0286"
+					}
+				],
+				"nodeUpdates": [
+					{
+						"name": "lodash",
+						"installedVersion": "4.17.20",
+						"fixedVersion": "4.17.21",
+						"vulnerabilityID": "CVE-2021-23337"
+					}
+				]
+			}`),
+			want: &unversioned.UpdateManifest{
+				Metadata: unversioned.Metadata{
+					OS: unversioned.OS{
+						Type:    "linux",
+						Version: "4.19",
+					},
+					Config: unversioned.Config{
+						Arch: "amd64",
+					},
+				},
+				Updates: unversioned.UpdatePackages{
+					{
+						Name:             "openssl",
+						InstalledVersion: "1.1.1f-1ubuntu2.16",
+						FixedVersion:     "1.1.1f-1ubuntu2.17",
+						VulnerabilityID:  "CVE-2023-0286",
+					},
+				},
+				NodeUpdates: unversioned.UpdatePackages{
+					{
+						Name:             "lodash",
+						InstalledVersion: "4.17.20",
+						FixedVersion:     "4.17.21",
+						VulnerabilityID:  "CVE-2021-23337",
+					},
+				},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {

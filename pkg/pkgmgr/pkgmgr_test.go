@@ -142,8 +142,8 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			name:          "empty updates",
 			updates:       unversioned.UpdatePackages{},
 			ignoreErrors:  false,
-			want:          nil,
-			expectedError: "no patchable vulnerabilities found",
+			want:          unversioned.UpdatePackages{},
+			expectedError: "",
 		},
 		{
 			name: "valid updates",
