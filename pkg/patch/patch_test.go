@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	buildkitclient "github.com/moby/buildkit/client"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func TestRemoveIfNotDebug(t *testing.T) {
@@ -607,7 +608,7 @@ func TestMultiArchSummaryTable(t *testing.T) {
 		},
 		"linux/arm/v7": {
 			Platform: "linux/arm/v7",
-			Status:   "Skipped",
+			Status:   "Ignored",
 			Ref:      "",
 			Error:    "",
 		},
@@ -617,10 +618,11 @@ func TestMultiArchSummaryTable(t *testing.T) {
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tERROR\n"))
 	for _, p := range platforms {
-		platformKey := p.OS + "/" + p.Architecture
-		if p.Variant != "" {
-			platformKey += "/" + p.Variant
-		}
+		platformKey := buildkit.PlatformKey(ispec.Platform{
+			OS:           p.OS,
+			Architecture: p.Architecture,
+			Variant:      p.Variant,
+		})
 		s := summaryMap[platformKey]
 		if s != nil {
 			ref := s.Ref
@@ -638,7 +640,7 @@ func TestMultiArchSummaryTable(t *testing.T) {
 	expected := `PLATFORM      STATUS   REFERENCE                              ERROR
 linux/amd64   Patched  docker.io/library/nginx:patched-amd64  
 linux/arm64   Error    -                                      emulation is not enabled for platform linux/arm64
-linux/arm/v7  Skipped  -                                      
+linux/arm/v7  Ignored  -                                      
 `
 
 	if got != expected {

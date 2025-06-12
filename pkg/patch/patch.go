@@ -774,10 +774,7 @@ func patchMultiPlatformImage(
 	for _, p := range platforms {
 		// rebind
 		p := p //nolint
-		platformKey := p.OS + "/" + p.Architecture
-		if p.Variant != "" {
-			platformKey += "/" + p.Variant
-		}
+		platformKey := buildkit.PlatformKey(p.Platform)
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -872,10 +869,7 @@ func patchMultiPlatformImage(
 	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tERROR")
 
 	for _, p := range platforms {
-		platformKey := p.OS + "/" + p.Architecture
-		if p.Variant != "" {
-			platformKey += "/" + p.Variant
-		}
+		platformKey := buildkit.PlatformKey(p.Platform)
 		s := summaryMap[platformKey]
 		if s != nil {
 			ref := s.Ref
