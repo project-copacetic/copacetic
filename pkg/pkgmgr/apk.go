@@ -165,19 +165,15 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 	apkUpdated := imageStateCurrent.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
 
-	// If updating all packages, check for upgrades before proceeding with patch
-	if updates == nil {
-		checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" > /upgradable.txt || exit 1"`
-		apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable)).Root()
-		_, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &apkUpdated, "/upgradable.txt")
-		if err != nil {
-			return nil, nil, fmt.Errorf("no patchable packages found")
-		}
+	checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" > /upgradable.txt || exit 1"`
+	apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	_, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &apkUpdated, "/upgradable.txt")
+	if err != nil {
+		return nil, nil, fmt.Errorf("no patchable packages found")
 	}
 
 	var apkInstalled llb.State
 	var resultManifestBytes []byte
-	var err error
 	if updates != nil {
 		// Add all requested update packages
 		// This works around cases where some packages (for example, tiff) require other packages in it's dependency tree to be updated
