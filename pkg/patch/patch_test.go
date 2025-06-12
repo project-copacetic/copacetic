@@ -512,7 +512,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	err := Patch(
 		context.Background(),
 		30*time.Second,
-		"alpine:3.19", "", "", "", "", "", "", "", "", "",
+		"alpine:3.19", "", "", "", "", "", "", "",
 		false, true,
 		buildkit.Opts{},
 	)
@@ -543,8 +543,6 @@ func TestArchTag(t *testing.T) {
 		}
 	}
 }
-
-const LINUX = "linux"
 
 func TestNormalizeConfigForPlatform(t *testing.T) {
 	// minimal starting config (missing fields on purpose)
