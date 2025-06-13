@@ -785,6 +785,7 @@ func patchMultiPlatformImage(
 
 			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
 			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
 				status := "Error"
 				if ignoreError {
@@ -795,6 +796,9 @@ func patchMultiPlatformImage(
 					Status:   status,
 					Ref:      "",
 					Error:    err.Error(),
+				}
+				if !ignoreError {
+					return err
 				}
 				return nil
 			} else if res == nil {
@@ -814,7 +818,6 @@ func patchMultiPlatformImage(
 				Ref:      res.PatchedRef.String(),
 				Error:    "",
 			}
-			mu.Unlock()
 			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
 			return nil
 		})

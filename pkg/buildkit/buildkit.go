@@ -209,6 +209,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	return nil, nil
 }
 
+//nolint:gocritic
 func PlatformKey(pl ispec.Platform) string {
 	// if platform is present in list from reference and report, then we should patch that platform
 	key := pl.OS + "/" + pl.Architecture
