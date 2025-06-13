@@ -21,7 +21,7 @@ const (
 	downloadPath     = "/" + copaPrefix + "downloads"
 	unpackPath       = "/" + copaPrefix + "unpacked"
 	resultManifest   = "results.manifest"
-	imageCachePrefix = "ghcr.io/project-copacetic/copacetic"
+	imageCachePrefix = "docker.io"
 )
 
 type PackageManager interface {
