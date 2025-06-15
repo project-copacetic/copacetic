@@ -12,6 +12,8 @@ import (
 
 const (
 	majorPatchLevel = "major"
+	minorPatchLevel = "minor"
+	patchPatchLevel = "patch"
 )
 
 // TestParseTrivyReport tests the parseTrivyReport function.
@@ -149,7 +151,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_only_patch_versions",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.17", "1.26.19"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "1.26.19",
 			description:      "Should pick highest patch version when patch level is specified",
 		},
@@ -157,7 +159,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_with_mixed_versions_no_fallback",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "2.0.6"}, // only minor and major available
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "",
 			description:      "Should not fall back to minor/major when patch level is specified",
 		},
@@ -165,7 +167,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_comma_separated_mixed",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.18, 1.27.1, 2.0.6"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "1.26.18",
 			description:      "Should keep to patch level only with comma-separated values",
 		},
@@ -175,7 +177,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "minor_level_prefers_patch",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			expected:         "1.26.19",
 			description:      "Should prefer patch over minor when minor level is specified",
 		},
@@ -183,7 +185,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "minor_level_uses_minor_when_no_patch",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "2.0.6"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			expected:         "1.27.1",
 			description:      "Should use minor when no patch available and minor level is specified",
 		},
@@ -191,7 +193,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "minor_level_no_major_fallback",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"2.0.6", "2.1.0"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			expected:         "",
 			description:      "Should not fall back to major when minor level is specified",
 		},
@@ -235,7 +237,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_empty_when_no_valid_versions",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.15", "1.25.0"}, // older versions
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "",
 			description:      "Should return empty when no valid patch versions available",
 		},
@@ -267,7 +269,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "certifi_patch_level_gets_major",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			packageName:      "certifi",
 			expected:         "2024.2.2",
 			description:      "certifi should get latest version even with patch level",
@@ -276,7 +278,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "certifi_minor_level_gets_major",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			packageName:      "certifi",
 			expected:         "2024.2.2",
 			description:      "certifi should get latest version even with minor level",
@@ -294,7 +296,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "other_package_respects_patch_level",
 			installedVersion: "2.25.1",
 			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			packageName:      "requests",
 			expected:         "2.25.2",
 			description:      "non-certifi packages should respect patch level restrictions",
@@ -303,7 +305,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "other_package_respects_minor_level",
 			installedVersion: "2.25.1",
 			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			packageName:      "requests",
 			expected:         "2.25.2",
 			description:      "non-certifi packages should prefer patch over minor with minor level",
@@ -312,7 +314,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "other_package_uses_minor_when_no_patch",
 			installedVersion: "2.25.1",
 			fixedVersions:    []string{"2.26.0", "2.27.0", "3.0.0"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			packageName:      "requests",
 			expected:         "2.27.0",
 			description:      "non-certifi packages should use highest minor when no patch available",
@@ -504,179 +506,153 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 		description      string
 		cves             []string // CVEs that would be fixed by the selected version (for documentation/testing)
 	}{
+		// Major patch level tests - picks highest version when no comma-separated versions
 		{
-			name:             "cryptography_cves_major_patch_level",
+			name:             "major_patch_level_picks_highest_version",
 			installedVersion: "41.0.6",
 			fixedVersions:    []string{"41.0.7", "42.0.0", "42.0.4", "42.0.2", "43.0.1"},
 			patchLevel:       majorPatchLevel,
 			expected:         "43.0.1", // Should pick highest version to fix all CVEs when no comma-separated versions
-			description:      "cryptography should upgrade to highest version to fix all CVEs with major patch level when no comma-separated versions",
+			description:      "should upgrade to highest version to fix all CVEs with major patch level when no comma-separated versions",
 			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
 		},
 		{
-			name:             "cryptography_cves_major_patch_level_no_patch_available",
+			name:             "major_patch_level_no_patch_available",
 			installedVersion: "41.0.6",
 			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
 			patchLevel:       majorPatchLevel,
 			expected:         "43.0.1", // Should pick highest major version when no patch versions available
-			description:      "cryptography should upgrade to highest major version when no patch versions available with major patch level",
+			description:      "should upgrade to highest major version when no patch versions available with major patch level",
 			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
-		},
-		{
-			name:             "cryptography_cves_patch_level_restriction",
-			installedVersion: "41.0.6",
-			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
-			patchLevel:       "patch",
-			expected:         "", // Should not upgrade when only major versions available
-			description:      "cryptography should NOT upgrade with patch level when only major versions available",
-			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
-		},
-		{
-			name:             "cryptography_cves_minor_level_restriction",
-			installedVersion: "41.0.6",
-			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
-			patchLevel:       "minor",
-			expected:         "", // Should not upgrade to major versions even with minor level
-			description:      "cryptography should NOT upgrade to major versions even with minor patch level",
-			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
-		},
-		{
-			name:             "cryptography_mixed_versions_with_cves",
-			installedVersion: "41.0.6",
-			fixedVersions:    []string{"41.0.7", "41.0.8", "42.0.0", "43.0.1"},
-			patchLevel:       "patch",
-			expected:         "41.0.8", // Should pick highest patch version
-			description:      "cryptography should upgrade to highest patch version when patch versions are available",
-			cves:             []string{"CVE-2023-50782", "CVE-2024-26130"},
-		},
-		{
-			name:             "cryptography_comma_separated_cves",
-			installedVersion: "41.0.6",
-			fixedVersions:    []string{"42.0.0, 42.0.4", "43.0.1"},
-			patchLevel:       majorPatchLevel,
-			expected:         "43.0.1", // Should handle comma-separated and pick highest when comma-separated versions don't contain patches
-			description:      "cryptography should handle comma-separated versions and pick highest with major patch level",
-			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
-		},
-		{
-			name:             "cryptography_comma_separated_with_patch_preference",
-			installedVersion: "41.0.6",
-			fixedVersions:    []string{"41.0.8, 42.0.4", "43.0.1"},
-			patchLevel:       majorPatchLevel,
-			expected:         "41.0.8", // Should prefer patch version from comma-separated list
-			description:      "cryptography should prefer patch version from comma-separated list even with major patch level",
-			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
-		},
-		{
-			name:             "urllib3_cves_comma_separated_major_patch_level",
-			installedVersion: "1.26.16",
-			fixedVersions:    []string{"2.0.6, 1.26.17"},
-			patchLevel:       majorPatchLevel,
-			expected:         "1.26.17", // Should prefer patch version from comma-separated list
-			description:      "urllib3 should prefer patch version from comma-separated list with major patch level",
-			cves:             []string{"CVE-2023-43804"},
-		},
-		{
-			name:             "urllib3_cves_comma_separated_major_patch_level",
-			installedVersion: "1.26.16",
-			fixedVersions:    []string{"2.0.6, 1.26.17"},
-			patchLevel:       majorPatchLevel,
-			expected:         "1.26.17", // Should prefer patch version from comma-separated list
-			description:      "urllib3 should prefer patch version from comma-separated list with major patch level",
-			cves:             []string{"CVE-2023-43804"},
-		},
-		{
-			name:             "urllib3_cves_multiple_comma_separated_entries",
-			installedVersion: "1.26.16",
-			fixedVersions:    []string{"2.0.7, 1.26.18", "1.26.19, 2.2.2"}, // Multiple comma-separated entries
-			patchLevel:       majorPatchLevel,
-			expected:         "1.26.19", // Should pick highest patch version across all comma-separated lists
-			description:      "urllib3 should prefer highest patch version across multiple comma-separated lists",
-			cves:             []string{"CVE-2023-45803", "CVE-2024-37891"},
 		},
 
-		// Basic patch level restriction tests
+		// Patch level restriction tests
+		{
+			name:             "patch_level_restriction_no_upgrade",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       patchPatchLevel,
+			expected:         "", // Should not upgrade when only major versions available
+			description:      "should NOT upgrade with patch level when only major versions available",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "patch_level_picks_highest_patch",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.7", "41.0.8", "42.0.0", "43.0.1"},
+			patchLevel:       patchPatchLevel,
+			expected:         "41.0.8", // Should pick highest patch version
+			description:      "should upgrade to highest patch version when patch versions are available",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130"},
+		},
 		{
 			name:             "patch_level_no_major_jump",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"3.4.0"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "",
-			description:      "package should NOT upgrade from 2.6.0 to 3.4.0 with patch level",
+			description:      "should NOT upgrade to major version with patch level",
 		},
 		{
 			name:             "patch_level_with_patch_available",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"2.6.1", "3.4.0"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "2.6.1",
-			description:      "package should upgrade from 2.6.0 to 2.6.1 with patch level",
+			description:      "should upgrade to patch version with patch level",
+		},
+
+		// Minor level restriction tests
+		{
+			name:             "minor_level_restriction_no_major",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       minorPatchLevel,
+			expected:         "", // Should not upgrade to major versions even with minor level
+			description:      "should NOT upgrade to major versions with minor patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
 		},
 		{
-			name:             "patch_level_minor_prevents_major",
-			installedVersion: "2.6.0",
-			fixedVersions:    []string{"3.4.0"},
-			patchLevel:       "minor",
-			expected:         "",
-			description:      "package should NOT upgrade to major version even with minor level",
+			name:             "minor_level_prefers_patch",
+			installedVersion: "1.26.5",
+			fixedVersions:    []string{"1.26.6", "1.27.0", "2.0.0"},
+			patchLevel:       minorPatchLevel,
+			expected:         "1.26.6",
+			description:      "should prefer patch over minor with minor level",
 		},
 		{
-			name:             "patch_level_major_allows_major",
+			name:             "minor_level_uses_minor_when_no_patch",
+			installedVersion: "1.26.5",
+			fixedVersions:    []string{"1.27.0", "1.28.0", "2.0.0"},
+			patchLevel:       minorPatchLevel,
+			expected:         "1.28.0",
+			description:      "should use highest minor when no patch available with minor level",
+		},
+
+		// Major level allows major upgrades
+		{
+			name:             "major_level_allows_major_upgrade",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"3.4.0"},
 			patchLevel:       majorPatchLevel,
 			expected:         "3.4.0",
-			description:      "package should upgrade to major version with major level",
+			description:      "should upgrade to major version with major level",
 		},
 
-		// Python-specific library test cases
+		// Comma-separated version handling
 		{
-			name:             "paramiko_patch_level_restriction",
-			installedVersion: "2.6.0",
-			fixedVersions:    []string{"2.6.1", "2.6.2", "2.7.0", "3.4.0"},
-			patchLevel:       "patch",
-			expected:         "2.6.2",
-			description:      "paramiko should only upgrade to highest patch version with patch level",
+			name:             "comma_separated_prefers_patch_over_major",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6, 1.26.17"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.17", // Should prefer patch version from comma-separated list
+			description:      "should prefer patch version from comma-separated list with major patch level",
+			cves:             []string{"CVE-2023-43804"},
 		},
 		{
-			name:             "paramiko_no_patch_available",
-			installedVersion: "2.6.0",
-			fixedVersions:    []string{"2.7.0", "3.4.0"},
-			patchLevel:       "patch",
+			name:             "comma_separated_with_patch_preference",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.8, 42.0.4", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "41.0.8", // Should prefer patch version from comma-separated list
+			description:      "should prefer patch version from comma-separated list even with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "comma_separated_multiple_entries",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.7, 1.26.18", "1.26.19, 2.2.2"}, // Multiple comma-separated entries
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.19", // Should pick highest patch version across all comma-separated lists
+			description:      "should prefer highest patch version across multiple comma-separated lists",
+			cves:             []string{"CVE-2023-45803", "CVE-2024-37891"},
+		},
+		{
+			name:             "comma_separated_no_patch_available",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0, 42.0.4", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should handle comma-separated and pick highest when comma-separated versions don't contain patches
+			description:      "should handle comma-separated versions and pick highest with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+
+		// Edge cases
+		{
+			name:             "no_valid_versions_available",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.15", "1.25.0"}, // older versions
+			patchLevel:       patchPatchLevel,
 			expected:         "",
-			description:      "paramiko should not upgrade when no patch versions available with patch level",
-		},
-		{
-			name:             "requests_patch_level_restriction",
-			installedVersion: "2.25.1",
-			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
-			patchLevel:       "patch",
-			expected:         "2.25.2",
-			description:      "requests should only upgrade to patch version with patch level",
-		},
-		{
-			name:             "urllib3_minor_level_prefers_patch",
-			installedVersion: "1.26.5",
-			fixedVersions:    []string{"1.26.6", "1.27.0", "2.0.0"},
-			patchLevel:       "minor",
-			expected:         "1.26.6",
-			description:      "urllib3 should prefer patch over minor with minor level",
-		},
-		{
-			name:             "urllib3_minor_level_uses_minor_when_needed",
-			installedVersion: "1.26.5",
-			fixedVersions:    []string{"1.27.0", "1.28.0", "2.0.0"},
-			patchLevel:       "minor",
-			expected:         "1.28.0",
-			description:      "urllib3 should use highest minor when no patch available with minor level",
+			description:      "should return empty when no valid patch versions available",
 		},
 		{
 			name:             "certifi_special_handling_simulation",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       majorPatchLevel, // Simulates overriding patch level to major for certifi
+			patchLevel:       majorPatchLevel,
 			expected:         "2024.2.2",
-			description:      "certifi should get latest version when patch level is overridden to major",
+			description:      "should get latest version with major level for date-based versioning",
 		},
 	}
 
