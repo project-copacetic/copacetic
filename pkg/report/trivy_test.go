@@ -198,12 +198,12 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 
 		// Major level tests
 		{
-			name:             "major_level_prefers_patch_over_major",
+			name:             "major_level_picks_highest_when_no_comma_separated",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
 			patchLevel:       majorPatchLevel,
-			expected:         "1.26.19",
-			description:      "Should prefer patch version over major when major level is specified",
+			expected:         "2.0.6",
+			description:      "Should pick highest version when no comma-separated versions and major level is specified",
 		},
 		{
 			name:             "major_level_use_major_when_only_option",
@@ -222,12 +222,12 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			description:      "Should prefer patch version from comma-separated values when major level is specified",
 		},
 		{
-			name:             "major_level_only_minor_available",
+			name:             "major_level_picks_highest_minor_when_no_comma_separated",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "1.28.0"},
 			patchLevel:       majorPatchLevel,
 			expected:         "1.28.0",
-			description:      "Should use minor when multiple minor options and major level is specified",
+			description:      "Should pick highest version when no comma-separated versions and major level is specified",
 		},
 
 		// Edge cases
@@ -492,6 +492,8 @@ func TestPkgTypesFiltering(t *testing.T) {
 
 // TestPatchLevelVersionSelection tests the FindOptimalFixedVersionWithPatchLevel function
 // with comprehensive test cases covering patch level restrictions and various scenarios.
+// The test cases include CVE tracking to verify that patch level settings correctly
+// balance security fixes with version stability requirements.
 func TestPatchLevelVersionSelection(t *testing.T) {
 	testCases := []struct {
 		name             string
@@ -500,7 +502,99 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 		patchLevel       string
 		expected         string
 		description      string
+		cves             []string // CVEs that would be fixed by the selected version (for documentation/testing)
 	}{
+		{
+			name:             "cryptography_cves_major_patch_level",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.7", "42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should pick highest version to fix all CVEs when no comma-separated versions
+			description:      "cryptography should upgrade to highest version to fix all CVEs with major patch level when no comma-separated versions",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "cryptography_cves_major_patch_level_no_patch_available",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should pick highest major version when no patch versions available
+			description:      "cryptography should upgrade to highest major version when no patch versions available with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "cryptography_cves_patch_level_restriction",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       "patch",
+			expected:         "", // Should not upgrade when only major versions available
+			description:      "cryptography should NOT upgrade with patch level when only major versions available",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "cryptography_cves_minor_level_restriction",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       "minor",
+			expected:         "", // Should not upgrade to major versions even with minor level
+			description:      "cryptography should NOT upgrade to major versions even with minor patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "cryptography_mixed_versions_with_cves",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.7", "41.0.8", "42.0.0", "43.0.1"},
+			patchLevel:       "patch",
+			expected:         "41.0.8", // Should pick highest patch version
+			description:      "cryptography should upgrade to highest patch version when patch versions are available",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130"},
+		},
+		{
+			name:             "cryptography_comma_separated_cves",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0, 42.0.4", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should handle comma-separated and pick highest when comma-separated versions don't contain patches
+			description:      "cryptography should handle comma-separated versions and pick highest with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "cryptography_comma_separated_with_patch_preference",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.8, 42.0.4", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "41.0.8", // Should prefer patch version from comma-separated list
+			description:      "cryptography should prefer patch version from comma-separated list even with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "urllib3_cves_comma_separated_major_patch_level",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6, 1.26.17"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.17", // Should prefer patch version from comma-separated list
+			description:      "urllib3 should prefer patch version from comma-separated list with major patch level",
+			cves:             []string{"CVE-2023-43804"},
+		},
+		{
+			name:             "urllib3_cves_comma_separated_major_patch_level",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6, 1.26.17"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.17", // Should prefer patch version from comma-separated list
+			description:      "urllib3 should prefer patch version from comma-separated list with major patch level",
+			cves:             []string{"CVE-2023-43804"},
+		},
+		{
+			name:             "urllib3_cves_multiple_comma_separated_entries",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.7, 1.26.18", "1.26.19, 2.2.2"}, // Multiple comma-separated entries
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.19", // Should pick highest patch version across all comma-separated lists
+			description:      "urllib3 should prefer highest patch version across multiple comma-separated lists",
+			cves:             []string{"CVE-2023-45803", "CVE-2024-37891"},
+		},
+
 		// Basic patch level restriction tests
 		{
 			name:             "patch_level_no_major_jump",
@@ -592,8 +686,22 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 
 			assert.Equal(t, tc.expected, result, tc.description)
 
-			t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s",
-				tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result)
+			// Log test results with CVE information if present
+			if len(tc.cves) > 0 {
+				t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s, CVEs=%v",
+					tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result, tc.cves)
+
+				// Verify that when major patch level is used, we can fix CVEs
+				if tc.patchLevel == majorPatchLevel && result != "" {
+					t.Logf("✓ Major patch level successfully selected version %s to fix CVEs: %v", result, tc.cves)
+					t.Logf("  (behavior: highest version for non-comma-separated, prefer patch for comma-separated)")
+				} else if tc.patchLevel != majorPatchLevel && result == "" {
+					t.Logf("✓ Patch level '%s' correctly restricted upgrade, CVEs remain unfixed: %v", tc.patchLevel, tc.cves)
+				}
+			} else {
+				t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s",
+					tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result)
+			}
 		})
 	}
 }

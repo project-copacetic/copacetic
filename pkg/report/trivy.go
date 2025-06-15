@@ -93,10 +93,21 @@ func findOptimalFixedVersion(installedVersion string, fixedVersions []string) st
 // libraryPatchLevel can be "patch", "minor", or "major":
 // - "patch": only updates to patch versions (same major.minor), no fallback to minor/major
 // - "minor": only updates to patch or minor versions, never major versions
-// - "major": allows all version types and chooses the highest available version.
+// - "major": behavior depends on version format:
+//   - If comma-separated versions exist: prefers patch > minor > major for compatibility
+//   - If no comma-separated versions: chooses highest available version to fix all CVEs
 func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
 	if len(fixedVersions) == 0 {
 		return ""
+	}
+
+	// Detect if any version entries contain comma-separated values
+	hasCommaSeparatedVersions := false
+	for _, versionStr := range fixedVersions {
+		if strings.Contains(versionStr, ",") {
+			hasCommaSeparatedVersions = true
+			break
+		}
 	}
 
 	// Collect all possible fixed versions
@@ -181,15 +192,21 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 		return ""
 
 	case "major":
-		// Allow all version types, but prefer patch > minor > major
-		if len(patchVersions) > 0 {
-			return getHighestVersion(patchVersions)
-		}
-		if len(minorVersions) > 0 {
-			return getHighestVersion(minorVersions)
-		}
-		if len(majorVersions) > 0 {
-			return getHighestVersion(majorVersions)
+		// For major patch level, the behavior depends on whether we have comma-separated versions
+		if hasCommaSeparatedVersions {
+			// When comma-separated versions exist, prefer patch > minor > major for compatibility
+			if len(patchVersions) > 0 {
+				return getHighestVersion(patchVersions)
+			}
+			if len(minorVersions) > 0 {
+				return getHighestVersion(minorVersions)
+			}
+			if len(majorVersions) > 0 {
+				return getHighestVersion(majorVersions)
+			}
+		} else {
+			// When no comma-separated versions, pick highest version to fix all CVEs
+			return getHighestVersion(validCandidates)
 		}
 		return ""
 
