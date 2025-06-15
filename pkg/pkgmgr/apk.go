@@ -6,9 +6,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/hashicorp/go-multierror"
 	apkVer "github.com/knqyf263/go-apk-version"
@@ -102,7 +100,7 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 			allErrors = multierror.Append(allErrors, err)
 			continue
 		}
-		if cmp.LessThan(version, update.FixedVersion) && compareVersions(version, update.FixedVersion){
+		if cmp.LessThan(version, update.FixedVersion) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
 			errorPkgs = append(errorPkgs, update.Name)
@@ -182,9 +180,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		const apkAddTemplate = `apk add --no-cache %s`
 		pkgStrings := []string{}
 		for _, u := range updates {
-			if("libretls" != u.Name){ 
 				pkgStrings = append(pkgStrings, u.Name)
-			}
 		}
 		addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
 		apkAdded := apkUpdated.Run(llb.Shlex(addCmd), llb.WithProxy(utils.GetProxy())).Root()
@@ -247,74 +243,4 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 func (am *apkManager) GetPackageType() string {
 	return "apk"
-}
-
-func compareVersions(v1Str, v2Str string) bool {
-	v1 := parseVersion(v1Str)
-	v2 := parseVersion(v2Str)
-	switch result := compareParseVersions(v1, v2); {
-	case result < 0:
-		fmt.Printf("%s is less than %s\n", v1Str, v2Str)
-		return false
-	case result > 0:
-		fmt.Printf("%s is greater than %s\n", v1Str, v2Str)
-		return true
-	default:
-		fmt.Printf("%s is equal to %s\n", v1Str, v2Str)
-		return false
-	}
-}
-
-type Version struct {
-	Major int
-	Minor int
-	Patch int
-	Letter string
-	Release int
-}
-func parseVersion(v string) Version {
-	parts := strings.SplitN(v, "-r", 2)
-	versionPart := parts[0]
-	releasePart := "0"
-	if len(parts) == 2 {
-		releasePart = parts[1]
-	}
-
-	nums := strings.Split(versionPart, ".")
-	if len(nums) < 3 {
-		panic("Invalid version format")
-	}
-
-	patchRaw := nums[2]
-	patchNum := ""
-	suffix := ""
-	for _, ch := range patchRaw {
-		if unicode.IsDigit(ch) {
-			patchNum += string(ch)
-		} else {
-			suffix += string(ch)
-		}
-	}
-	major, _ := strconv.Atoi(nums[0])
-	minor, _ := strconv.Atoi(nums[1])
-	patch, _ := strconv.Atoi(patchNum)
-	release, _ := strconv.Atoi(releasePart)
-
-	return Version{Major: major, Minor: minor, Patch: patch, Letter: suffix, Release: release}
-}
-
-func compareParseVersions(v1, v2 Version) int {
-	if v1.Major != v2.Major {
-		return v1.Major - v2.Major
-	}
-	if v1.Minor != v2.Minor {
-		return v1.Minor - v2.Minor
-	}
-	if v1.Patch != v2.Patch {
-		return v1.Patch - v2.Patch
-	}
-	if v1.Letter != v2.Letter {
-		return strings.Compare(v1.Letter, v2.Letter)
-	}
-	return v1.Release - v2.Release
 }

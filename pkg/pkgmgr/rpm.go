@@ -868,7 +868,7 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 		}
 		// Strip epoch from update.Version; report may specify it, but RPM naming scheme does not support epochs
 		expectedVersion := update.FixedVersion[strings.Index(update.FixedVersion, ":")+1:]
-		if cmp.LessThan(version, expectedVersion) && compareVersions(version, expectedVersion) {
+		if cmp.LessThan(version, expectedVersion) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
 			errorPkgs = append(errorPkgs, update.Name)
