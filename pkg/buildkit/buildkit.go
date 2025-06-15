@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
@@ -15,6 +18,7 @@ import (
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -38,7 +42,17 @@ type Opts struct {
 	KeyPath    string
 }
 
-const linux = "linux"
+const (
+	linux = "linux"
+	arm64 = "arm64"
+)
+
+// for testing.
+var (
+	readDir  = os.ReadDir
+	readFile = os.ReadFile
+	lookPath = exec.LookPath
+)
 
 func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
 	// Initialize buildkit config for the target image
@@ -90,8 +104,8 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	return &config, nil
 }
 
-func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, error) {
-	var platforms []ispec.Platform
+func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatform, error) {
+	var platforms []types.PatchPlatform
 
 	reportNames, err := os.ReadDir(reportDir)
 	if err != nil {
@@ -99,7 +113,11 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, e
 	}
 
 	for _, file := range reportNames {
-		report, err := report.TryParseScanReport(reportDir+"/"+file.Name(), scanner)
+		filePath := reportDir + "/" + file.Name()
+		if file.IsDir() {
+			continue
+		}
+		report, err := report.TryParseScanReport(filePath, scanner)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}
@@ -109,9 +127,19 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]ispec.Platform, e
 			continue
 		}
 
-		platform := ispec.Platform{
-			OS:           linux,
-			Architecture: report.Metadata.Config.Arch,
+		platform := types.PatchPlatform{
+			Platform: ispec.Platform{
+				OS:           linux,
+				Architecture: report.Metadata.Config.Arch,
+				Variant:      report.Metadata.Config.Variant,
+			},
+			ReportFile: filePath,
+		}
+
+		if platform.Architecture == arm64 && platform.Variant == "v8" {
+			// removing this to maintain consistency since we do
+			// the same for the platforms discovered from reports
+			platform.Variant = ""
 		}
 		platforms = append(platforms, platform)
 	}
@@ -129,8 +157,8 @@ func isSupportedOsType(osType string) bool {
 }
 
 // This approach will not work for local images, add future support for this.
-func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error) {
-	var platforms []ispec.Platform
+func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
+	var platforms []types.PatchPlatform
 
 	ref, err := name.ParseReference(manifestRef)
 	if err != nil {
@@ -159,49 +187,60 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]ispec.Platform, error
 			if m.Platform.OS != linux {
 				continue
 			}
-			platforms = append(platforms, ispec.Platform{
-				OS:           m.Platform.OS,
-				Architecture: m.Platform.Architecture,
-			})
+
+			patchPlatform := types.PatchPlatform{
+				Platform: ispec.Platform{
+					OS:           m.Platform.OS,
+					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
+				},
+			}
+			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+				// some scanners may not add v8 to arm64 reports, so we
+				// need to remove it here to maintain consistency
+				patchPlatform.Variant = ""
+			}
+			platforms = append(platforms, patchPlatform)
 		}
 		return platforms, nil
 	}
 
-	// return nil if not multi-arch, and handle as normal
+	// return nil if not multi-platform, and handle as normal
 	return nil, nil
 }
 
-func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]ispec.Platform, error) {
-	var platforms []ispec.Platform
+func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
+	var platforms []types.PatchPlatform
 
 	p, err := DiscoverPlatformsFromReference(manifestRef)
 	if err != nil {
 		return nil, err
 	}
 	if p == nil {
-		return nil, errors.New("image is not multi arch")
+		return nil, errors.New("image is not multi platform")
 	}
-	log.Debug("Discovered platforms from manifest:", p)
+	log.WithField("platforms", p).Debug("Discovered platforms from manifest")
 
 	if reportDir != "" {
 		p2, err := DiscoverPlatformsFromReport(reportDir, scanner)
 		if err != nil {
 			return nil, err
 		}
-		log.Debug("Discovered platforms from report:", p2)
+		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
 		// if platform is present in list from reference and report, then we should patch that platform
 		key := func(pl ispec.Platform) string {
-			return pl.OS + "/" + pl.Architecture
+			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
 		}
 
-		reportSet := make(map[string]struct{}, len(p2))
+		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl)] = struct{}{}
+			reportSet[key(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
-			if _, ok := reportSet[key(pl)]; ok {
+			if rp, ok := reportSet[key(pl.Platform)]; ok {
+				pl.ReportFile = rp
 				platforms = append(platforms, pl)
 			}
 		}
@@ -333,4 +372,118 @@ func WithFileString(s *llb.State, path, contents string) llb.State {
 
 func WithFileBytes(s *llb.State, path string, contents []byte) llb.State {
 	return s.File(llb.Mkfile(path, 0o600, contents))
+}
+
+func QemuAvailable(p *types.PatchPlatform) bool {
+	if p == nil {
+		return false
+	}
+
+	// check if were on macos or windows
+	switch runtime.GOOS {
+	case "darwin":
+		// on macos, we cant directly check binfmt_misc on the host
+		// we assume docker desktop handles emulation
+		log.Warn("Running on macOS, assuming Docker Desktop handles emulation.")
+		return true
+	case "windows":
+		log.Warn("Running on Windows, assuming Docker Desktop handles emulation.")
+		return true
+	}
+
+	archKey := mapGoArch(p.Architecture, p.Variant)
+
+	// walk binfmt_misc entries
+	entries, err := readDir("/proc/sys/fs/binfmt_misc")
+	if err != nil {
+		return false
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "register" || e.Name() == "status" {
+			continue
+		}
+		data, _ := readFile("/proc/sys/fs/binfmt_misc/" + e.Name())
+		if bytes.Contains(data, []byte("interpreter")) &&
+			bytes.Contains(data, []byte("qemu-"+archKey)) {
+			return true
+		}
+	}
+	// fallback to interpreter binary on PATH (for rootless case)
+	if _, err := lookPath("qemu-" + archKey + "-static"); err == nil {
+		return true
+	}
+	return false
+}
+
+func mapGoArch(arch, variant string) string {
+	switch arch {
+	case "amd64", "amd64p32":
+		return "x86_64"
+
+	case "386":
+		return "i386"
+
+	case "arm64", "arm64be":
+		return "aarch64"
+
+	case "arm":
+		// GOARM=5/6/7 -> qemu-arm
+		// big-endian -> qemu-armeb
+		if strings.HasSuffix(variant, "eb") || strings.HasSuffix(arch, "be") {
+			return "armeb"
+		}
+		return "arm"
+
+	case "mips":
+		if strings.HasSuffix(arch, "le") {
+			return "mipsel"
+		}
+		return "mips"
+
+	case "mips64":
+		if strings.HasSuffix(variant, "n32") {
+			return "mipsn32"
+		}
+		if strings.HasSuffix(arch, "le") {
+			return "mips64el"
+		}
+		return "mips64"
+
+	case "mips64le":
+		if strings.HasSuffix(variant, "n32") {
+			return "mipsn32el"
+		}
+		return "mips64el"
+
+	case "ppc64":
+		if strings.HasSuffix(variant, "le") {
+			return "ppc64le"
+		}
+		return "ppc64"
+
+	case "loong64":
+		return "loongarch64"
+
+	case "sh4":
+		if strings.HasSuffix(variant, "eb") {
+			return "sh4eb"
+		}
+		return "sh4"
+
+	case "xtensa":
+		if strings.HasSuffix(variant, "eb") {
+			return "xtensaeb"
+		}
+		return "xtensa"
+
+	case "microblaze":
+		if strings.HasSuffix(variant, "el") {
+			return "microblazeel"
+		}
+		return "microblaze"
+	}
+
+	// fallback: hope QEMU name == GOARCH
+	return arch
 }
