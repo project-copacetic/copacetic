@@ -209,6 +209,16 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	return nil, nil
 }
 
+//nolint:gocritic
+func PlatformKey(pl ispec.Platform) string {
+	// if platform is present in list from reference and report, then we should patch that platform
+	key := pl.OS + "/" + pl.Architecture
+	if pl.Variant != "" {
+		key += "/" + pl.Variant
+	}
+	return key
+}
+
 func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
@@ -228,18 +238,13 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		}
 		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
-		// if platform is present in list from reference and report, then we should patch that platform
-		key := func(pl ispec.Platform) string {
-			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
-		}
-
 		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl.Platform)] = pl.ReportFile
+			reportSet[PlatformKey(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
-			if rp, ok := reportSet[key(pl.Platform)]; ok {
+			if rp, ok := reportSet[PlatformKey(pl.Platform)]; ok {
 				pl.ReportFile = rp
 				platforms = append(platforms, pl)
 			}
