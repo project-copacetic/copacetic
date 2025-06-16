@@ -14,8 +14,7 @@ on:
       - '.github/workflows/deploy-docs.yaml'
       - 'website/**'
 
-permissions:
-  contents: read
+permissions: read-all
 
 jobs:
   deploy:
