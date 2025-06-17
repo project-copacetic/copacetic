@@ -534,7 +534,7 @@ func TestArchTag(t *testing.T) {
 	cases := []struct {
 		base, arch, variant, want string
 	}{
-		{"patched", "arm64", "", "patched-arm64"},
+		{"patched", ARM64, "", "patched-arm64"},
 		{"patched", "arm", "v7", "patched-arm-v7"},
 		{"patched", "mips64", "n32", "patched-mips64-n32"},
 	}
@@ -552,7 +552,7 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 
 	plat := &types.PatchPlatform{}
 	plat.OS = LINUX
-	plat.Architecture = "arm64"
+	plat.Architecture = ARM64
 	plat.Variant = "v8"
 
 	fixed, err := normalizeConfigForPlatform(orig, plat)
@@ -565,7 +565,7 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if m["architecture"] != "arm64" || m["os"] != LINUX || m["variant"] != "v8" {
+	if m["architecture"] != ARM64 || m["os"] != LINUX || m["variant"] != "v8" {
 		t.Fatalf("fields not normalised correctly: %#v", m)
 	}
 
@@ -589,7 +589,7 @@ func TestMultiArchSummaryTable(t *testing.T) {
 		Variant      string
 	}{
 		{"linux", "amd64", ""},
-		{"linux", "arm64", ""},
+		{"linux", ARM64, ""},
 		{"linux", "arm", "v7"},
 	}
 

@@ -54,6 +54,7 @@ const (
 	defaultRegistry = "docker.io"
 	defaultTag      = "latest"
 	LINUX           = "linux"
+	ARM64           = "arm64"
 )
 
 // for testing.
@@ -792,7 +793,7 @@ func patchMultiPlatformImage(
 				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
 
 				// Get the original platform descriptor from the manifest
-				originalDesc, err := getPlatformDescriptorFromManifest(image, p)
+				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
 				if err != nil {
 					return fmt.Errorf("failed to get original descriptor for platform %s: %w", p.OS+"/"+p.Architecture, err)
 				}
@@ -922,8 +923,8 @@ func patchMultiPlatformImage(
 	return nil
 }
 
-// Gets the descriptor for a specific platform from a multi-arch manifest
-func getPlatformDescriptorFromManifest(imageRef string, targetPlatform types.PatchPlatform) (*ispec.Descriptor, error) {
+// Gets the descriptor for a specific platform from a multi-arch manifest.
+func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.PatchPlatform) (*ispec.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
@@ -949,7 +950,8 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform types.Pat
 	}
 
 	// Find the descriptor for the target platform
-	for _, m := range manifest.Manifests {
+	for i := range manifest.Manifests {
+		m := &manifest.Manifests[i]
 		if m.Platform == nil {
 			continue
 		}
@@ -967,7 +969,6 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform types.Pat
 		if m.Platform.OS == targetPlatform.OS &&
 			m.Platform.Architecture == targetPlatform.Architecture &&
 			manifestVariant == targetVariant {
-
 			// Convert the descriptor to the expected format
 			ociDesc := &ispec.Descriptor{
 				MediaType: string(m.MediaType),
