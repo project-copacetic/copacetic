@@ -23,6 +23,8 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/docker/buildx/util/imagetools"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -30,6 +32,8 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
+	"github.com/opencontainers/go-digest"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
@@ -805,6 +809,36 @@ func patchMultiArchImage(
 			}
 			defer func() { <-sem }()
 
+			if p.ReportFile == "" {
+				// No report for this platform - preserve original
+				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
+
+				// Get the original platform descriptor from the manifest
+				originalDesc, err := getPlatformDescriptorFromManifest(image, p)
+				if err != nil {
+					return fmt.Errorf("failed to get original descriptor for platform %s: %w", p.OS+"/"+p.Architecture, err)
+				}
+
+				// Parse the original image reference for the result
+				originalRef, err := reference.ParseNormalizedNamed(image)
+				if err != nil {
+					return fmt.Errorf("failed to parse original image reference: %w", err)
+				}
+
+				// For platforms without reports, use the original image digest/reference
+				result := types.PatchResult{
+					OriginalRef: originalRef,
+					PatchedRef:  originalRef,
+					PatchedDesc: originalDesc,
+				}
+
+				mu.Lock()
+				patchResults = append(patchResults, result)
+				mu.Unlock()
+				log.Infof("Preserved original image (%s): %s\n", p.OS+"/"+p.Architecture, originalRef.String())
+				return nil
+			}
+
 			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
 			if err != nil {
 				return handlePlatformErr(p, err)
@@ -867,4 +901,70 @@ func patchMultiArchImage(
 	log.Infof("Multi-arch image patched with tag %s", patchedImageName.String())
 
 	return nil
+}
+
+// Gets the descriptor for a specific platform from a multi-arch manifest
+func getPlatformDescriptorFromManifest(imageRef string, targetPlatform types.PatchPlatform) (*ispec.Descriptor, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
+	}
+
+	desc, err := remote.Get(ref)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching descriptor for %q: %w", imageRef, err)
+	}
+
+	if !desc.MediaType.IsIndex() {
+		return nil, fmt.Errorf("expected multi-arch image but got single-arch image")
+	}
+
+	index, err := desc.ImageIndex()
+	if err != nil {
+		return nil, fmt.Errorf("error getting image index: %w", err)
+	}
+
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		return nil, fmt.Errorf("error getting manifest: %w", err)
+	}
+
+	// Find the descriptor for the target platform
+	for _, m := range manifest.Manifests {
+		if m.Platform == nil {
+			continue
+		}
+
+		// Normalize the variant comparison - treat missing variant as empty string
+		manifestVariant := m.Platform.Variant
+		targetVariant := targetPlatform.Variant
+		if m.Platform.Architecture == "arm64" && manifestVariant == "v8" {
+			manifestVariant = ""
+		}
+		if targetPlatform.Architecture == "arm64" && targetVariant == "v8" {
+			targetVariant = ""
+		}
+
+		if m.Platform.OS == targetPlatform.OS &&
+			m.Platform.Architecture == targetPlatform.Architecture &&
+			manifestVariant == targetVariant {
+
+			// Convert the descriptor to the expected format
+			ociDesc := &ispec.Descriptor{
+				MediaType: string(m.MediaType),
+				Size:      m.Size,
+				Digest:    digest.Digest(m.Digest.String()),
+				Platform: &ispec.Platform{
+					OS:           m.Platform.OS,
+					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
+					OSVersion:    m.Platform.OSVersion,
+					OSFeatures:   m.Platform.OSFeatures,
+				},
+			}
+			return ociDesc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
 }

@@ -228,7 +228,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		}
 		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
-		// if platform is present in list from reference and report, then we should patch that platform
+		// include all platforms from original manifest, patching only those with reports
 		key := func(pl ispec.Platform) string {
 			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
 		}
@@ -240,7 +240,13 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 
 		for _, pl := range p {
 			if rp, ok := reportSet[key(pl.Platform)]; ok {
+				// Platform has a report - will be patched
 				pl.ReportFile = rp
+				platforms = append(platforms, pl)
+			} else {
+				// Platform has no report - preserve original without patching
+				log.Debugf("No report found for platform %s, preserving original", key(pl.Platform))
+				pl.ReportFile = ""
 				platforms = append(platforms, pl)
 			}
 		}
