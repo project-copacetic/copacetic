@@ -205,8 +205,18 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return platforms, nil
 	}
 
-	// return nil if not multi-arch, and handle as normal
+	// return nil if not multi-platform, and handle as normal
 	return nil, nil
+}
+
+//nolint:gocritic
+func PlatformKey(pl ispec.Platform) string {
+	// if platform is present in list from reference and report, then we should patch that platform
+	key := pl.OS + "/" + pl.Architecture
+	if pl.Variant != "" {
+		key += "/" + pl.Variant
+	}
+	return key
 }
 
 func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
@@ -217,7 +227,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		return nil, err
 	}
 	if p == nil {
-		return nil, errors.New("image is not multi arch")
+		return nil, errors.New("image is not multi platform")
 	}
 	log.WithField("platforms", p).Debug("Discovered platforms from manifest")
 
@@ -235,7 +245,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 
 		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl.Platform)] = pl.ReportFile
+			reportSet[PlatformKey(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
