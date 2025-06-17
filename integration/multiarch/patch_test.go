@@ -204,7 +204,7 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	require.Equal(t, 3, windowsCount, "should contain 3 windows/amd64 variants with different OS versions")
 }
 
-// getManifestPlatforms extracts platform information from a manifest
+// getManifestPlatforms extracts platform information from a manifest.
 func getManifestPlatforms(t *testing.T, imageRef string) []Platform {
 	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
 	output, err := cmd.CombinedOutput()
@@ -227,7 +227,7 @@ func getManifestPlatforms(t *testing.T, imageRef string) []Platform {
 	return platforms
 }
 
-// Platform represents a platform in a manifest
+// Platform represents a platform in a manifest.
 type Platform struct {
 	OS           string `json:"os"`
 	Architecture string `json:"architecture"`
