@@ -206,6 +206,13 @@ func TestPatchPartialArchitectures(t *testing.T) {
 
 // getManifestPlatforms extracts platform information from a manifest.
 func getManifestPlatforms(t *testing.T, imageRef string) []Platform {
+	// For localhost registry, use registry API since docker manifest inspect
+	// doesn't work well with local insecure registries
+	if strings.HasPrefix(imageRef, "localhost:5000/") {
+		return getManifestPlatformsFromRegistry(t, imageRef)
+	}
+
+	// For external registries, use docker manifest inspect
 	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to inspect manifest: %s", string(output))
@@ -218,6 +225,42 @@ func getManifestPlatforms(t *testing.T, imageRef string) []Platform {
 
 	err = json.Unmarshal(output, &manifest)
 	require.NoError(t, err, "failed to parse manifest JSON")
+
+	platforms := make([]Platform, len(manifest.Manifests))
+	for i, m := range manifest.Manifests {
+		platforms[i] = m.Platform
+	}
+
+	return platforms
+}
+
+// getManifestPlatformsFromRegistry gets platform info directly from registry API
+func getManifestPlatformsFromRegistry(t *testing.T, imageRef string) []Platform {
+	// Parse image reference: localhost:5000/repo:tag
+	parts := strings.SplitN(imageRef, "/", 2)
+	require.Len(t, parts, 2, "invalid image reference format")
+
+	repoParts := strings.SplitN(parts[1], ":", 2)
+	repo := repoParts[0]
+	tag := "latest"
+	if len(repoParts) == 2 {
+		tag = repoParts[1]
+	}
+
+	// Get manifest from registry
+	url := fmt.Sprintf("http://localhost:5000/v2/%s/manifests/%s", repo, tag)
+	cmd := exec.Command("curl", "-s", "-H", "Accept: application/vnd.docker.distribution.manifest.list.v2+json", url)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to get manifest from registry: %s", string(output))
+
+	var manifest struct {
+		Manifests []struct {
+			Platform Platform `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	err = json.Unmarshal(output, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON: %s", string(output))
 
 	platforms := make([]Platform, len(manifest.Manifests))
 	for i, m := range manifest.Manifests {
