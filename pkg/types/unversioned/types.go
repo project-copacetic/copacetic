@@ -1,8 +1,9 @@
 package unversioned
 
 type UpdateManifest struct {
-	Metadata Metadata       `json:"metadata"`
-	Updates  UpdatePackages `json:"updates"`
+	Metadata    Metadata       `json:"metadata"`
+	Updates     UpdatePackages `json:"updates"`
+	NodeUpdates UpdatePackages `json:"nodeUpdates,omitempty"`
 }
 
 type UpdatePackages []UpdatePackage

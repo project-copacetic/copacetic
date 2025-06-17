@@ -1,0 +1,1 @@
+console.log("Test Node.js app with vulnerable dependencies");

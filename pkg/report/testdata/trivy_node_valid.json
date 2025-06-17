@@ -1,0 +1,51 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "node:18-alpine",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "OS": {
+      "Family": "alpine",
+      "Name": "3.16.0"
+    },
+    "ImageConfig": {
+      "architecture": "amd64"
+    }
+  },
+  "Results": [
+    {
+      "Target": "node:18-alpine (alpine 3.16.0)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2022-3509",
+          "PkgID": "protobuf-c@1.3.3-r1",
+          "PkgName": "protobuf-c",
+          "InstalledVersion": "1.3.3-r1",
+          "FixedVersion": "1.3.3-r2"
+        }
+      ]
+    },
+    {
+      "Target": "app/package-lock.json",
+      "Class": "lang-pkgs",
+      "Type": "npm",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2021-3807",
+          "PkgName": "ansi-regex",
+          "InstalledVersion": "3.0.0",
+          "FixedVersion": "3.0.1",
+          "Severity": "HIGH"
+        },
+        {
+          "VulnerabilityID": "CVE-2022-0536",
+          "PkgName": "follow-redirects",
+          "InstalledVersion": "1.14.7",
+          "FixedVersion": "1.14.8",
+          "Severity": "MEDIUM"
+        }
+      ]
+    }
+  ]
+}

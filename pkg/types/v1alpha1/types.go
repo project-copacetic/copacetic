@@ -3,9 +3,10 @@ package v1alpha1
 const APIVersion string = "v1alpha1"
 
 type UpdateManifest struct {
-	APIVersion string         `json:"apiVersion"`
-	Metadata   Metadata       `json:"metadata"`
-	Updates    UpdatePackages `json:"updates"`
+	APIVersion  string         `json:"apiVersion"`
+	Metadata    Metadata       `json:"metadata"`
+	Updates     UpdatePackages `json:"updates"`
+	NodeUpdates UpdatePackages `json:"nodeUpdates,omitempty"`
 }
 
 type UpdatePackages []UpdatePackage
