@@ -184,15 +184,13 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		for i := range manifest.Manifests {
 			m := &manifest.Manifests[i]
 
-			if m.Platform.OS != linux {
-				continue
-			}
-
 			patchPlatform := types.PatchPlatform{
 				Platform: ispec.Platform{
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
 					Variant:      m.Platform.Variant,
+					OSVersion:    m.Platform.OSVersion,
+					OSFeatures:   m.Platform.OSFeatures,
 				},
 			}
 			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
@@ -215,6 +213,10 @@ func PlatformKey(pl ispec.Platform) string {
 	key := pl.OS + "/" + pl.Architecture
 	if pl.Variant != "" {
 		key += "/" + pl.Variant
+	}
+	// Include OS version for platforms like Windows that have multiple versions
+	if pl.OSVersion != "" {
+		key += "@" + pl.OSVersion
 	}
 	return key
 }

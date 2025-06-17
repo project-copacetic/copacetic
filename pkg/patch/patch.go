@@ -968,7 +968,8 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.Pa
 
 		if m.Platform.OS == targetPlatform.OS &&
 			m.Platform.Architecture == targetPlatform.Architecture &&
-			manifestVariant == targetVariant {
+			manifestVariant == targetVariant &&
+			m.Platform.OSVersion == targetPlatform.OSVersion {
 			// Convert the descriptor to the expected format
 			ociDesc := &ispec.Descriptor{
 				MediaType: string(m.MediaType),
