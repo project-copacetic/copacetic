@@ -126,6 +126,115 @@ func TestPatch(t *testing.T) {
 	}
 }
 
+// Tests patching only some architectures while preserving others.
+func TestPatchPartialArchitectures(t *testing.T) {
+	// Test image with multiple platforms including Windows
+	originalImage := "mcr.microsoft.com/oss/kubernetes-csi/secrets-store/driver"
+	tag := "v1.4.8"
+	localImage := "localhost:5000/secrets-store-test"
+
+	originalRef := fmt.Sprintf("%s:%s", originalImage, tag)
+	localRef := fmt.Sprintf("%s:%s", localImage, tag)
+
+	// Copy the original multi-arch image to local registry
+	copyImage(t, originalRef, localRef)
+
+	// Create a temporary directory for reports
+	reportDir := t.TempDir()
+
+	// Only scan amd64 platform
+	platformToScan := "linux/amd64"
+	suffix := strings.ReplaceAll(platformToScan, "/", "-")
+	reportPath := filepath.Join(reportDir, "report-"+suffix+".json")
+
+	t.Logf("scanning original image for platform %s only", platformToScan)
+	scanner().
+		withOutput(reportPath).
+		withSkipDBUpdate().
+		withPlatform(platformToScan).
+		scan(t, localRef, false)
+
+	// Patch the image
+	patchedTag := tag + "-partial-patched"
+	patchedRef := fmt.Sprintf("%s:%s", localImage, patchedTag)
+
+	t.Log("patching image with only linux/amd64 platform report")
+	patchMultiPlatform(t, localRef, patchedTag, reportDir, false, true)
+
+	// Verify the patched manifest still contains all original platforms
+	t.Log("verifying manifest contains all original platforms")
+
+	// Get original manifest platforms
+	originalPlatforms := getManifestPlatforms(t, originalRef)
+	t.Logf("original platforms: %v", originalPlatforms)
+
+	// Get patched manifest platforms
+	patchedPlatforms := getManifestPlatforms(t, patchedRef)
+	t.Logf("patched platforms: %v", patchedPlatforms)
+
+	// Verify all original platforms are preserved
+	require.Equal(t, len(originalPlatforms), len(patchedPlatforms),
+		"patched manifest should have same number of platforms as original")
+
+	// Check that we have the expected 5 platforms (2 Linux + 3 Windows)
+	require.Equal(t, 5, len(patchedPlatforms),
+		"manifest should contain 5 platforms (linux/amd64, linux/arm64, windows/amd64 variants)")
+
+	// Verify specific platforms exist
+	platformSet := make(map[string]bool)
+	for _, p := range patchedPlatforms {
+		key := p.OS + "/" + p.Architecture
+		if p.OSVersion != "" {
+			key += ":" + p.OSVersion
+		}
+		platformSet[key] = true
+	}
+
+	// Should have Linux platforms
+	require.True(t, platformSet["linux/amd64"], "should contain linux/amd64")
+	require.True(t, platformSet["linux/arm64"], "should contain linux/arm64")
+
+	// Should have Windows platforms with different OS versions
+	windowsCount := 0
+	for key := range platformSet {
+		if strings.HasPrefix(key, "windows/amd64:") {
+			windowsCount++
+		}
+	}
+	require.Equal(t, 3, windowsCount, "should contain 3 windows/amd64 variants with different OS versions")
+}
+
+// getManifestPlatforms extracts platform information from a manifest
+func getManifestPlatforms(t *testing.T, imageRef string) []Platform {
+	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to inspect manifest: %s", string(output))
+
+	var manifest struct {
+		Manifests []struct {
+			Platform Platform `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	err = json.Unmarshal(output, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON")
+
+	platforms := make([]Platform, len(manifest.Manifests))
+	for i, m := range manifest.Manifests {
+		platforms[i] = m.Platform
+	}
+
+	return platforms
+}
+
+// Platform represents a platform in a manifest
+type Platform struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	OSVersion    string `json:"os.version,omitempty"`
+	Variant      string `json:"variant,omitempty"`
+}
+
 type addrWrapper struct {
 	m       sync.Mutex
 	address *string
