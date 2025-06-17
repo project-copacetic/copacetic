@@ -234,7 +234,7 @@ func getManifestPlatforms(t *testing.T, imageRef string) []Platform {
 	return platforms
 }
 
-// getManifestPlatformsFromRegistry gets platform info directly from registry API
+// Gets platform info directly from registry API.
 func getManifestPlatformsFromRegistry(t *testing.T, imageRef string) []Platform {
 	// Parse image reference: localhost:5000/repo:tag
 	parts := strings.SplitN(imageRef, "/", 2)
