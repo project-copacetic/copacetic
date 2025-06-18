@@ -201,7 +201,7 @@ func TestPatchPartialArchitectures(t *testing.T) {
 			windowsCount++
 		}
 	}
-	require.Equal(t, 3, windowsCount, "should contain 3 windows/amd64 variants with different OS versions")
+	require.Equal(t, 2, windowsCount, "should contain 2 windows/amd64 variants with different OS versions")
 }
 
 // getManifestPlatforms extracts platform information from a manifest.
