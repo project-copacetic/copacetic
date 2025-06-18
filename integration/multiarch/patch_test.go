@@ -129,7 +129,7 @@ func TestPatch(t *testing.T) {
 // Tests patching only some architectures while preserving others.
 func TestPatchPartialArchitectures(t *testing.T) {
 	// Test image with multiple platforms including Windows
-	originalImage := "mcr.microsoft.com/oss/kubernetes-csi/secrets-store/driver"
+	originalImage := "registry.k8s.io/csi-secrets-store/driver"
 	tag := "v1.4.8"
 	localImage := "localhost:5000/secrets-store-test"
 
