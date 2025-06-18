@@ -19,17 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	//go:embed fixtures/test-images.json
-	testImages []byte
-)
-
-func init() {
-	// Initialize DockerDINDAddress from environment if available
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-		common.DockerDINDAddress.Set(strings.TrimPrefix(addr, "docker://"))
-	}
-}
+//go:embed fixtures/test-images.json
+var testImages []byte
 
 type testImage struct {
 	Image        string        `json:"image"`
@@ -52,18 +43,7 @@ func TestPatch(t *testing.T) {
 	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
 	require.NoError(t, err)
 
-	// Check if we're running with podman based on buildkit address
-	isPodmanTest := strings.Contains(os.Getenv("COPA_BUILDKIT_ADDR"), "podman-container://")
-	
 	for _, img := range images {
-		// Skip podman tests when not using podman, and vice versa
-		if img.PodmanTest && !isPodmanTest {
-			continue
-		}
-		if !img.PodmanTest && isPodmanTest {
-			continue
-		}
-		
 		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 		mediaType, err := utils.GetMediaType(imageRef)
 		require.NoError(t, err)
@@ -75,7 +55,7 @@ func TestPatch(t *testing.T) {
 		}
 
 		// download the trivy db before running the tests
-		common.DownloadDB(t)
+		common.DownloadDB(t, common.DockerDINDAddress.Env()...)
 
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
@@ -106,7 +86,7 @@ func TestPatch(t *testing.T) {
 					WithOutput(scanResults).
 					WithSkipDBUpdate().
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
-					Scan(t, ref, img.IgnoreErrors)
+					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
 
 			r, err := reference.ParseNormalizedNamed(ref)
@@ -137,7 +117,7 @@ func TestPatch(t *testing.T) {
 					WithSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					WithExitCode(1).
-					Scan(t, patchedRef, img.IgnoreErrors)
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			default:
 				t.Log("scanning patched image")
 				common.NewScanner().
@@ -145,7 +125,7 @@ func TestPatch(t *testing.T) {
 					WithSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					WithExitCode(1).
-					Scan(t, patchedRef, img.IgnoreErrors)
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
 
 			// currently validation is only present when patching with a scan report
@@ -164,7 +144,6 @@ func dockerPull(t *testing.T, ref string) {
 func dockerTag(t *testing.T, ref, newRef string) {
 	dockerCmd(t, `tag`, ref, newRef)
 }
-
 
 func dockerCmd(t *testing.T, args ...string) {
 	var err error
@@ -224,4 +203,3 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		require.NoError(t, err, string(out))
 	}
 }
-

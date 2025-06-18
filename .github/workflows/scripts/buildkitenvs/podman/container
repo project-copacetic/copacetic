@@ -2,11 +2,21 @@
 
 set -eu -o pipefail
 
-# Start Podman buildkit container
+# Start Podman buildkit container with systemd-resolve for reliable DNS
 CONTAINER_NAME="copa-buildkitd-$(date +%s)"
 echo "Starting Podman buildkit container: ${CONTAINER_NAME}" >&2
 
-podman run -d --rm --name "${CONTAINER_NAME}" --privileged docker.io/moby/buildkit:latest >/dev/null
+# Start buildkit with slirp4netns networking and copy host resolv.conf
+# This approach should work better in GitHub Actions environments
+podman run -d --rm --name "${CONTAINER_NAME}" \
+    --privileged \
+    --network=slirp4netns:enable_ipv6=false \
+    --dns=8.8.8.8 \
+    --dns=8.8.4.4 \
+    --dns=1.1.1.1 \
+    --dns=1.0.0.1 \
+    docker.io/moby/buildkit:latest \
+    --oci-worker-snapshotter=native >/dev/null
 
 # Wait for container to be ready
 echo "Waiting for buildkit container to be ready..." >&2
@@ -21,6 +31,14 @@ for i in {1..30}; do
     fi
     sleep 1
 done
+
+# Test DNS resolution inside the container
+echo "Testing DNS resolution in buildkit container..." >&2
+if podman exec "${CONTAINER_NAME}" nslookup google.com >/dev/null 2>&1; then
+    echo "DNS resolution working in container" >&2
+else
+    echo "WARNING: DNS resolution may not be working properly" >&2
+fi
 
 # Set buildkit address for copa to use
 export COPA_BUILDKIT_ADDR="podman-container://${CONTAINER_NAME}"

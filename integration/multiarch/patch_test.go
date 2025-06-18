@@ -16,17 +16,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	//go:embed fixtures/test-images.json
-	testImages []byte
-)
-
-func init() {
-	// Initialize DockerDINDAddress from environment if available
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-		common.DockerDINDAddress.Set(strings.TrimPrefix(addr, "docker://"))
-	}
-}
+//go:embed fixtures/test-images.json
+var testImages []byte
 
 type testImage struct {
 	OriginalImage string   `json:"originalImage"`
@@ -50,7 +41,7 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// download the trivy db before running the tests
-	common.DownloadDB(t)
+	common.DownloadDB(t, common.DockerDINDAddress.Env()...)
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
@@ -80,7 +71,7 @@ func TestPatch(t *testing.T) {
 						WithSkipDBUpdate().
 						WithPlatform(platformStr).
 						// Do not set a non-zero exit code because we are expecting vulnerabilities.
-						Scan(t, ref, img.IgnoreErrors)
+						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 				}()
 			}
 			wg.Wait()
@@ -122,14 +113,13 @@ func TestPatch(t *testing.T) {
 						WithPlatform(platformStr).
 						// here we want a non-zero exit code because we are expecting no vulnerabilities.
 						WithExitCode(1).
-						Scan(t, patchedArchRef, img.IgnoreErrors)
+						Scan(t, patchedArchRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 				}()
 			}
 			wg.Wait()
 		})
 	}
 }
-
 
 func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
 	var addrFl string
@@ -169,7 +159,6 @@ func patchMultiArch(t *testing.T, ref, patchedTag, reportDir string, ignoreError
 		t.Fatalf("command failed: %v", err)
 	}
 }
-
 
 // helper to copy an image using oras.
 func copyImage(t *testing.T, src, dst string) {
