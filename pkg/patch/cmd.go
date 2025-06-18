@@ -16,21 +16,19 @@ import (
 )
 
 type patchArgs struct {
-	appImage               string
-	reportFile             string
-	reportDirectory        string
-	patchedTag             string
-	suffix                 string
-	workingFolder          string
-	timeout                time.Duration
-	scanner                string
-	ignoreError            bool
-	format                 string
-	output                 string
-	bkOpts                 buildkit.Opts
-	platformSpecificErrors string
-	push                   bool
-	loader                 string
+	appImage      string
+	reportFile    string
+	patchedTag    string
+	suffix        string
+	workingFolder string
+	timeout       time.Duration
+	scanner       string
+	ignoreError   bool
+	format        string
+	output        string
+	bkOpts        buildkit.Opts
+	push          bool
+	loader        string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -50,8 +48,6 @@ func NewPatchCmd() *cobra.Command {
 				ua.timeout,
 				ua.appImage,
 				ua.reportFile,
-				ua.reportDirectory,
-				ua.platformSpecificErrors,
 				ua.patchedTag,
 				ua.suffix,
 				ua.workingFolder,
@@ -66,7 +62,7 @@ func NewPatchCmd() *cobra.Command {
 	}
 	flags := patchCmd.Flags()
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
-	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file path")
+	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
@@ -76,11 +72,9 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.bkOpts.KeyPath, "key", "", "", "Absolute path to buildkit client key")
 	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
 	flags.StringVarP(&ua.scanner, "scanner", "s", "trivy", "Scanner used to generate the report, defaults to 'trivy'")
-	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching")
+	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching (for single-arch: continue with other packages; for multi-platform: continue with other platforms)")
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
-	flags.StringVarP(&ua.reportDirectory, "report-directory", "d", "", "Directory with multi-arch report files")
-	flags.StringVarP(&ua.platformSpecificErrors, "platform-specific-errors", "", "skip", "Behavior for error in patching any of sub-images for multi-arch patching: 'skip', 'warn', or 'fail'")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 

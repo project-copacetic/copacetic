@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/containerd/platforms"
@@ -85,10 +86,10 @@ func archTag(base, arch, variant string) string {
 	return fmt.Sprintf("%s-%s", base, arch)
 }
 
-// createMultiArchManifest assembles a multi-arch manifest list and pushes it
+// createMultiPlatformManifest assembles a multi-platform manifest list and pushes it
 // via Buildx's imagetools helper (equivalent to
 // `docker buildx imagetools create --tag … img@sha256:d1 img@sha256:d2 …`).
-func createMultiArchManifest(
+func createMultiPlatformManifest(
 	ctx context.Context,
 	imageName reference.NamedTagged,
 	items []types.PatchResult,
@@ -116,7 +117,7 @@ func createMultiArchManifest(
 
 	err = resolver.Push(ctx, imageName, desc, idxBytes)
 	if err != nil {
-		return fmt.Errorf("failed to push multi-arch manifest list: %w", err)
+		return fmt.Errorf("failed to push multi-platform manifest list: %w", err)
 	}
 
 	return nil
@@ -146,7 +147,7 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
@@ -155,7 +156,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts)
 	}()
 
 	select {
@@ -183,68 +184,54 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, reportDirectory, platformSpecificErrors, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
-	if reportFile != "" && reportDirectory != "" {
-		return fmt.Errorf("both report file and directory provided, please provide only one")
-	}
-
-	// try report file
-	if reportFile != "" {
-		// check if reportFile exists
-		if _, err := os.Stat(reportFile); os.IsNotExist(err) {
-			return fmt.Errorf("report file %s does not exist", reportFile)
-		}
-		// check if reportFile is a file
-		f, err := os.Stat(reportFile)
-		if err != nil {
-			// handle common errors
-			if os.IsNotExist(err) {
-				return fmt.Errorf("report file %s does not exist", reportFile)
-			}
-			return fmt.Errorf("failed to stat report file %s: %w", reportFile, err)
-		}
-		if f.IsDir() {
-			return fmt.Errorf("report file %s is a directory, please provide a file", reportFile)
-		}
-		log.Debugf("Using report file: %s", reportFile)
+	// Handle empty report path - single-arch patching without report
+	if reportPath == "" {
 		platform := types.PatchPlatform{
 			Platform: platforms.Normalize(platforms.DefaultSpec()),
 		}
 		if platform.OS != LINUX {
 			platform.OS = LINUX
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
-		if err == nil && result != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
-		}
-		return err
-	} else if reportDirectory == "" && reportFile == "" {
-		platform := types.PatchPlatform{
-			Platform: platforms.Normalize(platforms.DefaultSpec()),
-		}
-		if platform.OS != LINUX {
-			platform.OS = LINUX
-		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+		result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 		if err == nil && result != nil && result.PatchedRef != nil {
 			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 		}
 		return err
 	}
 
-	// must be dealing with a multi-arch image, check the directory
-	f, err := os.Stat(reportDirectory)
-	if err != nil {
-		return err
-	}
-	if !f.IsDir() {
-		return fmt.Errorf("provided report directory path %s is not a directory", reportDirectory)
+	// Check if reportPath exists
+	if _, err := os.Stat(reportPath); os.IsNotExist(err) {
+		return fmt.Errorf("report path %s does not exist", reportPath)
 	}
 
-	return patchMultiArchImage(ctx, ch, platformSpecificErrors, image, reportDirectory, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts)
+	// Get file info to determine if it's a file or directory
+	f, err := os.Stat(reportPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat report path %s: %w", reportPath, err)
+	}
+
+	if f.IsDir() {
+		// Handle directory - multi-platform patching
+		log.Debugf("Using report directory: %s", reportPath)
+		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts)
+	}
+	// Handle file - single-arch patching
+	log.Debugf("Using report file: %s", reportPath)
+	platform := types.PatchPlatform{
+		Platform: platforms.Normalize(platforms.DefaultSpec()),
+	}
+	if platform.OS != LINUX {
+		platform.OS = LINUX
+	}
+	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+	if err == nil && result != nil {
+		log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
+	}
+	return err
 }
 
 func patchSingleArchImage(
@@ -255,15 +242,15 @@ func patchSingleArchImage(
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
-	multiArch bool,
+	multiPlatform bool,
 ) (*types.PatchResult, error) {
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
 
 	// if the target platform is different from the host platform, we need to check if emulation is enabled
-	// only need to do this check if were patching a multi-arch image
-	if multiArch {
+	// only need to do this check if were patching a multi-platform image
+	if multiPlatform {
 		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
 		if hostPlatform.OS != LINUX {
 			hostPlatform.OS = LINUX
@@ -294,7 +281,7 @@ func patchSingleArchImage(
 	if err != nil {
 		return nil, err
 	}
-	if multiArch {
+	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
@@ -721,14 +708,14 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	return nameWithDigest
 }
 
-func patchMultiArchImage(
+func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
-	platformSpecificErrors, image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
+	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 ) error {
-	log.Debugf("Handling platform specific errors with %s", platformSpecificErrors)
+	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
 	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
 	if err != nil {
 		return err
@@ -743,21 +730,12 @@ func patchMultiArchImage(
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
 
-	handlePlatformErr := func(p types.PatchPlatform, err error) error {
-		switch platformSpecificErrors {
-		case "ignore":
-			return nil
-		case "skip":
-			log.Warnf("Ignoring error for platform %s: %v", p.OS+"/"+p.Architecture, err)
-			return nil
-		default:
-			return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
-		}
-	}
+	summaryMap := make(map[string]*types.MultiArchSummary)
 
 	for _, p := range platforms {
 		// rebind
 		p := p //nolint
+		platformKey := buildkit.PlatformKey(p.Platform)
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -767,15 +745,40 @@ func patchMultiArchImage(
 			defer func() { <-sem }()
 
 			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, p, ignoreError, push, bkOpts, true)
+			mu.Lock()
+			defer mu.Unlock()
 			if err != nil {
-				return handlePlatformErr(p, err)
+				status := "Error"
+				if ignoreError {
+					status = "Ignored"
+				}
+				summaryMap[platformKey] = &types.MultiArchSummary{
+					Platform: platformKey,
+					Status:   status,
+					Ref:      "",
+					Error:    err.Error(),
+				}
+				if !ignoreError {
+					return err
+				}
+				return nil
 			} else if res == nil {
-				return fmt.Errorf("patchSingleArchImage returned nil result for platform %s", p.OS+"/"+p.Architecture)
+				summaryMap[platformKey] = &types.MultiArchSummary{
+					Platform: platformKey,
+					Status:   "Error",
+					Ref:      "",
+					Error:    "patchSingleArchImage returned nil result",
+				}
+				return nil
 			}
 
-			mu.Lock()
 			patchResults = append(patchResults, *res)
-			mu.Unlock()
+			summaryMap[platformKey] = &types.MultiArchSummary{
+				Platform: platformKey,
+				Status:   "Patched",
+				Ref:      res.PatchedRef.String(),
+				Error:    "",
+			}
 			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
 			return nil
 		})
@@ -801,7 +804,7 @@ func patchMultiArchImage(
 	}
 
 	if push {
-		err = createMultiArchManifest(ctx, patchedImageName, patchResults)
+		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults)
 		if err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
@@ -813,7 +816,7 @@ func patchMultiArchImage(
 			for _, result := range patchResults {
 				log.Infof("  docker push %s", result.PatchedRef.String())
 			}
-			log.Infof("To create and push the multi-arch manifest, run:")
+			log.Infof("To create and push the multi-platform manifest, run:")
 			refs := make([]string, len(patchResults))
 			for i, result := range patchResults {
 				refs[i] = result.PatchedRef.String()
@@ -825,7 +828,23 @@ func patchMultiArchImage(
 		}
 	}
 
-	log.Infof("Multi-arch image patched with tag %s", patchedImageName.String())
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tERROR")
+
+	for _, p := range platforms {
+		platformKey := buildkit.PlatformKey(p.Platform)
+		s := summaryMap[platformKey]
+		if s != nil {
+			ref := s.Ref
+			if ref == "" {
+				ref = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Platform, s.Status, ref, s.Error)
+		}
+	}
+	w.Flush()
+	log.Info("\nMulti-arch patch summary:\n" + b.String())
 
 	return nil
 }

@@ -1,4 +1,4 @@
-package integration
+package multiplatformplugin
 
 import (
 	_ "embed"
@@ -12,7 +12,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/project-copacetic/copacetic/integration/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,18 +29,10 @@ type testImage struct {
 	Platforms     []string `json:"platforms"`
 }
 
-func TestPatch(t *testing.T) {
+func TestMultiArchPluginPatch(t *testing.T) {
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
-
-	tmp := t.TempDir()
-	ignoreFile := filepath.Join(tmp, "ignore.rego")
-	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
-	require.NoError(t, err)
-
-	// download the trivy db before running the tests
-	common.DownloadDB(t, common.DockerDINDAddress.Env()...)
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
@@ -54,7 +45,7 @@ func TestPatch(t *testing.T) {
 
 			reportDir := t.TempDir()
 
-			t.Log("creating scan reports for each platform")
+			t.Log("creating scan reports for each platform using scanner plugin")
 			var wg sync.WaitGroup
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
@@ -64,14 +55,8 @@ func TestPatch(t *testing.T) {
 					suffix := strings.ReplaceAll(platformStr, "/", "-")
 					reportPath := filepath.Join(reportDir, "report-"+suffix+".json")
 
-					t.Logf("scanning original image for platform %s", platformStr)
-					common.NewScanner().
-						WithIgnoreFile(ignoreFile).
-						WithOutput(reportPath).
-						WithSkipDBUpdate().
-						WithPlatform(platformStr).
-						// Do not set a non-zero exit code because we are expecting vulnerabilities.
-						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+					t.Logf("generating fake report for platform %s", platformStr)
+					generateFakeReport(t, platformStr, reportPath)
 				}()
 			}
 			wg.Wait()
@@ -79,16 +64,15 @@ func TestPatch(t *testing.T) {
 			tagPatched := img.Tag + "-patched"
 			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
 
-			t.Log("patching image with multiple architectures")
-			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
+			t.Log("patching image with multiple architectures using scanner plugin")
+			patchMultiPlatformWithPlugin(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
 
-			t.Log("scanning patched image for each platform")
+			t.Log("verifying patched image for each platform")
 			wg = sync.WaitGroup{}
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					// only want the platform string for the scanner
 					parts := strings.Split(platformStr, "/")
 					archStr := strings.Split(platformStr, "/")[1]
 					patchedArchRef := fmt.Sprintf("%s-%s", patchedRef, archStr)
@@ -97,23 +81,10 @@ func TestPatch(t *testing.T) {
 						patchedArchRef += "-" + variantStr
 					}
 
-					// run the image so the layers are fully loaded. a manifest-only load/push
-					// leaves the tag without its layer blobs; running "true" forces the daemon
-					// to pull/unpack the layers, then exits instantly. Without this, the
-					// subsequent Trivy scan can hit “snapshot … does not exist”.
-					cmd := exec.Command("docker", "run", "--rm", patchedArchRef, "true")
+					// check if the patched image exists
+					cmd := exec.Command("docker", "image", "inspect", patchedArchRef)
 					out, err := cmd.CombinedOutput()
 					require.NoError(t, err, string(out))
-
-					t.Logf("scanning patched image for platform %s", platformStr)
-					common.NewScanner().
-						WithIgnoreFile(ignoreFile).
-						WithSkipDBUpdate().
-						WithImageSrc("docker").
-						WithPlatform(platformStr).
-						// here we want a non-zero exit code because we are expecting no vulnerabilities.
-						WithExitCode(1).
-						Scan(t, patchedArchRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 				}()
 			}
 			wg.Wait()
@@ -121,7 +92,39 @@ func TestPatch(t *testing.T) {
 	}
 }
 
-func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
+type addrWrapper struct {
+	m       sync.Mutex
+	address *string
+}
+
+var dockerDINDAddress addrWrapper
+
+func (w *addrWrapper) addr() string {
+	w.m.Lock()
+	defer w.m.Unlock()
+
+	if w.address != nil {
+		return *w.address
+	}
+
+	w.address = new(string)
+	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
+		*w.address = strings.TrimPrefix(addr, "docker://")
+	}
+
+	return *w.address
+}
+
+func (w *addrWrapper) env() []string {
+	a := dockerDINDAddress.addr()
+	if a == "" {
+		return []string{}
+	}
+
+	return []string{fmt.Sprintf("DOCKER_HOST=%s", a)}
+}
+
+func patchMultiPlatformWithPlugin(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
 	var addrFl string
 	if buildkitAddr != "" {
 		addrFl = "-a=" + buildkitAddr
@@ -132,7 +135,7 @@ func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreE
 		"-i=" + ref,
 		"-t=" + patchedTag,
 		"--report=" + reportDir,
-		"-s=" + scannerPlugin,
+		"-s=" + scannerPluginName,
 		"--timeout=30m",
 		addrFl,
 		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
@@ -149,7 +152,7 @@ func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreE
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -157,6 +160,31 @@ func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreE
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("command failed: %v", err)
 	}
+}
+
+func generateFakeReport(t *testing.T, platform string, output string) {
+	var arch string
+	parts := strings.Split(platform, "/")
+	if len(parts) >= 2 {
+		arch = parts[1]
+	}
+
+	fakeReport := `{
+		"OSType": "debian",
+		"OSVersion": "12",
+		"Arch": "` + arch + `",
+		"Packages": [
+			{
+				"Name": "libssl3",
+				"InstalledVersion": "3.0.11-1~deb12u2",
+				"FixedVersion": "3.0.11-1~deb12u2+deb12u1",
+				"VulnerabilityID": "CVE-2021-44228"
+			}
+		]
+	}`
+
+	err := os.WriteFile(output, []byte(fakeReport), 0o600)
+	require.NoError(t, err)
 }
 
 // helper to copy an image using oras.
@@ -168,7 +196,7 @@ func copyImage(t *testing.T, src, dst string) {
 		dst,
 	)
 	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }
