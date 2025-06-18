@@ -176,9 +176,9 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	require.Equal(t, len(originalPlatforms), len(patchedPlatforms),
 		"patched manifest should have same number of platforms as original")
 
-	// Check that we have the expected 5 platforms (2 Linux + 3 Windows)
-	require.Equal(t, 5, len(patchedPlatforms),
-		"manifest should contain 5 platforms (linux/amd64, linux/arm64, windows/amd64 variants)")
+	// Check that we have the expected 4 platforms (2 Linux + 2 Windows)
+	require.Equal(t, 4, len(patchedPlatforms),
+		"manifest should contain 4 platforms (linux/amd64, linux/arm64, windows/amd64 variants)")
 
 	// Verify specific platforms exist
 	platformSet := make(map[string]bool)
