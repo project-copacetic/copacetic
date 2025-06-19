@@ -176,32 +176,46 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	require.Equal(t, len(originalPlatforms), len(patchedPlatforms),
 		"patched manifest should have same number of platforms as original")
 
-	// Check that we have the expected 4 platforms (2 Linux + 2 Windows)
-	require.Equal(t, 4, len(patchedPlatforms),
-		"manifest should contain 4 platforms (linux/amd64, linux/arm64, windows/amd64 variants)")
+	// Count expected platforms from original manifest
+	expectedLinuxCount := 0
+	expectedWindowsCount := 0
+	for _, p := range originalPlatforms {
+		if p.OS == "linux" {
+			expectedLinuxCount++
+		} else if p.OS == "windows" {
+			expectedWindowsCount++
+		}
+	}
 
-	// Verify specific platforms exist
-	platformSet := make(map[string]bool)
+	// Verify we have the expected number of Linux and Windows platforms
+	actualLinuxCount := 0
+	actualWindowsCount := 0
 	for _, p := range patchedPlatforms {
-		key := p.OS + "/" + p.Architecture
-		if p.OSVersion != "" {
-			key += ":" + p.OSVersion
-		}
-		platformSet[key] = true
-	}
-
-	// Should have Linux platforms
-	require.True(t, platformSet["linux/amd64"], "should contain linux/amd64")
-	require.True(t, platformSet["linux/arm64"], "should contain linux/arm64")
-
-	// Should have Windows platforms with different OS versions
-	windowsCount := 0
-	for key := range platformSet {
-		if strings.HasPrefix(key, "windows/amd64:") {
-			windowsCount++
+		if p.OS == "linux" {
+			actualLinuxCount++
+		} else if p.OS == "windows" {
+			actualWindowsCount++
 		}
 	}
-	require.Equal(t, 2, windowsCount, "should contain 2 windows/amd64 variants with different OS versions")
+
+	require.Equal(t, expectedLinuxCount, actualLinuxCount, "should contain %d Linux platforms", expectedLinuxCount)
+	require.Equal(t, expectedWindowsCount, actualWindowsCount, "should contain %d Windows platforms", expectedWindowsCount)
+
+	// Verify that all original platforms are preserved in the patched manifest
+	for _, originalPlatform := range originalPlatforms {
+		found := false
+		for _, patchedPlatform := range patchedPlatforms {
+			if originalPlatform.OS == patchedPlatform.OS &&
+				originalPlatform.Architecture == patchedPlatform.Architecture &&
+				originalPlatform.Variant == patchedPlatform.Variant &&
+				originalPlatform.OSVersion == patchedPlatform.OSVersion {
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "original platform %s/%s (variant: %s, osversion: %s) should be preserved",
+			originalPlatform.OS, originalPlatform.Architecture, originalPlatform.Variant, originalPlatform.OSVersion)
+	}
 }
 
 // getManifestPlatforms extracts platform information from a manifest.
