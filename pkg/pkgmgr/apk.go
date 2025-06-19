@@ -180,7 +180,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		const apkAddTemplate = `apk add --no-cache %s`
 		pkgStrings := []string{}
 		for _, u := range updates {
-			pkgStrings = append(pkgStrings, u.Name)
+				pkgStrings = append(pkgStrings, u.Name)
 		}
 		addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
 		apkAdded := apkUpdated.Run(llb.Shlex(addCmd), llb.WithProxy(utils.GetProxy())).Root()

@@ -484,28 +484,32 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		if dnfTooling == "" {
 			dnfTooling = rm.rpmTools["dnf"]
 		}
-		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
+		if !rm.checkForUpgrades(ctx, dnfTooling, "") {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
+		// Use --releasever=latest for DNFAdd commentMore actions
+		var dnfInstallTemplate string
+		if strings.Contains(dnfTooling, "dnf") {
+			dnfInstallTemplate = `sh -c '%[1]s clean all && %[1]s --releasever=latest makecache --refresh -y && %[1]s --releasever=latest upgrade --best --refresh %[2]s -y && %[1]s clean all'`
+		} else {
+			dnfInstallTemplate = `sh -c '%[1]s clean all && %[1]s makecache --refresh -y && %[1]s upgrade --best --refresh %[2]s -y && %[1]s clean all'`
+		}
 		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
-		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], "") {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
+		const yumInstallTemplate = `sh -c '%[1]s clean all && %[1]s makecache --refresh -y && %[1]s upgrade --best %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
+		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], "") {
 			return nil, nil, fmt.Errorf("no patchable packages found")
 		}
 
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
+		// Use --releasever=latest for microdnf as well since it's DNF-basedAdd commentMore actions
+		const microdnfInstallTemplate = `sh -c '%[1]s clean all && %[1]s --releasever=latest makecache --refresh -y && %[1]s --releasever=latest update --best %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
@@ -564,8 +568,14 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 		imageStateCurrent = rm.config.PatchedImageState
 	}
 
-	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
-	stateWithCheck := imageStateCurrent.Run(llb.Shlex(checkUpdate)).Root()
+	// For DNF, use --releasever=latest to ensure we check against the latest releaseAdd commentMore actions
+	var refreshCmd string
+	if strings.Contains(toolPath, "dnf") {
+		refreshCmd = fmt.Sprintf(`sh -c '%[1]s clean all && %[1]s --releasever=latest makecache --refresh -y && %[1]s --releasever=latest check-update --refresh -y; if [ $? -eq 100 ]; then echo >> /updates.txt; fi'`, toolPath)
+	} else {
+		refreshCmd = fmt.Sprintf(`sh -c '%[1]s clean all && %[1]s makecache --refresh -y && %[1]s check-update --refresh -y; if [ $? -eq 100 ]; then echo >> /updates.txt; fi'`, toolPath)
+	}
+	stateWithCheck := imageStateCurrent.Run(llb.Shlex(refreshCmd)).Root()
 
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
