@@ -344,8 +344,12 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
-	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
+	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" > /upgradable.txt || exit 1"`
 	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, "/upgradable.txt")
+	if err != nil {
+		return nil, nil, fmt.Errorf("no patchable packages found")
+	}
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
