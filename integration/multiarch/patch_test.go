@@ -180,9 +180,10 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	expectedLinuxCount := 0
 	expectedWindowsCount := 0
 	for _, p := range originalPlatforms {
-		if p.OS == "linux" {
+		switch p.OS {
+		case "linux":
 			expectedLinuxCount++
-		} else if p.OS == "windows" {
+		case "windows":
 			expectedWindowsCount++
 		}
 	}
