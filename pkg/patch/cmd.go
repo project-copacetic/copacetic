@@ -28,6 +28,7 @@ type patchArgs struct {
 	output        string
 	bkOpts        buildkit.Opts
 	push          bool
+	loader        string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -53,6 +54,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.scanner,
 				ua.format,
 				ua.output,
+				ua.loader,
 				ua.ignoreError,
 				ua.push,
 				bkopts)
@@ -74,6 +76,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

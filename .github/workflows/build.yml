@@ -60,6 +60,73 @@ jobs:
         uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  test-podman-dns:
+    name: Test Podman DNS Resolution
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.3.1
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install podman and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman jq
+      - name: Test DNS resolution in podman buildkit
+        run: |
+          set -ex
+          echo "=== Starting podman buildkit container ==="
+          # Source the script to get environment variables
+          set +e  # Temporarily disable errexit
+          source ./.github/workflows/scripts/buildkitenvs/podman/container
+          SCRIPT_EXIT_CODE=$?
+          set -e  # Re-enable errexit
+          
+          if [ $SCRIPT_EXIT_CODE -ne 0 ]; then
+            echo "Script exited with code $SCRIPT_EXIT_CODE"
+            exit 1
+          fi
+          
+          echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}"
+          
+          # Extract container name from COPA_BUILDKIT_ADDR
+          CONTAINER_NAME=$(echo ${COPA_BUILDKIT_ADDR} | sed 's/podman-container:\/\///')
+          echo "Container name: ${CONTAINER_NAME}"
+          
+          echo "=== Container information ==="
+          podman inspect ${CONTAINER_NAME} | jq '.[0].NetworkSettings'
+          
+          echo "=== Buildkit status ==="
+          podman exec ${CONTAINER_NAME} buildctl debug info || true
+          
+          echo "=== Container processes ==="
+          podman exec ${CONTAINER_NAME} ps aux || true
+          
+          echo "=== Testing DNS resolution inside buildkit container ==="
+          for domain in registry-1.docker.io ghcr.io quay.io mcr.microsoft.com; do
+            echo "--- Resolving ${domain} ---"
+            if podman exec ${CONTAINER_NAME} nslookup ${domain}; then
+              echo "✓ Successfully resolved ${domain}"
+            else
+              echo "✗ Failed to resolve ${domain}"
+              # Don't exit on first failure, test all domains
+            fi
+          done
+          
+          echo "=== Testing registry connectivity ==="
+          if podman exec ${CONTAINER_NAME} wget -O- --timeout=10 https://registry-1.docker.io/v2/ 2>&1; then
+            echo "✓ Successfully connected to Docker Hub"
+          else
+            echo "✗ Failed to connect to Docker Hub"
+          fi
+          
+          echo "=== Container logs ==="
+          podman logs ${CONTAINER_NAME}
+
   build:
     name: Build
     runs-on: ${{ matrix.os }}
