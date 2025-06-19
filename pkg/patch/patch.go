@@ -960,7 +960,7 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.Pa
 	}
 
 	if !desc.MediaType.IsIndex() {
-		return nil, fmt.Errorf("expected multi-arch image but got single-arch image")
+		return nil, fmt.Errorf("expected multi-platform image but got single-arch image")
 	}
 
 	index, err := desc.ImageIndex()
