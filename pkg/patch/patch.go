@@ -795,7 +795,7 @@ func patchMultiPlatformImage(
 				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {
 					if !ignoreError {
-						return errors.New("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors.")
+						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
 					}
 					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
 				}
