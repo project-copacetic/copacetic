@@ -825,7 +825,7 @@ func patchMultiPlatformImage(
 				summaryMap[platformKey] = &types.MultiArchSummary{
 					Platform: platformKey,
 					Status:   "Not Patched",
-					Ref:      originalRef.String(),
+					Ref:      originalRef.String() + " (original reference)",
 					Error:    "",
 				}
 				mu.Unlock()
