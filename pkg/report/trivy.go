@@ -9,6 +9,7 @@ import (
 
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	log "github.com/sirupsen/logrus"
 )
 
 type TrivyParser struct{}
@@ -324,6 +325,20 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 				r.Type == "dotnet-core" // consider adding "nuget" type?
 
 			if isSupportedLangPkg {
+				// Filter out system-level .NET packages that cannot be updated via application package managers
+				if r.Type == "dotnet-core" {
+					// Skip system SDK/runtime paths that are not application-manageable
+					if strings.HasPrefix(r.Target, "usr/share/dotnet/") ||
+						strings.HasPrefix(r.Target, "/usr/share/dotnet/") ||
+						strings.HasPrefix(r.Target, "usr/share/powershell/") ||
+						strings.HasPrefix(r.Target, "/usr/share/powershell/") ||
+						strings.Contains(r.Target, "sdk/") ||
+						strings.Contains(r.Target, "shared/Microsoft.") {
+						log.Debugf("Skipping system-level .NET dependency: %s", r.Target)
+						continue
+					}
+				}
+				
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
