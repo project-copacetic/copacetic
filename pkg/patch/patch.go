@@ -792,6 +792,11 @@ func patchMultiPlatformImage(
 				// No report for this platform - preserve original
 				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
 
+				// Warn about Windows platforms when not pushing
+				if !push && p.OS == "windows" {
+					log.Errorf("Cannot save Windows platform %s locally without pushing to registry. Use --push flag to save Windows images to a registry.", p.OS+"/"+p.Architecture)
+				}
+
 				// Get the original platform descriptor from the manifest
 				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
 				if err != nil {
