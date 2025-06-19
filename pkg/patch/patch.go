@@ -792,9 +792,12 @@ func patchMultiPlatformImage(
 				// No report for this platform - preserve original
 				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
 
-				// Warn about Windows platforms when not pushing
+				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {
-					log.Errorf("Cannot save Windows platform %s locally without pushing to registry. Use --push flag to save Windows images to a registry.", p.OS+"/"+p.Architecture)
+					if !ignoreError {
+						return errors.New("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors.")
+					}
+					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
 				}
 
 				// Get the original platform descriptor from the manifest
@@ -818,6 +821,13 @@ func patchMultiPlatformImage(
 
 				mu.Lock()
 				patchResults = append(patchResults, result)
+				// Add summary entry for unpatched platform
+				summaryMap[platformKey] = &types.MultiArchSummary{
+					Platform: platformKey,
+					Status:   "Not Patched",
+					Ref:      originalRef.String(),
+					Error:    "",
+				}
 				mu.Unlock()
 				log.Infof("Preserved original image (%s): %s\n", p.OS+"/"+p.Architecture, originalRef.String())
 				return nil
@@ -890,14 +900,23 @@ func patchMultiPlatformImage(
 	}
 
 	if !push {
-		if len(patchResults) > 0 {
+		// Filter to only show actually patched images (not preserved originals)
+		patchedOnlyResults := make([]types.PatchResult, 0)
+		for _, result := range patchResults {
+			// Only include results where the patched ref differs from original ref
+			if result.PatchedRef.String() != result.OriginalRef.String() {
+				patchedOnlyResults = append(patchedOnlyResults, result)
+			}
+		}
+
+		if len(patchedOnlyResults) > 0 {
 			log.Info("To push the individual architecture images, run:")
-			for _, result := range patchResults {
+			for _, result := range patchedOnlyResults {
 				log.Infof("  docker push %s", result.PatchedRef.String())
 			}
 			log.Infof("To create and push the multi-platform manifest, run:")
-			refs := make([]string, len(patchResults))
-			for i, result := range patchResults {
+			refs := make([]string, len(patchedOnlyResults))
+			for i, result := range patchedOnlyResults {
 				refs[i] = result.PatchedRef.String()
 			}
 			log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
