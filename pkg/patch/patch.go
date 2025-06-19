@@ -900,7 +900,7 @@ func patchMultiPlatformImage(
 	}
 
 	if !push {
-		// Filter to only show actually patched images (not preserved originals)
+		// Show push commands only for actually patched images (not preserved originals)
 		patchedOnlyResults := make([]types.PatchResult, 0)
 		for _, result := range patchResults {
 			// Only include results where the patched ref differs from original ref
@@ -915,9 +915,21 @@ func patchMultiPlatformImage(
 				log.Infof("  docker push %s", result.PatchedRef.String())
 			}
 			log.Infof("To create and push the multi-platform manifest, run:")
-			refs := make([]string, len(patchedOnlyResults))
-			for i, result := range patchedOnlyResults {
-				refs[i] = result.PatchedRef.String()
+
+			// Include all platforms (both patched and preserved) in the manifest create command
+			refs := make([]string, len(patchResults))
+			for i, result := range patchResults {
+				if result.PatchedRef.String() != result.OriginalRef.String() {
+					// Use the patched reference for actually patched platforms
+					refs[i] = result.PatchedRef.String()
+				} else {
+					// Use the original reference with digest for preserved platforms
+					if result.PatchedDesc != nil && result.PatchedDesc.Digest.String() != "" {
+						refs[i] = result.OriginalRef.String() + "@" + result.PatchedDesc.Digest.String()
+					} else {
+						refs[i] = result.OriginalRef.String()
+					}
+				}
 			}
 			log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
 			log.Infof("  docker manifest push %s", patchedImageName.String())
