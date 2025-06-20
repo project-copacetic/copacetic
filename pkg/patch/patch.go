@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"maps"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -48,12 +48,13 @@ import (
 )
 
 const (
-	copaProduct     = "copa"
-	defaultRegistry = "docker.io"
-	defaultTag      = "latest"
-	LINUX           = "linux"
-	ARM64           = "arm64"
-	trueString      = "true"
+	copaProduct             = "copa"
+	defaultRegistry         = "docker.io"
+	defaultTag              = "latest"
+	LINUX                   = "linux"
+	trueString              = "true"
+	ARM64                   = "arm64"
+	copaAnnotationKeyPrefix = "sh.copa"
 )
 
 // for testing.
@@ -158,13 +159,13 @@ func createMultiPlatformManifest(
 			// add a custom annotation to indicate this image was patched by Copa
 			patchedKey := exptypes.AnnotationKey{
 				Type: exptypes.AnnotationIndex,
-				Key:  "copacetic.patched",
+				Key:  copaAnnotationKeyPrefix + ".patched",
 			}
 			annotations[patchedKey] = trueString
 
 			patchedTimestampKey := exptypes.AnnotationKey{
 				Type: exptypes.AnnotationIndex,
-				Key:  "copacetic.patched.timestamp",
+				Key:  copaAnnotationKeyPrefix + ".patched.timestamp",
 			}
 			annotations[patchedTimestampKey] = time.Now().UTC().Format(time.RFC3339)
 
@@ -180,13 +181,13 @@ func createMultiPlatformManifest(
 
 			patchedKey := exptypes.AnnotationKey{
 				Type: exptypes.AnnotationIndex,
-				Key:  "copacetic.patched",
+				Key:  copaAnnotationKeyPrefix + ".patched",
 			}
 			annotations[patchedKey] = trueString
 
 			patchedTimestampKey := exptypes.AnnotationKey{
 				Type: exptypes.AnnotationIndex,
-				Key:  "copacetic.patched.timestamp",
+				Key:  copaAnnotationKeyPrefix + ".patched.timestamp",
 			}
 			annotations[patchedTimestampKey] = time.Now().UTC().Format(time.RFC3339)
 		}
