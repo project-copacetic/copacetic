@@ -591,6 +591,7 @@ func TestMultiArchSummaryTable(t *testing.T) {
 		{"linux", "amd64", ""},
 		{"linux", "arm64", ""},
 		{"linux", "arm", "v7"},
+		{"windows", "amd64", ""},
 	}
 
 	summaryMap := map[string]*types.MultiArchSummary{
@@ -598,25 +599,31 @@ func TestMultiArchSummaryTable(t *testing.T) {
 			Platform: "linux/amd64",
 			Status:   "Patched",
 			Ref:      "docker.io/library/nginx:patched-amd64",
-			Error:    "",
+			Message:  "",
 		},
 		"linux/arm64": {
 			Platform: "linux/arm64",
 			Status:   "Error",
 			Ref:      "",
-			Error:    "emulation is not enabled for platform linux/arm64",
+			Message:  "emulation is not enabled for platform linux/arm64",
 		},
 		"linux/arm/v7": {
 			Platform: "linux/arm/v7",
 			Status:   "Ignored",
 			Ref:      "",
-			Error:    "",
+			Message:  "",
+		},
+		"windows/amd64": {
+			Platform: "windows/amd64",
+			Status:   "Error",
+			Ref:      "",
+			Message:  "Windows images are not supported",
 		},
 	}
 
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tERROR\n"))
+	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tMESSAGE\n"))
 	for _, p := range platforms {
 		platformKey := buildkit.PlatformKey(ispec.Platform{
 			OS:           p.OS,
@@ -630,17 +637,18 @@ func TestMultiArchSummaryTable(t *testing.T) {
 				ref = "-"
 			}
 			_, _ = w.Write([]byte(
-				s.Platform + "\t" + s.Status + "\t" + ref + "\t" + s.Error + "\n",
+				s.Platform + "\t" + s.Status + "\t" + ref + "\t" + s.Message + "\n",
 			))
 		}
 	}
 	w.Flush()
 
 	got := b.String()
-	expected := `PLATFORM      STATUS   REFERENCE                              ERROR
-linux/amd64   Patched  docker.io/library/nginx:patched-amd64  
-linux/arm64   Error    -                                      emulation is not enabled for platform linux/arm64
-linux/arm/v7  Ignored  -                                      
+	expected := `PLATFORM       STATUS   REFERENCE                              MESSAGE
+linux/amd64    Patched  docker.io/library/nginx:patched-amd64  
+linux/arm64    Error    -                                      emulation is not enabled for platform linux/arm64
+linux/arm/v7   Ignored  -                                      
+windows/amd64  Error    -                                      Windows images are not supported
 `
 
 	if got != expected {
