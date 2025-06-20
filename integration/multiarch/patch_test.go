@@ -351,8 +351,8 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 
 	// Check index-level annotations (Copa metadata)
 	assert.NotEmpty(t, manifest.Annotations, "index-level annotations should not be empty")
-	assert.Equal(t, "true", manifest.Annotations["copacetic.patched"], "should have Copa patched annotation")
-	assert.NotEmpty(t, manifest.Annotations["copacetic.patched.timestamp"], "should have Copa timestamp annotation")
+	assert.Equal(t, "true", manifest.Annotations["sh.copa.patched"], "should have Copa patched annotation")
+	assert.NotEmpty(t, manifest.Annotations["sh.copa.patched.timestamp"], "should have Copa timestamp annotation")
 	assert.NotEmpty(t, manifest.Annotations["org.opencontainers.image.created"], "should have created annotation")
 
 	t.Logf("found %d index-level annotations", len(manifest.Annotations))
