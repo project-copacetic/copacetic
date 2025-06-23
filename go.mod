@@ -30,7 +30,7 @@ require (
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/sync v0.15.0
 	google.golang.org/grpc v1.73.0
-	k8s.io/apimachinery v0.33.1
+	k8s.io/apimachinery v0.33.2
 )
 
 require (
