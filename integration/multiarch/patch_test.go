@@ -4,15 +4,13 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/project-copacetic/copacetic/test/helpers"
+	"github.com/project-copacetic/copacetic/test/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,285 +20,83 @@ var (
 
 	//go:embed fixtures/trivy_ignore.rego
 	trivyIgnore []byte
+
+	env *testenv.Env
 )
 
-type testImage struct {
+type TestImage struct {
 	OriginalImage string   `json:"originalImage"`
 	LocalImage    string   `json:"localImage"`
-	Push          bool     `json:"push"`
 	Tag           string   `json:"tag"`
 	Distro        string   `json:"distro"`
 	Description   string   `json:"description"`
 	IgnoreErrors  bool     `json:"ignoreErrors"`
+	Push          bool     `json:"push"`
 	Platforms     []string `json:"platforms"`
 }
 
-func TestPatch(t *testing.T) {
-	var images []testImage
+func TestMultiArchPatch(t *testing.T) {
+	env = testenv.New(t)
+
+	var images []TestImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
 
 	tmp := t.TempDir()
 	ignoreFile := filepath.Join(tmp, "ignore.rego")
-	err = os.WriteFile(ignoreFile, trivyIgnore, 0o600)
+	err = helpers.WriteFile(ignoreFile, trivyIgnore)
 	require.NoError(t, err)
 
-	// download the trivy db before running the tests
-	downloadDB(t)
+	helpers.DownloadTrivyDB(t)
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
-			// define a few variables
-			ref := fmt.Sprintf("%s:%s", img.LocalImage, img.Tag)
-			originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)
+			t.Parallel()
 
-			// copy over the original image to the local image using oras
-			copyImage(t, originalImageRef, ref)
-
+			dstName := strings.Split(img.LocalImage, "/")[1]
+			ref := fmt.Sprintf("%s/%s", env.Registry.Address, dstName)
 			reportDir := t.TempDir()
 
-			t.Log("creating scan reports for each platform")
+			t.Log("Creating scan reports for each platform")
 			var wg sync.WaitGroup
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
-				go func() {
+				go func(platform string) {
 					defer wg.Done()
-
-					suffix := strings.ReplaceAll(platformStr, "/", "-")
+					suffix := strings.ReplaceAll(platform, "/", "-")
 					reportPath := filepath.Join(reportDir, "report-"+suffix+".json")
 
-					t.Logf("scanning original image for platform %s", platformStr)
-					scanner().
-						withIgnoreFile(ignoreFile).
-						withOutput(reportPath).
-						withSkipDBUpdate().
-						withPlatform(platformStr).
-						// Do not set a non-zero exit code because we are expecting vulnerabilities.
-						scan(t, ref, img.IgnoreErrors)
-				}()
+					t.Logf("Scanning original image %s:%s for platform %s", ref, img.Tag, platform)
+					helpers.Trivy(t).
+						WithPlatform(platform).
+						WithOutput(reportPath).
+						WithIgnoreFile(ignoreFile).
+						Scan(fmt.Sprintf("%s:%s", ref, img.Tag))
+				}(platformStr)
 			}
 			wg.Wait()
 
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
+			patchedRef := fmt.Sprintf("%s:%s", ref, tagPatched)
 
-			t.Log("patching image with multiple architectures")
-			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
+			t.Log("Patching multi-architecture image")
+			helpers.Copa(t, env).Patch(fmt.Sprintf("%s:%s", ref, img.Tag), tagPatched, reportDir, img.IgnoreErrors, img.Push).Run()
 
-			t.Log("scanning patched image for each platform")
+			t.Log("Verifying patched images for each platform")
 			wg = sync.WaitGroup{}
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
-				go func() {
+				go func(platform string) {
 					defer wg.Done()
-					// only want the platform string for the scanner
-					parts := strings.Split(platformStr, "/")
-					archStr := strings.Split(platformStr, "/")[1]
-					patchedArchRef := fmt.Sprintf("%s-%s", patchedRef, archStr)
-					if len(parts) > 2 {
-						variantStr := strings.Split(platformStr, "/")[2]
-						patchedArchRef += "-" + variantStr
-					}
-
-					// run the image so the layers are fully loaded. a manifest-only load/push
-					// leaves the tag without its layer blobs; running "true" forces the daemon
-					// to pull/unpack the layers, then exits instantly. Without this, the
-					// subsequent Trivy scan can hit “snapshot … does not exist”.
-					cmd := exec.Command("docker", "run", "--rm", patchedArchRef, "true")
-					out, err := cmd.CombinedOutput()
-					require.NoError(t, err, string(out))
-
-					t.Logf("scanning patched image for platform %s", platformStr)
-					scanner().
-						withIgnoreFile(ignoreFile).
-						withSkipDBUpdate().
-						withImageSrc("docker").
-						withPlatform(platformStr).
-						// here we want a non-zero exit code because we are expecting no vulnerabilities.
-						withExitCode(1).
-						scan(t, patchedArchRef, img.IgnoreErrors)
-				}()
+					t.Logf("Scanning patched image %s for platform %s", patchedRef, platform)
+					helpers.Trivy(t).
+						WithPlatform(platform).
+						WithIgnoreFile(ignoreFile).
+						WithExitCode(0).
+						Scan(patchedRef)
+				}(platformStr)
 			}
 			wg.Wait()
 		})
 	}
-}
-
-type addrWrapper struct {
-	m       sync.Mutex
-	address *string
-}
-
-var dockerDINDAddress addrWrapper
-
-func (w *addrWrapper) addr() string {
-	w.m.Lock()
-	defer w.m.Unlock()
-
-	if w.address != nil {
-		return *w.address
-	}
-
-	w.address = new(string)
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-		*w.address = strings.TrimPrefix(addr, "docker://")
-	}
-
-	return *w.address
-}
-
-func (w *addrWrapper) env() []string {
-	a := dockerDINDAddress.addr()
-	if a == "" {
-		return []string{}
-	}
-
-	return []string{fmt.Sprintf("DOCKER_HOST=%s", a)}
-}
-
-func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
-	var addrFl string
-	if buildkitAddr != "" {
-		addrFl = "-a=" + buildkitAddr
-	}
-
-	args := []string{
-		"patch",
-		"-i=" + ref,
-		"-t=" + patchedTag,
-		"--report=" + reportDir,
-		"-s=" + scannerPlugin,
-		"--timeout=30m",
-		addrFl,
-		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
-		"--debug",
-	}
-	if push {
-		args = append(args, "--push")
-	}
-
-	//#nosec G204
-	cmd := exec.Command(
-		copaPath,
-		args...,
-	)
-
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("command failed: %v", err)
-	}
-}
-
-func scanner() *scannerCmd {
-	return &scannerCmd{}
-}
-
-type scannerCmd struct {
-	output       string
-	skipDBUpdate bool
-	ignoreFile   string
-	exitCode     int
-	platform     string
-	imageSrc     string
-}
-
-func downloadDB(t *testing.T) {
-	args := []string{
-		"trivy",
-		"image",
-		"--download-db-only",
-		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
-	}
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-}
-
-func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
-	args := []string{
-		"trivy",
-		"image",
-		"--quiet",
-		"--pkg-types=os",
-		"--ignore-unfixed",
-		"--scanners=vuln",
-	}
-	if s.output != "" {
-		args = append(args, []string{"-o=" + s.output, "-f=json"}...)
-	}
-	if s.skipDBUpdate {
-		args = append(args, "--skip-db-update")
-	}
-	if s.ignoreFile != "" {
-		args = append(args, "--ignore-policy="+s.ignoreFile)
-	}
-	if s.platform != "" {
-		args = append(args, "--platform="+s.platform)
-	}
-	if s.imageSrc != "" {
-		args = append(args, "--image-src="+s.imageSrc)
-	}
-	// If ignoreErrors is false, we expect a non-zero exit code.
-	if s.exitCode != 0 && !ignoreErrors {
-		args = append(args, "--exit-code="+strconv.Itoa(s.exitCode))
-	}
-
-	args = append(args, ref)
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
-	out, err := cmd.CombinedOutput()
-
-	assert.NoError(t, err, string(out))
-}
-
-func (s *scannerCmd) withOutput(p string) *scannerCmd {
-	s.output = p
-	return s
-}
-
-func (s *scannerCmd) withSkipDBUpdate() *scannerCmd {
-	s.skipDBUpdate = true
-	return s
-}
-
-func (s *scannerCmd) withImageSrc(src string) *scannerCmd {
-	s.imageSrc = src
-	return s
-}
-
-func (s *scannerCmd) withIgnoreFile(p string) *scannerCmd {
-	s.ignoreFile = p
-	return s
-}
-
-func (s *scannerCmd) withExitCode(code int) *scannerCmd {
-	s.exitCode = code
-	return s
-}
-
-func (s *scannerCmd) withPlatform(platform string) *scannerCmd {
-	s.platform = platform
-	return s
-}
-
-// helper to copy an image using oras.
-func copyImage(t *testing.T, src, dst string) {
-	cmd := exec.Command(
-		"oras",
-		"copy",
-		src,
-		dst,
-	)
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
 }
