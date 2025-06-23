@@ -184,6 +184,12 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		for i := range manifest.Manifests {
 			m := &manifest.Manifests[i]
 
+			// Skip manifests with unknown platforms
+			if m.Platform == nil || m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
+				log.Debugf("Skipping manifest with unknown platform: %s/%s", m.Platform.OS, m.Platform.Architecture)
+				continue
+			}
+
 			patchPlatform := types.PatchPlatform{
 				Platform: ispec.Platform{
 					OS:           m.Platform.OS,
