@@ -931,8 +931,8 @@ func patchMultiPlatformImage(
 					}
 				}
 			}
-			log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
-			log.Infof("  docker manifest push %s", patchedImageName.String())
+
+			log.Infof("  docker buildx imagetools create --tag %s %s", patchedImageName.String(), strings.Join(refs, " "))
 		} else {
 			return fmt.Errorf("no patched images were created, check the logs for errors")
 		}
