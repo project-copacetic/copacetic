@@ -214,7 +214,6 @@ func patchWithPodman(t *testing.T, ref, patchedTag, path string, ignoreErrors bo
 	}
 }
 
-
 // tryScanPatchedImage attempts to scan the patched image but returns error instead of failing test.
 func tryScanPatchedImage(t *testing.T, ref, ignoreFile string, ignoreErrors bool) error {
 	args := []string{
@@ -245,4 +244,3 @@ func tryScanPatchedImage(t *testing.T, ref, ignoreFile string, ignoreErrors bool
 	t.Logf("Successfully scanned patched image: %s", ref)
 	return nil
 }
-
