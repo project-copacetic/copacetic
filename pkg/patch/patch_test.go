@@ -582,7 +582,7 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 	}
 }
 
-func TestMultiArchSummaryTable(t *testing.T) {
+func TestMultiPlatformSummaryTable(t *testing.T) {
 	platforms := []struct {
 		OS           string
 		Architecture string
@@ -593,7 +593,7 @@ func TestMultiArchSummaryTable(t *testing.T) {
 		{"linux", "arm", "v7"},
 	}
 
-	summaryMap := map[string]*types.MultiArchSummary{
+	summaryMap := map[string]*types.MultiPlatformSummary{
 		"linux/amd64": {
 			Platform: "linux/amd64",
 			Status:   "Patched",

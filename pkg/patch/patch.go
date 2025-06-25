@@ -774,7 +774,7 @@ func patchMultiPlatformImage(
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
 
-	summaryMap := make(map[string]*types.MultiArchSummary)
+	summaryMap := make(map[string]*types.MultiPlatformSummary)
 
 	for _, p := range platforms {
 		// rebind
@@ -822,7 +822,7 @@ func patchMultiPlatformImage(
 				mu.Lock()
 				patchResults = append(patchResults, result)
 				// Add summary entry for unpatched platform
-				summaryMap[platformKey] = &types.MultiArchSummary{
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
@@ -841,7 +841,7 @@ func patchMultiPlatformImage(
 				if ignoreError {
 					status = "Ignored"
 				}
-				summaryMap[platformKey] = &types.MultiArchSummary{
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
 					Status:   status,
 					Ref:      "",
@@ -852,7 +852,7 @@ func patchMultiPlatformImage(
 				}
 				return nil
 			} else if res == nil {
-				summaryMap[platformKey] = &types.MultiArchSummary{
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
 					Status:   "Error",
 					Ref:      "",
@@ -862,7 +862,7 @@ func patchMultiPlatformImage(
 			}
 
 			patchResults = append(patchResults, *res)
-			summaryMap[platformKey] = &types.MultiArchSummary{
+			summaryMap[platformKey] = &types.MultiPlatformSummary{
 				Platform: platformKey,
 				Status:   "Patched",
 				Ref:      res.PatchedRef.String(),

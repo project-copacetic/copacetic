@@ -42,7 +42,7 @@ type PatchResult struct {
 	PatchedRef  reference.Named
 }
 
-type MultiArchSummary struct {
+type MultiPlatformSummary struct {
 	Platform string
 	Status   string
 	Ref      string
