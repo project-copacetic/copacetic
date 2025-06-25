@@ -428,11 +428,6 @@ func patchSingleArchImage(
 				// determine OS family
 				fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
 				if err != nil {
-					_, winErr := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/Windows/System32/license.rtf")
-					if winErr == nil {
-						ch <- err
-						return nil, fmt.Errorf("windows image are not supported")
-					}
 					ch <- err
 					return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
 				}
@@ -786,17 +781,6 @@ func patchMultiPlatformImage(
 		p := p //nolint
 		platformKey := buildkit.PlatformKey(p.Platform)
 		g.Go(func() error {
-			if p.ReportFile == "" {
-				mu.Lock()
-				summaryMap[platformKey] = &types.MultiArchSummary{
-					Platform: platformKey,
-					Status:   "Ignored",
-					Ref:      "",
-					Message:  "No scanner report",
-				}
-				mu.Unlock()
-				return nil
-			}
 			select {
 			case sem <- struct{}{}:
 			case <-gctx.Done():
@@ -842,7 +826,7 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
-					Error:    "",
+					Message:  "",
 				}
 				mu.Unlock()
 				log.Infof("Preserved original image (%s): %s\n", p.OS+"/"+p.Architecture, originalRef.String())
