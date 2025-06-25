@@ -41,3 +41,10 @@ type PatchResult struct {
 	PatchedDesc *ispec.Descriptor
 	PatchedRef  reference.Named
 }
+
+type MultiPlatformSummary struct {
+	Platform string
+	Status   string
+	Ref      string
+	Error    string
+}
