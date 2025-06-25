@@ -184,7 +184,9 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		for i := range manifest.Manifests {
 			m := &manifest.Manifests[i]
 
-			if m.Platform.OS != linux {
+			// Skip manifests with unknown platforms
+			if m.Platform == nil || m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
+				log.Debugf("Skipping manifest with unknown platform: %s/%s", m.Platform.OS, m.Platform.Architecture)
 				continue
 			}
 
@@ -193,6 +195,8 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
 					Variant:      m.Platform.Variant,
+					OSVersion:    m.Platform.OSVersion,
+					OSFeatures:   m.Platform.OSFeatures,
 				},
 			}
 			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
@@ -216,6 +220,10 @@ func PlatformKey(pl ispec.Platform) string {
 	if pl.Variant != "" {
 		key += "/" + pl.Variant
 	}
+	// Include OS version for platforms like Windows that have multiple versions
+	if pl.OSVersion != "" {
+		key += "@" + pl.OSVersion
+	}
 	return key
 }
 
@@ -238,6 +246,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		}
 		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
+		// include all platforms from original manifest, patching only those with reports
 		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
 			reportSet[PlatformKey(pl.Platform)] = pl.ReportFile
@@ -245,7 +254,13 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 
 		for _, pl := range p {
 			if rp, ok := reportSet[PlatformKey(pl.Platform)]; ok {
+				// Platform has a report - will be patched
 				pl.ReportFile = rp
+				platforms = append(platforms, pl)
+			} else {
+				// Platform has no report - preserve original without patching
+				log.Debugf("No report found for platform %s, preserving original", PlatformKey(pl.Platform))
+				pl.ReportFile = ""
 				platforms = append(platforms, pl)
 			}
 		}

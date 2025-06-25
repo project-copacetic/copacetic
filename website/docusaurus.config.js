@@ -82,8 +82,9 @@ const config = {
         darkTheme: darkCodeTheme,
       },
       algolia: {
-        appId: process.env.ALGOLIA_ID,
-        apiKey: process.env.ALGOLIA_API_KEY,
+        // For forked PRs, secrets arent available, so we use dummy values to allow build checks to complete
+        appId: process.env.ALGOLIA_ID || 'DUMMY_APP_ID_FOR_BUILDS',
+        apiKey: process.env.ALGOLIA_API_KEY || 'DUMMY_API_KEY_FOR_BUILDS',
         indexName: 'project-copaceticio',
         contextualSearch: true,
       }

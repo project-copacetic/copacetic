@@ -50,6 +50,14 @@ If you don't provide a `--report` flag pointing to a directory, Copa will not pe
 
 If `--push` is not specified, the individual patched images will be saved locally, and you can push them to your registry later using `docker push` and then `docker manifest create/push` to create the multi-platform manifest.
 
+:::note
+Copa copies over unpatched platforms as a passthrough - only platforms with vulnerability reports are patched, while other platforms remain unchanged in the final multi-platform image.
+:::
+
+:::warning
+Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
+:::
+
 ---
 
 ## Emulation and QEMU for Cross-Platform Patching ⚙️
