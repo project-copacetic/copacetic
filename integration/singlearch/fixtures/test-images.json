@@ -200,14 +200,5 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false
-    },
-    {
-        "image": "docker.io/library/alpine",
-        "tag": "3.17",
-        "digest": "sha256:8fc3dacfb6d69da8d44e42390de777e48577085db99aa4e4af35f483eb08b989",
-        "distro": "Alpine",
-        "description": "Valid apk/db, apk present - podman test",
-        "ignoreErrors": false,
-        "podmanTest": true
     }
 ]

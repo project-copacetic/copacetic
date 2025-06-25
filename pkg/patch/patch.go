@@ -69,9 +69,9 @@ func detectLoaderFromBuildkitAddr(addr string) string {
 
 	switch u.Scheme {
 	case "podman-container":
-		return "podman"
+		return imageloader.Podman
 	case "docker-container", "docker", "buildx":
-		return "docker"
+		return imageloader.Docker
 	default:
 		// Unknown scheme, let imageloader auto-detect
 		return ""
@@ -332,8 +332,17 @@ func patchSingleArchImage(
 		ref = imageName.String()
 	}
 
+	// Determine the loader type before starting goroutines
+	finalLoaderType := loader
+	if finalLoaderType == "" {
+		finalLoaderType = detectLoaderFromBuildkitAddr(bkOpts.Addr)
+		if finalLoaderType != "" {
+			log.Debugf("Auto-detected loader type %q from buildkit address %q", finalLoaderType, bkOpts.Addr)
+		}
+	}
+
 	// get the original media type of the image to determine if we should export as OCI or Docker
-	mt, err := utils.GetMediaType(ref)
+	mt, err := utils.GetMediaType(ref, finalLoaderType)
 	shouldExportOCI := err == nil && strings.Contains(mt, "vnd.oci.image")
 
 	switch {
@@ -567,16 +576,7 @@ func patchSingleArchImage(
 	// only load to docker if not pushing
 	if !push {
 		eg.Go(func() error {
-			// auto-detect loader from buildkit address if not explicitly set
-			loaderType := loader
-			if loaderType == "" {
-				loaderType = detectLoaderFromBuildkitAddr(bkOpts.Addr)
-				if loaderType != "" {
-					log.Debugf("Auto-detected loader type %q from buildkit address %q", loaderType, bkOpts.Addr)
-				}
-			}
-
-			imgLoader, err := imageloader.New(ctx, imageloader.Config{Loader: loaderType})
+			imgLoader, err := imageloader.New(ctx, imageloader.Config{Loader: finalLoaderType})
 			if err != nil {
 				err = fmt.Errorf("failed to create loader: %w", err)
 				pipeR.CloseWithError(err)
@@ -603,7 +603,13 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName)
+	// Use the appropriate runtime for image descriptor lookup
+	runtime := imageloader.Docker
+	if finalLoaderType == imageloader.Podman {
+		runtime = imageloader.Podman
+	}
+
+	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName, runtime)
 	if err != nil { // dont necessarily need to fail if we can't get the descriptor
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s':  %v", prettyPlatform, err)
@@ -812,17 +818,23 @@ func patchMultiPlatformImage(
 
 	if !push {
 		if len(patchResults) > 0 {
+			// Determine which CLI to use based on loader type
+			finalLoaderType := loader
+			if finalLoaderType == "" {
+				finalLoaderType = detectLoaderFromBuildkitAddr(bkOpts.Addr)
+			}
+
 			log.Info("To push the individual architecture images, run:")
 			for _, result := range patchResults {
-				log.Infof("  docker push %s", result.PatchedRef.String())
+				log.Infof("  %s push %s", finalLoaderType, result.PatchedRef.String())
 			}
 			log.Infof("To create and push the multi-platform manifest, run:")
 			refs := make([]string, len(patchResults))
 			for i, result := range patchResults {
 				refs[i] = result.PatchedRef.String()
 			}
-			log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
-			log.Infof("  docker manifest push %s", patchedImageName.String())
+			log.Infof("  %s manifest create %s %s", finalLoaderType, patchedImageName.String(), strings.Join(refs, " "))
+			log.Infof("  %s manifest push %s", finalLoaderType, patchedImageName.String())
 		} else {
 			return fmt.Errorf("no patched images were created, check the logs for errors")
 		}

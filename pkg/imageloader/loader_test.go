@@ -14,7 +14,7 @@ func TestNew_DockerUnavailable(t *testing.T) {
 	t.Cleanup(func() { _ = os.Setenv("DOCKER_HOST", oldHost) })
 	_ = os.Setenv("DOCKER_HOST", "unix:///definitely/not/there.sock")
 
-	_, err := New(ctx, Config{Loader: "docker"})
+	_, err := New(ctx, Config{Loader: Docker})
 	if err == nil || !strings.Contains(err.Error(), "docker socket not reachable") {
 		t.Fatalf("expected docker socket not reachable error, got %v", err)
 	}
@@ -27,7 +27,7 @@ func TestNew_PodmanUnavailable(t *testing.T) {
 	t.Cleanup(func() { _ = os.Setenv("PATH", oldPath) })
 	_ = os.Setenv("PATH", "")
 
-	_, err := New(ctx, Config{Loader: "podman"})
+	_, err := New(ctx, Config{Loader: Podman})
 	if err == nil || !strings.Contains(err.Error(), "podman socket not reachable") {
 		t.Fatalf("expected podman socket not reachable error, got %v", err)
 	}

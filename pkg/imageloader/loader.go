@@ -6,6 +6,12 @@ import (
 	"io"
 )
 
+// Loader type constants.
+const (
+	Docker = "docker"
+	Podman = "podman"
+)
+
 // Loader streams an OCI/Docker tar archive into a local container engine.
 type Loader interface {
 	Load(ctx context.Context, tar io.Reader, imageRef string) error
@@ -14,26 +20,26 @@ type Loader interface {
 // Config is the configuration for the image loader.
 // It specifies which container engine to use for loading images.
 type Config struct {
-	// "docker" | "podman" | ""
+	// Docker | Podman | ""
 	Loader string
 }
 
 // New instantiates the concrete loader.
 func New(ctx context.Context, cfg Config) (Loader, error) {
 	switch cfg.Loader {
-	case "docker", "":
+	case Docker, "":
 		if l, ok := probeDocker(ctx); ok {
 			return l, nil
 		}
-		if cfg.Loader == "docker" {
+		if cfg.Loader == Docker {
 			return nil, fmt.Errorf("docker socket not reachable")
 		}
 		fallthrough
-	case "podman":
+	case Podman:
 		if l, ok := probePodman(ctx); ok {
 			return l, nil
 		}
-		if cfg.Loader == "podman" {
+		if cfg.Loader == Podman {
 			return nil, fmt.Errorf("podman socket not reachable")
 		}
 		fallthrough
