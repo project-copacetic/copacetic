@@ -29,7 +29,7 @@ type testImage struct {
 	Platforms     []string `json:"platforms"`
 }
 
-func TestMultiArchPluginPatch(t *testing.T) {
+func TestMultiPlatformPluginPatch(t *testing.T) {
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
