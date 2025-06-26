@@ -4,7 +4,15 @@
     "tag": "1.21.6",
     "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
     "distro": "Debian",
-    "description": "Nginx Debian image for Podman testing",
+    "description": "Nginx Docker layout Debian image for Podman testing",
+    "ignoreErrors": false
+  },
+  {
+    "image": "docker.io/library/nginx",
+    "tag": "1.27.0",
+    "digest": "sha256:98f8ec75657d21b924fe4f69b6b9bff2f6550ea48838af479d8894a852000e40",
+    "distro": "Debian",
+    "description": "Nginx OCI layout Debian image for Podman testing",
     "ignoreErrors": false
   }
 ]

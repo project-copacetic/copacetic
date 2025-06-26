@@ -104,7 +104,6 @@ func TestPatchWithPodman(t *testing.T) {
 					WithIgnoreFile(ignoreFile).
 					WithOutput(scanResults).
 					WithSkipDBUpdate().
-					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					Scan(t, ref, img.IgnoreErrors)
 			}
 
@@ -126,27 +125,16 @@ func TestPatchWithPodman(t *testing.T) {
 			t.Log("patching image with Podman")
 			patchWithPodman(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile, buildkitContainer)
 
-			switch {
-			case strings.Contains(img.Image, "oracle"):
-				t.Log("Oracle image detected. Skipping Trivy scan.")
-			case reportFile:
-				t.Log("scanning patched image")
-				// Try to scan, but don't fail if Trivy can't access Podman socket in CI
-				err := tryScanPatchedImage(t, patchedRef, ignoreFile, img.IgnoreErrors)
-				if err != nil {
-					t.Logf("Warning: Could not scan patched image with Trivy (this is expected in some CI environments): %v", err)
-				}
-			default:
-				t.Log("scanning patched image")
-				// Try to scan, but don't fail if Trivy can't access Podman socket in CI
-				err := tryScanPatchedImage(t, patchedRef, ignoreFile, img.IgnoreErrors)
-				if err != nil {
-					t.Logf("Warning: Could not scan patched image with Trivy (this is expected in some CI environments): %v", err)
-				}
-			}
+			t.Log("scanning patched image")
+			common.NewScanner().
+				WithIgnoreFile(ignoreFile).
+				WithOutput(scanResults).
+				WithSkipDBUpdate().
+				WithExitCode(0).
+				Scan(t, patchedRef, img.IgnoreErrors)
 
 			// currently validation is only present when patching with a scan report
-			if reportFile && !strings.Contains(img.Image, "oracle") {
+			if reportFile {
 				t.Log("verifying the vex output")
 				common.ValidateVEXJSON(t, dir)
 			}
