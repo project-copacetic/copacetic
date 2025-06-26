@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -225,13 +226,19 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		log.Debugf("latest unique RPMs: %v", updates)
 	}
 
+	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		log.Error("unable to get image platform")
+		return nil, nil, err
+	}
+
 	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion, true)
 	// check if we can resolve the tool image
-	if _, err := tryImage(ctx, toolImageName, rm.config.Client); err != nil {
+	if _, err := tryImage(ctx, toolImageName, rm.config.Client, imagePlatform); err != nil {
 		toolImageName = getRPMImageName(manifest, rm.osType, rm.osVersion, false)
 	}
 
-	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
+	if err := rm.probeRPMStatus(ctx, toolImageName, imagePlatform); err != nil {
 		return nil, nil, err
 	}
 
@@ -261,21 +268,15 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	return updatedImageState, errPkgs, nil
 }
 
-func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
+func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, platform *ocispecs.Platform) error {
 	imageStateCurrent := rm.config.ImageState
 	if rm.config.PatchedConfigData != nil {
 		imageStateCurrent = rm.config.PatchedImageState
 	}
 
-	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
-	if err != nil {
-		log.Error("unable to get image platform")
-		return err
-	}
-
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(*imagePlatform),
+		llb.Platform(*platform),
 		llb.ResolveModeDefault,
 	)
 
