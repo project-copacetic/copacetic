@@ -826,7 +826,7 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
-					Message:  "",
+					Message:  "Windows Image (Original Preserved)",
 				}
 				mu.Unlock()
 				log.Infof("Preserved original image (%s): %s\n", p.OS+"/"+p.Architecture, originalRef.String())

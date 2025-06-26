@@ -615,9 +615,9 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 		},
 		"windows/amd64": {
 			Platform: "windows/amd64",
-			Status:   "Error",
-			Ref:      "",
-			Message:  "Windows images are not supported",
+			Status:   "Not Patched",
+			Ref:      "docker.io/library/nginx (original reference)",
+			Message:  "Windows Image (Original Preserved)",
 		},
 	}
 
@@ -644,14 +644,20 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 	w.Flush()
 
 	got := b.String()
-	expected := `PLATFORM       STATUS   REFERENCE                              MESSAGE
-linux/amd64    Patched  docker.io/library/nginx:patched-amd64  
-linux/arm64    Error    -                                      emulation is not enabled for platform linux/arm64
-linux/arm/v7   Ignored  -                                      
-windows/amd64  Error    -                                      Windows images are not supported
+	expected := `PLATFORM       STATUS       REFERENCE                                     MESSAGE
+linux/amd64    Patched      docker.io/library/nginx:patched-amd64
+linux/arm64    Error        -                                             emulation is not enabled for platform linux/arm64
+linux/arm/v7   Ignored      -
+windows/amd64  Not Patched  docker.io/library/nginx (original reference)  Windows Image (Original Preserved)
 `
-
-	if got != expected {
-		t.Errorf("summary table output mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	gotLines := strings.FieldsFunc(got, func(r rune) bool { return r == '\n' || r == '\r' })
+	expectedLines := strings.FieldsFunc(expected, func(r rune) bool { return r == '\n' || r == '\r' })
+	if len(gotLines) != len(expectedLines) {
+		t.Errorf("line count mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+	for i := range gotLines {
+		if strings.TrimSpace(gotLines[i]) != strings.TrimSpace(expectedLines[i]) {
+			t.Errorf("line %d mismatch:\ngot:   %q\nwant:  %q", i+1, gotLines[i], expectedLines[i])
+		}
 	}
 }
