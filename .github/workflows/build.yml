@@ -426,6 +426,7 @@ jobs:
           else
             # For other modes, source the corresponding script
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
+            echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
           fi
       - name: Run functional test
         shell: bash
