@@ -94,8 +94,13 @@ jobs:
         id: load-test-envs-matrix
         shell: bash
         run: echo "buildkitenvs=$(.github/workflows/scripts/buildkit-env-matrix.sh)" | tee -a "${GITHUB_OUTPUT}"
+      - name: Load multiplatform test environments
+        id: load-multiplatform-envs-matrix
+        shell: bash
+        run: echo "multiplatformenvs=[\"docker\",\"podman/container\"]" | tee -a "${GITHUB_OUTPUT}"
     outputs:
       buildkitenvs: ${{ steps.load-test-envs-matrix.outputs.buildkitenvs }}
+      multiplatformenvs: ${{ steps.load-multiplatform-envs-matrix.outputs.multiplatformenvs }}
 
   test-patch-trivy:
     needs: build
@@ -348,10 +353,14 @@ jobs:
           
   test-patch-multiplatform:
     needs: build
-    name: Test patch with multiplatform
+    name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: read-all
+    strategy:
+      fail-fast: false
+      matrix:
+        buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
     steps:
       - name: Change docker daemon config
         run: |
@@ -408,11 +417,21 @@ jobs:
           ./copa --version
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Set up buildkit environment
+        shell: bash
+        run: |
+          if [[ "${{ matrix.buildkit_mode }}" == "docker" ]]; then
+            # For docker mode, use the default docker daemon
+            echo "COPA_BUILDKIT_ADDR=docker://" >> "$GITHUB_ENV"
+          else
+            # For other modes, source the corresponding script
+            . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
+          fi
       - name: Run functional test
         shell: bash
         run: |
           set -eu -o pipefail
-          go test -v ./integration/multiarch --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+          go test -v ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
   test-patch-multiplatform-plugin:
     needs: build

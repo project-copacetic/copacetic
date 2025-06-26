@@ -39,20 +39,8 @@ func (w *AddrWrapper) Set(val string) {
 func (w *AddrWrapper) Env() []string {
 	val := w.Addr()
 	if val == "" {
-		return nil
+		return []string{}
 	}
-	v := strings.TrimPrefix(val, "docker://")
-	if v == val {
-		// not a docker address
-		return nil
-	}
-	// if no host is provided, default to the default docker host
-	// on Linux, this is normally unix:///var/run/docker.sock
-	if v == "" {
-		endpoint, ok := os.LookupEnv("DOCKER_HOST")
-		if ok {
-			v = endpoint
-		}
-	}
-	return []string{fmt.Sprintf("DOCKER_HOST=%s", v)}
+
+	return []string{fmt.Sprintf("DOCKER_HOST=%s", val)}
 }
