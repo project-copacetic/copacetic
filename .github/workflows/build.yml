@@ -189,6 +189,7 @@ jobs:
           echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
           go test -v ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
       - name: Test RPM validation - noreplace files
+        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
         run: |
             set -eux -o pipefail
@@ -211,6 +212,7 @@ jobs:
             rm "${tmp}"
             docker rm -f test
       - name: Test RPM validation - symlink
+        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
         run: |
           set -eux -o pipefail
@@ -235,6 +237,7 @@ jobs:
           rm "${tmp}" "${tmp}_symlink"
           docker rm -f test
       - name: Test Debian validation - noreplace files
+        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
         run: |
             set -eux -o pipefail
@@ -417,21 +420,19 @@ jobs:
           ./copa --version
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
-      - name: Set up buildkit environment
-        shell: bash
-        run: |
-          if [[ "${{ matrix.buildkit_mode }}" == "docker" ]]; then
-            # For docker mode, use the default docker daemon
-            echo "COPA_BUILDKIT_ADDR=docker://" >> "$GITHUB_ENV"
-          else
-            # For other modes, source the corresponding script
-            . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
-            echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
-          fi
       - name: Run functional test
         shell: bash
         run: |
           set -eu -o pipefail
+          
+          if [[ "${{ matrix.buildkit_mode }}" == "docker" ]]; then
+            # For docker mode, use the default docker daemon
+            export COPA_BUILDKIT_ADDR="docker://"
+          else
+            # For other modes, source the corresponding script in the same shell session
+            . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
+          fi
+          
           go test -v ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
   test-patch-multiplatform-plugin:

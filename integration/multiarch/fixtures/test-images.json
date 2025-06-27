@@ -30,15 +30,15 @@
     ]
   },
   {
-    "originalImage": "registry.k8s.io/pause:3.10",
-    "localImage": "localhost:5000/nginx",
-    "tag": "1.27.0",
-    "description": "Multi-platform pause 3.10, with push",
+    "originalImage": "mcr.microsoft.com/dotnet/runtime",
+    "localImage": "localhost:5000/dotnet-runtime",
+    "tag": "6.0",
+    "description": "Multi-platform .NET 6.0 runtime, with push",
     "ignoreErrors": false,
-    "push": false,
+    "push": true,
     "platforms": [
       "linux/arm/v7",
-      "linux/s390x"
+      "linux/arm64"
     ]
   }
 ]
