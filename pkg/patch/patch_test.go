@@ -517,7 +517,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	err := Patch(
 		context.Background(),
 		30*time.Second,
-		"alpine:3.19", "", "", "", "", "", "", "",
+		"alpine:3.19", "", "", "", "", "", "", "", "",
 		false, true,
 		targetPlatforms,
 		buildkit.Opts{},

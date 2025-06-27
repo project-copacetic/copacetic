@@ -1,13 +1,13 @@
 package patch
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -36,7 +36,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -44,9 +44,6 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 	"github.com/quay/claircore/osrelease"
-
-	dockerTypes "github.com/docker/docker/api/types"
-	dockerClient "github.com/docker/docker/client"
 )
 
 const (
@@ -61,6 +58,30 @@ const (
 var (
 	bkNewClient = buildkit.NewClient
 )
+
+// detectLoaderFromBuildkitAddr attempts to determine the appropriate loader.
+// based on the buildkit connection address scheme.
+func detectLoaderFromBuildkitAddr(addr string) string {
+	if addr == "" {
+		return ""
+	}
+
+	u, err := url.Parse(addr)
+	if err != nil {
+		log.Debugf("Failed to parse buildkit address %q: %v", addr, err)
+		return ""
+	}
+
+	switch u.Scheme {
+	case "podman-container":
+		return imageloader.Podman
+	case "docker-container", "docker", "buildx":
+		return imageloader.Docker
+	default:
+		// Unknown scheme, let imageloader auto-detect
+		return ""
+	}
+}
 
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
@@ -131,7 +152,7 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	targetPlatforms []string,
 	bkOpts buildkit.Opts,
@@ -141,7 +162,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, targetPlatforms, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, targetPlatforms, bkOpts)
 	}()
 
 	select {
@@ -169,7 +190,7 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	targetPlatforms []string,
 	bkOpts buildkit.Opts,
@@ -194,7 +215,7 @@ func patchWithContext(
 				platform.OS = LINUX
 			}
 
-			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 			}
@@ -217,7 +238,7 @@ func patchWithContext(
 				platform.OS = LINUX
 			}
 
-			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 			}
@@ -225,7 +246,7 @@ func patchWithContext(
 		}
 
 		log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
-		return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
+		return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
 	}
 
 	// Check if reportPath exists
@@ -245,7 +266,7 @@ func patchWithContext(
 		if len(targetPlatforms) > 0 {
 			log.Warnf("Platform flag ignored when report directory is provided")
 		}
-		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, nil, nil)
+		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, nil, nil)
 	}
 	// Handle file - single-arch patching
 	log.Debugf("Using report file: %s", reportPath)
@@ -255,7 +276,7 @@ func patchWithContext(
 	if platform.OS != LINUX {
 		platform.OS = LINUX
 	}
-	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 	}
@@ -265,7 +286,7 @@ func patchWithContext(
 func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
@@ -360,8 +381,17 @@ func patchSingleArchImage(
 		ref = imageName.String()
 	}
 
+	// Determine the loader type before starting goroutines
+	finalLoaderType := loader
+	if finalLoaderType == "" {
+		finalLoaderType = detectLoaderFromBuildkitAddr(bkOpts.Addr)
+		if finalLoaderType != "" {
+			log.Debugf("Auto-detected loader type %q from buildkit address %q", finalLoaderType, bkOpts.Addr)
+		}
+	}
+
 	// get the original media type of the image to determine if we should export as OCI or Docker
-	mt, err := utils.GetMediaType(ref)
+	mt, err := utils.GetMediaType(ref, finalLoaderType)
 	shouldExportOCI := err == nil && strings.Contains(mt, "vnd.oci.image")
 
 	switch {
@@ -595,17 +625,19 @@ func patchSingleArchImage(
 	// only load to docker if not pushing
 	if !push {
 		eg.Go(func() error {
-			dockerCli, err := newDockerClient()
+			imgLoader, err := imageloader.New(ctx, imageloader.Config{Loader: finalLoaderType})
 			if err != nil {
-				pipeR.CloseWithError(fmt.Errorf("failed to create docker client for loading: %w", err))
-				return fmt.Errorf("failed to create docker client for loading: %w", err)
+				err = fmt.Errorf("failed to create loader: %w", err)
+				pipeR.CloseWithError(err)
+				log.Error(err)
+				return err
 			}
-			defer dockerCli.Close()
 
-			err = dockerLoadWithClient(ctx, dockerCli, pipeR)
-			if err != nil {
-				pipeR.CloseWithError(fmt.Errorf("dockerLoadWithClient failed: %w", err))
-				return fmt.Errorf("dockerLoadWithClient failed: %w", err)
+			if err := imgLoader.Load(ctx, pipeR, patchedImageName); err != nil {
+				err = fmt.Errorf("failed to load image: %w", err)
+				pipeR.CloseWithError(err)
+				log.Error(err)
+				return err
 			}
 			return pipeR.Close()
 		})
@@ -620,7 +652,13 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName)
+	// Use the appropriate runtime for image descriptor lookup
+	runtime := imageloader.Docker
+	if finalLoaderType == imageloader.Podman {
+		runtime = imageloader.Podman
+	}
+
+	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName, runtime)
 	if err != nil { // dont necessarily need to fail if we can't get the descriptor
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s':  %v", prettyPlatform, err)
@@ -714,77 +752,6 @@ func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
 	return osData["VERSION_ID"], nil
 }
 
-func newDockerClient() (dockerClient.APIClient, error) {
-	hostOpt := func(c *dockerClient.Client) error {
-		if os.Getenv(dockerClient.EnvOverrideHost) != "" {
-			// Fallback to just keep dockerClient.FromEnv whatever was set from
-			return nil
-		}
-		addr, err := connhelpers.AddrFromDockerContext()
-		if err != nil {
-			log.WithError(err).Error("Error loading docker context, falling back to env")
-			return nil
-		}
-		return dockerClient.WithHost(addr)(c)
-	}
-
-	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, hostOpt, dockerClient.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create docker client: %w", err)
-	}
-	log.Debug("Docker client initialized successfully")
-	return cli, nil
-}
-
-func dockerLoadWithClient(ctx context.Context, cli dockerClient.APIClient, pipeR io.Reader) error {
-	log.Debugf("Loading image stream using Docker API client")
-	resp, err := cli.ImageLoad(ctx, pipeR, dockerClient.ImageLoadWithQuiet(false))
-	if err != nil {
-		log.Errorf("Docker API ImageLoad failed: %v", err)
-		return fmt.Errorf("docker client ImageLoad: %w", err)
-	}
-	defer resp.Body.Close()
-
-	scanner := bufio.NewScanner(resp.Body)
-	lastLine := ""
-	for scanner.Scan() {
-		line := scanner.Text()
-		lastLine = line
-		log.Debugf("ImageLoad response stream: %s", line)
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Warnf("Error reading ImageLoad response body stream: %v", err)
-	}
-
-	if resp.JSON && lastLine != "" {
-		var jsonResp struct {
-			ErrorResponse *dockerTypes.ErrorResponse `json:"errorResponse"`
-			Error         string                     `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(lastLine), &jsonResp); err == nil {
-			if jsonResp.ErrorResponse != nil {
-				msg := fmt.Sprintf("ImageLoad reported error: %s", jsonResp.ErrorResponse.Message)
-				log.Error(msg)
-				return errors.New(msg)
-			}
-			if jsonResp.Error != "" {
-				// Sometimes the error is directly in the 'error' field
-				msg := fmt.Sprintf("ImageLoad reported error: %s", jsonResp.Error)
-				log.Error(msg)
-				return errors.New(msg)
-			}
-		} else {
-			log.Debugf("Final ImageLoad response line (non-JSON or parse error): %s", lastLine)
-		}
-	} else if lastLine != "" {
-		log.Debugf("Final ImageLoad response line (non-JSON): %s", lastLine)
-	}
-
-	log.Info("Image loaded successfully via Docker API")
-	return nil
-}
-
 // e.g. "docker.io/library/nginx:1.21.6-patched".
 func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	parts := strings.Split(patchedImageName, "/")
@@ -833,7 +800,7 @@ func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms 
 func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
-	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
 	targetPlatforms []string,
@@ -969,7 +936,7 @@ func patchMultiPlatformImage(
 				reportFile = ""
 			}
 
-			res, err := patchSingleArchImage(gctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			res, err := patchSingleArchImage(gctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, p, ignoreError, push, bkOpts, true)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

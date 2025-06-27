@@ -29,6 +29,7 @@ type patchArgs struct {
 	bkOpts        buildkit.Opts
 	push          bool
 	platform      []string
+	loader        string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -54,6 +55,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.scanner,
 				ua.format,
 				ua.output,
+				ua.loader,
 				ua.ignoreError,
 				ua.push,
 				ua.platform,
@@ -78,6 +80,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
 	flags.StringSliceVar(&ua.platform, "platforms", nil,
 		"Target platform(s) for multi-arch images when no report directory is provided (e.g., linux/amd64,linux/arm64). Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms are patched.")
+	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
