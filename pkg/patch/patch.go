@@ -206,9 +206,8 @@ func patchWithContext(
 				log.Warnf("Platform flag ignored when platform discovery fails")
 			}
 
-			var platform types.PatchPlatform
 			// Fallback to default platform
-			platform = types.PatchPlatform{
+			platform := types.PatchPlatform{
 				Platform: platforms.Normalize(platforms.DefaultSpec()),
 			}
 			if platform.OS != LINUX {
