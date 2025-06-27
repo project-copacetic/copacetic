@@ -190,16 +190,12 @@ func patchWithContext(
 			}
 
 			var platform types.PatchPlatform
-			if len(discoveredPlatforms) == 1 {
-				platform = discoveredPlatforms[0]
-			} else {
-				// Fallback to default platform if none discovered
-				platform = types.PatchPlatform{
-					Platform: platforms.Normalize(platforms.DefaultSpec()),
-				}
-				if platform.OS != LINUX {
-					platform.OS = LINUX
-				}
+			// Fallback to default platform if single arch image
+			platform = types.PatchPlatform{
+				Platform: platforms.Normalize(platforms.DefaultSpec()),
+			}
+			if platform.OS != LINUX {
+				platform.OS = LINUX
 			}
 
 			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
