@@ -761,22 +761,53 @@ func patchMultiPlatformImage(
 
 				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {
+					msg := "cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors"
+					mu.Lock()
+					defer mu.Unlock()
 					if !ignoreError {
-						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
+						summaryMap[platformKey] = &types.MultiPlatformSummary{
+							Platform: platformKey,
+							Status:   "Error",
+							Ref:      "",
+							Message:  msg,
+						}
+						return errors.New(msg)
 					}
-					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Ignored",
+						Ref:      "",
+						Message:  "Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.",
+					}
+					return nil
 				}
 
 				// Get the original platform descriptor from the manifest
 				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
 				if err != nil {
-					return fmt.Errorf("failed to get original descriptor for platform %s: %w", p.OS+"/"+p.Architecture, err)
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
+					}
+					mu.Unlock()
+					return err
 				}
 
 				// Parse the original image reference for the result
 				originalRef, err := reference.ParseNormalizedNamed(image)
 				if err != nil {
-					return fmt.Errorf("failed to parse original image reference: %w", err)
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
+					}
+					mu.Unlock()
+					return err
 				}
 
 				// For platforms without reports, use the original image digest/reference
@@ -793,10 +824,9 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
-					Message:  "Windows Image (Original Preserved)",
+					Message:  "Preserved original image",
 				}
 				mu.Unlock()
-				log.Infof("Preserved original image (%s): %s\n", p.OS+"/"+p.Architecture, originalRef.String())
 				return nil
 			}
 
@@ -833,9 +863,8 @@ func patchMultiPlatformImage(
 				Platform: platformKey,
 				Status:   "Patched",
 				Ref:      res.PatchedRef.String(),
-				Message:  "",
+				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
 			}
-			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
 			return nil
 		})
 	}
