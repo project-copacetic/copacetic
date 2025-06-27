@@ -133,6 +133,7 @@ func Patch(
 	ctx context.Context, timeout time.Duration,
 	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
+	targetPlatforms []string,
 	bkOpts buildkit.Opts,
 ) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -140,7 +141,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, targetPlatforms, bkOpts)
 	}()
 
 	select {
@@ -170,21 +171,46 @@ func patchWithContext(
 	ch chan error,
 	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
+	targetPlatforms []string,
 	bkOpts buildkit.Opts,
 ) error {
-	// Handle empty report path - single-arch patching without report
+	// Handle empty report path - check if image is manifest list or single arch
 	if reportPath == "" {
-		platform := types.PatchPlatform{
-			Platform: platforms.Normalize(platforms.DefaultSpec()),
+		// Discover platforms from the image reference to determine if it's multi-arch
+		discoveredPlatforms, err := buildkit.DiscoverPlatformsFromReference(image)
+		if err != nil {
+			return fmt.Errorf("failed to discover platforms for image %s: %w", image, err)
 		}
-		if platform.OS != LINUX {
-			platform.OS = LINUX
+
+		if len(discoveredPlatforms) <= 1 {
+			// Single-arch image - ignore platform flag
+			log.Debugf("Detected single-arch image")
+			if len(targetPlatforms) > 0 {
+				log.Warnf("Platform flag ignored for single-arch image")
+			}
+
+			var platform types.PatchPlatform
+			if len(discoveredPlatforms) == 1 {
+				platform = discoveredPlatforms[0]
+			} else {
+				// Fallback to default platform if none discovered
+				platform = types.PatchPlatform{
+					Platform: platforms.Normalize(platforms.DefaultSpec()),
+				}
+				if platform.OS != LINUX {
+					platform.OS = LINUX
+				}
+			}
+
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+			if err == nil && result != nil && result.PatchedRef != nil {
+				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
+			}
+			return err
+		} else {
+			log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
+			return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
-		if err == nil && result != nil && result.PatchedRef != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
-		}
-		return err
 	}
 
 	// Check if reportPath exists
@@ -201,7 +227,10 @@ func patchWithContext(
 	if f.IsDir() {
 		// Handle directory - multi-platform patching
 		log.Debugf("Using report directory: %s", reportPath)
-		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		if len(targetPlatforms) > 0 {
+			log.Warnf("Platform flag ignored when report directory is provided")
+		}
+		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, nil, nil)
 	}
 	// Handle file - single-arch patching
 	log.Debugf("Using report file: %s", reportPath)
@@ -752,20 +781,129 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	return nameWithDigest
 }
 
+var validPlatforms = []string{
+	"linux/amd64", "linux/arm64", "linux/riscv64", "linux/ppc64le",
+	"linux/s390x", "linux/386", "linux/arm/v7", "linux/arm/v6",
+}
+
+// filterPlatforms filters discovered platforms based on user-specified target platforms
+func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms []string) []types.PatchPlatform {
+	var filtered []types.PatchPlatform
+
+	for _, target := range targetPlatforms {
+		// Validate platform against allowed list
+		if !slices.Contains(validPlatforms, target) {
+			log.Warnf("Platform %s is not in the list of valid platforms: %v", target, validPlatforms)
+			continue
+		}
+
+		targetPlatform, err := platforms.Parse(target)
+		if err != nil {
+			log.Warnf("Invalid platform format %s: %v", target, err)
+			continue
+		}
+		targetPlatform = platforms.Normalize(targetPlatform)
+
+		for _, discovered := range discoveredPlatforms {
+			if platforms.Only(targetPlatform).Match(discovered.Platform) {
+				filtered = append(filtered, discovered)
+				break
+			}
+		}
+	}
+
+	return filtered
+}
+
+// getPreservedPlatforms returns platforms that should be preserved and not patched.
+func getPreservedPlatforms(allPlatforms []types.PatchPlatform, patchPlatforms []types.PatchPlatform) []types.PatchPlatform {
+	var preserved []types.PatchPlatform
+
+	patchMap := make(map[string]bool)
+	for _, p := range patchPlatforms {
+		key := buildkit.PlatformKey(p.Platform)
+		patchMap[key] = true
+	}
+
+	// Find platforms not in the patch list
+	for _, p := range allPlatforms {
+		key := buildkit.PlatformKey(p.Platform)
+		if !patchMap[key] {
+			preservedPlatform := p
+			preservedPlatform.ReportFile = ""
+			preserved = append(preserved, preservedPlatform)
+		}
+	}
+
+	return preserved
+}
+
 func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
 	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
+	targetPlatforms []string,
+	discoveredPlatforms []types.PatchPlatform,
 ) error {
 	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
-	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
-	if err != nil {
-		return err
-	}
-	if len(platforms) == 0 {
-		return fmt.Errorf("no patchable platforms found for image %s", image)
+
+	var platforms []types.PatchPlatform
+	if reportDir != "" {
+		// Using report directory - discover platforms from reports
+		var err error
+		platforms, err = buildkit.DiscoverPlatforms(image, reportDir, scanner)
+		if err != nil {
+			return err
+		}
+		if len(platforms) == 0 {
+			return fmt.Errorf("no patchable platforms found for image %s", image)
+		}
+	} else {
+		// No report directory - use discovered platforms and filter
+		if len(discoveredPlatforms) == 0 {
+			return fmt.Errorf("no platforms provided for image %s", image)
+		}
+
+		if len(targetPlatforms) > 0 {
+			// Filter platforms based on user specification and validate
+			patchPlatforms := filterPlatforms(discoveredPlatforms, targetPlatforms)
+			if len(patchPlatforms) == 0 {
+				return fmt.Errorf("none of the specified platforms %v are available in the image", targetPlatforms)
+			}
+
+			// Create a map to track which platforms should be patched
+			shouldPatchMap := make(map[string]bool)
+			for _, p := range patchPlatforms {
+				key := buildkit.PlatformKey(p.Platform)
+				shouldPatchMap[key] = true
+			}
+
+			// Process all platforms, marking which should be patched vs preserved
+			for _, p := range discoveredPlatforms {
+				platformCopy := p
+				key := buildkit.PlatformKey(p.Platform)
+				if shouldPatchMap[key] {
+					// Platform should be patched with all
+					platformCopy.ReportFile = ""
+				} else {
+					// Platform should be preserved
+					platformCopy.ReportFile = "PRESERVE"
+				}
+				platforms = append(platforms, platformCopy)
+			}
+
+			log.Infof("Patching specified platforms, preserving others")
+		} else {
+			// Patch all available platforms since no specific platforms were requested
+			for _, p := range discoveredPlatforms {
+				platformCopy := p
+				platformCopy.ReportFile = "" // No vulnerability report, just patch with latest packages
+				platforms = append(platforms, platformCopy)
+			}
+			log.Infof("Patching all available platforms")
+		}
 	}
 
 	sem := make(chan struct{}, runtime.NumCPU())
@@ -788,8 +926,8 @@ func patchMultiPlatformImage(
 			}
 			defer func() { <-sem }()
 
-			if p.ReportFile == "" {
-				// No report for this platform - preserve original
+			if (p.ReportFile == "" && reportDir != "") || p.ReportFile == "PRESERVE" {
+				// Report directory was provided but no report for this platform, or platform marked for preservation - preserve original
 				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
 
 				// Handle Windows platform without push enabled
@@ -833,7 +971,13 @@ func patchMultiPlatformImage(
 				return nil
 			}
 
-			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
+			// When no report directory is provided, patch with empty report file
+			reportFile := p.ReportFile
+			if reportDir == "" {
+				reportFile = ""
+			}
+
+			res, err := patchSingleArchImage(gctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

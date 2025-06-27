@@ -28,6 +28,7 @@ type patchArgs struct {
 	output        string
 	bkOpts        buildkit.Opts
 	push          bool
+	platform      []string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -55,6 +56,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.output,
 				ua.ignoreError,
 				ua.push,
+				ua.platform,
 				bkopts)
 		},
 	}
@@ -74,6 +76,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+	flags.StringSliceVar(&ua.platform, "platforms", nil, "Target platform(s) for multi-arch images when no report is provided (e.g., linux/amd64,linux/arm64). Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms are patched.")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
