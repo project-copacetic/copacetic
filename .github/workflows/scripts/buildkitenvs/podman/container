@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -eu -o pipefail
+
+# Start Podman buildkit container
+CONTAINER_NAME="copa-buildkitd-$(date +%s)"
+echo "Starting Podman buildkit container: ${CONTAINER_NAME}" >&2
+
+# Start buildkit
+podman run -d --rm --name "${CONTAINER_NAME}" \
+    --privileged \
+    --network=host \
+    docker.io/moby/buildkit:latest >/dev/null
+
+# Wait for container to be ready
+echo "Waiting for buildkit container to be ready..." >&2
+for i in {1..30}; do
+    if podman inspect --format "{{.State.Status}}" "${CONTAINER_NAME}" 2>/dev/null | grep -q "running"; then
+        echo "Container ${CONTAINER_NAME} is running" >&2
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "Container ${CONTAINER_NAME} failed to start" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
+# Function to cleanup container on exit
+_cleanup() {
+    echo "Cleaning up Podman buildkit container: ${CONTAINER_NAME}" >&2
+    podman kill "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    podman rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+}
+
+# Set trap to cleanup on exit
+trap '_cleanup' EXIT INT TERM
+
+# Set buildkit address for copa to use
+export COPA_BUILDKIT_ADDR="podman-container://${CONTAINER_NAME}"

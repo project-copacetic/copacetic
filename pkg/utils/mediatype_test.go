@@ -13,6 +13,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -128,7 +129,7 @@ func TestGetMediaType_LocalSuccess(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := GetMediaType("alpine:latest")
+	mt, err := GetMediaType("alpine:latest", imageloader.Docker)
 	require.NoError(t, err)
 	require.Equal(t, fakeLocalType, mt)
 }
@@ -159,7 +160,7 @@ func TestGetMediaType_RemoteFallback(t *testing.T) {
 		return mr.Get(ref, opts...)
 	}
 
-	mt, err := GetMediaType("alpine:latest")
+	mt, err := GetMediaType("alpine:latest", imageloader.Docker)
 	require.NoError(t, err)
 	require.Equal(t, string(fakeRemoteType), mt)
 }
