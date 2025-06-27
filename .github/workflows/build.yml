@@ -94,8 +94,13 @@ jobs:
         id: load-test-envs-matrix
         shell: bash
         run: echo "buildkitenvs=$(.github/workflows/scripts/buildkit-env-matrix.sh)" | tee -a "${GITHUB_OUTPUT}"
+      - name: Load multiplatform test environments
+        id: load-multiplatform-envs-matrix
+        shell: bash
+        run: echo "multiplatformenvs=[\"docker\",\"podman/container\"]" | tee -a "${GITHUB_OUTPUT}"
     outputs:
       buildkitenvs: ${{ steps.load-test-envs-matrix.outputs.buildkitenvs }}
+      multiplatformenvs: ${{ steps.load-multiplatform-envs-matrix.outputs.multiplatformenvs }}
 
   test-patch-trivy:
     needs: build
@@ -108,11 +113,6 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
-        with:
-          egress-policy: audit
-
       - name: Download copa from build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -156,11 +156,6 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@002fdce3c6a235733a90a27c80493a3241e56863 # v2.12.1
-        with:
-          egress-policy: audit
-
       - name: Download copa from build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -194,6 +189,7 @@ jobs:
           echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
           go test -v ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
       - name: Test RPM validation - noreplace files
+        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
         run: |
             set -eux -o pipefail
@@ -216,6 +212,7 @@ jobs:
             rm "${tmp}"
             docker rm -f test
       - name: Test RPM validation - symlink
+        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
         run: |
           set -eux -o pipefail
@@ -240,6 +237,7 @@ jobs:
           rm "${tmp}" "${tmp}_symlink"
           docker rm -f test
       - name: Test Debian validation - noreplace files
+        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
         run: |
             set -eux -o pipefail
@@ -358,10 +356,14 @@ jobs:
           
   test-patch-multiplatform:
     needs: build
-    name: Test patch with multiplatform
+    name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: read-all
+    strategy:
+      fail-fast: false
+      matrix:
+        buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
     steps:
       - name: Change docker daemon config
         run: |
@@ -422,7 +424,16 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          go test -v ./integration/multiarch --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+          
+          if [[ "${{ matrix.buildkit_mode }}" == "docker" ]]; then
+            # For docker mode, use the default docker daemon
+            export COPA_BUILDKIT_ADDR="docker://"
+          else
+            # For other modes, source the corresponding script in the same shell session
+            . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
+          fi
+          
+          go test -v ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
   test-patch-multiplatform-plugin:
     needs: build

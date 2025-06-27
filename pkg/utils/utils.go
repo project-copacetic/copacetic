@@ -2,10 +2,13 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/containerd/errdefs"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -14,6 +17,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -78,6 +82,77 @@ func localImageDescriptor(ctx context.Context, imageRef string) (*ocispec.Descri
 	return distInspect.Descriptor, nil
 }
 
+// podmanImageDescriptor tries to get the OCI image descriptor using podman CLI.
+func podmanImageDescriptor(ctx context.Context, imageRef string) (*ocispec.Descriptor, error) {
+	// Check if podman is available
+	if _, err := exec.LookPath("podman"); err != nil {
+		return nil, fmt.Errorf("podman not found in PATH: %w", err)
+	}
+
+	// Run podman inspect to get image metadata
+	cmd := exec.CommandContext(ctx, "podman", "inspect", "--type", "image", imageRef)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// Check if it's a "not found" error
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "no such image") || strings.Contains(stderr, "not found") {
+				return nil, errdefs.ErrNotFound
+			}
+		}
+		return nil, fmt.Errorf("podman inspect failed: %w", err)
+	}
+
+	// Parse the JSON output
+	var inspectResults []map[string]interface{}
+	if err := json.Unmarshal(output, &inspectResults); err != nil {
+		return nil, fmt.Errorf("failed to parse podman inspect output: %w", err)
+	}
+
+	if len(inspectResults) == 0 {
+		return nil, errdefs.ErrNotFound
+	}
+
+	result := inspectResults[0]
+
+	// Extract relevant fields to construct the descriptor
+	digestStr, _ := result["Digest"].(string)
+	if digestStr == "" {
+		digestStr, _ = result["Id"].(string)
+		if digestStr != "" && !strings.HasPrefix(digestStr, "sha256:") {
+			digestStr = "sha256:" + digestStr
+		}
+	}
+
+	size := int64(0)
+	if sizeVal, ok := result["Size"].(float64); ok {
+		size = int64(sizeVal)
+	}
+
+	// Get architecture and OS
+	architecture := "amd64"
+	os := "linux"
+	if archVal, ok := result["Architecture"].(string); ok {
+		architecture = archVal
+	}
+	if osVal, ok := result["Os"].(string); ok {
+		os = osVal
+	}
+
+	// Construct the descriptor
+	desc := &ocispec.Descriptor{
+		MediaType: ocispec.MediaTypeImageManifest,
+		Digest:    digest.Digest(digestStr),
+		Size:      size,
+		Platform: &ocispec.Platform{
+			Architecture: architecture,
+			OS:           os,
+		},
+	}
+
+	return desc, nil
+}
+
 // remoteImageDescriptor tries to get the OCI image descriptor from a remote registry.
 func remoteImageDescriptor(imageRef string) (*ocispec.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
@@ -113,23 +188,34 @@ func remoteImageDescriptor(imageRef string) (*ocispec.Descriptor, error) {
 	return ociDesc, nil
 }
 
-// GetImageDescriptor retrieves the image descriptor for a given image reference.
-// It first tries to inspect the image using the Docker client (local).
+// GetImageDescriptor retrieves the image descriptor for a given image reference using the specified runtime.
+// It first tries to inspect the image using the specified runtime client (local).
 // If the image is not found locally or a local error occurs, it tries to get the image descriptor from the remote registry.
-func GetImageDescriptor(ctx context.Context, imageRef string) (*ocispec.Descriptor, error) {
-	log.Debugf("Attempting to get local image descriptor for %s", imageRef)
-	localDesc, localErr := localImageDescriptor(ctx, imageRef)
+// runtime should be imageloader.Docker or imageloader.Podman.
+func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec.Descriptor, error) {
+	log.Debugf("Attempting to get local image descriptor for %s using runtime %s", imageRef, runtime)
+
+	var localDesc *ocispec.Descriptor
+	var localErr error
+
+	switch runtime {
+	case imageloader.Podman:
+		localDesc, localErr = podmanImageDescriptor(ctx, imageRef)
+	default:
+		// Default to Docker
+		localDesc, localErr = localImageDescriptor(ctx, imageRef)
+	}
 
 	if localErr == nil {
-		log.Infof("found local image descriptor for %s via Docker client", imageRef)
+		log.Infof("found local image descriptor for %s via %s", imageRef, runtime)
 		return localDesc, nil
 	}
 
 	isNotFoundError := errdefs.IsNotFound(localErr)
 	if isNotFoundError {
-		log.Debugf("image %s not found locally (error: %v), trying remote.", imageRef, localErr)
+		log.Debugf("image %s not found locally in %s (error: %v), trying remote.", imageRef, runtime, localErr)
 	} else {
-		log.Warnf("local descriptor lookup for %s failed (error: %v), trying remote.", imageRef, localErr)
+		log.Warnf("local descriptor lookup for %s failed in %s (error: %v), trying remote.", imageRef, runtime, localErr)
 	}
 
 	log.Debugf("attempting to get remote image descriptor for %s", imageRef)
