@@ -600,6 +600,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
 	if updates == nil {
+		// Check for upgradable packages
+		checkUpgradable := `sh -c 'tdnf makecache && tdnf check-update > /updates.txt || true; if [ ! -s /updates.txt ]; then exit 1; fi'`
+		checkState := busyboxCopied.Run(llb.Shlex(checkUpgradable)).Root()
+		_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &checkState, "/updates.txt")
+		if err != nil {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
 		busyboxCopied = busyboxCopied.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{

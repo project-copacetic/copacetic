@@ -345,8 +345,12 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
-	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
+	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" > /upgradable.txt || exit 1"`
 	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, "/upgradable.txt")
+	if err != nil {
+		return nil, nil, fmt.Errorf("no patchable packages found")
+	}
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
@@ -451,6 +455,13 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// In the case of update all packages, only update packages that are not already latest version. Store these packages in packages.txt.
 	if updates == nil {
+		// Check for upgradable packages
+		checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q \"^Inst\" > /upgradable.txt || exit 1"`
+		updatedCheck := updated.Run(llb.Shlex(checkUpgradable)).Root()
+		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &updatedCheck, "/upgradable.txt")
+		if err != nil {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
 		updated = updated.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
