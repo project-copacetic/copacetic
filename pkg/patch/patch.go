@@ -179,7 +179,26 @@ func patchWithContext(
 		// Discover platforms from the image reference to determine if it's multi-arch
 		discoveredPlatforms, err := buildkit.DiscoverPlatformsFromReference(image)
 		if err != nil {
-			return fmt.Errorf("failed to discover platforms for image %s: %w", image, err)
+			// Failed to discover platforms - treat as single-arch image
+			log.Warnf("Failed to discover platforms for image %s (treating as single-arch): %v", image, err)
+			if len(targetPlatforms) > 0 {
+				log.Warnf("Platform flag ignored when platform discovery fails")
+			}
+
+			var platform types.PatchPlatform
+			// Fallback to default platform
+			platform = types.PatchPlatform{
+				Platform: platforms.Normalize(platforms.DefaultSpec()),
+			}
+			if platform.OS != LINUX {
+				platform.OS = LINUX
+			}
+
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+			if err == nil && result != nil && result.PatchedRef != nil {
+				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
+			}
+			return err
 		}
 
 		if len(discoveredPlatforms) <= 1 {
