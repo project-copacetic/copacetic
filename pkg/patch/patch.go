@@ -207,10 +207,10 @@ func patchWithContext(
 				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 			}
 			return err
-		} else {
-			log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
-			return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
 		}
+
+		log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
+		return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
 	}
 
 	// Check if reportPath exists
@@ -786,7 +786,7 @@ var validPlatforms = []string{
 	"linux/s390x", "linux/386", "linux/arm/v7", "linux/arm/v6",
 }
 
-// filterPlatforms filters discovered platforms based on user-specified target platforms
+// filterPlatforms filters discovered platforms based on user-specified target platforms.
 func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms []string) []types.PatchPlatform {
 	var filtered []types.PatchPlatform
 
@@ -813,29 +813,6 @@ func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms 
 	}
 
 	return filtered
-}
-
-// getPreservedPlatforms returns platforms that should be preserved and not patched.
-func getPreservedPlatforms(allPlatforms []types.PatchPlatform, patchPlatforms []types.PatchPlatform) []types.PatchPlatform {
-	var preserved []types.PatchPlatform
-
-	patchMap := make(map[string]bool)
-	for _, p := range patchPlatforms {
-		key := buildkit.PlatformKey(p.Platform)
-		patchMap[key] = true
-	}
-
-	// Find platforms not in the patch list
-	for _, p := range allPlatforms {
-		key := buildkit.PlatformKey(p.Platform)
-		if !patchMap[key] {
-			preservedPlatform := p
-			preservedPlatform.ReportFile = ""
-			preserved = append(preserved, preservedPlatform)
-		}
-	}
-
-	return preserved
 }
 
 func patchMultiPlatformImage(
