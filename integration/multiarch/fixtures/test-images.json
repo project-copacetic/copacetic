@@ -28,5 +28,17 @@
       "linux/amd64",
       "linux/arm/v5"
     ]
+  },
+  {
+    "originalImage": "mcr.microsoft.com/dotnet/runtime",
+    "localImage": "localhost:5000/dotnet-runtime",
+    "tag": "6.0",
+    "description": "Multi-platform .NET 6.0 runtime, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "platforms": [
+      "linux/arm/v7",
+      "linux/arm64"
+    ]
   }
 ]
