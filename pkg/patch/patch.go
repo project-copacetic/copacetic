@@ -228,9 +228,7 @@ func patchWithContext(
 				log.Warnf("Platform flag ignored for single-arch image")
 			}
 
-			var platform types.PatchPlatform
-			// Fallback to default platform if single arch image
-			platform = types.PatchPlatform{
+			platform := types.PatchPlatform{
 				Platform: platforms.Normalize(platforms.DefaultSpec()),
 			}
 			if platform.OS != LINUX {
