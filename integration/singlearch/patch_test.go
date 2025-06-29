@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -16,7 +15,6 @@ import (
 	"github.com/project-copacetic/copacetic/integration/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/utils"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +32,7 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
+
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
@@ -105,7 +104,10 @@ func TestPatch(t *testing.T) {
 			}
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+			common.Patch(
+				t, ref, tagPatched, dir, ignoreErrors, reportFile,
+				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(), false, false,
+			)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -163,43 +165,4 @@ func dockerCmd(t *testing.T, args ...string) {
 	cmd := exec.Command(`docker`, a...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
-}
-
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
-	var addrFl string
-	if buildkitAddr != "" {
-		addrFl = "-a=" + buildkitAddr
-	}
-
-	var reportPath string
-	if reportFile {
-		reportPath = "-r=" + path + "/scan.json"
-	}
-
-	//#nosec G204
-	cmd := exec.Command(
-		copaPath,
-		"patch",
-		"-i="+ref,
-		"-t="+patchedTag,
-		reportPath,
-		"-s="+scannerPlugin,
-		"--timeout=30m",
-		addrFl,
-		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
-		"--output="+path+"/vex.json",
-		"--debug",
-	)
-
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
-
-	out, err := cmd.CombinedOutput()
-
-	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
-		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+
-			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
-	} else {
-		require.NoError(t, err, string(out))
-	}
 }

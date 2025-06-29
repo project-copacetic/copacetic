@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +17,7 @@ import (
 
 //go:embed fixtures/test-images.json
 var testImages []byte
+var multiarch bool = true
 
 type testImage struct {
 	OriginalImage string   `json:"originalImage"`
@@ -80,7 +80,10 @@ func TestPatch(t *testing.T) {
 			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
 
 			t.Log("patching image with multiple architectures")
-			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
+			common.Patch(
+				t, ref, tagPatched, reportDir, img.IgnoreErrors, false,
+				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(), img.Push, multiarch,
+			)
 
 			t.Log("scanning patched image for each platform")
 			wg = sync.WaitGroup{}
@@ -154,8 +157,10 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	patchedRef := fmt.Sprintf("%s:%s", localImage, patchedTag)
 
 	t.Log("patching image with only linux/amd64 platform report")
-	patchMultiPlatform(t, localRef, patchedTag, reportDir, false, true)
-
+	common.Patch(
+		t, localRef, patchedTag, reportDir, false, false,
+		buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(), true, multiarch,
+	)
 	// Verify the patched manifest still contains all original platforms
 	t.Log("verifying manifest contains all original platforms")
 
@@ -287,44 +292,6 @@ type Platform struct {
 	Architecture string `json:"architecture"`
 	OSVersion    string `json:"os.version,omitempty"`
 	Variant      string `json:"variant,omitempty"`
-}
-
-func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
-	var addrFl string
-	if buildkitAddr != "" {
-		addrFl = "-a=" + buildkitAddr
-	}
-
-	args := []string{
-		"patch",
-		"-i=" + ref,
-		"-t=" + patchedTag,
-		"--report=" + reportDir,
-		"-s=" + scannerPlugin,
-		"--timeout=30m",
-		addrFl,
-		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
-		"--debug",
-	}
-	if push {
-		args = append(args, "--push")
-	}
-
-	//#nosec G204
-	cmd := exec.Command(
-		copaPath,
-		args...,
-	)
-
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("command failed: %v", err)
-	}
 }
 
 // helper to copy an image using oras.
