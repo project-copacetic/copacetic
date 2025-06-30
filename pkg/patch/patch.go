@@ -761,7 +761,6 @@ func patchMultiPlatformImage(
 
 				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {
-					msg := "cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors"
 					mu.Lock()
 					defer mu.Unlock()
 					if !ignoreError {
@@ -769,16 +768,17 @@ func patchMultiPlatformImage(
 							Platform: platformKey,
 							Status:   "Error",
 							Ref:      "",
-							Message:  msg,
+							Message:  "Windows images are not patched",
 						}
-						return errors.New(msg)
+						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
 					}
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Ignored",
 						Ref:      "",
-						Message:  "Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.",
+						Message:  "Windows images are not patched and will be preserved as-is",
 					}
+					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
 					return nil
 				}
 
