@@ -455,13 +455,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// In the case of update all packages, only update packages that are not already latest version. Store these packages in packages.txt.
 	if updates == nil {
-		// Check for upgradable packages
-		checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q \"^Inst\" > /upgradable.txt || exit 1"`
-		updatedCheck := updated.Run(llb.Shlex(checkUpgradable)).Root()
-		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &updatedCheck, "/upgradable.txt")
-		if err != nil {
-			return nil, nil, fmt.Errorf("no patchable packages found")
-		}
 		updated = updated.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
@@ -520,6 +513,13 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							ls -lh /var/lib/dpkg
 						`,
 		})).Root()
+	// Check for upgradable packages
+	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q \"^Inst\" > /upgradable.txt || exit 1"`
+	updatedCheck := updated.Run(llb.Shlex(checkUpgradable)).Root()
+	_, err = buildkit.ExtractFileFromState(ctx, dm.config.Client, &updatedCheck, "/upgradable.txt")
+	if err != nil {
+		return nil, nil, fmt.Errorf("no patchable packages found")
+	}
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
