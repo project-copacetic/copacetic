@@ -94,8 +94,7 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
-
+			
 			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
 			require.NoError(t, err)
 			fmt.Println("patchedMediaType: ", patchedMediaType)
@@ -105,15 +104,16 @@ func TestPatch(t *testing.T) {
 				t.Fatalf("media type mismatch: %s != %s", mediaType, patchedMediaType)
 			}
 
-			t.Log("patching image", "tagPatched:", tagPatched)
+			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
 			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
-			// Set this to get patchedRef for scanner
+			// The scanning should look for the tag that Copa actually created
+			scanTag := tagPatched
 			if !reportFile && img.IsManifest {
-				tagPatched += "-amd64"
+				scanTag += "-amd64"
 			}
-			patchedRef = fmt.Sprintf("%s:%s", r.Name(), tagPatched)
+			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
