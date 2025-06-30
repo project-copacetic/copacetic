@@ -180,6 +180,11 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		reportPath = "-r=" + path + "/scan.json"
 	}
 
+	var platformsFlag string
+	if !reportFile {
+		platformsFlag = "--platforms=linux/amd64"
+	}
+
 	//#nosec G204
 	cmd := exec.Command(
 		copaPath,
@@ -190,6 +195,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,
+		platformsFlag,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
 		"--debug",
