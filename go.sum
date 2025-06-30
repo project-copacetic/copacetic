@@ -83,8 +83,8 @@ github.com/containerd/typeurl/v2 v2.2.3/go.mod h1:95ljDnPfD3bAbDJRugOiShd/DlAAsx
 github.com/coreos/go-systemd/v22 v22.5.0/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSVTIJ3seZv2GcEnc=
 github.com/cpuguy83/dockercfg v0.3.2 h1:DlJTyZGBDlXqUZ2Dk2Q3xHs/FtnooJJVaad2S9GKorA=
 github.com/cpuguy83/dockercfg v0.3.2/go.mod h1:sugsbF4//dDlL/i+S+rtpIWp+5h0BHJHfjj5/jFyUJc=
-github.com/cpuguy83/go-docker v0.3.0 h1:O88rocdycYvY+pUYYp0i1rRDANXHurNir3VE0F/PH3g=
-github.com/cpuguy83/go-docker v0.3.0/go.mod h1:R2HgB/m54W+2dhYc70Xm78yS6o775SfN09bGIPSfQZQ=
+github.com/cpuguy83/go-docker v0.3.1 h1:P9JN2ZlX6ErP1zA3Vp4Yyqyqy3IWXWagQST59s6+VNY=
+github.com/cpuguy83/go-docker v0.3.1/go.mod h1:4FEaRF9Uz13kKnax1E/c1YE2XM50xcW31RK0A3q5PsI=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/creack/pty v1.1.24 h1:bJrF4RRfyJnbTJqzRLHzcGaZK1NeM5kTC9jGgovnR1s=
 github.com/creack/pty v1.1.24/go.mod h1:08sCNb52WyoAwi2QDyzUCTgcvVFhUzewun7wtTfvcwE=
