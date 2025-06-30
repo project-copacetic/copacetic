@@ -7,7 +7,7 @@ require (
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
 	github.com/cpuguy83/dockercfg v0.3.2
-	github.com/cpuguy83/go-docker v0.3.0
+	github.com/cpuguy83/go-docker v0.3.1
 	github.com/distribution/reference v0.6.0
 	github.com/docker/buildx v0.25.0
 	github.com/docker/cli v28.3.0+incompatible
