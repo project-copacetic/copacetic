@@ -85,7 +85,6 @@ func TestPatch(t *testing.T) {
 					WithIgnoreFile(ignoreFile).
 					WithOutput(scanResults).
 					WithSkipDBUpdate().
-					WithPlatform("linux/amd64").
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
@@ -94,6 +93,10 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
+			// For no-report tests, scan the amd64-tagged patched image instead of using platform-specific scanning
+			if !reportFile {
+				tagPatched += "-amd64"
+			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
 			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
