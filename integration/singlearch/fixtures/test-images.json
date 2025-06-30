@@ -16,7 +16,7 @@
         "distro": "Alpine",
         "description": "Valid apk/db, apk present, locally tagged with fully-qualified name",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "docker.io/library/nginx",
@@ -35,7 +35,7 @@
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, locally tagged with repo and image name",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "registry.k8s.io/kube-proxy",
@@ -81,7 +81,7 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with base64 names, locally tagged with image name only",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "docker.io/openpolicyagent/opa",
