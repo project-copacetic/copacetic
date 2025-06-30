@@ -85,6 +85,7 @@ func TestPatch(t *testing.T) {
 					WithIgnoreFile(ignoreFile).
 					WithOutput(scanResults).
 					WithSkipDBUpdate().
+					WithPlatform("linux/amd64").
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
