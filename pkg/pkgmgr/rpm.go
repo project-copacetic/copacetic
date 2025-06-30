@@ -627,13 +627,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 						`,
 			})).Root()
 	}
-	// Check for upgradable packages
-	checkUpgradable := `sh -c 'tdnf makecache && tdnf check-update > /updates.txt || true; if [ ! -s /updates.txt ]; then exit 1; fi'`
-	checkState := busyboxCopied.Run(llb.Shlex(checkUpgradable)).Root()
-	_, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &checkState, "/updates.txt")
-	if err != nil {
-		return nil, nil, fmt.Errorf("no patchable packages found")
-	}
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
 	rpmdb := busyboxCopied.Run(
@@ -659,6 +652,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 						`,
 		})).AddMount("/tmp/rootfs/var/lib/rpm", llb.Scratch())
 
+	// Check for upgradable packages
+	checkUpgradable := `sh -c 'tdnf makecache && tdnf check-update > /updates.txt || true; if [ ! -s /updates.txt ]; then exit 1; fi'`
+	checkState := rpmdb.Run(llb.Shlex(checkUpgradable)).Root()
+	_, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &checkState, "/updates.txt")
+	if err != nil {
+		return nil, nil, fmt.Errorf("no patchable packages found")
+	}
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)

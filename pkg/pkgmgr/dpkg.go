@@ -515,7 +515,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		})).Root()
 	// Check for upgradable packages
 	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q \"^Inst\" > /upgradable.txt || exit 1"`
-	updatedCheck := updated.Run(llb.Shlex(checkUpgradable)).Root()
+	updatedCheck := dpkgdb.Run(llb.Shlex(checkUpgradable)).Root()
 	_, err = buildkit.ExtractFileFromState(ctx, dm.config.Client, &updatedCheck, "/upgradable.txt")
 	if err != nil {
 		return nil, nil, fmt.Errorf("no patchable packages found")
