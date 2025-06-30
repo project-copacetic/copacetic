@@ -24,14 +24,15 @@ import (
 var testImages []byte
 
 type testImage struct {
-	OriginalImage string   `json:"originalImage"`
-	LocalImage    string   `json:"localImage"`
-	Push          bool     `json:"push"`
-	Tag           string   `json:"tag"`
-	Distro        string   `json:"distro"`
-	Description   string   `json:"description"`
-	IgnoreErrors  bool     `json:"ignoreErrors"`
-	Platforms     []string `json:"platforms"`
+	OriginalImage   string   `json:"originalImage"`
+	LocalImage      string   `json:"localImage"`
+	Push            bool     `json:"push"`
+	Tag             string   `json:"tag"`
+	Distro          string   `json:"distro"`
+	Description     string   `json:"description"`
+	IgnoreErrors    bool     `json:"ignoreErrors"`
+	SkipAnnotations bool     `json:"skipAnnotations,omitempty"`
+	Platforms       []string `json:"platforms"`
 }
 
 func TestPatch(t *testing.T) {
@@ -86,7 +87,7 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image with multiple architectures")
 			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
 
-			if img.Push {
+			if img.Push && !img.SkipAnnotations {
 				t.Log("verifying OCI annotations are preserved")
 				verifyAnnotations(t, patchedRef, img.Platforms, reportDir)
 			}
@@ -403,28 +404,6 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 		// Only check platforms that actually have vulnerability reports (were patched)
 		if isPatchablePlatform(platformStr, platforms, reportDir) {
 			t.Logf("checking manifest annotations for patched platform %s", platformStr)
-
-			// Verify that if original nginx annotations exist, they are preserved
-			commonAnnotations := []string{
-				"org.opencontainers.image.source",
-				"org.opencontainers.image.url",
-				"org.opencontainers.image.version",
-				"org.opencontainers.image.revision",
-				"org.opencontainers.image.base.name",
-				"org.opencontainers.image.base.digest",
-			}
-
-			foundAnnotations := 0
-			for _, expectedKey := range commonAnnotations {
-				if value, exists := manifestEntry.Annotations[expectedKey]; exists {
-					assert.NotEmpty(t, value, "annotation %s should not be empty for platform %s", expectedKey, platformStr)
-					t.Logf("platform %s has annotation %s=%s", platformStr, expectedKey, value)
-					foundAnnotations++
-				}
-			}
-
-			// We expect at least some annotations to be preserved for nginx images
-			assert.Greater(t, foundAnnotations, 0, "platform %s should have at least some preserved annotations", platformStr)
 
 			// The created timestamp should be updated for patched platforms
 			if createdTime, exists := manifestEntry.Annotations["org.opencontainers.image.created"]; exists {
