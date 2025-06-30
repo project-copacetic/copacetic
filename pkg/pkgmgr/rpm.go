@@ -583,6 +583,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// List all packages installed in the tooling image
 	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
+
 	installToolsCmd, err := rm.generateToolInstallCmd(ctx, &toolsListed)
 	if err != nil {
 		return nil, nil, err
@@ -600,6 +601,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
 	if updates == nil {
+		// Check for upgradable packages
+		checkUpgradable := `sh -c 'tdnf makecache && tdnf check-update > /updates.txt || true; if [ ! -s /updates.txt ]; then exit 1; fi'`
+		checkState := busyboxCopied.Run(llb.Shlex(checkUpgradable)).Root()
+		_, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &checkState, "/updates.txt")
+		if err != nil {
+			return nil, nil, fmt.Errorf("no patchable packages found")
+		}
 		busyboxCopied = busyboxCopied.Run(
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
@@ -651,14 +659,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 								ls /tmp/rootfs/var/lib/rpm
 						`,
 		})).AddMount("/tmp/rootfs/var/lib/rpm", llb.Scratch())
-
-	// Check for upgradable packages
-	checkUpgradable := `sh -c 'tdnf makecache && tdnf check-update > /updates.txt || true; if [ ! -s /updates.txt ]; then exit 1; fi'`
-	checkState := rpmdb.Run(llb.Shlex(checkUpgradable)).Root()
-	_, err = buildkit.ExtractFileFromState(ctx, rm.config.Client, &checkState, "/updates.txt")
-	if err != nil {
-		return nil, nil, fmt.Errorf("no patchable packages found")
-	}
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
 	//  - Reports not specifying version epochs correct (e.g. bsdutils=2.36.1-8+deb11u1 instead of with epoch as 1:2.36.1-8+dev11u1)
