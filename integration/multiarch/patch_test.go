@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/integration/testenv"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,6 +32,9 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
+	env := testenv.New(t)
+	defer env.Teardown()
+
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
@@ -41,7 +45,7 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// download the trivy db before running the tests
-	common.DownloadDB(t, common.DockerDINDAddress.Env()...)
+	common.DownloadDB(t, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
@@ -50,7 +54,7 @@ func TestPatch(t *testing.T) {
 			originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)
 
 			// copy over the original image to the local image using oras
-			copyImage(t, originalImageRef, ref)
+			copyImage(t, originalImageRef, ref, env.Buildkit.Address)
 
 			reportDir := t.TempDir()
 
@@ -71,7 +75,7 @@ func TestPatch(t *testing.T) {
 						WithSkipDBUpdate().
 						WithPlatform(platformStr).
 						// Do not set a non-zero exit code because we are expecting vulnerabilities.
-						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 				}()
 			}
 			wg.Wait()
@@ -82,7 +86,7 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image with multiple architectures")
 			common.Patch(
 				t, ref, tagPatched, reportDir, img.IgnoreErrors, false,
-				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(), img.Push, multiarch,
+				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(env.Buildkit.Address), img.Push, multiarch,
 			)
 
 			t.Log("scanning patched image for each platform")
@@ -116,7 +120,7 @@ func TestPatch(t *testing.T) {
 						WithPlatform(platformStr).
 						// here we want a non-zero exit code because we are expecting no vulnerabilities.
 						WithExitCode(1).
-						Scan(t, patchedArchRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+						Scan(t, patchedArchRef, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 				}()
 			}
 			wg.Wait()
@@ -126,6 +130,9 @@ func TestPatch(t *testing.T) {
 
 // Tests patching only some architectures while preserving others.
 func TestPatchPartialArchitectures(t *testing.T) {
+	env := testenv.New(t)
+	defer env.Teardown()
+
 	// Test image with multiple platforms including Windows
 	originalImage := "registry.k8s.io/csi-secrets-store/driver"
 	tag := "v1.4.8"
@@ -135,7 +142,7 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	localRef := fmt.Sprintf("%s:%s", localImage, tag)
 
 	// Copy the original multi-arch image to local registry
-	copyImage(t, originalRef, localRef)
+	copyImage(t, originalRef, localRef, env.Buildkit.Address)
 
 	// Create a temporary directory for reports
 	reportDir := t.TempDir()
@@ -159,7 +166,7 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	t.Log("patching image with only linux/amd64 platform report")
 	common.Patch(
 		t, localRef, patchedTag, reportDir, false, false,
-		buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(), true, multiarch,
+		buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(env.Buildkit.Address), true, multiarch,
 	)
 	// Verify the patched manifest still contains all original platforms
 	t.Log("verifying manifest contains all original platforms")
@@ -295,7 +302,7 @@ type Platform struct {
 }
 
 // helper to copy an image using oras.
-func copyImage(t *testing.T, src, dst string) {
+func copyImage(t *testing.T, src, dst string, builkitdAddr string) {
 	cmd := exec.Command(
 		"oras",
 		"copy",
@@ -303,7 +310,7 @@ func copyImage(t *testing.T, src, dst string) {
 		dst,
 	)
 	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env(builkitdAddr)...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }

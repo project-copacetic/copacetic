@@ -52,7 +52,7 @@ func Patch(t *testing.T,
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, DockerDINDAddress.Env()...)
+	cmd.Env = append(cmd.Env, DockerDINDAddress.Env(buildkitAddr)...)
 
 	out, err := cmd.CombinedOutput()
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/moby/buildkit/client"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 )
@@ -21,6 +22,7 @@ type BuildkitdContainer struct {
 	Container testcontainers.Container
 	Address   string
 	Client    *client.Client
+	Gateway   gwclient.Client
 }
 
 type RegistryContainer struct {
@@ -75,7 +77,7 @@ func newBuildkitd(ctx context.Context) (*BuildkitdContainer, error) {
 		return nil, err
 	}
 
-	addr := fmt.Sprintf("docker-container://%s", container.GetContainerID())
+	addr := fmt.Sprintf("docker://%s", container.GetContainerID())
 
 	c, err := client.New(ctx, addr)
 	if err != nil {
