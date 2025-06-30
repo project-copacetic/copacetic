@@ -94,7 +94,7 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-			
+
 			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
 			require.NoError(t, err)
 			fmt.Println("patchedMediaType: ", patchedMediaType)
