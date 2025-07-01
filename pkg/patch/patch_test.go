@@ -591,6 +591,7 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 		{"linux", "amd64", ""},
 		{"linux", ARM64, ""},
 		{"linux", "arm", "v7"},
+		{"windows", "amd64", ""},
 	}
 
 	summaryMap := map[string]*types.MultiPlatformSummary{
@@ -598,25 +599,31 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 			Platform: "linux/amd64",
 			Status:   "Patched",
 			Ref:      "docker.io/library/nginx:patched-amd64",
-			Error:    "",
+			Message:  "",
 		},
 		"linux/arm64": {
 			Platform: "linux/arm64",
 			Status:   "Error",
 			Ref:      "",
-			Error:    "emulation is not enabled for platform linux/arm64",
+			Message:  "emulation is not enabled for platform linux/arm64",
 		},
 		"linux/arm/v7": {
 			Platform: "linux/arm/v7",
 			Status:   "Ignored",
 			Ref:      "",
-			Error:    "",
+			Message:  "",
+		},
+		"windows/amd64": {
+			Platform: "windows/amd64",
+			Status:   "Not Patched",
+			Ref:      "docker.io/library/nginx (original reference)",
+			Message:  "Windows Image (Original Preserved)",
 		},
 	}
 
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tERROR\n"))
+	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tMESSAGE\n"))
 	for _, p := range platforms {
 		platformKey := buildkit.PlatformKey(ispec.Platform{
 			OS:           p.OS,
@@ -630,20 +637,27 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 				ref = "-"
 			}
 			_, _ = w.Write([]byte(
-				s.Platform + "\t" + s.Status + "\t" + ref + "\t" + s.Error + "\n",
+				s.Platform + "\t" + s.Status + "\t" + ref + "\t" + s.Message + "\n",
 			))
 		}
 	}
 	w.Flush()
 
 	got := b.String()
-	expected := `PLATFORM      STATUS   REFERENCE                              ERROR
-linux/amd64   Patched  docker.io/library/nginx:patched-amd64  
-linux/arm64   Error    -                                      emulation is not enabled for platform linux/arm64
-linux/arm/v7  Ignored  -                                      
+	expected := `PLATFORM       STATUS       REFERENCE                                     MESSAGE
+linux/amd64    Patched      docker.io/library/nginx:patched-amd64
+linux/arm64    Error        -                                             emulation is not enabled for platform linux/arm64
+linux/arm/v7   Ignored      -
+windows/amd64  Not Patched  docker.io/library/nginx (original reference)  Windows Image (Original Preserved)
 `
-
-	if got != expected {
-		t.Errorf("summary table output mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	gotLines := strings.FieldsFunc(got, func(r rune) bool { return r == '\n' || r == '\r' })
+	expectedLines := strings.FieldsFunc(expected, func(r rune) bool { return r == '\n' || r == '\r' })
+	if len(gotLines) != len(expectedLines) {
+		t.Errorf("line count mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+	for i := range gotLines {
+		if strings.TrimSpace(gotLines[i]) != strings.TrimSpace(expectedLines[i]) {
+			t.Errorf("line %d mismatch:\ngot:   %q\nwant:  %q", i+1, gotLines[i], expectedLines[i])
+		}
 	}
 }
