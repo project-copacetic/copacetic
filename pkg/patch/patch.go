@@ -203,7 +203,7 @@ func patchWithContext(
 			// Failed to discover platforms - treat as single-arch image
 			log.Warnf("Failed to discover platforms for image %s (treating as single-arch): %v", image, err)
 			if len(targetPlatforms) > 0 {
-				log.Warnf("Platform flag ignored when platform discovery fails")
+				log.Info("Platform flag ignored when platform discovery fails")
 			}
 
 			// Fallback to default platform
@@ -227,7 +227,7 @@ func patchWithContext(
 			// Single-arch image - ignore platform flag
 			log.Debugf("Detected single-arch image")
 			if len(targetPlatforms) > 0 {
-				log.Warnf("Platform flag ignored for single-arch image")
+				log.Info("Platform flag ignored for single-arch image")
 			}
 
 			platform := types.PatchPlatform{
@@ -265,7 +265,7 @@ func patchWithContext(
 		// Handle directory - multi-platform patching
 		log.Debugf("Using report directory: %s", reportPath)
 		if len(targetPlatforms) > 0 {
-			log.Warnf("Platform flag ignored when report directory is provided")
+			log.Info("Platform flag ignored when report directory is provided")
 		}
 		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, nil, nil)
 	}
