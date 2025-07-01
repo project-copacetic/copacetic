@@ -184,9 +184,9 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		reportPath = "-r=" + path + "/scan.json"
 	}
 
-	var platformsFlag string
+	var platformFlag string
 	if !reportFile {
-		platformsFlag = "--platforms=linux/amd64"
+		platformFlag = "--platform=linux/amd64"
 	}
 
 	//#nosec G204
@@ -199,7 +199,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,
-		platformsFlag,
+		platformFlag,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
 		"--debug",
