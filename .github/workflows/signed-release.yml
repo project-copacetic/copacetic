@@ -1,0 +1,62 @@
+name: Sign GitHub Release Artifacts
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  id-token: write  # Required for keyless signing
+
+jobs:
+  sign-assets:
+    name: Sign and Generate Provenance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.4.0
+
+      - name: Install GitHub CLI
+        uses: cli/cli-action@v2
+        with:
+          version: latest
+
+      - name: Create download dir and fetch assets
+        run: |
+          mkdir release-assets
+          gh release download "$GITHUB_REF_NAME" --dir release-assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign each asset using Cosign keyless
+        run: |
+          for file in release-assets/*; do
+            echo "Signing $file"
+            cosign sign-blob \
+              --yes \
+              --output-signature "${file}.sig" \
+              --output-certificate "${file}.pem" \
+              "$file"
+          done
+
+      - name: Upload signatures and certs to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release-assets/*.sig
+            release-assets/*.pem
+
+      - name: Generate SLSA provenance (optional but recommended)
+        uses: slsa-framework/slsa-github-generator@v1.7.0
+        with:
+          builder: github
+          output: provenance.intoto.jsonl
+
+      - name: Upload provenance
+        uses: softprops/action-gh-release@v1
+        with:
+          files: provenance.intoto.jsonl
