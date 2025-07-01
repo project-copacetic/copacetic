@@ -387,10 +387,8 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 	err = json.Unmarshal(out, &manifest)
 	require.NoError(t, err, "failed to parse manifest JSON")
 
-	// Check index-level annotations (Copa metadata)
+	// Check index-level annotations
 	assert.NotEmpty(t, manifest.Annotations, "index-level annotations should not be empty")
-	assert.Equal(t, "true", manifest.Annotations["sh.copa.patched"], "should have Copa patched annotation")
-	assert.NotEmpty(t, manifest.Annotations["sh.copa.patched.timestamp"], "should have Copa timestamp annotation")
 	assert.NotEmpty(t, manifest.Annotations["org.opencontainers.image.created"], "should have created annotation")
 
 	t.Logf("found %d index-level annotations", len(manifest.Annotations))
@@ -410,6 +408,12 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 				assert.NotEmpty(t, createdTime, "created timestamp should not be empty for patched platform %s", platformStr)
 				t.Logf("platform %s has updated created timestamp: %s", platformStr, createdTime)
 			}
+
+			// Check for Copa last.patched annotation on patched platforms
+			lastPatched, exists := manifestEntry.Annotations["sh.copa.last.patched"]
+			assert.True(t, exists, "patched platform %s should have sh.copa.last.patched annotation", platformStr)
+			assert.NotEmpty(t, lastPatched, "sh.copa.last.patched timestamp should not be empty for patched platform %s", platformStr)
+			t.Logf("platform %s has Copa last.patched timestamp: %s", platformStr, lastPatched)
 
 			t.Logf("platform %s has %d manifest-level annotations", platformStr, len(manifestEntry.Annotations))
 
@@ -446,7 +450,11 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 
 			t.Logf("verified %d original annotations are preserved for platform %s", len(originalAnnotations), platformStr)
 		} else {
-			t.Logf("skipping platform %s (no vulnerability report, not patched)", platformStr)
+			t.Logf("checking platform %s (no vulnerability report, not patched)", platformStr)
+
+			// Non-patched platforms should NOT have the Copa last.patched annotation
+			_, exists := manifestEntry.Annotations["sh.copa.last.patched"]
+			assert.False(t, exists, "non-patched platform %s should not have sh.copa.last.patched annotation", platformStr)
 		}
 	}
 }

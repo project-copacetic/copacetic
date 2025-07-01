@@ -52,7 +52,6 @@ const (
 	defaultRegistry         = "docker.io"
 	defaultTag              = "latest"
 	LINUX                   = "linux"
-	trueString              = "true"
 	ARM64                   = "arm64"
 	copaAnnotationKeyPrefix = "sh.copa"
 )
@@ -156,19 +155,6 @@ func createMultiPlatformManifest(
 				}
 			}
 
-			// add a custom annotation to indicate this image was patched by Copa
-			patchedKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  copaAnnotationKeyPrefix + ".patched",
-			}
-			annotations[patchedKey] = trueString
-
-			patchedTimestampKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  copaAnnotationKeyPrefix + ".patched.timestamp",
-			}
-			annotations[patchedTimestampKey] = time.Now().UTC().Format(time.RFC3339)
-
 			log.Debugf("Preserving %d annotations from original image", len(annotations))
 		} else {
 			log.Info("No annotations found in original image, adding Copa annotations only")
@@ -178,18 +164,6 @@ func createMultiPlatformManifest(
 				Key:  "org.opencontainers.image.created",
 			}
 			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
-
-			patchedKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  copaAnnotationKeyPrefix + ".patched",
-			}
-			annotations[patchedKey] = trueString
-
-			patchedTimestampKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  copaAnnotationKeyPrefix + ".patched.timestamp",
-			}
-			annotations[patchedTimestampKey] = time.Now().UTC().Format(time.RFC3339)
 		}
 	}
 
@@ -494,6 +468,7 @@ func patchSingleArchImage(
 	// determine which attributes to set for the export
 	attrs := map[string]string{
 		"name": patchedImageName,
+		"annotation." + copaAnnotationKeyPrefix + ".last.patched": time.Now().UTC().Format(time.RFC3339),
 	}
 	if shouldExportOCI {
 		attrs["oci-mediatypes"] = "true"
@@ -761,6 +736,9 @@ func patchSingleArchImage(
 
 			// update creation timestamp to reflect patching
 			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
+
+			// add Copa last.patched annotation for patched platforms
+			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".last.patched"] = time.Now().UTC().Format(time.RFC3339)
 
 			patchedDesc = &augmentedDesc
 			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
@@ -1132,6 +1110,7 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.Pa
 					OSVersion:    m.Platform.OSVersion,
 					OSFeatures:   m.Platform.OSFeatures,
 				},
+				Annotations: m.Annotations,
 			}
 			return ociDesc, nil
 		}
