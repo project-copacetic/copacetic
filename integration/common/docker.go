@@ -2,7 +2,6 @@ package common
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 )
@@ -14,7 +13,7 @@ type AddrWrapper struct {
 
 var DockerDINDAddress AddrWrapper
 
-func (w *AddrWrapper) Addr() string {
+func (w *AddrWrapper) Addr(buildkitdAddr string) string {
 	w.m.Lock()
 	defer w.m.Unlock()
 
@@ -23,7 +22,7 @@ func (w *AddrWrapper) Addr() string {
 	}
 
 	w.address = new(string)
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
+	if addr := buildkitdAddr; addr != "" && strings.HasPrefix(addr, "docker://") {
 		*w.address = strings.TrimPrefix(addr, "docker://")
 	}
 
@@ -36,8 +35,8 @@ func (w *AddrWrapper) Set(val string) {
 	w.address = &val
 }
 
-func (w *AddrWrapper) Env() []string {
-	val := w.Addr()
+func (w *AddrWrapper) Env(addr string) []string {
+	val := w.Addr(addr)
 	if val == "" {
 		return []string{}
 	}

@@ -7,17 +7,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/integration/testenv"
 	"github.com/stretchr/testify/require"
 )
 
 //go:embed fixtures/test-images.json
 var testImages []byte
+var multiarch bool = true
 
 type testImage struct {
 	OriginalImage string   `json:"originalImage"`
@@ -31,6 +32,9 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
+	env := testenv.New(t)
+	defer env.Teardown()
+
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
@@ -41,7 +45,7 @@ func TestPatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// download the trivy db before running the tests
-	common.DownloadDB(t, common.DockerDINDAddress.Env()...)
+	common.DownloadDB(t, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
@@ -50,7 +54,7 @@ func TestPatch(t *testing.T) {
 			originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)
 
 			// copy over the original image to the local image using oras
-			copyImage(t, originalImageRef, ref)
+			copyImage(t, originalImageRef, ref, env.Buildkit.Address)
 
 			reportDir := t.TempDir()
 
@@ -71,7 +75,7 @@ func TestPatch(t *testing.T) {
 						WithSkipDBUpdate().
 						WithPlatform(platformStr).
 						// Do not set a non-zero exit code because we are expecting vulnerabilities.
-						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 				}()
 			}
 			wg.Wait()
@@ -80,7 +84,10 @@ func TestPatch(t *testing.T) {
 			patchedRef := fmt.Sprintf("%s:%s", img.LocalImage, tagPatched)
 
 			t.Log("patching image with multiple architectures")
-			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
+			common.Patch(
+				t, ref, tagPatched, reportDir, img.IgnoreErrors, false,
+				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(env.Buildkit.Address), img.Push, multiarch,
+			)
 
 			t.Log("scanning patched image for each platform")
 			wg = sync.WaitGroup{}
@@ -113,7 +120,7 @@ func TestPatch(t *testing.T) {
 						WithPlatform(platformStr).
 						// here we want a non-zero exit code because we are expecting no vulnerabilities.
 						WithExitCode(1).
-						Scan(t, patchedArchRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+						Scan(t, patchedArchRef, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 				}()
 			}
 			wg.Wait()
@@ -123,6 +130,9 @@ func TestPatch(t *testing.T) {
 
 // Tests patching only some architectures while preserving others.
 func TestPatchPartialArchitectures(t *testing.T) {
+	env := testenv.New(t)
+	defer env.Teardown()
+
 	// Test image with multiple platforms including Windows
 	originalImage := "registry.k8s.io/csi-secrets-store/driver"
 	tag := "v1.4.8"
@@ -132,7 +142,7 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	localRef := fmt.Sprintf("%s:%s", localImage, tag)
 
 	// Copy the original multi-arch image to local registry
-	copyImage(t, originalRef, localRef)
+	copyImage(t, originalRef, localRef, env.Buildkit.Address)
 
 	// Create a temporary directory for reports
 	reportDir := t.TempDir()
@@ -154,8 +164,10 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	patchedRef := fmt.Sprintf("%s:%s", localImage, patchedTag)
 
 	t.Log("patching image with only linux/amd64 platform report")
-	patchMultiPlatform(t, localRef, patchedTag, reportDir, false, true)
-
+	common.Patch(
+		t, localRef, patchedTag, reportDir, false, false,
+		buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(env.Buildkit.Address), true, multiarch,
+	)
 	// Verify the patched manifest still contains all original platforms
 	t.Log("verifying manifest contains all original platforms")
 
@@ -289,46 +301,8 @@ type Platform struct {
 	Variant      string `json:"variant,omitempty"`
 }
 
-func patchMultiPlatform(t *testing.T, ref, patchedTag, reportDir string, ignoreErrors, push bool) {
-	var addrFl string
-	if buildkitAddr != "" {
-		addrFl = "-a=" + buildkitAddr
-	}
-
-	args := []string{
-		"patch",
-		"-i=" + ref,
-		"-t=" + patchedTag,
-		"--report=" + reportDir,
-		"-s=" + scannerPlugin,
-		"--timeout=30m",
-		addrFl,
-		"--ignore-errors=" + strconv.FormatBool(ignoreErrors),
-		"--debug",
-	}
-	if push {
-		args = append(args, "--push")
-	}
-
-	//#nosec G204
-	cmd := exec.Command(
-		copaPath,
-		args...,
-	)
-
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("command failed: %v", err)
-	}
-}
-
 // helper to copy an image using oras.
-func copyImage(t *testing.T, src, dst string) {
+func copyImage(t *testing.T, src, dst string, builkitdAddr string) {
 	cmd := exec.Command(
 		"oras",
 		"copy",
@@ -336,7 +310,7 @@ func copyImage(t *testing.T, src, dst string) {
 		dst,
 	)
 	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env(builkitdAddr)...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }

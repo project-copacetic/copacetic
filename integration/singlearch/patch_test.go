@@ -7,16 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/integration/testenv"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/utils"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,6 +33,9 @@ type testImage struct {
 }
 
 func TestPatch(t *testing.T) {
+	env := testenv.New(t)
+	defer env.Teardown()
+
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
 	require.NoError(t, err)
@@ -55,7 +57,7 @@ func TestPatch(t *testing.T) {
 		}
 
 		// download the trivy db before running the tests
-		common.DownloadDB(t, common.DockerDINDAddress.Env()...)
+		common.DownloadDB(t, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
@@ -72,8 +74,8 @@ func TestPatch(t *testing.T) {
 
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 			if img.LocalName != "" {
-				dockerPull(t, ref)
-				dockerTag(t, ref, img.LocalName)
+				dockerPull(t, env.Buildkit.Address, ref)
+				dockerTag(t, env.Buildkit.Address, ref, img.LocalName)
 				ref = img.LocalName
 			}
 
@@ -86,7 +88,7 @@ func TestPatch(t *testing.T) {
 					WithOutput(scanResults).
 					WithSkipDBUpdate().
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
-					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 			}
 
 			r, err := reference.ParseNormalizedNamed(ref)
@@ -105,7 +107,10 @@ func TestPatch(t *testing.T) {
 			}
 
 			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+			common.Patch(
+				t, ref, tagPatched, dir, ignoreErrors, reportFile,
+				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(env.Buildkit.Address), false, false,
+			)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -117,7 +122,7 @@ func TestPatch(t *testing.T) {
 					WithSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					WithExitCode(1).
-					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 			default:
 				t.Log("scanning patched image")
 				common.NewScanner().
@@ -125,7 +130,7 @@ func TestPatch(t *testing.T) {
 					WithSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					WithExitCode(1).
-					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env(env.Buildkit.Address)...)
 			}
 
 			// currently validation is only present when patching with a scan report
@@ -137,15 +142,15 @@ func TestPatch(t *testing.T) {
 	}
 }
 
-func dockerPull(t *testing.T, ref string) {
-	dockerCmd(t, `pull`, ref)
+func dockerPull(t *testing.T, buildkitAddr string, ref string) {
+	dockerCmd(t, buildkitAddr, `pull`, ref)
 }
 
-func dockerTag(t *testing.T, ref, newRef string) {
-	dockerCmd(t, `tag`, ref, newRef)
+func dockerTag(t *testing.T, ref, buildkitAddr string, newRef string) {
+	dockerCmd(t, buildkitAddr, `tag`, ref, newRef)
 }
 
-func dockerCmd(t *testing.T, args ...string) {
+func dockerCmd(t *testing.T, buildkitAddr string, args ...string) {
 	var err error
 	if len(args) == 0 {
 		err = fmt.Errorf("no args provided")
@@ -154,7 +159,7 @@ func dockerCmd(t *testing.T, args ...string) {
 
 	a := []string{}
 
-	if addr := common.DockerDINDAddress.Addr(); addr != "" {
+	if addr := common.DockerDINDAddress.Addr(buildkitAddr); addr != "" {
 		a = append(a, "-H", addr)
 	}
 
@@ -163,43 +168,4 @@ func dockerCmd(t *testing.T, args ...string) {
 	cmd := exec.Command(`docker`, a...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
-}
-
-func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, reportFile bool) {
-	var addrFl string
-	if buildkitAddr != "" {
-		addrFl = "-a=" + buildkitAddr
-	}
-
-	var reportPath string
-	if reportFile {
-		reportPath = "-r=" + path + "/scan.json"
-	}
-
-	//#nosec G204
-	cmd := exec.Command(
-		copaPath,
-		"patch",
-		"-i="+ref,
-		"-t="+patchedTag,
-		reportPath,
-		"-s="+scannerPlugin,
-		"--timeout=30m",
-		addrFl,
-		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
-		"--output="+path+"/vex.json",
-		"--debug",
-	)
-
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
-
-	out, err := cmd.CombinedOutput()
-
-	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
-		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+
-			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
-	} else {
-		require.NoError(t, err, string(out))
-	}
 }
