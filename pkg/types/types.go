@@ -47,5 +47,5 @@ type MultiPlatformSummary struct {
 	Platform string
 	Status   string
 	Ref      string
-	Error    string
+	Message  string
 }
