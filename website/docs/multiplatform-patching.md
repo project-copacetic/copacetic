@@ -10,7 +10,7 @@ Similar to patching single architecture images, Copa supports two ways to patch 
 
 1. **Report-based patching**: Use the `--report` flag pointing to a directory containing platform-specific vulnerability reports. This is the traditional approach that patches only platforms that exist and have respective reports.
 
-2. **Update all outdated packages**: When report flag is omitted, Copa detects if it is a manifest list and patches oudated packages across all platforms. Use the optional `--platform` flag to specify which platforms to patch.
+2. **Update all outdated packages**: When report flag is omitted, Copa detects if it is a manifest list and patches oudated packages across all platforms. Use the optional `--platforms` flag to specify which platforms to patch.
 
 ### Method 1: Report-based Multi-Platform Patching
 
@@ -18,7 +18,7 @@ This method uses vulnerability reports to determine which platforms and vulnerab
 
 #### Create vulnerability reports for multi-platform images
 
-Before you can patch a multi-platform image, you need to generate vulnerability reports for each platform architecture you wish to patch. You can do this using `trivy` using `--platform` flag to specify the architecture. Below is an example of how to generate vulnerability reports for a multi-platform image like `nginx:1.25.0`.
+Before you can patch a multi-platform image, you need to generate vulnerability reports for each platform architecture you wish to patch. You can do this using `trivy` using `--platforms` flag to specify the architecture. Below is an example of how to generate vulnerability reports for a multi-platform image like `nginx:1.25.0`.
 
 ```bash
 export IMAGE=docker.io/library/nginx:1.25.0 # Replace with your multi-platform image
@@ -52,20 +52,18 @@ To patch a multi-platform across all platforms and update all outdated packages 
 ```bash
 copa patch \
   --image $IMAGE \
-  --report reports
 ```
-To filter only specific platforms to patch, provide them with the `--platform` flag.
+To filter only specific platforms to patch, provide them with the `--platforms` flag.
 
 ```bash
 copa patch \
   --image $IMAGE \
-  --report reports
-   --platform=linux/amd64,linux/arm64
+   --platforms=linux/amd64,linux/arm64
 ```
 
 #### Valid Platform Values
 
-The `--platform` flag accepts the following values:
+The `--platforms` flag accepts the following values:
 - `linux/amd64`
 - `linux/arm64`
 - `linux/riscv64`
@@ -81,7 +79,7 @@ You can specify multiple platforms by separating them with commas.
 
 - `--image <image_name>`: The multi-platform container image to patch.
 - `--report <directory_path>` (optional): Specifies the directory containing platform-specific vulnerability reports. When provided, only platforms with reports are patched.
-- `--platform <platform_list>` (optional): Comma-separated list of platforms to patch (e.g., `linux/amd64,linux/arm64`). Only available when `--report` is not used. If not specified, all platforms are patched.
+- `--platforms <platform_list>` (optional): Comma-separated list of platforms to patch (e.g., `linux/amd64,linux/arm64`). Only available when `--report` is not used. If not specified, all platforms are patched.
 - `--tag <final_tag>` (optional): The tag for the final, reassembled multi-platform manifest (e.g., `1.0-patched`).
 - `--push` (optional): If included, Copa pushes the final multi-platform manifest to the registry.
 - `--ignore-errors` (optional, default: `false`): When `false` (default), Copa warns about errors and fails if any platform encounters an error. When `true`, Copa warns about errors but continues processing other platforms.
@@ -89,15 +87,15 @@ You can specify multiple platforms by separating them with commas.
 ### Things to Keep in Mind
 
 - **Automatic platform detection**: Copa automatically detects whether an image is multi-platform (manifest list) or single-platform and handles them accordingly.
-- **Report vs. platform flags**: The `--platform` flag is only available when not using `--report`. When using `--report`, platforms are determined by the reports available.
-- **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in the final manifest.
+- **Report vs. platform flags**: The `--platforms` flag is only available when not using `--report`. When using `--report`, platforms are determined by the reports available.
+- **Platform preservation**: When using `--platforms`, only specified platforms are patched; others are preserved unchanged in the final manifest.
 - **No local storage for unspecified platforms**: If `--push` is not specified, the individual patched images will be saved locally, but preserved platforms will only exist in the registry.
-- **Single-platform fallback**: If you don't provide a `--report` directory and don't use `--platform`, Copa will detect if the image is single-platform and patch only that platform.
+- **Single-platform fallback**: If you don't provide a `--report` directory and don't use `--platforms`, Copa will detect if the image is single-platform and patch only that platform.
 
 :::note
 **Report-based vs. Platform-based patching:**
 - When using `--report`, Copa copies over unpatched platforms as a passthrough - only platforms with vulnerability reports are patched, while other platforms remain unchanged in the final multi-platform image.
-- When using `--platform`, only the specified platforms are patched, and others are preserved unchanged.
+- When using `--platforms`, only the specified platforms are patched, and others are preserved unchanged.
 - When using neither flag, Copa patches all available platforms if the image is multi-platform.
 :::
 
