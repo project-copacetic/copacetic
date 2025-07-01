@@ -23,6 +23,8 @@ import (
 //go:embed fixtures/test-images.json
 var testImages []byte
 
+const lastPatchedAnnotation = "sh.copa.image.patched"
+
 type testImage struct {
 	OriginalImage   string   `json:"originalImage"`
 	LocalImage      string   `json:"localImage"`
@@ -409,11 +411,11 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 				t.Logf("platform %s has updated created timestamp: %s", platformStr, createdTime)
 			}
 
-			// Check for Copa last.patched annotation on patched platforms
-			lastPatched, exists := manifestEntry.Annotations["sh.copa.last.patched"]
-			assert.True(t, exists, "patched platform %s should have sh.copa.last.patched annotation", platformStr)
-			assert.NotEmpty(t, lastPatched, "sh.copa.last.patched timestamp should not be empty for patched platform %s", platformStr)
-			t.Logf("platform %s has Copa last.patched timestamp: %s", platformStr, lastPatched)
+			// Check for Copa image.patched annotation on patched platforms
+			lastPatched, exists := manifestEntry.Annotations[lastPatchedAnnotation]
+			assert.True(t, exists, "patched platform %s should have %s annotation", platformStr, lastPatchedAnnotation)
+			assert.NotEmpty(t, lastPatched, "%s timestamp should not be empty for patched platform %s", lastPatchedAnnotation, platformStr)
+			t.Logf("platform %s has %s timestamp: %s", platformStr, lastPatchedAnnotation, lastPatched)
 
 			t.Logf("platform %s has %d manifest-level annotations", platformStr, len(manifestEntry.Annotations))
 
@@ -452,9 +454,9 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 		} else {
 			t.Logf("checking platform %s (no vulnerability report, not patched)", platformStr)
 
-			// Non-patched platforms should NOT have the Copa last.patched annotation
-			_, exists := manifestEntry.Annotations["sh.copa.last.patched"]
-			assert.False(t, exists, "non-patched platform %s should not have sh.copa.last.patched annotation", platformStr)
+			// Non-patched platforms should NOT have the Copa image.patched annotation
+			_, exists := manifestEntry.Annotations[lastPatchedAnnotation]
+			assert.False(t, exists, "non-patched platform %s should not have %s annotation", platformStr, lastPatchedAnnotation)
 		}
 	}
 }

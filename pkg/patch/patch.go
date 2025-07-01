@@ -468,7 +468,7 @@ func patchSingleArchImage(
 	// determine which attributes to set for the export
 	attrs := map[string]string{
 		"name": patchedImageName,
-		"annotation." + copaAnnotationKeyPrefix + ".last.patched": time.Now().UTC().Format(time.RFC3339),
+		"annotation." + copaAnnotationKeyPrefix + ".image.patched": time.Now().UTC().Format(time.RFC3339),
 	}
 	if shouldExportOCI {
 		attrs["oci-mediatypes"] = "true"
@@ -737,8 +737,8 @@ func patchSingleArchImage(
 			// update creation timestamp to reflect patching
 			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
 
-			// add Copa last.patched annotation for patched platforms
-			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".last.patched"] = time.Now().UTC().Format(time.RFC3339)
+			// add Copa image.patched annotation for patched platforms
+			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
 
 			patchedDesc = &augmentedDesc
 			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
