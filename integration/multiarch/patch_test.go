@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -12,22 +13,28 @@ import (
 	"sync"
 	"testing"
 
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/pkg/utils"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 //go:embed fixtures/test-images.json
 var testImages []byte
 
+const lastPatchedAnnotation = "sh.copa.image.patched"
+
 type testImage struct {
-	OriginalImage string   `json:"originalImage"`
-	LocalImage    string   `json:"localImage"`
-	Push          bool     `json:"push"`
-	Tag           string   `json:"tag"`
-	Distro        string   `json:"distro"`
-	Description   string   `json:"description"`
-	IgnoreErrors  bool     `json:"ignoreErrors"`
-	Platforms     []string `json:"platforms"`
+	OriginalImage   string   `json:"originalImage"`
+	LocalImage      string   `json:"localImage"`
+	Push            bool     `json:"push"`
+	Tag             string   `json:"tag"`
+	Distro          string   `json:"distro"`
+	Description     string   `json:"description"`
+	IgnoreErrors    bool     `json:"ignoreErrors"`
+	SkipAnnotations bool     `json:"skipAnnotations,omitempty"`
+	Platforms       []string `json:"platforms"`
 }
 
 func TestPatch(t *testing.T) {
@@ -81,6 +88,11 @@ func TestPatch(t *testing.T) {
 
 			t.Log("patching image with multiple architectures")
 			patchMultiPlatform(t, ref, tagPatched, reportDir, img.IgnoreErrors, img.Push)
+
+			if img.Push && !img.SkipAnnotations {
+				t.Log("verifying OCI annotations are preserved")
+				verifyAnnotations(t, patchedRef, img.Platforms, reportDir)
+			}
 
 			t.Log("scanning patched image for each platform")
 			wg = sync.WaitGroup{}
@@ -339,4 +351,151 @@ func copyImage(t *testing.T, src, dst string) {
 	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
+}
+
+// ManifestData represents the JSON structure returned by docker buildx imagetools inspect.
+type ManifestData struct {
+	Annotations map[string]string `json:"annotations"`
+	Manifests   []ManifestEntry   `json:"manifests"`
+}
+
+type ManifestEntry struct {
+	Platform    PlatformInfo      `json:"platform"`
+	Annotations map[string]string `json:"annotations"`
+}
+
+type PlatformInfo struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
+	Variant      string `json:"variant,omitempty"`
+}
+
+// verifyAnnotations checks that Copa properly preserves OCI annotations.
+// This function verifies:
+// 1. Index-level annotations: Copa metadata (copacetic.patched, timestamps)
+// 2. Manifest-level annotations: Original platform-specific annotations are preserved
+// 3. Updated timestamps: Patched platforms get updated creation timestamps.
+func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, reportDir string) {
+	t.Log("checking index-level annotations")
+
+	// Get the raw manifest using docker buildx imagetools
+	cmd := exec.Command("docker", "buildx", "imagetools", "inspect", patchedRef, "--raw")
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to inspect patched image: %s", string(out))
+
+	var manifest ManifestData
+	err = json.Unmarshal(out, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON")
+
+	// Check index-level annotations
+	assert.NotEmpty(t, manifest.Annotations, "index-level annotations should not be empty")
+	assert.NotEmpty(t, manifest.Annotations["org.opencontainers.image.created"], "should have created annotation")
+
+	t.Logf("found %d index-level annotations", len(manifest.Annotations))
+
+	// Check manifest-level annotations for each platform
+	t.Log("checking manifest-level annotations for patched platforms")
+
+	for _, manifestEntry := range manifest.Manifests {
+		platformStr := formatPlatform(manifestEntry.Platform)
+
+		// Only check platforms that actually have vulnerability reports (were patched)
+		if isPatchablePlatform(platformStr, platforms, reportDir) {
+			t.Logf("checking manifest annotations for patched platform %s", platformStr)
+
+			// The created timestamp should be updated for patched platforms
+			if createdTime, exists := manifestEntry.Annotations["org.opencontainers.image.created"]; exists {
+				assert.NotEmpty(t, createdTime, "created timestamp should not be empty for patched platform %s", platformStr)
+				t.Logf("platform %s has updated created timestamp: %s", platformStr, createdTime)
+			}
+
+			// Check for Copa image.patched annotation on patched platforms
+			lastPatched, exists := manifestEntry.Annotations[lastPatchedAnnotation]
+			assert.True(t, exists, "patched platform %s should have %s annotation", platformStr, lastPatchedAnnotation)
+			assert.NotEmpty(t, lastPatched, "%s timestamp should not be empty for patched platform %s", lastPatchedAnnotation, platformStr)
+			t.Logf("platform %s has %s timestamp: %s", platformStr, lastPatchedAnnotation, lastPatched)
+
+			t.Logf("platform %s has %d manifest-level annotations", platformStr, len(manifestEntry.Annotations))
+
+			// Verify that ALL original annotations are preserved
+			// Get the original image reference
+			originalRef := strings.Replace(patchedRef, "-patched", "", 1)
+
+			// Get original platform annotations
+			// Create platform object from manifestEntry
+			platform := &ocispec.Platform{
+				OS:           manifestEntry.Platform.OS,
+				Architecture: manifestEntry.Platform.Architecture,
+				Variant:      manifestEntry.Platform.Variant,
+			}
+			originalAnnotations, err := utils.GetPlatformManifestAnnotations(context.Background(), originalRef, platform)
+			require.NoError(t, err, "failed to get original annotations for platform %s", platformStr)
+
+			// Check that every original annotation is present in the patched manifest
+			// Some annotations are expected to change during patching
+			annotationsThatChange := map[string]bool{
+				"org.opencontainers.image.created": true,
+				"org.opencontainers.image.version": true,
+			}
+
+			for key, originalValue := range originalAnnotations {
+				patchedValue, exists := manifestEntry.Annotations[key]
+				assert.True(t, exists, "original annotation %s is missing in patched manifest for platform %s", key, platformStr)
+
+				if exists && !annotationsThatChange[key] {
+					// For annotations that shouldn't change, verify the values are equal
+					assert.Equal(t, originalValue, patchedValue, "annotation %s value changed for platform %s: original=%s, patched=%s", key, platformStr, originalValue, patchedValue)
+				}
+			}
+
+			t.Logf("verified %d original annotations are preserved for platform %s", len(originalAnnotations), platformStr)
+		} else {
+			t.Logf("checking platform %s (no vulnerability report, not patched)", platformStr)
+
+			// Non-patched platforms should NOT have the Copa image.patched annotation
+			_, exists := manifestEntry.Annotations[lastPatchedAnnotation]
+			assert.False(t, exists, "non-patched platform %s should not have %s annotation", platformStr, lastPatchedAnnotation)
+		}
+	}
+}
+
+// formatPlatform creates a platform string from PlatformInfo.
+func formatPlatform(p PlatformInfo) string {
+	platform := p.OS + "/" + p.Architecture
+	if p.Variant != "" {
+		platform += "/" + p.Variant
+	}
+	return platform
+}
+
+// isPatchablePlatform checks if a platform actually has a vulnerability report file
+// and therefore should have been patched by Copa.
+func isPatchablePlatform(platform string, allPlatforms []string, reportDir string) bool {
+	// First verify this platform is in the test's platform list
+	found := false
+	for _, testPlatform := range allPlatforms {
+		if testPlatform == platform {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+
+	// Check if a vulnerability report exists for this platform
+	// Report files are named like "report-linux-amd64.json"
+	suffix := strings.ReplaceAll(platform, "/", "-")
+	reportPath := filepath.Join(reportDir, "report-"+suffix+".json")
+
+	// Check if the report file exists and is not empty
+	if info, err := os.Stat(reportPath); err == nil && info.Size() > 0 {
+		// A non-empty vulnerability report exists, so this platform should be patched
+		return true
+	}
+
+	// No vulnerability report or empty report means platform was not patched
+	return false
 }

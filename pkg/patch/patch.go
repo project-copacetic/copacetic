@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"runtime"
@@ -47,11 +48,12 @@ import (
 )
 
 const (
-	copaProduct     = "copa"
-	defaultRegistry = "docker.io"
-	defaultTag      = "latest"
-	LINUX           = "linux"
-	ARM64           = "arm64"
+	copaProduct             = "copa"
+	defaultRegistry         = "docker.io"
+	defaultTag              = "latest"
+	LINUX                   = "linux"
+	ARM64                   = "arm64"
+	copaAnnotationKeyPrefix = "sh.copa"
 )
 
 // for testing.
@@ -98,10 +100,100 @@ func createMultiPlatformManifest(
 	ctx context.Context,
 	imageName reference.NamedTagged,
 	items []types.PatchResult,
+	originalImage string,
 ) error {
 	resolver := imagetools.New(imagetools.Opt{
 		Auth: config.LoadDefaultConfigFile(os.Stderr),
 	})
+
+	// fetch annotations from the original image
+	annotations := make(map[exptypes.AnnotationKey]string)
+
+	// get the original image index manifest annotations
+	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage)
+	if err != nil {
+		log.Warnf("Failed to get original image annotations: %v", err)
+		// continue without annotations rather than failing
+	} else {
+		log.Infof("Retrieved %d annotations from original image %s", len(originalAnnotations), originalImage)
+		if len(originalAnnotations) > 0 {
+			// copy all annotations from the original image
+			for k, v := range originalAnnotations {
+				// create an AnnotationKey for index level annotations
+				ak := exptypes.AnnotationKey{
+					Type: exptypes.AnnotationIndex,
+					Key:  k,
+				}
+				annotations[ak] = v
+			}
+
+			// update annotations that should reflect the patched state
+			// update the created timestamp to reflect when the patch was applied
+			createdKey := exptypes.AnnotationKey{
+				Type: exptypes.AnnotationIndex,
+				Key:  "org.opencontainers.image.created",
+			}
+			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
+
+			// if theres a version annotation, update it to reflect the patched tag
+			versionKey := exptypes.AnnotationKey{
+				Type: exptypes.AnnotationIndex,
+				Key:  "org.opencontainers.image.version",
+			}
+			if version, ok := annotations[versionKey]; ok {
+				// Extract the tag from the patched image name to determine what suffix to use
+				patchedTag := imageName.Tag()
+
+				// Try to determine what was added to the original version
+				// If the patched tag contains the original version, extract the suffix
+				if strings.Contains(patchedTag, version) {
+					// Use the full patched tag as the new version
+					annotations[versionKey] = patchedTag
+				} else {
+					// Fallback: append the patched tag as a suffix
+					annotations[versionKey] = version + "-" + patchedTag
+				}
+			}
+
+			log.Debugf("Preserving %d annotations from original image", len(annotations))
+		} else {
+			log.Info("No annotations found in original image, adding Copa annotations only")
+			// add Copa-specific annotations even if there are no original annotations
+			createdKey := exptypes.AnnotationKey{
+				Type: exptypes.AnnotationIndex,
+				Key:  "org.opencontainers.image.created",
+			}
+			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
+		}
+	}
+
+	// add manifest descriptor level annotations for each platform
+	for _, it := range items {
+		if it.PatchedDesc != nil && it.PatchedDesc.Platform != nil {
+			// use annotations that are already preserved in PatchedDesc.Annotations
+			// this works for both patched and pass-through platforms
+			if len(it.PatchedDesc.Annotations) > 0 {
+				// add each annotation as a manifest-descriptor annotation
+				for k, v := range it.PatchedDesc.Annotations {
+					ak := exptypes.AnnotationKey{
+						Type:     exptypes.AnnotationManifestDescriptor,
+						Platform: it.PatchedDesc.Platform,
+						Key:      k,
+					}
+					// for patched platforms, update creation timestamp to reflect patching
+					// for other platforms, preserve original timestamps
+					if k == "org.opencontainers.image.created" && it.PatchedRef != it.OriginalRef {
+						// this is a patched platform, update the timestamp
+						annotations[ak] = time.Now().UTC().Format(time.RFC3339)
+					} else {
+						// this is a platform with preserved or non-timestamp annotation
+						annotations[ak] = v
+					}
+				}
+				log.Debugf("Added %d manifest-descriptor annotations for platform %s", len(it.PatchedDesc.Annotations), platforms.Format(*it.PatchedDesc.Platform))
+			}
+		}
+	}
 
 	// Source references (repo@sha256:digest) – one per architecture.
 	srcRefs := make([]*imagetools.Source, 0, len(items))
@@ -109,13 +201,14 @@ func createMultiPlatformManifest(
 		if it.PatchedDesc == nil {
 			return fmt.Errorf("patched descriptor is nil for %s", it.OriginalRef.String())
 		}
+
 		srcRefs = append(srcRefs, &imagetools.Source{
 			Ref:  it.PatchedRef,
 			Desc: *it.PatchedDesc,
 		})
 	}
 
-	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, map[exptypes.AnnotationKey]string{}, false)
+	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, annotations, false)
 	if err != nil {
 		return fmt.Errorf("failed to combine sources into manifest list: %w", err)
 	}
@@ -375,6 +468,7 @@ func patchSingleArchImage(
 	// determine which attributes to set for the export
 	attrs := map[string]string{
 		"name": patchedImageName,
+		"annotation." + copaAnnotationKeyPrefix + ".image.patched": time.Now().UTC().Format(time.RFC3339),
 	}
 	if shouldExportOCI {
 		attrs["oci-mediatypes"] = "true"
@@ -618,6 +712,37 @@ func patchSingleArchImage(
 	if err != nil { // dont necessarily need to fail if we can't get the descriptor
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s':  %v", prettyPlatform, err)
+	}
+
+	// if we have a patched descriptor then augment it with original manifest level annotations
+	if patchedDesc != nil {
+		// get the original manifest level annotations for this platform
+		originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+			OS:           targetPlatform.OS,
+			Architecture: targetPlatform.Architecture,
+			Variant:      targetPlatform.Variant,
+		})
+		if err != nil {
+			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
+		} else if len(originalAnnotations) > 0 {
+			// create a new descriptor that includes the original manifest level annotations
+			augmentedDesc := *patchedDesc
+			if augmentedDesc.Annotations == nil {
+				augmentedDesc.Annotations = make(map[string]string)
+			}
+
+			// copy original annotations
+			maps.Copy(augmentedDesc.Annotations, originalAnnotations)
+
+			// update creation timestamp to reflect patching
+			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
+
+			// add Copa image.patched annotation for patched platforms
+			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
+
+			patchedDesc = &augmentedDesc
+			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+		}
 	}
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
@@ -889,7 +1014,7 @@ func patchMultiPlatformImage(
 	}
 
 	if push {
-		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults)
+		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults, image)
 		if err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
@@ -930,7 +1055,7 @@ func patchMultiPlatformImage(
 
 			log.Infof("  docker buildx imagetools create --tag %s %s", patchedImageName.String(), strings.Join(refs, " "))
 		} else {
-			return fmt.Errorf("no patched images were created, check the logs for errors")
+			return fmt.Errorf("no images were processed, check the logs for errors")
 		}
 	}
 
@@ -1014,6 +1139,7 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.Pa
 					OSVersion:    m.Platform.OSVersion,
 					OSFeatures:   m.Platform.OSFeatures,
 				},
+				Annotations: m.Annotations,
 			}
 			return ociDesc, nil
 		}
