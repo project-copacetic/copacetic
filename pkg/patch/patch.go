@@ -759,6 +759,20 @@ func patchMultiPlatformImage(
 				// No report for this platform - preserve original
 				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
 
+				// Parse the original image reference for the result
+				originalRef, err := reference.ParseNormalizedNamed(image)
+				if err != nil {
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
+					}
+					mu.Unlock()
+					return err
+				}
+
 				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {
 					mu.Lock()
@@ -767,7 +781,7 @@ func patchMultiPlatformImage(
 						summaryMap[platformKey] = &types.MultiPlatformSummary{
 							Platform: platformKey,
 							Status:   "Error",
-							Ref:      "",
+							Ref:      originalRef.String() + " (original reference)",
 							Message:  "Windows images are not patched",
 						}
 						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
@@ -775,7 +789,7 @@ func patchMultiPlatformImage(
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Ignored",
-						Ref:      "",
+						Ref:      originalRef.String() + " (original reference)",
 						Message:  "Windows images are not patched and will be preserved as-is",
 					}
 					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
@@ -791,20 +805,6 @@ func patchMultiPlatformImage(
 						Status:   "Error",
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
-					}
-					mu.Unlock()
-					return err
-				}
-
-				// Parse the original image reference for the result
-				originalRef, err := reference.ParseNormalizedNamed(image)
-				if err != nil {
-					mu.Lock()
-					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
-						Status:   "Error",
-						Ref:      "",
-						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
 					}
 					mu.Unlock()
 					return err
