@@ -32,3 +32,18 @@ updates:
       all:
         patterns:
         - "*"
+
+  - package-ecosystem: docker
+    directory: /integration/singlearch/fixtures/openssl-test-img-debian
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /integration/singlearch/fixtures/openssl-test-img-rpm
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /integration/singlearch/fixtures/tdnf-test-img
+    schedule:
+      interval: daily
