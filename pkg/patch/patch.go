@@ -759,24 +759,55 @@ func patchMultiPlatformImage(
 				// No report for this platform - preserve original
 				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
 
+				// Parse the original image reference for the result
+				originalRef, err := reference.ParseNormalizedNamed(image)
+				if err != nil {
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
+					}
+					mu.Unlock()
+					return err
+				}
+
 				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {
+					mu.Lock()
+					defer mu.Unlock()
 					if !ignoreError {
+						summaryMap[platformKey] = &types.MultiPlatformSummary{
+							Platform: platformKey,
+							Status:   "Error",
+							Ref:      originalRef.String() + " (original reference)",
+							Message:  "Windows images are not patched",
+						}
 						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
 					}
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Ignored",
+						Ref:      originalRef.String() + " (original reference)",
+						Message:  "Windows images are not patched and will be preserved as-is",
+					}
 					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
+					return nil
 				}
 
 				// Get the original platform descriptor from the manifest
 				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
 				if err != nil {
-					return fmt.Errorf("failed to get original descriptor for platform %s: %w", p.OS+"/"+p.Architecture, err)
-				}
-
-				// Parse the original image reference for the result
-				originalRef, err := reference.ParseNormalizedNamed(image)
-				if err != nil {
-					return fmt.Errorf("failed to parse original image reference: %w", err)
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
+					}
+					mu.Unlock()
+					return err
 				}
 
 				// For platforms without reports, use the original image digest/reference
@@ -793,10 +824,9 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
-					Error:    "",
+					Message:  "Preserved original image (No Scan Report provided for platform)",
 				}
 				mu.Unlock()
-				log.Infof("Preserved original image (%s): %s\n", p.OS+"/"+p.Architecture, originalRef.String())
 				return nil
 			}
 
@@ -812,7 +842,7 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   status,
 					Ref:      "",
-					Error:    err.Error(),
+					Message:  err.Error(),
 				}
 				if !ignoreError {
 					return err
@@ -823,7 +853,7 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   "Error",
 					Ref:      "",
-					Error:    "patchSingleArchImage returned nil result",
+					Message:  "patchSingleArchImage returned nil result",
 				}
 				return nil
 			}
@@ -833,9 +863,8 @@ func patchMultiPlatformImage(
 				Platform: platformKey,
 				Status:   "Patched",
 				Ref:      res.PatchedRef.String(),
-				Error:    "",
+				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
 			}
-			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
 			return nil
 		})
 	}
@@ -907,7 +936,7 @@ func patchMultiPlatformImage(
 
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tERROR")
+	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tMESSAGE")
 
 	for _, p := range platforms {
 		platformKey := buildkit.PlatformKey(p.Platform)
@@ -917,7 +946,7 @@ func patchMultiPlatformImage(
 			if ref == "" {
 				ref = "-"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Platform, s.Status, ref, s.Error)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Platform, s.Status, ref, s.Message)
 		}
 	}
 	w.Flush()
