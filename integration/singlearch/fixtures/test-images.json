@@ -171,7 +171,7 @@
         "distro": "Oracle Linux 7.9",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "docker.io/library/oraclelinux",
@@ -189,7 +189,7 @@
         "distro": "Rocky Linux",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "docker.io/redhat/ubi9-minimal",
@@ -197,7 +197,7 @@
         "digest": "sha256:9607229894026ebecade4623038fce35bb75bf9371aca7b08ca11b08d103d2ab",
         "distro": "Redhat",
         "description": "Valid microdnf, no yum/dnf/rpm",
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "docker.io/almalinux",
@@ -215,7 +215,7 @@
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     },
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
@@ -224,6 +224,6 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifest": false
     }
 ]
