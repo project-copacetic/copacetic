@@ -2,6 +2,7 @@
 
 ![GitHub](https://img.shields.io/github/license/project-copacetic/copacetic)
 [![codecov](https://codecov.io/gh/project-copacetic/copacetic/branch/main/graph/badge.svg?token=PBC8EPNHRL)](https://codecov.io/gh/project-copacetic/copacetic)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8031/badge)](https://www.bestpractices.dev/projects/8031)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/project-copacetic/copacetic/badge)](https://api.securityscorecards.dev/projects/github.com/project-copacetic/copacetic)
 
 <img src="./images/copa-color.png" alt="Copa logo" width="25%" />
