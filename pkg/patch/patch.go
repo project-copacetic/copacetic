@@ -208,7 +208,9 @@ func patchWithContext(
 
 			// Fallback to default platform
 			platform := types.PatchPlatform{
-				Platform: platforms.Normalize(platforms.DefaultSpec()),
+				Platform:       platforms.Normalize(platforms.DefaultSpec()),
+				ReportFile:     "",
+				ShouldPreserve: false,
 			}
 			if platform.OS != LINUX {
 				platform.OS = LINUX
@@ -229,7 +231,9 @@ func patchWithContext(
 			}
 
 			platform := types.PatchPlatform{
-				Platform: platforms.Normalize(platforms.DefaultSpec()),
+				Platform:       platforms.Normalize(platforms.DefaultSpec()),
+				ReportFile:     "",
+				ShouldPreserve: false,
 			}
 			if platform.OS != LINUX {
 				platform.OS = LINUX
@@ -841,11 +845,12 @@ func patchMultiPlatformImage(
 				platformCopy := p
 				key := buildkit.PlatformKey(p.Platform)
 				if shouldPatchMap[key] {
-					// Platform should be patched with all
+					// Platform should be patched
 					platformCopy.ReportFile = ""
+					platformCopy.ShouldPreserve = false
 				} else {
 					// Platform should be preserved
-					platformCopy.ReportFile = "PRESERVE"
+					platformCopy.ShouldPreserve = true
 				}
 				platforms = append(platforms, platformCopy)
 			}
@@ -856,6 +861,7 @@ func patchMultiPlatformImage(
 			for _, p := range discoveredPlatforms {
 				platformCopy := p
 				platformCopy.ReportFile = "" // No vulnerability report, just patch with latest packages
+				platformCopy.ShouldPreserve = false
 				platforms = append(platforms, platformCopy)
 			}
 			log.Infof("Patching all available platforms")
@@ -882,9 +888,9 @@ func patchMultiPlatformImage(
 			}
 			defer func() { <-sem }()
 
-			if (p.ReportFile == "" && reportDir != "") || p.ReportFile == "PRESERVE" {
-				// Report directory was provided but no report for this platform, or platform marked for preservation - preserve original
-				log.Infof("No report for platform %s, preserving original in manifest", p.OS+"/"+p.Architecture)
+			if p.ShouldPreserve {
+				// Platform marked for preservation - preserve original
+				log.Infof("Platform %s marked for preservation, preserving original in manifest", p.OS+"/"+p.Architecture)
 
 				// Handle Windows platform without push enabled
 				if !push && p.OS == "windows" {

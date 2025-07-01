@@ -24,7 +24,8 @@ type UpdateManifest struct {
 // PatchPlatform is an extension of ispec.Platform but with a reportFile.
 type PatchPlatform struct {
 	ispec.Platform
-	ReportFile string `json:"reportFile"`
+	ReportFile     string `json:"reportFile"`
+	ShouldPreserve bool   `json:"shouldPreserve"`
 }
 
 // String returns a string representation of the PatchPlatform.
