@@ -824,7 +824,7 @@ func patchMultiPlatformImage(
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
-					Message:  "Preserved original image",
+					Message:  "Preserved original image (No Scan Report provided for platform)",
 				}
 				mu.Unlock()
 				return nil
