@@ -765,8 +765,16 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 }
 
 var validPlatforms = []string{
-	"linux/amd64", "linux/arm64", "linux/riscv64", "linux/ppc64le",
-	"linux/s390x", "linux/386", "linux/arm/v7", "linux/arm/v6",
+	"linux/386",
+	"linux/amd64",
+	"linux/arm",
+	"linux/arm/v5",
+	"linux/arm/v6",
+	"linux/arm/v7",
+	"linux/arm64",
+	"linux/arm64/v8",
+	"linux/ppc64le",
+	"linux/s390x",
 }
 
 // filterPlatforms filters discovered platforms based on user-specified target platforms.
