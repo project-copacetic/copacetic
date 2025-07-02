@@ -13,6 +13,9 @@ on:
 env:
   GHCR_NAMESPACE: ${{ github.event.inputs.ghcr_namespace || 'ghcr.io/project-copacetic/copacetic' }}
 
+permissions:
+  contents: read
+
 jobs:
   mirror:
     runs-on: ubuntu-latest
@@ -34,6 +37,11 @@ jobs:
           - "mcr.microsoft.com/cbl-mariner/base/core:1.0"
 
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.12.2
+        with:
+          egress-policy: audit
+
       - name: Checkout
         uses: actions/checkout@e3d2460bbb42d7710191569f88069044cfb9d8cf # v4.2.2
 
