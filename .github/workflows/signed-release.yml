@@ -6,7 +6,7 @@ on:
 
 permissions:
   contents: write
-  id-token: write  # Required for keyless signing
+  id-token: write  
 
 jobs:
   sign-assets:
@@ -15,13 +15,13 @@ jobs:
 
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4@9d476bda2b52b4a4fbe396aa9b674bca6a2d4a13
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.4.0
+        uses: sigstore/cosign-installer@v3.4.0@7e0c53cb364b5f7cfc6b04d99b68353c6c14fd64
 
       - name: Install GitHub CLI
-        uses: cli/cli-action@v2
+        uses: cli/cli-action@v2@a0fbe95a6ba35e3d6c45d3bcf89b94e912e3d776
         with:
           version: latest
 
@@ -44,19 +44,31 @@ jobs:
           done
 
       - name: Upload signatures and certs to release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v1@c96e5e2fd7bc3506a738bfe8d10a57b517aa9940
         with:
           files: |
             release-assets/*.sig
             release-assets/*.pem
+          tag_name: ${{ github.ref_name }}
 
       - name: Generate SLSA provenance (optional but recommended)
-        uses: slsa-framework/slsa-github-generator@v1.7.0
+        uses: slsa-framework/slsa-github-generator@v1.7.0@52cbcb7c206c4f8ad25e5b53a22bc3ff3e174e5f
         with:
           builder: github
           output: provenance.intoto.jsonl
 
       - name: Upload provenance
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v1@c96e5e2fd7bc3506a738bfe8d10a57b517aa9940
         with:
           files: provenance.intoto.jsonl
+          tag_name: ${{ github.ref_name }}
+
+      - name: Validate signatures
+        run: |
+          for file in release-assets/*; do
+            echo "Verifying $file"
+            cosign verify-blob \
+              --key "${file}.pem" \
+              --signature "${file}.sig" \
+              "$file"
+          done
