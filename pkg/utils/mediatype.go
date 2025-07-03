@@ -10,6 +10,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	log "github.com/sirupsen/logrus"
 )
@@ -119,4 +120,17 @@ func remoteMediaType(imageRef string) (string, error) {
 	}
 	log.Debugf("remote media type found for %s: %s", imageRef, desc.MediaType)
 	return string(desc.MediaType), nil
+}
+
+// IsManifestList checks if an image reference points to a manifest list/index
+// by inspecting its media type. It handles both local and remote images.
+func IsManifestList(imageRef, runtime string) (bool, error) {
+	mediaType, err := GetMediaType(imageRef, runtime)
+	if err != nil {
+		return false, err
+	}
+
+	// Check if the media type represents a manifest list/index
+	mt := types.MediaType(mediaType)
+	return mt.IsIndex(), nil
 }

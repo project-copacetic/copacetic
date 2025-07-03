@@ -164,3 +164,55 @@ func TestGetMediaType_RemoteFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(fakeRemoteType), mt)
 }
+
+func TestIsManifestList(t *testing.T) {
+	tests := []struct {
+		name           string
+		mediaType      string
+		isManifestList bool
+	}{
+		{
+			name:           "Docker manifest list",
+			mediaType:      "application/vnd.docker.distribution.manifest.list.v2+json",
+			isManifestList: true,
+		},
+		{
+			name:           "OCI index",
+			mediaType:      "application/vnd.oci.image.index.v1+json",
+			isManifestList: true,
+		},
+		{
+			name:           "Docker manifest v2",
+			mediaType:      "application/vnd.docker.distribution.manifest.v2+json",
+			isManifestList: false,
+		},
+		{
+			name:           "OCI manifest",
+			mediaType:      "application/vnd.oci.image.manifest.v1+json",
+			isManifestList: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Mock Docker client to return the test media type
+			md := new(mockDockerClient)
+			md.On("ImageInspect", mock.Anything, "test:latest", mock.Anything).Return(
+				image.InspectResponse{
+					Descriptor: &ocispec.Descriptor{
+						MediaType: tt.mediaType,
+					},
+				},
+				nil,
+			)
+
+			origNewClient := newClient
+			defer func() { newClient = origNewClient }()
+			newClient = func() (dockerClient.APIClient, error) { return md, nil }
+
+			isManifestList, err := IsManifestList("test:latest", imageloader.Docker)
+			require.NoError(t, err)
+			require.Equal(t, tt.isManifestList, isManifestList)
+		})
+	}
+}

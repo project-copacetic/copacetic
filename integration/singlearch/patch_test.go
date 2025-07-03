@@ -31,7 +31,6 @@ type testImage struct {
 	Digest       digest.Digest `json:"digest"`
 	Description  string        `json:"description"`
 	IgnoreErrors bool          `json:"ignoreErrors"`
-	IsManifest   bool          `json:"isManifest"`
 }
 
 func TestPatch(t *testing.T) {
@@ -110,8 +109,13 @@ func TestPatch(t *testing.T) {
 			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
-			if !reportFile && img.IsManifest {
-				scanTag += "-amd64"
+			if !reportFile {
+				// Check if the image is a manifest list by inspecting its media type
+				isManifestList, err := utils.IsManifestList(ref, imageloader.Docker)
+				require.NoError(t, err)
+				if isManifestList {
+					scanTag += "-amd64"
+				}
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
