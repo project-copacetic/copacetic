@@ -1,0 +1,19 @@
+[[ignore]]
+id = "GHSA-pxg6-pf52-xh8x"
+reason = "Not applicable to core Copa; used in static website generation only."
+
+[[ignore]]
+id = "GHSA-rhx6-c78j-4q9w"
+reason = "Not applicable to core Copa; used in static website generation only."
+
+[[ignore]]
+id = "GHSA-9wv6-86v2-598j"
+reason = "Not applicable to core Copa; used in static website generation only."
+
+[[ignore]]
+id = "GHSA-4v9v-hfq4-rm2v"
+reason = "Not applicable to core Copa; used in static website generation only."
+
+[[ignore]]
+id = "GHSA-9jgg-88mc-972h"
+reason = "Not applicable to core Copa; used in static website generation only."
