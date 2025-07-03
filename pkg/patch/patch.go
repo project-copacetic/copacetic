@@ -1,17 +1,19 @@
 package patch
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/containerd/platforms"
@@ -23,6 +25,8 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/docker/buildx/util/imagetools"
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -30,8 +34,10 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/moby/buildkit/util/progress/progressui"
+	"github.com/opencontainers/go-digest"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -39,22 +45,45 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 	"github.com/quay/claircore/osrelease"
-
-	dockerTypes "github.com/docker/docker/api/types"
-	dockerClient "github.com/docker/docker/client"
 )
 
 const (
-	copaProduct     = "copa"
-	defaultRegistry = "docker.io"
-	defaultTag      = "latest"
-	LINUX           = "linux"
+	copaProduct             = "copa"
+	defaultRegistry         = "docker.io"
+	defaultTag              = "latest"
+	LINUX                   = "linux"
+	ARM64                   = "arm64"
+	copaAnnotationKeyPrefix = "sh.copa"
 )
 
 // for testing.
 var (
 	bkNewClient = buildkit.NewClient
 )
+
+// detectLoaderFromBuildkitAddr attempts to determine the appropriate loader.
+// based on the buildkit connection address scheme.
+func detectLoaderFromBuildkitAddr(addr string) string {
+	if addr == "" {
+		return ""
+	}
+
+	u, err := url.Parse(addr)
+	if err != nil {
+		log.Debugf("Failed to parse buildkit address %q: %v", addr, err)
+		return ""
+	}
+
+	switch u.Scheme {
+	case "podman-container":
+		return imageloader.Podman
+	case "docker-container", "docker", "buildx":
+		return imageloader.Docker
+	default:
+		// Unknown scheme, let imageloader auto-detect
+		return ""
+	}
+}
 
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
@@ -71,10 +100,100 @@ func createMultiPlatformManifest(
 	ctx context.Context,
 	imageName reference.NamedTagged,
 	items []types.PatchResult,
+	originalImage string,
 ) error {
 	resolver := imagetools.New(imagetools.Opt{
 		Auth: config.LoadDefaultConfigFile(os.Stderr),
 	})
+
+	// fetch annotations from the original image
+	annotations := make(map[exptypes.AnnotationKey]string)
+
+	// get the original image index manifest annotations
+	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage)
+	if err != nil {
+		log.Warnf("Failed to get original image annotations: %v", err)
+		// continue without annotations rather than failing
+	} else {
+		log.Infof("Retrieved %d annotations from original image %s", len(originalAnnotations), originalImage)
+		if len(originalAnnotations) > 0 {
+			// copy all annotations from the original image
+			for k, v := range originalAnnotations {
+				// create an AnnotationKey for index level annotations
+				ak := exptypes.AnnotationKey{
+					Type: exptypes.AnnotationIndex,
+					Key:  k,
+				}
+				annotations[ak] = v
+			}
+
+			// update annotations that should reflect the patched state
+			// update the created timestamp to reflect when the patch was applied
+			createdKey := exptypes.AnnotationKey{
+				Type: exptypes.AnnotationIndex,
+				Key:  "org.opencontainers.image.created",
+			}
+			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
+
+			// if theres a version annotation, update it to reflect the patched tag
+			versionKey := exptypes.AnnotationKey{
+				Type: exptypes.AnnotationIndex,
+				Key:  "org.opencontainers.image.version",
+			}
+			if version, ok := annotations[versionKey]; ok {
+				// Extract the tag from the patched image name to determine what suffix to use
+				patchedTag := imageName.Tag()
+
+				// Try to determine what was added to the original version
+				// If the patched tag contains the original version, extract the suffix
+				if strings.Contains(patchedTag, version) {
+					// Use the full patched tag as the new version
+					annotations[versionKey] = patchedTag
+				} else {
+					// Fallback: append the patched tag as a suffix
+					annotations[versionKey] = version + "-" + patchedTag
+				}
+			}
+
+			log.Debugf("Preserving %d annotations from original image", len(annotations))
+		} else {
+			log.Info("No annotations found in original image, adding Copa annotations only")
+			// add Copa-specific annotations even if there are no original annotations
+			createdKey := exptypes.AnnotationKey{
+				Type: exptypes.AnnotationIndex,
+				Key:  "org.opencontainers.image.created",
+			}
+			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
+		}
+	}
+
+	// add manifest descriptor level annotations for each platform
+	for _, it := range items {
+		if it.PatchedDesc != nil && it.PatchedDesc.Platform != nil {
+			// use annotations that are already preserved in PatchedDesc.Annotations
+			// this works for both patched and pass-through platforms
+			if len(it.PatchedDesc.Annotations) > 0 {
+				// add each annotation as a manifest-descriptor annotation
+				for k, v := range it.PatchedDesc.Annotations {
+					ak := exptypes.AnnotationKey{
+						Type:     exptypes.AnnotationManifestDescriptor,
+						Platform: it.PatchedDesc.Platform,
+						Key:      k,
+					}
+					// for patched platforms, update creation timestamp to reflect patching
+					// for other platforms, preserve original timestamps
+					if k == "org.opencontainers.image.created" && it.PatchedRef != it.OriginalRef {
+						// this is a patched platform, update the timestamp
+						annotations[ak] = time.Now().UTC().Format(time.RFC3339)
+					} else {
+						// this is a platform with preserved or non-timestamp annotation
+						annotations[ak] = v
+					}
+				}
+				log.Debugf("Added %d manifest-descriptor annotations for platform %s", len(it.PatchedDesc.Annotations), platforms.Format(*it.PatchedDesc.Platform))
+			}
+		}
+	}
 
 	// Source references (repo@sha256:digest) – one per architecture.
 	srcRefs := make([]*imagetools.Source, 0, len(items))
@@ -82,13 +201,14 @@ func createMultiPlatformManifest(
 		if it.PatchedDesc == nil {
 			return fmt.Errorf("patched descriptor is nil for %s", it.OriginalRef.String())
 		}
+
 		srcRefs = append(srcRefs, &imagetools.Source{
 			Ref:  it.PatchedRef,
 			Desc: *it.PatchedDesc,
 		})
 	}
 
-	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, map[exptypes.AnnotationKey]string{}, false)
+	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, annotations, false)
 	if err != nil {
 		return fmt.Errorf("failed to combine sources into manifest list: %w", err)
 	}
@@ -125,8 +245,9 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 // Patch command applies package updates to an OCI image given a vulnerability report.
 func Patch(
 	ctx context.Context, timeout time.Duration,
-	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
+	targetPlatforms []string,
 	bkOpts buildkit.Opts,
 ) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -134,7 +255,7 @@ func Patch(
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, targetPlatforms, bkOpts)
 	}()
 
 	select {
@@ -162,23 +283,64 @@ func removeIfNotDebug(workingFolder string) {
 func patchWithContext(
 	ctx context.Context,
 	ch chan error,
-	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
+	targetPlatforms []string,
 	bkOpts buildkit.Opts,
 ) error {
-	// Handle empty report path - single-arch patching without report
+	// Handle empty report path - check if image is manifest list or single arch
 	if reportPath == "" {
-		platform := types.PatchPlatform{
-			Platform: platforms.Normalize(platforms.DefaultSpec()),
+		// Discover platforms from the image reference to determine if it's multi-arch
+		discoveredPlatforms, err := buildkit.DiscoverPlatformsFromReference(image)
+		if err != nil {
+			// Failed to discover platforms - treat as single-arch image
+			log.Warnf("Failed to discover platforms for image %s (treating as single-arch): %v", image, err)
+			if len(targetPlatforms) > 0 {
+				log.Info("Platform flag ignored when platform discovery fails")
+			}
+
+			// Fallback to default platform
+			platform := types.PatchPlatform{
+				Platform:       platforms.Normalize(platforms.DefaultSpec()),
+				ReportFile:     "",
+				ShouldPreserve: false,
+			}
+			if platform.OS != LINUX {
+				platform.OS = LINUX
+			}
+
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+			if err == nil && result != nil && result.PatchedRef != nil {
+				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
+			}
+			return err
 		}
-		if platform.OS != LINUX {
-			platform.OS = LINUX
+
+		if len(discoveredPlatforms) <= 1 {
+			// Single-arch image - ignore platform flag
+			log.Debugf("Detected single-arch image")
+			if len(targetPlatforms) > 0 {
+				log.Info("Platform flag ignored for single-arch image")
+			}
+
+			platform := types.PatchPlatform{
+				Platform:       platforms.Normalize(platforms.DefaultSpec()),
+				ReportFile:     "",
+				ShouldPreserve: false,
+			}
+			if platform.OS != LINUX {
+				platform.OS = LINUX
+			}
+
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+			if err == nil && result != nil && result.PatchedRef != nil {
+				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
+			}
+			return err
 		}
-		result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
-		if err == nil && result != nil && result.PatchedRef != nil {
-			log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
-		}
-		return err
+
+		log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
+		return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
 	}
 
 	// Check if reportPath exists
@@ -195,7 +357,10 @@ func patchWithContext(
 	if f.IsDir() {
 		// Handle directory - multi-platform patching
 		log.Debugf("Using report directory: %s", reportPath)
-		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, ignoreError, push, bkOpts)
+		if len(targetPlatforms) > 0 {
+			log.Info("Platform flag ignored when report directory is provided")
+		}
+		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, nil, nil)
 	}
 	// Handle file - single-arch patching
 	log.Debugf("Using report file: %s", reportPath)
@@ -205,7 +370,7 @@ func patchWithContext(
 	if platform.OS != LINUX {
 		platform.OS = LINUX
 	}
-	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, platform, ignoreError, push, bkOpts, false)
+	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 	}
@@ -215,7 +380,7 @@ func patchWithContext(
 func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
-	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
@@ -310,8 +475,17 @@ func patchSingleArchImage(
 		ref = imageName.String()
 	}
 
+	// Determine the loader type before starting goroutines
+	finalLoaderType := loader
+	if finalLoaderType == "" {
+		finalLoaderType = detectLoaderFromBuildkitAddr(bkOpts.Addr)
+		if finalLoaderType != "" {
+			log.Debugf("Auto-detected loader type %q from buildkit address %q", finalLoaderType, bkOpts.Addr)
+		}
+	}
+
 	// get the original media type of the image to determine if we should export as OCI or Docker
-	mt, err := utils.GetMediaType(ref)
+	mt, err := utils.GetMediaType(ref, finalLoaderType)
 	shouldExportOCI := err == nil && strings.Contains(mt, "vnd.oci.image")
 
 	switch {
@@ -339,6 +513,7 @@ func patchSingleArchImage(
 	// determine which attributes to set for the export
 	attrs := map[string]string{
 		"name": patchedImageName,
+		"annotation." + copaAnnotationKeyPrefix + ".image.patched": time.Now().UTC().Format(time.RFC3339),
 	}
 	if shouldExportOCI {
 		attrs["oci-mediatypes"] = "true"
@@ -545,17 +720,19 @@ func patchSingleArchImage(
 	// only load to docker if not pushing
 	if !push {
 		eg.Go(func() error {
-			dockerCli, err := newDockerClient()
+			imgLoader, err := imageloader.New(ctx, imageloader.Config{Loader: finalLoaderType})
 			if err != nil {
-				pipeR.CloseWithError(fmt.Errorf("failed to create docker client for loading: %w", err))
-				return fmt.Errorf("failed to create docker client for loading: %w", err)
+				err = fmt.Errorf("failed to create loader: %w", err)
+				pipeR.CloseWithError(err)
+				log.Error(err)
+				return err
 			}
-			defer dockerCli.Close()
 
-			err = dockerLoadWithClient(ctx, dockerCli, pipeR)
-			if err != nil {
-				pipeR.CloseWithError(fmt.Errorf("dockerLoadWithClient failed: %w", err))
-				return fmt.Errorf("dockerLoadWithClient failed: %w", err)
+			if err := imgLoader.Load(ctx, pipeR, patchedImageName); err != nil {
+				err = fmt.Errorf("failed to load image: %w", err)
+				pipeR.CloseWithError(err)
+				log.Error(err)
+				return err
 			}
 			return pipeR.Close()
 		})
@@ -570,10 +747,47 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName)
+	// Use the appropriate runtime for image descriptor lookup
+	runtime := imageloader.Docker
+	if finalLoaderType == imageloader.Podman {
+		runtime = imageloader.Podman
+	}
+
+	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName, runtime)
 	if err != nil { // dont necessarily need to fail if we can't get the descriptor
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s':  %v", prettyPlatform, err)
+	}
+
+	// if we have a patched descriptor then augment it with original manifest level annotations
+	if patchedDesc != nil {
+		// get the original manifest level annotations for this platform
+		originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+			OS:           targetPlatform.OS,
+			Architecture: targetPlatform.Architecture,
+			Variant:      targetPlatform.Variant,
+		})
+		if err != nil {
+			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
+		} else if len(originalAnnotations) > 0 {
+			// create a new descriptor that includes the original manifest level annotations
+			augmentedDesc := *patchedDesc
+			if augmentedDesc.Annotations == nil {
+				augmentedDesc.Annotations = make(map[string]string)
+			}
+
+			// copy original annotations
+			maps.Copy(augmentedDesc.Annotations, originalAnnotations)
+
+			// update creation timestamp to reflect patching
+			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
+
+			// add Copa image.patched annotation for patched platforms
+			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
+
+			patchedDesc = &augmentedDesc
+			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+		}
 	}
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
@@ -664,77 +878,6 @@ func getOSVersion(ctx context.Context, osreleaseBytes []byte) (string, error) {
 	return osData["VERSION_ID"], nil
 }
 
-func newDockerClient() (dockerClient.APIClient, error) {
-	hostOpt := func(c *dockerClient.Client) error {
-		if os.Getenv(dockerClient.EnvOverrideHost) != "" {
-			// Fallback to just keep dockerClient.FromEnv whatever was set from
-			return nil
-		}
-		addr, err := connhelpers.AddrFromDockerContext()
-		if err != nil {
-			log.WithError(err).Error("Error loading docker context, falling back to env")
-			return nil
-		}
-		return dockerClient.WithHost(addr)(c)
-	}
-
-	cli, err := dockerClient.NewClientWithOpts(dockerClient.FromEnv, hostOpt, dockerClient.WithAPIVersionNegotiation())
-	if err != nil {
-		return nil, fmt.Errorf("failed to create docker client: %w", err)
-	}
-	log.Debug("Docker client initialized successfully")
-	return cli, nil
-}
-
-func dockerLoadWithClient(ctx context.Context, cli dockerClient.APIClient, pipeR io.Reader) error {
-	log.Debugf("Loading image stream using Docker API client")
-	resp, err := cli.ImageLoad(ctx, pipeR, dockerClient.ImageLoadWithQuiet(false))
-	if err != nil {
-		log.Errorf("Docker API ImageLoad failed: %v", err)
-		return fmt.Errorf("docker client ImageLoad: %w", err)
-	}
-	defer resp.Body.Close()
-
-	scanner := bufio.NewScanner(resp.Body)
-	lastLine := ""
-	for scanner.Scan() {
-		line := scanner.Text()
-		lastLine = line
-		log.Debugf("ImageLoad response stream: %s", line)
-	}
-
-	if err := scanner.Err(); err != nil {
-		log.Warnf("Error reading ImageLoad response body stream: %v", err)
-	}
-
-	if resp.JSON && lastLine != "" {
-		var jsonResp struct {
-			ErrorResponse *dockerTypes.ErrorResponse `json:"errorResponse"`
-			Error         string                     `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(lastLine), &jsonResp); err == nil {
-			if jsonResp.ErrorResponse != nil {
-				msg := fmt.Sprintf("ImageLoad reported error: %s", jsonResp.ErrorResponse.Message)
-				log.Error(msg)
-				return errors.New(msg)
-			}
-			if jsonResp.Error != "" {
-				// Sometimes the error is directly in the 'error' field
-				msg := fmt.Sprintf("ImageLoad reported error: %s", jsonResp.Error)
-				log.Error(msg)
-				return errors.New(msg)
-			}
-		} else {
-			log.Debugf("Final ImageLoad response line (non-JSON or parse error): %s", lastLine)
-		}
-	} else if lastLine != "" {
-		log.Debugf("Final ImageLoad response line (non-JSON): %s", lastLine)
-	}
-
-	log.Info("Image loaded successfully via Docker API")
-	return nil
-}
-
 // e.g. "docker.io/library/nginx:1.21.6-patched".
 func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	parts := strings.Split(patchedImageName, "/")
@@ -746,20 +889,116 @@ func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
 	return nameWithDigest
 }
 
+var validPlatforms = []string{
+	"linux/386",
+	"linux/amd64",
+	"linux/arm",
+	"linux/arm/v5",
+	"linux/arm/v6",
+	"linux/arm/v7",
+	"linux/arm64",
+	"linux/arm64/v8",
+	"linux/ppc64le",
+	"linux/s390x",
+}
+
+// filterPlatforms filters discovered platforms based on user-specified target platforms.
+func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms []string) []types.PatchPlatform {
+	var filtered []types.PatchPlatform
+
+	for _, target := range targetPlatforms {
+		// Validate platform against allowed list
+		if !slices.Contains(validPlatforms, target) {
+			log.Warnf("Platform %s is not in the list of valid platforms: %v", target, validPlatforms)
+			continue
+		}
+
+		targetPlatform, err := platforms.Parse(target)
+		if err != nil {
+			log.Warnf("Invalid platform format %s: %v", target, err)
+			continue
+		}
+		targetPlatform = platforms.Normalize(targetPlatform)
+
+		for _, discovered := range discoveredPlatforms {
+			if platforms.Only(targetPlatform).Match(discovered.Platform) {
+				filtered = append(filtered, discovered)
+				break
+			}
+		}
+	}
+
+	return filtered
+}
+
 func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
-	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output string,
+	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	bkOpts buildkit.Opts,
+	targetPlatforms []string,
+	discoveredPlatforms []types.PatchPlatform,
 ) error {
 	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
-	platforms, err := buildkit.DiscoverPlatforms(image, reportDir, scanner)
-	if err != nil {
-		return err
-	}
-	if len(platforms) == 0 {
-		return fmt.Errorf("no patchable platforms found for image %s", image)
+
+	var platforms []types.PatchPlatform
+	if reportDir != "" {
+		// Using report directory - discover platforms from reports
+		var err error
+		platforms, err = buildkit.DiscoverPlatforms(image, reportDir, scanner)
+		if err != nil {
+			return err
+		}
+		if len(platforms) == 0 {
+			return fmt.Errorf("no patchable platforms found for image %s", image)
+		}
+	} else {
+		// No report directory - use discovered platforms and filter
+		if len(discoveredPlatforms) == 0 {
+			return fmt.Errorf("no platforms provided for image %s", image)
+		}
+
+		if len(targetPlatforms) > 0 {
+			// Filter platforms based on user specification and validate
+			patchPlatforms := filterPlatforms(discoveredPlatforms, targetPlatforms)
+			if len(patchPlatforms) == 0 {
+				return fmt.Errorf("none of the specified platforms %v are available in the image", targetPlatforms)
+			}
+
+			// Create a map to track which platforms should be patched
+			shouldPatchMap := make(map[string]bool)
+			for _, p := range patchPlatforms {
+				key := buildkit.PlatformKey(p.Platform)
+				shouldPatchMap[key] = true
+			}
+
+			// Process all platforms, marking which should be patched vs preserved
+			for _, p := range discoveredPlatforms {
+				platformCopy := p
+				key := buildkit.PlatformKey(p.Platform)
+				if shouldPatchMap[key] {
+					// Platform should be patched
+					platformCopy.ReportFile = ""
+					platformCopy.ShouldPreserve = false
+				} else {
+					// Platform should be preserved
+					platformCopy.ShouldPreserve = true
+				}
+				platforms = append(platforms, platformCopy)
+			}
+
+			log.Infof("Patching specified platforms, preserving others")
+		} else {
+			// Patch all available platforms since no specific platforms were requested
+			for _, p := range discoveredPlatforms {
+				platformCopy := p
+				platformCopy.ReportFile = "" // No vulnerability report, just patch with latest packages
+				platformCopy.ShouldPreserve = false
+				platforms = append(platforms, platformCopy)
+			}
+			log.Infof("Patching all available platforms")
+		}
 	}
 
 	sem := make(chan struct{}, runtime.NumCPU())
@@ -768,18 +1007,12 @@ func patchMultiPlatformImage(
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
 
-	handlePlatformErr := func(p types.PatchPlatform, err error) error {
-		if ignoreError {
-			log.Warnf("Ignoring error for platform %s: %v", p.OS+"/"+p.Architecture, err)
-			return nil
-		}
-		log.Warnf("Error for platform %s: %v", p.OS+"/"+p.Architecture, err)
-		return fmt.Errorf("platform %s failed: %w", p.OS+"/"+p.Architecture, err)
-	}
+	summaryMap := make(map[string]*types.MultiPlatformSummary)
 
 	for _, p := range platforms {
 		// rebind
 		p := p //nolint
+		platformKey := buildkit.PlatformKey(p.Platform)
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -788,17 +1021,122 @@ func patchMultiPlatformImage(
 			}
 			defer func() { <-sem }()
 
-			res, err := patchSingleArchImage(gctx, ch, image, p.ReportFile, patchedTag, suffix, workingFolder, scanner, format, output, p, ignoreError, push, bkOpts, true)
-			if err != nil {
-				return handlePlatformErr(p, err)
-			} else if res == nil {
-				return fmt.Errorf("patchSingleArchImage returned nil result for platform %s", p.OS+"/"+p.Architecture)
+			if p.ShouldPreserve {
+				// Platform marked for preservation - preserve original
+				log.Infof("Platform %s marked for preservation, preserving original in manifest", p.OS+"/"+p.Architecture)
+
+				// Parse the original image reference for the result
+				originalRef, err := reference.ParseNormalizedNamed(image)
+				if err != nil {
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
+					}
+					mu.Unlock()
+					return err
+				}
+
+				// Handle Windows platform without push enabled
+				if !push && p.OS == "windows" {
+					mu.Lock()
+					defer mu.Unlock()
+					if !ignoreError {
+						summaryMap[platformKey] = &types.MultiPlatformSummary{
+							Platform: platformKey,
+							Status:   "Error",
+							Ref:      originalRef.String() + " (original reference)",
+							Message:  "Windows images are not patched",
+						}
+						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
+					}
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Ignored",
+						Ref:      originalRef.String() + " (original reference)",
+						Message:  "Windows images are not patched and will be preserved as-is",
+					}
+					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
+					return nil
+				}
+
+				// Get the original platform descriptor from the manifest
+				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
+				if err != nil {
+					mu.Lock()
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Error",
+						Ref:      "",
+						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
+					}
+					mu.Unlock()
+					return err
+				}
+
+				// For platforms without reports, use the original image digest/reference
+				result := types.PatchResult{
+					OriginalRef: originalRef,
+					PatchedRef:  originalRef,
+					PatchedDesc: originalDesc,
+				}
+
+				mu.Lock()
+				patchResults = append(patchResults, result)
+				// Add summary entry for unpatched platform
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
+					Platform: platformKey,
+					Status:   "Not Patched",
+					Ref:      originalRef.String() + " (original reference)",
+					Message:  "Preserved original image (No Scan Report provided for platform)",
+				}
+				mu.Unlock()
+				return nil
 			}
 
+			// When no report directory is provided, patch with empty report file
+			reportFile := p.ReportFile
+			if reportDir == "" {
+				reportFile = ""
+			}
+
+			res, err := patchSingleArchImage(gctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, p, ignoreError, push, bkOpts, true)
 			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				status := "Error"
+				if ignoreError {
+					status = "Ignored"
+				}
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
+					Platform: platformKey,
+					Status:   status,
+					Ref:      "",
+					Message:  err.Error(),
+				}
+				if !ignoreError {
+					return err
+				}
+				return nil
+			} else if res == nil {
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
+					Platform: platformKey,
+					Status:   "Error",
+					Ref:      "",
+					Message:  "patchSingleArchImage returned nil result",
+				}
+				return nil
+			}
+
 			patchResults = append(patchResults, *res)
-			mu.Unlock()
-			log.Infof("Patched image (%s): %s\n", p.OS+"/"+p.Architecture, res.PatchedRef.String())
+			summaryMap[platformKey] = &types.MultiPlatformSummary{
+				Platform: platformKey,
+				Status:   "Patched",
+				Ref:      res.PatchedRef.String(),
+				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
+			}
 			return nil
 		})
 	}
@@ -823,31 +1161,136 @@ func patchMultiPlatformImage(
 	}
 
 	if push {
-		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults)
+		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults, image)
 		if err != nil {
 			return fmt.Errorf("manifest list creation failed: %w", err)
 		}
 	}
 
 	if !push {
-		if len(patchResults) > 0 {
+		// Show push commands only for actually patched images (not preserved originals)
+		patchedOnlyResults := make([]types.PatchResult, 0)
+		for _, result := range patchResults {
+			// Only include results where the patched ref differs from original ref
+			if result.PatchedRef.String() != result.OriginalRef.String() {
+				patchedOnlyResults = append(patchedOnlyResults, result)
+			}
+		}
+
+		if len(patchedOnlyResults) > 0 {
 			log.Info("To push the individual architecture images, run:")
-			for _, result := range patchResults {
+			for _, result := range patchedOnlyResults {
 				log.Infof("  docker push %s", result.PatchedRef.String())
 			}
 			log.Infof("To create and push the multi-platform manifest, run:")
+
+			// Include all platforms (both patched and preserved) in the manifest create command
 			refs := make([]string, len(patchResults))
 			for i, result := range patchResults {
-				refs[i] = result.PatchedRef.String()
+				if result.PatchedRef.String() != result.OriginalRef.String() {
+					// Use the patched reference for actually patched platforms
+					refs[i] = result.PatchedRef.String()
+				} else {
+					// Use the original reference with digest for preserved platforms
+					if result.PatchedDesc != nil && result.PatchedDesc.Digest.String() != "" {
+						refs[i] = result.OriginalRef.String() + "@" + result.PatchedDesc.Digest.String()
+					} else {
+						refs[i] = result.OriginalRef.String()
+					}
+				}
 			}
-			log.Infof("  docker manifest create %s %s", patchedImageName.String(), strings.Join(refs, " "))
-			log.Infof("  docker manifest push %s", patchedImageName.String())
+
+			log.Infof("  docker buildx imagetools create --tag %s %s", patchedImageName.String(), strings.Join(refs, " "))
 		} else {
-			return fmt.Errorf("no patched images were created, check the logs for errors")
+			return fmt.Errorf("no images were processed, check the logs for errors")
 		}
 	}
 
-	log.Infof("Multi-platform image patched with tag %s", patchedImageName.String())
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tMESSAGE")
+
+	for _, p := range platforms {
+		platformKey := buildkit.PlatformKey(p.Platform)
+		s := summaryMap[platformKey]
+		if s != nil {
+			ref := s.Ref
+			if ref == "" {
+				ref = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Platform, s.Status, ref, s.Message)
+		}
+	}
+	w.Flush()
+	log.Info("\nMulti-arch patch summary:\n" + b.String())
 
 	return nil
+}
+
+// Gets the descriptor for a specific platform from a multi-arch manifest.
+func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.PatchPlatform) (*ispec.Descriptor, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
+	}
+
+	desc, err := remote.Get(ref)
+	if err != nil {
+		return nil, fmt.Errorf("error fetching descriptor for %q: %w", imageRef, err)
+	}
+
+	if !desc.MediaType.IsIndex() {
+		return nil, fmt.Errorf("expected multi-platform image but got single-arch image")
+	}
+
+	index, err := desc.ImageIndex()
+	if err != nil {
+		return nil, fmt.Errorf("error getting image index: %w", err)
+	}
+
+	manifest, err := index.IndexManifest()
+	if err != nil {
+		return nil, fmt.Errorf("error getting manifest: %w", err)
+	}
+
+	// Find the descriptor for the target platform
+	for i := range manifest.Manifests {
+		m := &manifest.Manifests[i]
+		if m.Platform == nil {
+			continue
+		}
+
+		// Normalize the variant comparison - treat missing variant as empty string
+		manifestVariant := m.Platform.Variant
+		targetVariant := targetPlatform.Variant
+		if m.Platform.Architecture == "arm64" && manifestVariant == "v8" {
+			manifestVariant = ""
+		}
+		if targetPlatform.Architecture == "arm64" && targetVariant == "v8" {
+			targetVariant = ""
+		}
+
+		if m.Platform.OS == targetPlatform.OS &&
+			m.Platform.Architecture == targetPlatform.Architecture &&
+			manifestVariant == targetVariant &&
+			m.Platform.OSVersion == targetPlatform.OSVersion {
+			// Convert the descriptor to the expected format
+			ociDesc := &ispec.Descriptor{
+				MediaType: string(m.MediaType),
+				Size:      m.Size,
+				Digest:    digest.Digest(m.Digest.String()),
+				Platform: &ispec.Platform{
+					OS:           m.Platform.OS,
+					Architecture: m.Platform.Architecture,
+					Variant:      m.Platform.Variant,
+					OSVersion:    m.Platform.OSVersion,
+					OSFeatures:   m.Platform.OSFeatures,
+				},
+				Annotations: m.Annotations,
+			}
+			return ociDesc, nil
+		}
+	}
+
+	return nil, fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
 }

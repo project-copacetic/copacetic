@@ -133,7 +133,8 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 				Architecture: report.Metadata.Config.Arch,
 				Variant:      report.Metadata.Config.Variant,
 			},
-			ReportFile: filePath,
+			ReportFile:     filePath,
+			ShouldPreserve: false, // This platform has a report, so it should be patched
 		}
 
 		if platform.Architecture == arm64 && platform.Variant == "v8" {
@@ -184,7 +185,9 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		for i := range manifest.Manifests {
 			m := &manifest.Manifests[i]
 
-			if m.Platform.OS != linux {
+			// Skip manifests with unknown platforms
+			if m.Platform == nil || m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
+				log.Debugf("Skipping manifest with unknown platform: %s/%s", m.Platform.OS, m.Platform.Architecture)
 				continue
 			}
 
@@ -193,7 +196,11 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					OS:           m.Platform.OS,
 					Architecture: m.Platform.Architecture,
 					Variant:      m.Platform.Variant,
+					OSVersion:    m.Platform.OSVersion,
+					OSFeatures:   m.Platform.OSFeatures,
 				},
+				ReportFile:     "",    // No report file for platforms discovered from reference
+				ShouldPreserve: false, // Default to false, will be set appropriately later
 			}
 			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
 				// some scanners may not add v8 to arm64 reports, so we
@@ -207,6 +214,20 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 
 	// return nil if not multi-platform, and handle as normal
 	return nil, nil
+}
+
+//nolint:gocritic
+func PlatformKey(pl ispec.Platform) string {
+	// if platform is present in list from reference and report, then we should patch that platform
+	key := pl.OS + "/" + pl.Architecture
+	if pl.Variant != "" {
+		key += "/" + pl.Variant
+	}
+	// Include OS version for platforms like Windows that have multiple versions
+	if pl.OSVersion != "" {
+		key += "@" + pl.OSVersion
+	}
+	return key
 }
 
 func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
@@ -228,19 +249,23 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		}
 		log.WithField("platforms", p2).Debug("Discovered platforms from report")
 
-		// if platform is present in list from reference and report, then we should patch that platform
-		key := func(pl ispec.Platform) string {
-			return pl.OS + "/" + pl.Architecture + "/" + pl.Variant
-		}
-
+		// include all platforms from original manifest, patching only those with reports
 		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[key(pl.Platform)] = pl.ReportFile
+			reportSet[PlatformKey(pl.Platform)] = pl.ReportFile
 		}
 
 		for _, pl := range p {
-			if rp, ok := reportSet[key(pl.Platform)]; ok {
+			if rp, ok := reportSet[PlatformKey(pl.Platform)]; ok {
+				// Platform has a report - will be patched
 				pl.ReportFile = rp
+				pl.ShouldPreserve = false
+				platforms = append(platforms, pl)
+			} else {
+				// Platform has no report - preserve original without patching
+				log.Debugf("No report found for platform %s, preserving original", PlatformKey(pl.Platform))
+				pl.ReportFile = ""
+				pl.ShouldPreserve = true
 				platforms = append(platforms, pl)
 			}
 		}

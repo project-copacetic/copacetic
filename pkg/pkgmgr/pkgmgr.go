@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	log "github.com/sirupsen/logrus"
@@ -165,8 +166,17 @@ func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionCompa
 
 // tryImage attempts to create an llb.Image reference and call c.Solve() on it
 // to confirm it exists. If it doesn't, it will return an error so we can fallback.
-func tryImage(ctx context.Context, imageRef string, c client.Client) (llb.State, error) {
-	st := llb.Image(imageRef)
+func tryImage(ctx context.Context, imageRef string, c client.Client, platform *ocispecs.Platform) (llb.State, error) {
+	imageOpts := []llb.ImageOption{
+		llb.ResolveModeDefault,
+	}
+	if platform != nil {
+		imageOpts = append(imageOpts, llb.Platform(*platform))
+	}
+	st := llb.Image(
+		imageRef,
+		imageOpts...,
+	)
 	def, err := st.Marshal(ctx)
 	if err != nil {
 		return llb.State{}, err
