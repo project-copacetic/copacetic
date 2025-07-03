@@ -360,6 +360,17 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 		Definition: def.ToPB(),
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "mergeop") || strings.Contains(err.Error(), "diffop") {
+			return nil, fmt.Errorf(`❌ Copa failed due to missing BuildKit features.
+
+The requested BuildKit operations "mergeop" or "diffop" are disabled because Docker is not using the containerd image store.
+
+💡 To fix this:
+1. Open Docker Desktop.
+2. Navigate to ⚙️ Settings → Features in Development.
+3. Enable "Use containerd for storing and managing images".
+4. Restart Docker Desktop and try again.`)
+		}
 		return nil, err
 	}
 

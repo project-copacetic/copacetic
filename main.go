@@ -50,6 +50,23 @@ func main() {
 	cobra.OnInitialize(initConfig)
 	rootCmd := newRootCmd()
 	if err := rootCmd.Execute(); err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "mergeop") || strings.Contains(errStr, "diffop") {
+			log.Error(`
+	❌ Copa failed due to missing BuildKit features.
+	
+	The requested BuildKit operations "mergeop" or "diffop" are disabled because Docker is not using the containerd image store.
+	
+	💡 To fix this:
+	1. Open Docker Desktop.
+	2. Go to ⚙️  Settings → Features in Development.
+	3. Enable "Use containerd for storing and managing images".
+	4. Restart Docker Desktop and try again.
+	`)
+		} else {
+			log.Errorf("Error: %v", err)
+		}
 		os.Exit(1)
 	}
+	
 }
