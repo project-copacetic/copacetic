@@ -17,10 +17,10 @@ jobs:
       pull-requests: write
     steps:
       - name: Close Stale Issues
-        uses: actions/stale@v9.1.0
+        uses: actions/stale@5bef64f19d7facfb25b37b414482c7164d639639
         with:
-          days-before-stale: 60
-          days-before-close: 21
+          days-before-stale: 7
+          days-before-close: 7
           stale-issue-label: 'stale'
           stale-pr-label: 'stale'
           stale-issue-message: |
