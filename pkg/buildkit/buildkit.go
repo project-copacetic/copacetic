@@ -133,7 +133,8 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 				Architecture: report.Metadata.Config.Arch,
 				Variant:      report.Metadata.Config.Variant,
 			},
-			ReportFile: filePath,
+			ReportFile:     filePath,
+			ShouldPreserve: false, // This platform has a report, so it should be patched
 		}
 
 		if platform.Architecture == arm64 && platform.Variant == "v8" {
@@ -198,6 +199,8 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					OSVersion:    m.Platform.OSVersion,
 					OSFeatures:   m.Platform.OSFeatures,
 				},
+				ReportFile:     "",    // No report file for platforms discovered from reference
+				ShouldPreserve: false, // Default to false, will be set appropriately later
 			}
 			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
 				// some scanners may not add v8 to arm64 reports, so we
@@ -256,11 +259,13 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 			if rp, ok := reportSet[PlatformKey(pl.Platform)]; ok {
 				// Platform has a report - will be patched
 				pl.ReportFile = rp
+				pl.ShouldPreserve = false
 				platforms = append(platforms, pl)
 			} else {
 				// Platform has no report - preserve original without patching
 				log.Debugf("No report found for platform %s, preserving original", PlatformKey(pl.Platform))
 				pl.ReportFile = ""
+				pl.ShouldPreserve = true
 				platforms = append(platforms, pl)
 			}
 		}
