@@ -24,13 +24,14 @@ import (
 var testImages []byte
 
 type testImage struct {
-	Image        string        `json:"image"`
-	Tag          string        `json:"tag"`
-	LocalName    string        `json:"localName,omitempty"`
-	Distro       string        `json:"distro"`
-	Digest       digest.Digest `json:"digest"`
-	Description  string        `json:"description"`
-	IgnoreErrors bool          `json:"ignoreErrors"`
+	Image          string        `json:"image"`
+	Tag            string        `json:"tag"`
+	LocalName      string        `json:"localName,omitempty"`
+	Distro         string        `json:"distro"`
+	Digest         digest.Digest `json:"digest"`
+	Description    string        `json:"description"`
+	IgnoreErrors   bool          `json:"ignoreErrors"`
+	IsManifestList bool          `json:"isManifestList"`
 }
 
 func TestPatch(t *testing.T) {
@@ -93,7 +94,6 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
 			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
 			require.NoError(t, err)
@@ -106,6 +106,14 @@ func TestPatch(t *testing.T) {
 
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+
+			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
+			// The scanning should look for the tag that Copa actually created
+			scanTag := tagPatched
+			if !reportFile && img.IsManifestList {
+				scanTag += "-amd64"
+			}
+			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -176,6 +184,11 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		reportPath = "-r=" + path + "/scan.json"
 	}
 
+	var platformFlag string
+	if !reportFile {
+		platformFlag = "--platform=linux/amd64"
+	}
+
 	//#nosec G204
 	cmd := exec.Command(
 		copaPath,
@@ -186,6 +199,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,
+		platformFlag,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
 		"--debug",
