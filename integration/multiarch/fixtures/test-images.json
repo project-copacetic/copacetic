@@ -36,6 +36,7 @@
     "description": "Multi-platform .NET 6.0 runtime, with push",
     "ignoreErrors": false,
     "push": true,
+    "skipAnnotations": true,
     "platforms": [
       "linux/arm/v7",
       "linux/arm64"
