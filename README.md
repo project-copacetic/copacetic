@@ -55,23 +55,6 @@ This approach is motivated by the core principles of making direct container pat
 
 ---
 
-## 📈 OpenSSF Best Practices Additions
-
-To work toward **OpenSSF Best Practices silver and gold badges**, we’ve adopted the following improvements:
-
-- ✅ Maintains a documented [Security Policy](./SECURITY.md)  
-- ✅ Enables vulnerability reporting through GitHub security advisories  
-- ✅ All contributors are required to sign off via the [Developer Certificate of Origin (DCO)](https://developercertificate.org/)  
-- ✅ Code is linted and tested in CI (`make lint`, `make test`)  
-- ✅ Uses [Signed Commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification) for PR validation  
-- ✅ Documented [contribution guidelines](./CONTRIBUTING.md)  
-- ✅ SBOM generation is supported via [go-mod-graph](https://pkg.go.dev/golang.org/x/tools/go/mod/graph)  
-- ✅ Code scanning enabled via [CodeQL](https://github.com/github/codeql)  
-- ✅ Dependencies are continuously scanned and monitored
-
-_See [OpenSSF Best Practices Project](https://www.bestpractices.dev/en/projects/8031) for live badge status._
-
----
 
 ## Contributing
 
