@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[FEATURE] <your feature title>"
+labels: [enhancement]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What is the feature?
+      description: Clearly describe the feature or enhancement you'd like to see.
+      placeholder: I’d like Copa to support patching XYZ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Why is it needed?
+      description: Describe the use case or problem it solves.
+      placeholder: This would help users who...
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Are you willing to help implement this feature?
+      options:
+        - label: "Yes, I’d be interested in submitting a PR"
+        - label: "No, but I’d be happy to help test or provide feedback"

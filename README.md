@@ -51,12 +51,35 @@ This approach is motivated by the core principles of making direct container pat
   - Image publishers don't need to create new workflows for container patching since Copa supports patching container images using the security update packages already being published today.
   - Consumers do not need to migrate to a new and potentially more limited support ecosystem for custom distros or change their container vulnerability scanning pipelines to include remediation, since Copa can be integrated seamlessly as an extra step to patch containers based on those scanning reports.
 - **Copa reduces the technical expertise needed and waiting on dependencies needed to patch an image**.
-  - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to be patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
+  - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
+
+---
+
+## 📈 OpenSSF Best Practices Additions
+
+To work toward **OpenSSF Best Practices silver and gold badges**, we’ve adopted the following improvements:
+
+- ✅ Maintains a documented [Security Policy](./SECURITY.md)  
+- ✅ Enables vulnerability reporting through GitHub security advisories  
+- ✅ All contributors are required to sign off via the [Developer Certificate of Origin (DCO)](https://developercertificate.org/)  
+- ✅ Code is linted and tested in CI (`make lint`, `make test`)  
+- ✅ Uses [Signed Commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification) for PR validation  
+- ✅ Documented [contribution guidelines](./CONTRIBUTING.md)  
+- ✅ SBOM generation is supported via [go-mod-graph](https://pkg.go.dev/golang.org/x/tools/go/mod/graph)  
+- ✅ Code scanning enabled via [CodeQL](https://github.com/github/codeql)  
+- ✅ Dependencies are continuously scanned and monitored
+
+_See [OpenSSF Best Practices Project](https://www.bestpractices.dev/en/projects/8031) for live badge status._
+
+---
 
 ## Contributing
+
 There are several ways to get involved:
 * Join the [mailing list](https://groups.google.com/g/project-copa) to get notifications for releases, security announcements, etc.
 * Join the [biweekly community meetings](https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit#heading=h.294j02tlxam) to discuss development, issues, use cases, etc.
 * Join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf).
 
 The project welcomes contributions and suggestions that abide by the [CNCF Code of Conduct](./CODE_OF_CONDUCT.md).
+
+---
