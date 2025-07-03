@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.07fadb2b.css">
-<script src="/copacetic/website/assets/js/runtime~main.2ef9d48d.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.ac00aed6.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.219aa451.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -78,14 +78,36 @@
 </li>
 </ol>
 <h2 class="anchor anchorWithStickyNavbar_LWe7" id="tradeoffs">Tradeoffs<a href="#tradeoffs" class="hash-link" aria-label="Direct link to Tradeoffs" title="Direct link to Tradeoffs">​</a></h2>
+<ol>
+<li>
+<p><strong>Package-Based Update Model</strong>:</p>
 <ul>
-<li>The core architectural choice of relying on packages as the unit of patching creates a couple of constraints:<!-- -->
-<ul>
-<li>By relying on existing vulnerability scanner behavior that only detects vulnerabilities via presence/absence of vulnerable packages, copa is limited in the kinds of vulnerabilities it can address and false positive/negatives from scanners flow downstream to copa.</li>
-<li>copa depends on individual package manager adapters to correctly deploy patches to the target images, but there is a long tail of compatibility issues that arise depending on the target image itself (e.g. outdated package manager config/keys, invalid/missing package graph, etc.). Overall, the maintenance cost of the project is expected to be non-trivial to address this.</li>
+<li>While Copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on OS package updates</li>
+<li>When using scanner reports, false positives/negatives from scanners flow downstream to Copa</li>
+<li>The package-based approach limits the kinds of vulnerabilities copa can address to those fixable via package updates</li>
 </ul>
 </li>
-<li>No support for windows containers given the dependency on buildkit.</li>
-</ul></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/v0.8.x/code-of-conduct"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Code of Conduct</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/v0.8.x/development-tips"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Development and Testing Tips</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#design-tenets" class="table-of-contents__link toc-highlight">Design Tenets</a></li><li><a href="#design-reasoning" class="table-of-contents__link toc-highlight">Design Reasoning</a></li><li><a href="#architecture" class="table-of-contents__link toc-highlight">Architecture</a></li><li><a href="#implementation" class="table-of-contents__link toc-highlight">Implementation</a></li><li><a href="#tradeoffs" class="table-of-contents__link toc-highlight">Tradeoffs</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
+<li>
+<p><strong>Package Manager Dependencies</strong>:</p>
+<ul>
+<li>Copa depends on individual package manager adapters to correctly deploy patches to target images</li>
+<li>There is a long tail of compatibility issues that arise depending on the target image itself:<!-- -->
+<ul>
+<li>Outdated package manager config/keys</li>
+<li>Invalid/missing package graph</li>
+<li>Repository configuration issues</li>
+</ul>
+</li>
+<li>Overall, the maintenance cost of the project is expected to be non-trivial to address these package manager complexities</li>
+</ul>
+</li>
+<li>
+<p><strong>Platform Limitations</strong>:</p>
+<ul>
+<li>While BuildKit has experimental Windows container support, Windows containers lack a standardized package upgrade mechanism</li>
+<li>This makes package-based patching currently impractical on Windows</li>
+</ul>
+</li>
+</ol></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/v0.8.x/code-of-conduct"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Code of Conduct</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/v0.8.x/development-tips"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Development and Testing Tips</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#design-tenets" class="table-of-contents__link toc-highlight">Design Tenets</a></li><li><a href="#design-reasoning" class="table-of-contents__link toc-highlight">Design Reasoning</a></li><li><a href="#architecture" class="table-of-contents__link toc-highlight">Architecture</a></li><li><a href="#implementation" class="table-of-contents__link toc-highlight">Implementation</a></li><li><a href="#tradeoffs" class="table-of-contents__link toc-highlight">Tradeoffs</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
 </body>
 </html>
