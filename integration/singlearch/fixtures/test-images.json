@@ -6,7 +6,7 @@
         "distro": "Alpine",
         "description": "Valid apk/db, apk present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/grafana/grafana",
@@ -16,7 +16,7 @@
         "distro": "Alpine",
         "description": "Valid apk/db, apk present, locally tagged with fully-qualified name",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "docker.io/library/nginx",
@@ -25,7 +25,7 @@
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/library/nginx",
@@ -35,7 +35,7 @@
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, locally tagged with repo and image name",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "registry.k8s.io/kube-proxy",
@@ -44,7 +44,7 @@
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, custom network config",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "registry.k8s.io/kube-proxy",
@@ -53,7 +53,7 @@
         "distro": "Custom Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1.1",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "registry.k8s.io/kube-proxy",
@@ -62,7 +62,7 @@
         "distro": "Custom Google Distroless",
         "description": "Custom dpkg/status.d with text names, with both libssl1.1 and libssl1",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/fluent/fluent-bit",
@@ -71,7 +71,7 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with base64 names",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/fluent/fluent-bit",
@@ -81,7 +81,7 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with base64 names, locally tagged with image name only",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "docker.io/openpolicyagent/opa",
@@ -90,7 +90,7 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "quay.io/calico/cni",
@@ -99,7 +99,7 @@
         "distro": "Redhat",
         "description": "Valid rpm DB, microdnf & rpm present",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
@@ -108,7 +108,7 @@
         "distro": "Mariner",
         "description": "Valid rpm DB, tdnf, yum & rpm present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
@@ -117,7 +117,7 @@
         "distro": "Mariner",
         "description": "Valid rpm DB, tdnf, yum & rpm present, arm64 cross-arch",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/distroless/base",
@@ -126,7 +126,7 @@
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "mcr.microsoft.com/azurelinux/base/core",
@@ -135,7 +135,7 @@
         "distro": "Azure Linux",
         "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "mcr.microsoft.com/azurelinux/base/core",
@@ -144,7 +144,7 @@
         "distro": "Azure Linux",
         "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum, arm64 cross-arch",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "mcr.microsoft.com/azurelinux/distroless/base",
@@ -153,7 +153,7 @@
         "distro": "Azure Linux Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/library/amazonlinux",
@@ -162,7 +162,7 @@
         "distro": "Amazon Linux",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/library/oraclelinux",
@@ -171,7 +171,7 @@
         "distro": "Oracle Linux 7.9",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "docker.io/library/oraclelinux",
@@ -180,7 +180,7 @@
         "distro": "Oracle Linux 8.9",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": true,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "docker.io/library/rockylinux",
@@ -189,7 +189,7 @@
         "distro": "Rocky Linux",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "docker.io/redhat/ubi9-minimal",
@@ -197,7 +197,7 @@
         "digest": "sha256:9607229894026ebecade4623038fce35bb75bf9371aca7b08ca11b08d103d2ab",
         "distro": "Redhat",
         "description": "Valid microdnf, no yum/dnf/rpm",
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "docker.io/almalinux",
@@ -206,7 +206,7 @@
         "distro": "AlmaLinux",
         "description": "Valid rpm DB, microdnf & rpm present",
         "ignoreErrors": false,
-        "isManifest": true
+        "isManifestList": true
     },
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
@@ -215,7 +215,7 @@
         "distro": "Mariner Distroless",
         "description": "Custom rpmmanifest files, no yum/tdnf/dnf/microdnf/rpm, custom openssl.cnf",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     },
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
@@ -224,6 +224,6 @@
         "distro": "Google Distroless",
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false,
-        "isManifest": false
+        "isManifestList": false
     }
 ]

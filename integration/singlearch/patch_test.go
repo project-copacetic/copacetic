@@ -24,14 +24,14 @@ import (
 var testImages []byte
 
 type testImage struct {
-	Image        string        `json:"image"`
-	Tag          string        `json:"tag"`
-	LocalName    string        `json:"localName,omitempty"`
-	Distro       string        `json:"distro"`
-	Digest       digest.Digest `json:"digest"`
-	Description  string        `json:"description"`
-	IgnoreErrors bool          `json:"ignoreErrors"`
-	IsManifest   bool          `json:"isManifest"`
+	Image          string        `json:"image"`
+	Tag            string        `json:"tag"`
+	LocalName      string        `json:"localName,omitempty"`
+	Distro         string        `json:"distro"`
+	Digest         digest.Digest `json:"digest"`
+	Description    string        `json:"description"`
+	IgnoreErrors   bool          `json:"ignoreErrors"`
+	IsManifestList bool          `json:"isManifestList"`
 }
 
 func TestPatch(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPatch(t *testing.T) {
 			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
-			if !reportFile && img.IsManifest {
+			if !reportFile && img.IsManifestList {
 				scanTag += "-amd64"
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
