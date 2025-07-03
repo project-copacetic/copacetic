@@ -78,7 +78,7 @@ type PackageManager interface {
 
 1. **Package-Based Update Model**:
    - While Copa can work with or without vulnerability scanner reports, its patching capability is fundamentally based on OS package updates
-   - When using scanner reports, false positives/negatives from scanners flow downstream to copa
+   - When using scanner reports, false positives/negatives from scanners flow downstream to Copa
    - The package-based approach limits the kinds of vulnerabilities copa can address to those fixable via package updates
 
 2. **Package Manager Dependencies**:
@@ -90,6 +90,5 @@ type PackageManager interface {
    - Overall, the maintenance cost of the project is expected to be non-trivial to address these package manager complexities
 
 3. **Platform Limitations**:
-   - While BuildKit has experimental Windows container support
-   - Windows containers lack a standardized package upgrade mechanism and has limited Windows continer support
+   - While BuildKit has experimental Windows container support, Windows containers lack a standardized package upgrade mechanism
    - This makes package-based patching currently impractical on Windows
