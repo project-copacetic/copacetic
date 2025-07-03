@@ -104,19 +104,9 @@ Yes, see [best practices](best-practices.md#dependabot) to learn more about usin
 ## Does Copa cause a buildup of patched layers on each patch?
 No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
 
-## Why am I seeing GPG key errors when trying to patch or update images?
+## Why am I getting 404 errors when trying to patch an image?
 
-This can happen if the **GPG key used to sign packages in the image has expired**. Copacetic relies on the GPG keys present in the container image to verify and trust package updates. If these keys are expired, package installations or updates during patching may fail with signature verification errors.
-
-### How to resolve this?
-
-- **Update the expired GPG keys** inside the container image using the package manager.
-
-For Alpine-based images:
-  ```sh
- apk update && apk upgrade --available
-  ```
-
+If you're seeing errors related to missing **Release files** or `404 Not Found` errors during patching, your base image is likely using an End-of-Life (EOL) release of a distribution. Copa cannot patch images based on EOL operating systems where the package repositories have been removed or archived.
 
 ## What does "End-of-Life" mean for patching?
 
