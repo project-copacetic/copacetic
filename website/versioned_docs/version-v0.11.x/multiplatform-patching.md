@@ -2,7 +2,7 @@
 title: Multi-Platform Patching
 ---
 
-This guide covers Copa's multi-platform patching capabilities for securing applications across diverse hardware architectures. For basic Copa usage, see the [Quick Start Guide](./quick-start.md).
+This guide covers Copa's multi-platform patching capabilities for securing applications across diverse hardware platforms.
 
 ## Overview
 
@@ -21,6 +21,10 @@ Copa supports patching the following platforms:
 | `linux/386`     | 32-bit x86                               |
 | `linux/ppc64le` | PowerPC 64-bit Little Endian             |
 | `linux/s390x`   | IBM System z                             |
+
+:::note
+Any platform not listed above (such as `windows/amd64`) is not supported by Copa for patching. However, they'll be always be preserved as is if they exist in the original manifest.
+:::
 
 ## Multi-Platform Patching Strategies
 
@@ -54,7 +58,8 @@ copa patch --image $IMAGE --report reports --tag nginx:1.25.0-patched
 Target specific platforms:
 
 ```bash
-# Patch only common production platforms
+# Patch only linux/amd64 and linux/arm64 platforms
+# Rest of the platforms will be preserved unchanged
 copa patch --image $IMAGE \
   --platform linux/amd64,linux/arm64 \
   --tag nginx:1.25.0-patched
