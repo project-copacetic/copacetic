@@ -3,7 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.24.4
 
 require (
-	github.com/aquasecurity/trivy v0.64.0
+	github.com/aquasecurity/trivy v0.64.1
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
 	github.com/cpuguy83/dockercfg v0.3.2
