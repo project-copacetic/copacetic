@@ -23,13 +23,14 @@ import (
 var testImages []byte
 
 type testImage struct {
-	Image        string        `json:"image"`
-	Tag          string        `json:"tag"`
-	LocalName    string        `json:"localName,omitempty"`
-	Distro       string        `json:"distro"`
-	Digest       digest.Digest `json:"digest"`
-	Description  string        `json:"description"`
-	IgnoreErrors bool          `json:"ignoreErrors"`
+	Image          string        `json:"image"`
+	Tag            string        `json:"tag"`
+	LocalName      string        `json:"localName,omitempty"`
+	Distro         string        `json:"distro"`
+	Digest         digest.Digest `json:"digest"`
+	Description    string        `json:"description"`
+	IgnoreErrors   bool          `json:"ignoreErrors"`
+	IsManifestList bool          `json:"isManifestList"`
 }
 
 func TestPatch(t *testing.T) {
@@ -95,7 +96,6 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
 			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
 			require.NoError(t, err)
@@ -111,6 +111,14 @@ func TestPatch(t *testing.T) {
 				t, ref, tagPatched, dir, ignoreErrors, reportFile,
 				buildkitAddr, copaPath, scannerPlugin, common.DockerDINDAddress.Env(env.Buildkit.Address), false, false,
 			)
+
+			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
+			// The scanning should look for the tag that Copa actually created
+			scanTag := tagPatched
+			if !reportFile && img.IsManifestList {
+				scanTag += "-amd64"
+			}
+			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):

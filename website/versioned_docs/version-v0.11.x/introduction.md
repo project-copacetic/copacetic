@@ -1,21 +1,10 @@
+---
+title: Introduction
+slug: /
+---
+
 # Project Copacetic: Directly patch container image vulnerabilities
-
-![GitHub](https://img.shields.io/github/license/project-copacetic/copacetic)
-[![codecov](https://codecov.io/gh/project-copacetic/copacetic/branch/main/graph/badge.svg?token=PBC8EPNHRL)](https://codecov.io/gh/project-copacetic/copacetic)
-[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/8031/badge)](https://www.bestpractices.dev/projects/8031)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/project-copacetic/copacetic/badge)](https://api.securityscorecards.dev/projects/github.com/project-copacetic/copacetic)
-
-<img src="./images/copa-color.png" alt="Copa logo" width="25%" />
-<br>
-<br>
-
 `copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
-
-For more details and how to get started, please refer to [full documentation](https://project-copacetic.github.io/copacetic/).
-
-## Demo
-
-![intro](demo/copa-demo.gif)
 
 ## Why?
 
@@ -24,7 +13,7 @@ We needed the ability to patch containers quickly without going upstream for a f
 - inherited from base images several levels deep and waiting on updated releases to percolate through the supply chain is not an option
 - found in 3rd party app images you don't maintain with update cadences that don't meet your security SLAs.
 
-![direct image patching](./website/static/img/direct-image-patching.png)
+<img title="direct image patching" src="/copacetic/website/img/direct-image-patching.png" />
 
 In addition to filling the operational gap not met by left-shift security practices and tools, the ability of `copa` to patch a container without requiring a rebuild of the container image provides other benefits:
 
@@ -38,25 +27,21 @@ In addition to filling the operational gap not met by left-shift security practi
 The `copa` tool is an extensible engine that:
 
 1. Parses the needed update packages from the container image’s vulnerability report produced by a scanner like Trivy. New adapters can be written to accommodate more report formats.
-2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt, apk, etc. New adapters can be written to support more package managers.
+2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt-get, apk, etc. New adapters can be written to support more package managers.
 3. Applies the resulting update binaries to the container image using buildkit.
 
-![report-driven vulnerability patching](./website/static/img/vulnerability-patch.png)
+<img title="report-driven vulnerability patching" src="/copacetic/website/img/vulnerability-patch.png" />
 
 This approach is motivated by the core principles of making direct container patching broadly applicable and accessible:
 
 - **Copa supports patching _existing_ container images**.
   - Devs don't need to build their images using specific tools or modify them in some way just to support container patching.
+- **Copa supports containers without package managers _including_ distroless containers**
+  - Copa does not support Chainguard's wolfi-based images
 - **Copa works with the existing vulnerability scanning and mitigation ecosystems**.
   - Image publishers don't need to create new workflows for container patching since Copa supports patching container images using the security update packages already being published today.
   - Consumers do not need to migrate to a new and potentially more limited support ecosystem for custom distros or change their container vulnerability scanning pipelines to include remediation, since Copa can be integrated seamlessly as an extra step to patch containers based on those scanning reports.
 - **Copa reduces the technical expertise needed and waiting on dependencies needed to patch an image**.
   - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to be patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
 
-## Contributing
-There are several ways to get involved:
-* Join the [mailing list](https://groups.google.com/g/project-copa) to get notifications for releases, security announcements, etc.
-* Join the [biweekly community meetings](https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit#heading=h.294j02tlxam) to discuss development, issues, use cases, etc.
-* Join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf).
-
-The project welcomes contributions and suggestions that abide by the [CNCF Code of Conduct](./CODE_OF_CONDUCT.md).
+For more details, refer to the [copa design](./design.md) documentation.

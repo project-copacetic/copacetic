@@ -11,9 +11,11 @@ import (
 	"strings"
 
 	"github.com/containerd/errdefs"
+	"github.com/containerd/platforms"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -230,4 +232,102 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 
 	log.Infof("found remote image descriptor for %s", imageRef)
 	return remoteDesc, nil
+}
+
+// GetIndexManifestAnnotations retrieves annotations from an image index manifest.
+// This is specifically for multi-platform images to get the index-level annotations.
+func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
+	}
+
+	// First check if this is an index
+	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get descriptor for '%s': %w", imageRef, err)
+	}
+
+	// Check if this is an index manifest
+	if desc.MediaType != types.OCIImageIndex && desc.MediaType != types.DockerManifestList {
+		log.Debugf("Image %s is not a multi-platform image (media type: %s)", imageRef, desc.MediaType)
+		// For single platform images, return the descriptor annotations
+		return desc.Annotations, nil
+	}
+
+	// Fetch the actual index
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image index for '%s': %w", imageRef, err)
+	}
+
+	// Get the index manifest
+	indexManifest, err := idx.IndexManifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get index manifest for '%s': %w", imageRef, err)
+	}
+
+	return indexManifest.Annotations, nil
+}
+
+// GetPlatformManifestAnnotations retrieves manifest-level annotations for a specific platform
+// from an image index manifest.
+func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPlatform *ocispec.Platform) (map[string]string, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
+	}
+
+	// First check if this is an index
+	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get descriptor for '%s': %w", imageRef, err)
+	}
+
+	// Check if this is an index manifest
+	if desc.MediaType != types.OCIImageIndex && desc.MediaType != types.DockerManifestList {
+		log.Debugf("Image %s is not a multi-platform image (media type: %s)", imageRef, desc.MediaType)
+		// For single platform images, return empty annotations
+		return nil, nil
+	}
+
+	// Fetch the actual index
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image index for '%s': %w", imageRef, err)
+	}
+
+	// Get the index manifest
+	indexManifest, err := idx.IndexManifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get index manifest for '%s': %w", imageRef, err)
+	}
+
+	// Find the matching platform in the manifest list
+	for i := range indexManifest.Manifests {
+		manifest := &indexManifest.Manifests[i]
+		if manifest.Platform == nil {
+			continue
+		}
+
+		// Compare platforms (normalize variants for comparison)
+		manifestPlatform := ocispec.Platform{
+			OS:           manifest.Platform.OS,
+			Architecture: manifest.Platform.Architecture,
+			Variant:      manifest.Platform.Variant,
+		}
+
+		// Use containerd's OnlyStrict matcher which handles variant normalization
+		// including arm64/v8 matching arm64 (empty variant)
+		matcher := platforms.OnlyStrict(*targetPlatform)
+		if matcher.Match(manifestPlatform) {
+			// Return the manifest-level annotations for this platform
+			if manifest.Annotations != nil {
+				return manifest.Annotations, nil
+			}
+			return map[string]string{}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("platform %s/%s/%s not found in image index", targetPlatform.OS, targetPlatform.Architecture, targetPlatform.Variant)
 }
