@@ -11,7 +11,7 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/docker/buildx v0.25.0
 	github.com/docker/cli v28.3.0+incompatible
-	github.com/docker/docker v28.3.0+incompatible
+	github.com/docker/docker v28.3.1+incompatible
 	github.com/google/go-containerregistry v0.20.6
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
