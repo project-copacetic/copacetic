@@ -21,6 +21,7 @@
     {
         "image": "docker.io/arm64v8/redis",
         "tag": "7.4.0-alpine",
+        "localName": "registry.copacetic.test/repo/image:tag",
         "digest": "sha256:0e8d7f9026f67fa2ccf51a7737dce5423e5230bc247474140406cd63f296e9f2",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present, arm64 cross-arch",
