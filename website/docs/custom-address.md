@@ -6,8 +6,6 @@ Copa automatically detects available BuildKit instances, but you can specify a c
 
 ## Supported Address Formats
 
-## Address Format Reference
-
 | Format                 | Example                                     | Description                                             |
 | ---------------------- | ------------------------------------------- | ------------------------------------------------------- |
 | `unix://`              | `unix:///path/to/buildkit.sock`             | Connect to BuildKit over Unix socket                    |
