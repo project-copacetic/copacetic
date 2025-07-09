@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/project-copacetic/copacetic/integration/common"
@@ -111,7 +112,10 @@ func TestPatch(t *testing.T) {
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
 			if !reportFile && img.IsManifestList {
-				scanTag += "-amd64"
+				// Determine the host platform
+				hostPlatform := platforms.DefaultSpec()
+				platformArch := fmt.Sprintf("-%s", hostPlatform.Architecture)
+				scanTag += platformArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
