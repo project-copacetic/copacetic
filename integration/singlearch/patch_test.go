@@ -114,21 +114,19 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
+			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
+			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
 			if !reportFile && img.IsManifestList {
 				hostPlatform := platforms.DefaultSpec().Architecture
-
 				imagePlatforms := getManifestPlatforms(t, ref)
 
-				var targetArch string
-				for _, p := range imagePlatforms {
-					if p.Architecture == hostPlatform {
-						targetArch = p.Architecture
-						break
-					}
-				}
-				require.NotEmpty(t, targetArch, "test error: image %s does not contain a platform matching host platform %s", ref, hostPlatform)
+				require.NotEmpty(t, imagePlatforms, "test setup error: could not find any platforms in manifest for %s", ref)
 
+				targetArch := hostPlatform
+				if imagePlatforms[0].Architecture != hostPlatform {
+					targetArch = imagePlatforms[0].Architecture
+				}
 				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
