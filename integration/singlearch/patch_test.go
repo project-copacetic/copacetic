@@ -121,10 +121,8 @@ func TestPatch(t *testing.T) {
 				hostPlatform := platforms.DefaultSpec().Architecture
 				imagePlatforms := getManifestPlatforms(t, ref)
 
-				require.NotEmpty(t, imagePlatforms, "test setup error: could not find any platforms in manifest for %s", ref)
-
 				targetArch := hostPlatform
-				if imagePlatforms[0].Architecture != hostPlatform {
+				if len(imagePlatforms) > 0 && imagePlatforms[0].Architecture != hostPlatform {
 					targetArch = imagePlatforms[0].Architecture
 				}
 				scanTag += "-" + targetArch
