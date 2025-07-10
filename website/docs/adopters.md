@@ -2,7 +2,7 @@
 title: Adopters
 ---
 
-Check out some adopters of Copa in the community:
+Check out some adopters of Copa in the community:  
 
 ### GitHub Actions Adopters
 - [Unoplat ](https://github.com/unoplat/unoplat/tree/develop)  
@@ -13,6 +13,8 @@ Check out some adopters of Copa in the community:
 ---
 
 ### Copa CLI Adopters
-- [Helmper](https://github.com/ChristofferNissen/helmper)
+- [Helmper](https://github.com/ChristofferNissen/helmper) 
 - [Kubescape](https://github.com/kubescape/kubescape)
 - [Devtron](https://docs.devtron.ai/usage/plugins/plugin-list/copacetic) 
+- [SITA](https://www.sita.aero/)
+- [Azure Container Registry](https://github.com/Azure/acr) 
