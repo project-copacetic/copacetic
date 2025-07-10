@@ -1234,7 +1234,8 @@ func patchMultiPlatformImage(
 // Gets the descriptor for a specific platform from a multi-arch manifest.
 func getPlatformDescriptorFromManifest(
 	imageRef string,
-	targetPlatform *types.PatchPlatform) (*ispec.Descriptor, error) {
+	targetPlatform *types.PatchPlatform,
+) (*ispec.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
