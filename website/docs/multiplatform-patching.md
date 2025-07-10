@@ -21,6 +21,7 @@ Copa supports patching the following platforms:
 | `linux/386`     | 32-bit x86                               |
 | `linux/ppc64le` | PowerPC 64-bit Little Endian             |
 | `linux/s390x`   | IBM System z                             |
+| `linux/riscv64` | 64-bit RISC-V                            |
 
 :::note
 Any platform not listed above (such as `windows/amd64`) is not supported by Copa for patching. However, they'll be always be preserved as is if they exist in the original manifest.
