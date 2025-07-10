@@ -35,6 +35,12 @@ type testImage struct {
 	IsManifestList bool          `json:"isManifestList"`
 }
 
+type manifestPlatform struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Variant      string `json:"variant,omitempty"`
+}
+
 func TestPatch(t *testing.T) {
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -108,14 +114,22 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
-			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
-			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
 			if !reportFile && img.IsManifestList {
-				// Determine the host platform
-				hostPlatform := platforms.DefaultSpec()
-				platformArch := fmt.Sprintf("-%s", hostPlatform.Architecture)
-				scanTag += platformArch
+				hostPlatform := platforms.DefaultSpec().Architecture
+
+				imagePlatforms := getManifestPlatforms(t, ref)
+
+				var targetArch string
+				for _, p := range imagePlatforms {
+					if p.Architecture == hostPlatform {
+						targetArch = p.Architecture
+						break
+					}
+				}
+				require.NotEmpty(t, targetArch, "test error: image %s does not contain a platform matching host platform %s", ref, hostPlatform)
+
+				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
@@ -147,6 +161,27 @@ func TestPatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
+	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	var manifest struct {
+		Manifests []struct {
+			Platform manifestPlatform `json:"platform"`
+		} `json:"manifests"`
+	}
+	err = json.Unmarshal(output, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON")
+
+	platforms := make([]manifestPlatform, len(manifest.Manifests))
+	for i, m := range manifest.Manifests {
+		platforms[i] = m.Platform
+	}
+	return platforms
 }
 
 func dockerPull(t *testing.T, ref string) {
