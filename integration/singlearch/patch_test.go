@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/project-copacetic/copacetic/integration/common"
@@ -32,6 +33,12 @@ type testImage struct {
 	Description    string        `json:"description"`
 	IgnoreErrors   bool          `json:"ignoreErrors"`
 	IsManifestList bool          `json:"isManifestList"`
+}
+
+type manifestPlatform struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Variant      string `json:"variant,omitempty"`
 }
 
 func TestPatch(t *testing.T) {
@@ -111,7 +118,14 @@ func TestPatch(t *testing.T) {
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
 			if !reportFile && img.IsManifestList {
-				scanTag += "-amd64"
+				hostPlatform := platforms.DefaultSpec().Architecture
+				imagePlatforms := getManifestPlatforms(t, ref)
+
+				targetArch := hostPlatform
+				if len(imagePlatforms) > 0 && imagePlatforms[0].Architecture != hostPlatform {
+					targetArch = imagePlatforms[0].Architecture
+				}
+				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
@@ -143,6 +157,27 @@ func TestPatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
+	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	var manifest struct {
+		Manifests []struct {
+			Platform manifestPlatform `json:"platform"`
+		} `json:"manifests"`
+	}
+	err = json.Unmarshal(output, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON")
+
+	platforms := make([]manifestPlatform, len(manifest.Manifests))
+	for i, m := range manifest.Manifests {
+		platforms[i] = m.Platform
+	}
+	return platforms
 }
 
 func dockerPull(t *testing.T, ref string) {
