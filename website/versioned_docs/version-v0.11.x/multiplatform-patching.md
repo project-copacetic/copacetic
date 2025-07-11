@@ -2,134 +2,156 @@
 title: Multi-Platform Patching
 ---
 
-Copa also supports patching multi-platform container images, streamlining the process of securing applications deployed across diverse hardware platforms. This guide explains how Copa handles multi-platform images and how you can use this feature.
+This guide covers Copa's multi-platform patching capabilities for securing applications across diverse hardware platforms.
 
-## Usage
+## Overview
 
-Similar to patching single architecture images, Copa supports two ways to patch multi-platform container images:
+[Multi-platform images](https://docs.docker.com/build/building/multi-platform/) contain multiple platform-specific variants of the same application. Copa can automatically detect and patch these images across all supported platforms or target specific architectures based on your needs.
 
-1. **Report-based patching**: Use the `--report` flag pointing to a directory containing platform-specific vulnerability reports. This is the traditional approach that patches only platforms that exist and have respective reports.
+### Supported Architectures
 
-2. **Update all outdated packages**: When report flag is omitted, Copa detects if it is a manifest list and patches oudated packages across all platforms. Use the optional `--platform` flag to specify which platforms to patch.
+Copa supports patching the following platforms:
 
-### Method 1: Report-based Multi-Platform Patching
+| Platform        | Description                              |
+| --------------- | ---------------------------------------- |
+| `linux/amd64`   | 64-bit x86 (Intel/AMD)                   |
+| `linux/arm64`   | 64-bit ARM (Apple Silicon, AWS Graviton) |
+| `linux/arm/v7`  | 32-bit ARM v7                            |
+| `linux/arm/v6`  | 32-bit ARM v6                            |
+| `linux/386`     | 32-bit x86                               |
+| `linux/ppc64le` | PowerPC 64-bit Little Endian             |
+| `linux/s390x`   | IBM System z                             |
+| `linux/riscv64` | 64-bit RISC-V                            |
 
-This method uses vulnerability reports to determine which platforms and vulnerabilities to patch.
+:::note
+Any platform not listed above (such as `windows/amd64`) is not supported by Copa for patching. However, they'll be always be preserved as is if they exist in the original manifest.
+:::
 
-#### Create vulnerability reports for multi-platform images
+## Multi-Platform Patching Strategies
 
-Before you can patch a multi-platform image, you need to generate vulnerability reports for each platform architecture you wish to patch. You can do this using `trivy` using `--platform` flag to specify the architecture. Below is an example of how to generate vulnerability reports for a multi-platform image like `nginx:1.25.0`.
+Copa offers several approaches for multi-platform patching, each optimized for different use cases:
+
+### Report-Based Patching
+
+Generate platform-specific vulnerability reports and patch only affected platforms:
 
 ```bash
-export IMAGE=docker.io/library/nginx:1.25.0 # Replace with your multi-platform image
-
+# Generate reports for specific platforms
+export IMAGE=docker.io/library/nginx:1.25.0
 mkdir -p reports
 
-trivy image --vuln-type os --scanners vuln --ignore-unfixed \
-  -f json -o reports/amd64.json \
-  --platform linux/amd64 $IMAGE
-trivy image --vuln-type os --scanners vuln --ignore-unfixed \
-  -f json -o reports/arm64.json \
-  --platform linux/arm64 $IMAGE
+# Create platform-specific reports
+export PLATFORMS="linux/amd64 linux/arm64"
+for platform in $PLATFORMS; do
+  arch=$(echo $platform | cut -d'/' -f2 | sed 's/\//-/g')
+  echo "Scanning $platform..."
+  trivy image --vuln-type os --scanners vuln --ignore-unfixed \
+    -f json -o reports/${arch}.json --platform $platform $IMAGE || \
+    echo "Warning: Failed to scan $platform"
+done
+
+# Patch only platforms with reports
+copa patch --image $IMAGE --report reports --tag nginx:1.25.0-patched
 ```
 
-This will create two JSON files in the `reports` directory, one for each architecture (`amd64` and `arm64`).
+### Platform-Selective Patching
 
-#### Patching with Reports
-
-To patch a multi-platform image using vulnerability reports, use the `copa patch` command with the `--image` flag to specify the multi-platform image, the `--report` flag to point to the directory containing your vulnerability reports, and optionally a `--tag` for the final patched image.
+Target specific platforms:
 
 ```bash
-copa patch \
-  --image $IMAGE \
-  --report reports
+# Patch only linux/amd64 and linux/arm64 platforms
+# Rest of the platforms will be preserved unchanged
+copa patch --image $IMAGE \
+  --platform linux/amd64,linux/arm64 \
+  --tag nginx:1.25.0-patched
+
+# Patch all available platforms (default behavior)
+copa patch --image $IMAGE --tag nginx:1.25.0-patched
 ```
 
-### Method 2: Update all outdated packages
+### Comprehensive Patching
 
-To patch a multi-platform across all platforms and update all outdated packages to latest, use the `copa patch` command with the `--image` flag to specify the multi-platform image, and omit the `--report` flag. 
+Update all platforms with the latest patches:
 
 ```bash
-copa patch \
-  --image $IMAGE \
-```
-To filter only specific platforms to patch, provide them with the `--platform` flag.
-
-```bash
-copa patch \
-  --image $IMAGE \
-   --platform=linux/amd64,linux/arm64
+# Patch all platforms in the manifest list
+copa patch --image $IMAGE --tag nginx:1.25.0-patched
 ```
 
-#### Valid Platform Values
+## Multi-Platform Command Reference
 
-The `--platform` flag accepts the following values:
-- `linux/amd64`
-- `linux/arm64`
-- `linux/riscv64`
-- `linux/ppc64le`
-- `linux/s390x`
-- `linux/386`
-- `linux/arm/v7`
-- `linux/arm/v6`
+### Platform-Specific Flags
 
-You can specify multiple platforms by separating them with commas.
+These flags are essential for multi-platform patching:
 
-## Key Flags for Multi-Platform Patching
+| Flag              | Description                                            | Example                              |
+| ----------------- | ------------------------------------------------------ | ------------------------------------ |
+| `--platform`      | Specifies which platforms to patch from manifest list  | `--platform linux/amd64,linux/arm64` |
+| `--report`        | Directory with platform-specific vulnerability reports | `--report ./platform-reports/`       |
+| `--ignore-errors` | Continue patching other platforms if one fails         | `--ignore-errors`                    |
+| `--push`          | Push all manifests and index/manifest list to registry | `--push`                             |
 
-- `--image <image_name>`: The multi-platform container image to patch.
-- `--report <directory_path>` (optional): Specifies the directory containing platform-specific vulnerability reports. When provided, only platforms with reports are patched.
-- `--platform <platform_list>` (optional): Comma-separated list of platforms to patch (e.g., `linux/amd64,linux/arm64`). Only available when `--report` is not used. If not specified, all platforms are patched.
-- `--tag <final_tag>` (optional): The tag for the final, reassembled multi-platform manifest (e.g., `1.0-patched`).
-- `--push` (optional): If included, Copa pushes the final multi-platform manifest to the registry.
-- `--ignore-errors` (optional, default: `false`): When `false` (default), Copa warns about errors and fails if any platform encounters an error. When `true`, Copa warns about errors but continues processing other platforms.
+## Multi-Platform Behavior
 
-### Things to Keep in Mind
+- **Automatic platform detection**: Copa automatically detects whether an image is multi-platform (Docker manifest list or OCI Index) or single-platform and handles them accordingly.
 
-- **Automatic platform detection**: Copa automatically detects whether an image is multi-platform (manifest list) or single-platform and handles them accordingly.
 - **Report vs. platform flags**: The `--platform` flag is only available when not using `--report`. When using `--report`, platforms are determined by the reports available.
+
 - **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in the final manifest.
+
 - **No local storage for unspecified platforms**: If `--push` is not specified, the individual patched images will be saved locally, but preserved platforms will only exist in the registry.
+
 - **Single-platform fallback**: If you don't provide a `--report` directory and don't use `--platform`, Copa will detect if the image is single-platform and patch only that platform.
 
 :::note
 **Report-based vs. Platform-based patching:**
+
 - When using `--report`, Copa copies over unpatched platforms as a passthrough - only platforms with vulnerability reports are patched, while other platforms remain unchanged in the final multi-platform image.
+
 - When using `--platform`, only the specified platforms are patched, and others are preserved unchanged.
+
 - When using neither flag, Copa patches all available platforms if the image is multi-platform.
+
 :::
 
 :::warning
 Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
 :::
 
----
+## Cross-Platform Emulation Setup
 
-## Emulation and QEMU for Cross-Platform Patching ⚙️
+When patching images for architectures different from your host machine (e.g., patching ARM64 images on an AMD64 host), Copa uses QEMU emulation through BuildKit.
 
-When patching an image for an architecture different from your host machine's architecture (e.g., patching an `arm64` image on an `amd64` machine), Copa relies on **emulation**. This is often necessary for multi-platform image patching, as you might not have native hardware for every architecture you intend to patch.
+### Why Emulation is Required
 
-Copa leverages **BuildKit**, which in turn can use **QEMU** for emulation. QEMU is a generic and open-source machine emulator and virtualizer. When BuildKit detects that it needs to execute binaries for a foreign architecture, it can use QEMU user-mode emulation to run those commands.
+#### Package Manager Execution
 
-### Why Emulation is Needed
+- Copa executes package managers (`apt`, `yum`, `apk`) inside the target architecture environment
+- Native binaries for foreign architectures cannot run without emulation
+- QEMU provides transparent binary translation
 
-- **Running Package Managers:** To apply patches, Copa needs to execute the package manager (like `apk`, `apt`, `yum`) _inside_ the environment of the target image's architecture. If you're on an `amd64` host trying to patch an `arm64` image, the `arm64` package manager won't run natively. QEMU bridges this gap.
-- **Ensuring Correctness:** Emulation helps ensure that the patches are applied in an environment that closely mirrors the target architecture, reducing the chances of incompatibilities.
+#### Architecture Compatibility
 
-### Setting up QEMU
+- Ensures patches are applied correctly for the target architecture
+- Prevents compatibility issues between different instruction sets
+- Maintains image integrity across platforms
 
-**Docker Desktop (macOS and Windows) comes pre-configured with QEMU emulation support and requires no additional setup.**
+### Setup Requirements
 
-For Linux hosts or when using BuildKit outside of Docker Desktop, your host system  (where the `copa` command and BuildKit daemon are running) needs to have QEMU static binaries registered with the kernel's `binfmt_misc` handler. This allows the kernel to automatically invoke QEMU when it encounters a binary for a foreign architecture.
+#### Docker Desktop Users (macOS/Windows)
 
-**Installation Steps (Linux/Non-Docker Desktop environments):**
+**No setup required** - QEMU emulation is pre-configured and ready to use.
 
-One way to set this up, especially in Dockerized environments or on Linux hosts, is to use the `multiarch/qemu-user-static` image:
+#### Linux
 
-1. **Ensure your kernel supports `binfmt_misc`:** Most modern Linux kernels do.
+QEMU static binaries must be registered with the kernel's `binfmt_misc` handler:
 
-2. **Register QEMU handlers:** You can do this by running the `multiarch/qemu-user-static` Docker image with privileged mode:
+```bash
+# Install QEMU emulation support
+docker run --privileged --rm tonistiigi/binfmt --install all
 
-    ```bash
-    docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
-    ```
+# Verify installation
+ls /proc/sys/fs/binfmt_misc/qemu-*
+```
+
+For more details, see [Docker's QEMU documentation](https://docs.docker.com/build/building/multi-platform/#qemu).
