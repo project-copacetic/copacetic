@@ -51,12 +51,18 @@ This approach is motivated by the core principles of making direct container pat
   - Image publishers don't need to create new workflows for container patching since Copa supports patching container images using the security update packages already being published today.
   - Consumers do not need to migrate to a new and potentially more limited support ecosystem for custom distros or change their container vulnerability scanning pipelines to include remediation, since Copa can be integrated seamlessly as an extra step to patch containers based on those scanning reports.
 - **Copa reduces the technical expertise needed and waiting on dependencies needed to patch an image**.
-  - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to be patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
+  - For OS package vulnerabilities, no specialized knowledge about a specific image is needed to patch it as Copa relies on the vulnerability remediation knowledge already embedded in the reports produced by popular container scanning tools today.
+
+---
+
 
 ## Contributing
+
 There are several ways to get involved:
 * Join the [mailing list](https://groups.google.com/g/project-copa) to get notifications for releases, security announcements, etc.
 * Join the [biweekly community meetings](https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit#heading=h.294j02tlxam) to discuss development, issues, use cases, etc.
 * Join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf).
 
 The project welcomes contributions and suggestions that abide by the [CNCF Code of Conduct](./CODE_OF_CONDUCT.md).
+
+---
