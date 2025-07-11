@@ -288,13 +288,13 @@ func patchWithContext(
 	targetPlatforms []string,
 	bkOpts buildkit.Opts,
 ) error {
-	// Handle empty report path - check if image is manifest list or single arch
+	// Handle empty report path - check if image is manifest list or single platform
 	if reportPath == "" {
-		// Discover platforms from the image reference to determine if it's multi-arch
+		// Discover platforms from the image reference to determine if it's multi-platform
 		discoveredPlatforms, err := buildkit.DiscoverPlatformsFromReference(image)
 		if err != nil {
-			// Failed to discover platforms - treat as single-arch image
-			log.Warnf("Failed to discover platforms for image %s (treating as single-arch): %v", image, err)
+			// Failed to discover platforms - treat as single-platform image
+			log.Warnf("Failed to discover platforms for image %s (treating as single-platform): %v", image, err)
 			if len(targetPlatforms) > 0 {
 				log.Info("Platform flag ignored when platform discovery fails")
 			}
@@ -317,19 +317,23 @@ func patchWithContext(
 		}
 
 		if len(discoveredPlatforms) <= 1 {
-			// Single-arch image - ignore platform flag
-			log.Debugf("Detected single-arch image")
+			// Single-platform image or multi-platform with only one valid platform
+			log.Debugf("Detected single-platform image or multi-platform with single valid platform")
 			if len(targetPlatforms) > 0 {
-				log.Info("Platform flag ignored for single-arch image")
+				log.Info("Platform flag ignored for single-platform image")
+			}
+
+			var targetPlatform ispec.Platform
+			if len(discoveredPlatforms) == 1 {
+				// Use the discovered platform from the manifest
+				targetPlatform = discoveredPlatforms[0].Platform
+				log.Debugf("Using discovered platform from manifest: %s/%s", targetPlatform.OS, targetPlatform.Architecture)
 			}
 
 			platform := types.PatchPlatform{
-				Platform:       platforms.Normalize(platforms.DefaultSpec()),
+				Platform:       targetPlatform,
 				ReportFile:     "",
 				ShouldPreserve: false,
-			}
-			if platform.OS != LINUX {
-				platform.OS = LINUX
 			}
 
 			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
@@ -362,7 +366,7 @@ func patchWithContext(
 		}
 		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, nil, nil)
 	}
-	// Handle file - single-arch patching
+	// Handle file - single-platform patching
 	log.Debugf("Using report file: %s", reportPath)
 	platform := types.PatchPlatform{
 		Platform: platforms.Normalize(platforms.DefaultSpec()),
@@ -585,7 +589,7 @@ func patchSingleArchImage(
 
 		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Configure buildctl/client for use by package manager
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String())
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, imageName.String(), &targetPlatform.Platform)
 			if err != nil {
 				ch <- err
 				return nil, err
@@ -1229,7 +1233,10 @@ func patchMultiPlatformImage(
 }
 
 // Gets the descriptor for a specific platform from a multi-arch manifest.
-func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.PatchPlatform) (*ispec.Descriptor, error) {
+func getPlatformDescriptorFromManifest(
+	imageRef string,
+	targetPlatform *types.PatchPlatform,
+) (*ispec.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
@@ -1241,7 +1248,7 @@ func getPlatformDescriptorFromManifest(imageRef string, targetPlatform *types.Pa
 	}
 
 	if !desc.MediaType.IsIndex() {
-		return nil, fmt.Errorf("expected multi-platform image but got single-arch image")
+		return nil, fmt.Errorf("expected multi-platform image but got single-platform image")
 	}
 
 	index, err := desc.ImageIndex()
