@@ -160,6 +160,17 @@ func TestPatch(t *testing.T) {
 }
 
 func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
+	validPlatforms := map[string]bool{
+		"linux/amd64":   true,
+		"linux/arm64":   true,
+		"linux/riscv64": true,
+		"linux/ppc64le": true,
+		"linux/s390x":   true,
+		"linux/386":     true,
+		"linux/arm/v7":  true,
+		"linux/arm/v6":  true,
+	}
+
 	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -173,11 +184,19 @@ func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 	err = json.Unmarshal(output, &manifest)
 	require.NoError(t, err, "failed to parse manifest JSON")
 
-	platforms := make([]manifestPlatform, len(manifest.Manifests))
-	for i, m := range manifest.Manifests {
-		platforms[i] = m.Platform
+	var filteredPlatforms []manifestPlatform
+	for _, m := range manifest.Manifests {
+		p := m.Platform
+		platformStr := p.OS + "/" + p.Architecture
+		if p.Variant != "" {
+			platformStr += "/" + p.Variant
+		}
+
+		if _, ok := validPlatforms[platformStr]; ok {
+			filteredPlatforms = append(filteredPlatforms, p)
+		}
 	}
-	return platforms
+	return filteredPlatforms
 }
 
 func dockerPull(t *testing.T, ref string) {
