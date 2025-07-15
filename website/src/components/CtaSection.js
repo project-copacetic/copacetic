@@ -11,7 +11,7 @@ return (
         <p className="cncf-text">
         Copacetic is a{' '}
         <span className="cncf-highlight">Cloud Native Computing Foundation</span>{' '}
-        graduated project
+        Sandbox project
         </p>
         <img
         className="cncf-logo"

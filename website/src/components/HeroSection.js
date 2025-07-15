@@ -24,8 +24,8 @@ export default function HeroSection() {
         copa is an <span className="desc-highlight">Open Source</span> CLI tool 
         written in <Link to="https://go.dev/" className="desc-link">Go</Link> and 
         based on <Link to="https://docs.docker.com/build/buildkit/" className="desc-link">buildkit</Link> that 
-        can be used to directly patch container images without full rebuilds given 
-        the vulnerability scanning results from popular tools like{' '}
+        can be used to directly patch container images without full rebuilds. It can also patch 
+        container images using the vulnerability scanning results from popular tools like{' '}
         <Link to="https://github.com/aquasecurity/trivy" className="desc-link">Trivy</Link>.
       </p>
 

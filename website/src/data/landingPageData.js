@@ -3,30 +3,55 @@ export const featureCards = [
     title: "Direct Vulnerability Patching",
     description: "Patches container images instantly without requiring full rebuilds - just adds a lightweight patch layer on top of existing images.",
     icon: "/img/feature-patching.png",
+    link: "/quick-start",
   },
   {
     title: "Multi-Package Manager Support",
-    description: "Supports APK, DPKG, and RPM package managers, covering a wide range of popular base images like Alpine, Debian, Ubuntu, and CBL-Mariner.",
+    description: "Supports multiple package managers, covering a wide range of base images like Alpine, Debian, Ubuntu, RHEL and many more.",
     icon: "/img/feature-pkg-manager.png",
+    link: "/faq#how-does-copa-determine-what-tooling-image-to-use",
   },
   {
-    title: "Multi-Platform & Distroless Support",
-    description: "Builds multi-architecture images and is capable of patching minimal 'distroless' images that lack shells or package managers.",
+    title: "Multi-Platform Support",
+    description: "Copa can automatically detect and patch multi-platform images across all supported platforms or target specific architectures.",
     icon: "/img/feature-multi-platform.png",
+    link: "/multiplatform-patching",
+  },
+  {
+    title: "Distroless Image Support",
+    description: "Copacetic also supports patching of distroless DPKG and RPM based distroless images by spinning up a build tooling container.",
+    icon: "/img/feature-distroless.png",
+    link: "/multiplatform-patching",
   },
   {
     title: "Ecosystem & Scanner Compatible",
-    description: "Integrates with popular vulnerability scanners like Trivy and can be used in any CI/CD pipeline to automate your patching workflow.",
+    description: "Built-in Trivy support with third-party scanners support, can be used in any CI/CD pipeline and we have a Docker-Desktop Extension.",
     icon: "/img/feature-ecosystem.png",
+    link: "/scanner-plugins",
   },
 ];
 
 export const adopters = [
-  { name: "Unoplat", logo: "/img/adopter-unoplat.png" },
-  { name: "Helmper", logo: "/img/adopter-helmper.png"},
-  { name: "Azure", logo: "/img/adopter-azure.png"},
-  { name: "Kubescape", logo: "/img/adopter-kubescape.png" },
-  { name: "Devtron", logo: "/img/adopter-devtron.png" },
+  { 
+    name: "Azure", 
+    logo: "/img/adopter-azure.png",
+    description: "Azure workload and AKS periscope use Copacetic for patching vulnerabilities in images through GitHub Actions integraion."
+  },
+  { 
+    name: "Kubescape", 
+    logo: "/img/adopter-kubescape.png",
+    description: "Kuberscape uses Copacetic under the hood for container image patching using the Grype image scanning tool."
+  },
+  { 
+    name: "Devtron", 
+    logo: "/img/adopter-devtron.png",
+    description: "Copacetic plugin of Devtron helps patch the container image vulnerabilities traced by the security scan Devtron performed on the image. "
+  },
+  { 
+    name: "Helmper", 
+    logo: "/img/adopter-helmper.png",
+    description: "Helmper is a go program that is built on top of Helm, Oras, Trivy, Copacetic and Cosign to read Helm Charts and push charts to registry."
+  },
 ];
 
 export const featuredTalks = [

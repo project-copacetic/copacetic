@@ -53,6 +53,20 @@ html[data-theme='dark'] .header-github-link:before {
     no-repeat;
 }
 
+.header-slack-link:hover {
+  opacity: 0.8;
+}
+
+.header-slack-link:before {
+  content: '';
+  width: 160px;
+  height: 40px;
+  display: flex;
+  background-image: url(/img/join-slack.png); /* The magic is here */
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain; /* Ensures the icon fits perfectly */
+}
 
 /* Base button styles */
 .button {
@@ -74,6 +88,7 @@ html[data-theme='dark'] .header-github-link:before {
 .button:hover {
   opacity: 0.8;
   border-color: var(--ifm-color-primary);
+  color: white;
 }
 
 /* Landing Page Specific Styles */
@@ -92,17 +107,19 @@ html[data-theme='dark'] .header-github-link:before {
 
 /* Hero Section */
 .hero-section {
-  padding: 4rem 2rem;
+  padding: 5rem;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 1.5rem;
-  min-height: 80vh;
+  min-height: 60vh;
   justify-content: center;
   position: relative;
 }
 .hero-logo-container {
+  position: relative;
+  left: 80px;
   width: 100%;
   max-width: 500px;
   margin-bottom: 2rem;
@@ -112,9 +129,9 @@ html[data-theme='dark'] .header-github-link:before {
   height: auto;
 }
 .hero-title {
-  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-size: clamp(2rem, 5vw, 3rem);
   font-weight: 300;
-  max-width: 900px;
+  max-width: 1000px;
 }
 .title-bold {
   font-weight: 700;
@@ -123,7 +140,7 @@ html[data-theme='dark'] .header-github-link:before {
 }
 .hero-description {
   font-size: clamp(1rem, 2vw, 1.25rem);
-  max-width: 800px;
+  max-width: 1100px;
   line-height: 1.6;
   color: #d0d0d0;
 }
@@ -155,86 +172,117 @@ html[data-theme='dark'] .header-github-link:before {
 
 /* Features Section */
 .features-section {
-  padding: 4rem 2rem;
-  background-color: #242526;
+  padding: 1rem;
 }
 .features-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 2rem;
-  max-width: 1200px;
+  gap: 1.5rem;
+  max-width: 1600px;
   margin: 0 auto;
 }
 .feature-card {
-  border: 1px solid #535353;
+  border: 1px solid #363636;
   border-radius: 12px;
   padding: 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.2rem;
+  background: linear-gradient(to bottom, #101010, #1B1B1D);
+}
+.feature-card-link {
+  color: inherit !important;
+  text-decoration: none !important;
+  transition: all 0.2s ease-in-out;
+}
+.feature-card-link:hover {
+  transform: translateY(-5px);
+  border-color: var(--ifm-color-primary);
 }
 .feature-card-header {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 1rem;
 }
 .feature-icon {
   width: 40px;
-  height: 40px;
+  height: 100%;
 }
 .feature-title {
   font-size: 1.5rem;
   font-weight: 500;
+  max-width: 230px;
 }
 .feature-description {
   font-weight: 300;
   font-size: 0.9rem;
   line-height: 1.5;
   color: #d0d0d0;
+  margin: 0;
 }
 
 /* Adopters Section */
 .adopters-section {
   padding: 4rem 2rem;
 }
-.adopters-container {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
-  gap: 3rem;
-  max-width: 1200px;
+.adopters-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1.5rem;
+  max-width: 1600px;
   margin: 0 auto;
 }
-.adopter-logo {
+.adopter-card {
+  border: 1px solid #535353;
+  border-radius: 12px;
+  padding: 1.5rem;
   display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 1.5rem;
+  text-align: center;
+}
+.adopter-header {
+  display: flex;
+  justify-content: center;
   align-items: center;
   gap: 1rem;
 }
-.adopter-logo img {
-  height: 50px;
+.adopter-logo-img {
+  height: 48px;
   width: auto;
-  max-width: 180px;
+
 }
-.adopter-logo span {
-  font-size: 1.5rem;
-  font-weight: bold;
+.adopter-name {
+  font-size: 1.75rem;
+  font-weight: 500;
+  color: white;
+}
+.adopter-description {
+  font-size: 0.9rem;
+  color: #a0a0a0;
+  line-height: 1.5;
+  margin: 0; /* remove default margin from p tag */
 }
 
 /* Talks Section */
 .talks-section {
   padding: 4rem 2rem;
-  background-color: #242526;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
 }
 .talks-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
   gap: 2rem;
-  max-width: 1200px;
+  max-width: 1600px;
   margin: 0 auto;
 }
 .talk-item {
-  text-align: center;
+  text-align: start;
 }
 .video-container {
   position: relative;
@@ -253,7 +301,7 @@ html[data-theme='dark'] .header-github-link:before {
 }
 .talk-description {
   font-style: italic;
-  font-size: 1rem;
+  font-size: 1.2rem;
   padding: 0 1rem;
 }
 
@@ -263,15 +311,16 @@ html[data-theme='dark'] .header-github-link:before {
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 2rem;
-  padding: 3rem 2rem;
+  gap: 5rem;
+  padding: 3rem 5rem;
   background: #141414;
   text-align: center;
 }
 .cncf-text {
-  font-size: 1.25rem;
-  font-weight: 600;
-  max-width: 500px;
+  font-size: 1.5rem;
+  font-weight: 300;
+  max-width: 800px;
+  margin: 0;
 }
 .cncf-highlight {
   color: var(--ifm-color-primary);
@@ -300,7 +349,7 @@ html[data-theme='dark'] .header-github-link:before {
   font-size: 1.25rem;
 }
 .community-icon {
-  width: 28px;
+  width: 100%;
   height: 28px;
   margin-right: 0.75rem;
 }
