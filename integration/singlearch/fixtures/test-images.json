@@ -19,6 +19,15 @@
         "isManifestList": false
     },
     {
+        "image": "docker.io/arm64v8/redis",
+        "tag": "7.4.0-alpine",
+        "digest": "sha256:b7b10e22a82307ec3992e740fd6db023217414c16fafa43950b61edf6e719983",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present, arm64 cross-arch",
+        "ignoreErrors": false,
+        "isManifestList": false
+    },
+    {
         "image": "docker.io/library/nginx",
         "tag": "1.21.6",
         "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",

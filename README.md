@@ -9,7 +9,7 @@
 <br>
 <br>
 
-`copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
+`copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images without full rebuilds. `copa` can also patch container images using the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
 
 For more details and how to get started, please refer to [full documentation](https://project-copacetic.github.io/copacetic/).
 
