@@ -5,12 +5,14 @@ on:
       - 'v[0-9]+.[0-9]+.0' # run this workflow when a new minor version is published
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   create-docs-pr:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.3.1
