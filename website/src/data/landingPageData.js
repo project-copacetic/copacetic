@@ -35,22 +35,22 @@ export const adopters = [
   { 
     name: "Azure", 
     logo: "/img/adopter-azure.png",
-    description: "Azure workload and AKS periscope use Copacetic for patching vulnerabilities in images through GitHub Actions integraion."
+    description: "Azure Container Registry (ACR) Continuous Patching uses Copa to automate the detection and remediation of vulnerabilities in container images."
   },
   { 
     name: "Kubescape", 
     logo: "/img/adopter-kubescape.png",
-    description: "Kuberscape uses Copacetic under the hood for container image patching using the Grype image scanning tool."
+    description: "Kubescape (CNCF incubating) uses Copa to patch container images using the Grype image scanning tool."
   },
   { 
     name: "Devtron", 
     logo: "/img/adopter-devtron.png",
-    description: "Copacetic plugin of Devtron helps patch the container image vulnerabilities traced by the security scan Devtron performed on the image. "
+    description: "Devtron uses Copa to patch container image vulnerabilities traced by the security scan performed on the image."
   },
   { 
     name: "Helmper", 
     logo: "/img/adopter-helmper.png",
-    description: "Helmper is a go program that is built on top of Helm, Oras, Trivy, Copacetic and Cosign to read Helm Charts and push charts to registry."
+    description: "Helmper uses Copa to patch container images used in Helm charts."
   },
 ];
 
