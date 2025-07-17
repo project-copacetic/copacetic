@@ -1,7 +1,7 @@
 import React from 'react';
 import Link from '@docusaurus/Link';
 import CopaLogo from '@site/static/img/copa-logo.png';
-import Download from '@site/static/img/icon-download.png';
+import Download from '@site/static/img/icon-download.svg';
 
 export default function HeroSection() {
   return (
@@ -34,7 +34,7 @@ export default function HeroSection() {
           Get Started
         </Link>
         <Link to="/installation" className="button download-button">
-          <img src={Download} alt="Download Icon" className="download-icon" />
+          <Download className='download-icon'/>
           Download
         </Link>
       </div>

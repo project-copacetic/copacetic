@@ -6,6 +6,8 @@
 
  /* You can override the default Infima variables here. */
 
+ @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lato:ital,wght@0,300;0,400;0,700;1,400;1,700&display=swap');
+
  :root {
   --ifm-color-primary: #408ac5;
   --ifm-color-primary-dark: #397bb2;
@@ -14,10 +16,11 @@
   --ifm-color-primary-light: #4e9bcf;
   --ifm-color-primary-lighter: #5ba9d9;
   --ifm-color-primary-lightest: #74bde8;
-
+  --ifm-background-color: #ffffff;
+  --ifm-font-color-base: #1b1b1d;
+  --ifm-desc-color-base: #1a1a1a;
   --ifm-code-font-size: 95%;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
-  --ifm-font-family-base: 'Lato', 'Inter', Helvetica, sans-serif;
 }
 
 [data-theme='dark'] {
@@ -32,6 +35,7 @@
   
   --ifm-background-color: #1b1b1d;
   --ifm-font-color-base: #ffffff;
+  --ifm-desc-color-base: #d0d0d0;
   --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
 }
 
@@ -59,10 +63,10 @@ html[data-theme='dark'] .header-github-link:before {
 
 .header-slack-link:before {
   content: '';
-  width: 160px;
-  height: 40px;
+  width: 24px;
+  height: 24px;
   display: flex;
-  background-image: url(/img/join-slack.png);
+  background-image: url(/img/icon-slack.png);
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain; 
@@ -74,33 +78,34 @@ html[data-theme='dark'] .header-github-link:before {
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  border: 1px solid white;
+  border: 1px solid var(--ifm-font-color-base);
   padding: 14px 24px;
-  font-size: 1.1rem;
-  font-weight: 600;
+  font-size: 1.4rem;
+  font-weight: 400;
   font-family: inherit;
   cursor: pointer;
   transition: all 0.25s;
   text-decoration: none !important;
-  color: white;
+  color: var(--ifm-font-color-base);
   background: transparent;
 }
 .button:hover {
   opacity: 0.8;
   border-color: var(--ifm-color-primary);
-  color: white;
+  color: var(--ifm-font-color-base);
 }
 
 /* Landing Page Specific Styles */
 .landing-page-main {
   width: 100%;
   overflow-x: hidden;
+  font-family: "Lato", sans-serif;
 }
 
 .section-title {
   font-size: 2rem;
   font-weight: 500;
-  color: rgba(208, 208, 208, 0.82);
+  color: var(--ifm-desc-color-base);
   text-align: center;
   margin-bottom: 2rem;
 }
@@ -142,7 +147,7 @@ html[data-theme='dark'] .header-github-link:before {
   font-size: clamp(1rem, 2vw, 1.25rem);
   max-width: 1100px;
   line-height: 1.6;
-  color: #d0d0d0;
+  color: var(--ifm-font-color-base);
 }
 .desc-highlight {
   color: var(--ifm-color-primary);
@@ -160,15 +165,19 @@ html[data-theme='dark'] .header-github-link:before {
 }
 .get-started-button {
   background-color: var(--ifm-color-primary);
-  color: #1b1b1d !important;
+  color: var(--ifm-font-color-base) !important;
   border-color: var(--ifm-color-primary);
-  font-weight: bold;
+  font-weight: 400;
 }
 .download-icon {
   margin-right: 0.5rem;
   width: 20px;
   height: 20px;
 }
+.download-icon-color {
+  fill: var(--ifm-font-color-base);
+}
+
 
 /* Features Section */
 .features-section {
@@ -190,8 +199,16 @@ html[data-theme='dark'] .header-github-link:before {
   gap: 1.2rem;
   background: linear-gradient(to bottom, #101010, #1B1B1D);
 }
+[data-theme="light"] .feature-card {
+  border: 1px solid #bdbdbd;
+  background: linear-gradient(
+    to bottom,
+    #e7e7e7,
+    #ffffff
+  );
+}
 .feature-card-link {
-  color: inherit !important;
+  color: var(--ifm-font-color-base) !important;
   text-decoration: none !important;
   transition: all 0.2s ease-in-out;
 }
@@ -218,7 +235,7 @@ html[data-theme='dark'] .header-github-link:before {
   font-weight: 300;
   font-size: 0.9rem;
   line-height: 1.5;
-  color: #d0d0d0;
+  color: var(--ifm-desc-color-base);
   margin: 0;
 }
 
@@ -261,7 +278,7 @@ html[data-theme='dark'] .header-github-link:before {
 }
 .adopter-description {
   font-size: 0.9rem;
-  color: #a0a0a0;
+  color: var(--ifm-font-color-base);
   line-height: 1.5;
   margin: 0;
 }
@@ -316,6 +333,9 @@ html[data-theme='dark'] .header-github-link:before {
   background: #141414;
   text-align: center;
 }
+[data-theme = "light"] .cncf-section {
+  background: #f5f5f5;
+}
 .cncf-text {
   font-size: 1.5rem;
   font-weight: 300;
@@ -324,11 +344,18 @@ html[data-theme='dark'] .header-github-link:before {
 }
 .cncf-highlight {
   color: var(--ifm-color-primary);
+  font-weight: 400;
 }
 .cncf-logo {
   max-width: 400px;
   width: 100%;
   height: auto;
+}
+.cncf-text-color {
+  fill: var(--ifm-font-color-base);
+}
+[data-theme="light"] .cncf-text-color {
+  fill: #666666;
 }
 
 .community-section {
@@ -352,4 +379,7 @@ html[data-theme='dark'] .header-github-link:before {
   width: 100%;
   height: 28px;
   margin-right: 0.75rem;
+}
+.github-icon{
+  fill: var(--ifm-font-color-base);
 }

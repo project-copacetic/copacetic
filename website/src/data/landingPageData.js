@@ -1,3 +1,8 @@
+import GithubIcon from '@site/static/img/icon-github.svg';
+import SlackIcon from '@site/static/img/icon-slack.png';
+import MeetingsIcon from '@site/static/img/icon-meetings.png';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+
 export const featureCards = [
   {
     title: "Direct Vulnerability Patching",
@@ -35,22 +40,27 @@ export const adopters = [
   { 
     name: "Azure", 
     logo: "/img/adopter-azure.png",
-    description: "Azure Container Registry (ACR) Continuous Patching uses Copa to automate the detection and remediation of vulnerabilities in container images."
+    description: "Azure Container Registry (ACR) Continuous Patching uses Copa to automate the detection and remediation of vulnerabilities in container images.",
+    link: "https://learn.microsoft.com/en-us/azure/container-registry/key-concept-continuous-patching",
   },
   { 
     name: "Kubescape", 
     logo: "/img/adopter-kubescape.png",
-    description: "Kubescape (CNCF incubating) uses Copa to patch container images using the Grype image scanning tool."
+    description: "Kubescape (CNCF incubating) uses Copa to patch container images using the Grype image scanning tool.",
+    link: "https://kubescape.io/blog/2024/07/14/kubescape-3-image-patching/",
+
   },
   { 
     name: "Devtron", 
     logo: "/img/adopter-devtron.png",
-    description: "Devtron uses Copa to patch container image vulnerabilities traced by the security scan performed on the image."
+    description: "Devtron uses Copa to patch container image vulnerabilities traced by the security scan performed on the image.",
+    link: "https://docs.devtron.ai/usage/plugins/plugin-list/copacetic",
   },
   { 
     name: "Helmper", 
     logo: "/img/adopter-helmper.png",
-    description: "Helmper uses Copa to patch container images used in Helm charts."
+    description: "Helmper uses Copa to patch container images used in Helm charts.",
+    link: "https://christoffernissen.github.io/helmper/",
   },
 ];
 
@@ -72,17 +82,17 @@ export const featuredTalks = [
 export const communityButtons = [
   {
     title: "Join our Slack Channel",
-    icon: "/img/icon-slack.png",
+    Icon: () => <img src={useBaseUrl(SlackIcon)} alt="Slack Icon" className='community-icon'/>,
     href: "https://cloud-native.slack.com/archives/C071UU5QDKJ"
   },
   {
     title: "Contribute on GitHub",
-    icon: "/img/icon-github.png",
+    Icon: GithubIcon,
     href: "https://github.com/project-copacetic/copacetic"
   },
   {
     title: "Community Meetings",
-    icon: "/img/icon-meetings.png",
+    Icon: () => <img src={useBaseUrl(MeetingsIcon)} alt="Meetings Icon" className='community-icon'/>,
     href: "https://docs.google.com/document/d/1QdskbeCtgKcdWYHI6EXkLFxyzTCyVT6e8MgB3CaAhWI/edit?usp=sharing" 
   },
 ];
