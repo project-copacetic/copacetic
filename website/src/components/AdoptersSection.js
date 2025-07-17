@@ -1,5 +1,6 @@
 import React from 'react';
 import useBaseUrl from '@docusaurus/useBaseUrl';
+import Link from '@docusaurus/Link';
 import { adopters } from '../data/landingPageData';
 
 export default function AdoptersSection() {
@@ -8,7 +9,7 @@ export default function AdoptersSection() {
       <h2 className="section-title">Adopted by</h2>
       <div className="adopters-grid">
         {adopters.map((adopter, index) => (
-          <div key={index} className="adopter-card">
+          <Link to={adopter.link} key={index} className="adopter-card">
             <div className="adopter-header">
               <img 
                 className="adopter-logo-img"
@@ -17,7 +18,7 @@ export default function AdoptersSection() {
               />
             </div>
             <p className="adopter-description">{adopter.description}</p>
-          </div>
+          </Link>
         ))}
       </div>
     </section>
