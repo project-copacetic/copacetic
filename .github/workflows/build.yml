@@ -35,7 +35,6 @@ jobs:
     name: Unit Test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: read-all
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.3.1
@@ -107,7 +106,6 @@ jobs:
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     strategy:
       fail-fast: false
       matrix:
@@ -150,7 +148,6 @@ jobs:
     name: Test patch no report ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     strategy:
       fail-fast: false
       matrix:
@@ -271,7 +268,6 @@ jobs:
     name: Test plugin
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: read-all
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.3.1
@@ -315,7 +311,6 @@ jobs:
     name: Test push
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: read-all
     steps:
       - name: Check out code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -359,7 +354,6 @@ jobs:
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     strategy:
       fail-fast: false
       matrix:
@@ -440,7 +434,6 @@ jobs:
     name: Test multiplatform with plugin
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     steps:
       - name: Change docker daemon config
         run: |
