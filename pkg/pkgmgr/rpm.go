@@ -650,7 +650,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
                                 OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
 
 								tdnf makecache
-								tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
+								tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
 
 								ls /tmp/rootfs/var/lib/rpm
 						`,
