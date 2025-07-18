@@ -646,6 +646,9 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
+								# Convert OS_VERSION from X.Y.Z to X.Y format
+                                OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
 								tdnf makecache
 								tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
 
