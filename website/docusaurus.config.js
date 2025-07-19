@@ -52,7 +52,10 @@ const config = {
 
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
-    ({
+    ({  
+      colorMode: {
+        defaultMode: 'dark',
+      },
       navbar: {
         title: 'Copacetic',
         logo: {
@@ -64,6 +67,12 @@ const config = {
           {
             type: 'docsVersionDropdown',
             position: 'right',
+          },
+          {
+            href: 'https://cloud-native.slack.com/archives/C071UU5QDKJ',
+            position: 'right',
+            className: 'header-slack-link',
+            'aria-label': 'Slack Connection',
           },
           {
             href: 'https://github.com/project-copacetic/copacetic',
