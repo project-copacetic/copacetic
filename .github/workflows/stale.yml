@@ -31,6 +31,6 @@ jobs:
             This pull request has been automatically marked as stale because it has not had 
             recent activity. It will be closed if no further activity occurs. 
             Thank you for your contributions.
-          exempt-issue-labels: 'security,bug,good first issue'
+          exempt-issue-labels: 'security,good first issue,triaged'
           exempt-pr-labels: 'security'
           remove-stale-when-updated: true
