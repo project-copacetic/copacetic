@@ -24,12 +24,12 @@ const (
 	keyMirror       = "package-mirror"
 )
 
-// Frontend implements the BuildKit frontend interface for Copa
+// Frontend implements the BuildKit frontend interface for Copa.
 type Frontend struct {
 	client gwclient.Client
 }
 
-// Build is the main entry point for the frontend
+// Build is the main entry point for the frontend.
 func Build(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	f := &Frontend{
 		client: client,
@@ -66,7 +66,7 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 	return res, nil
 }
 
-// Main entry point for the frontend
+// Main entry point for the frontend.
 func RunFrontend(_ []string) {
 	if err := grpcclient.RunFromEnvironment(appcontext.Context(), Build); err != nil {
 		panic(err)

@@ -8,13 +8,13 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 )
 
-// LLBGraphBuilder constructs LLB graphs with advanced features
+// LLBGraphBuilder constructs LLB graphs with advanced features.
 type LLBGraphBuilder struct {
 	client gwclient.Client
 	config *Config
 }
 
-// NewLLBGraphBuilder creates a new LLB graph builder
+// NewLLBGraphBuilder creates a new LLB graph builder.
 func NewLLBGraphBuilder(client gwclient.Client, config *Config) *LLBGraphBuilder {
 	return &LLBGraphBuilder{
 		client: client,
@@ -22,7 +22,7 @@ func NewLLBGraphBuilder(client gwclient.Client, config *Config) *LLBGraphBuilder
 	}
 }
 
-// BuildPatchedImage constructs an LLB graph for patching an image
+// BuildPatchedImage constructs an LLB graph for patching an image.
 func (b *LLBGraphBuilder) BuildPatchedImage(_ context.Context, baseState *llb.State, patchCommands []string) (llb.State, error) {
 	// Apply security constraints if specified
 	workingState := *baseState
@@ -53,7 +53,7 @@ func (b *LLBGraphBuilder) BuildPatchedImage(_ context.Context, baseState *llb.St
 	return finalState, nil
 }
 
-// buildProbeOperation creates an LLB operation to probe package state
+// buildProbeOperation creates an LLB operation to probe package state.
 func (b *LLBGraphBuilder) buildProbeOperation(base *llb.State) llb.State {
 	// Detect package manager and list installed packages
 	probeCmd := b.getProbeCommand()
@@ -64,7 +64,7 @@ func (b *LLBGraphBuilder) buildProbeOperation(base *llb.State) llb.State {
 	).Root()
 }
 
-// getProbeCommand returns the appropriate command to probe package state
+// getProbeCommand returns the appropriate command to probe package state.
 func (b *LLBGraphBuilder) getProbeCommand() string {
 	if b.config.PkgMgr != "" {
 		switch b.config.PkgMgr {
@@ -81,7 +81,7 @@ func (b *LLBGraphBuilder) getProbeCommand() string {
 	return "sh -c 'dpkg -l > /tmp/packages.list 2>/dev/null || rpm -qa > /tmp/packages.list 2>/dev/null || apk list -I > /tmp/packages.list 2>/dev/null || true'"
 }
 
-// buildToolingOperation deploys minimal patching tools if needed
+// buildToolingOperation deploys minimal patching tools if needed.
 func (b *LLBGraphBuilder) buildToolingOperation(base *llb.State) llb.State {
 	// For most cases, the base image already has the package manager
 	// This is a placeholder for cases where we need to install tools
@@ -98,7 +98,7 @@ func (b *LLBGraphBuilder) buildToolingOperation(base *llb.State) llb.State {
 	).Root()
 }
 
-// buildPatchOperation applies security patches
+// buildPatchOperation applies security patches.
 func (b *LLBGraphBuilder) buildPatchOperation(base *llb.State, patchCommands []string) llb.State {
 	if len(patchCommands) == 0 {
 		return *base
@@ -120,7 +120,7 @@ func (b *LLBGraphBuilder) buildPatchOperation(base *llb.State, patchCommands []s
 	return base.Run(runOpts...).Root()
 }
 
-// applySecurityConstraints adds security constraints to LLB operations
+// applySecurityConstraints adds security constraints to LLB operations.
 func (b *LLBGraphBuilder) applySecurityConstraints(state *llb.State) llb.State {
 	switch b.config.SecurityMode {
 	case "sandbox":
@@ -135,7 +135,7 @@ func (b *LLBGraphBuilder) applySecurityConstraints(state *llb.State) llb.State {
 	}
 }
 
-// applyCaching applies caching strategies to LLB operations
+// applyCaching applies caching strategies to LLB operations.
 func (b *LLBGraphBuilder) applyCaching(state *llb.State) llb.State {
 	switch b.config.CacheMode {
 	case "local":

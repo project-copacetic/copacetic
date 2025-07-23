@@ -96,7 +96,7 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 	dockerfilePath := filepath.Join(projectRoot, "frontend-simple.Dockerfile")
 	binaryPath := filepath.Join(projectRoot, "copa-frontend")
 
-	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0600); err != nil {
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0o600); err != nil {
 		panic(fmt.Sprintf("failed to create simple Dockerfile: %v", err))
 	}
 	defer os.Remove(dockerfilePath)

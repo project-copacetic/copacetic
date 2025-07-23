@@ -92,8 +92,11 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 			return nil, errors.Wrapf(err, "failed to read report from context: %s", reportPath)
 		}
 		config.Report = report
+	} else if updateAll, ok := opts.Opts["update-all"]; ok && (updateAll == "true" || updateAll == "1") {
+		// Update all mode - no report needed
+		config.Report = nil
 	} else {
-		return nil, errors.New("vulnerability report required via --opt report=<data> or --opt report-path=<path>")
+		return nil, errors.New("vulnerability report required via --opt report=<data>, --opt report-path=<path>, or --opt update-all=true")
 	}
 
 	// Parse package manager
@@ -153,8 +156,48 @@ func parsePlatform(p string) (*ispec.Platform, error) {
 
 // readReportFromContext reads a file from the build context.
 func readReportFromContext(ctx context.Context, client gwclient.Client, path string) ([]byte, error) {
-	// TODO: Implement proper build context file reading
-	// For now, this is a placeholder that returns an error
-	// The BuildKit client API for reading context files needs to be investigated further
-	return nil, fmt.Errorf("reading from build context not yet implemented - file: %s, use --opt report=<inline-data> instead", path)
+	// Get the build context inputs
+	inputs, err := client.Inputs(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get build inputs")
+	}
+
+	// Look for the context input (usually named "context")
+	contextState, ok := inputs["context"]
+	if !ok {
+		// Debug: Print all available inputs
+		var availableInputs []string
+		for name := range inputs {
+			availableInputs = append(availableInputs, name)
+		}
+		return nil, errors.Errorf("build context not found in inputs, available inputs: %v", availableInputs)
+	}
+
+	// Solve the context state to get a reference
+	def, err := contextState.Marshal(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to marshal context state")
+	}
+
+	res, err := client.Solve(ctx, gwclient.SolveRequest{
+		Definition: def.ToPB(),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to solve context state")
+	}
+
+	ref, err := res.SingleRef()
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get context reference")
+	}
+
+	// Read the file from the build context
+	data, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+		Filename: path,
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read file: %s", path)
+	}
+
+	return data, nil
 }

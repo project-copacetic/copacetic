@@ -25,18 +25,25 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.S
 		return llb.State{}, errors.Wrap(err, "failed to initialize buildkit config")
 	}
 
-	// Parse the vulnerability report
-	vr, err := f.parseReportData(config.Report, config.Scanner)
-	if err != nil {
-		return llb.State{}, errors.Wrap(err, "failed to parse vulnerability report")
+	// Parse the vulnerability report (or use nil for update all mode)
+	var vr *unversioned.UpdateManifest
+	if config.Report != nil {
+		var parseErr error
+		vr, parseErr = f.parseReportData(config.Report, config.Scanner)
+		if parseErr != nil {
+			return llb.State{}, errors.Wrap(parseErr, "failed to parse vulnerability report")
+		}
+	}
+	// If config.Report is nil, vr will be nil, which triggers "update all" mode in package managers
+
+	// Get the OS information from the report metadata or detect from image
+	var osType, osVersion string
+	if vr != nil && vr.Metadata.OS.Type != "" {
+		osType = vr.Metadata.OS.Type
+		osVersion = vr.Metadata.OS.Version
 	}
 
-	// Get the OS information from the report metadata
-	var osType, osVersion string
-	osType = vr.Metadata.OS.Type
-	osVersion = vr.Metadata.OS.Version
-
-	// If no OS info in report, try to detect from image
+	// If no OS info from report (including update-all mode), detect from image
 	if osType == "" {
 		osType, osVersion, err = f.detectOSFromImage(ctx, bkConfig)
 		if err != nil {
@@ -50,8 +57,8 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.S
 		return llb.State{}, errors.Wrap(err, "failed to create package manager")
 	}
 
-	// Check if there are packages to update
-	if len(vr.Updates) == 0 {
+	// Check if there are packages to update (skip for update-all mode)
+	if vr != nil && len(vr.Updates) == 0 {
 		// No packages to update, return original image
 		return bkConfig.ImageState, nil
 	}
@@ -157,7 +164,7 @@ func (f *Frontend) parseReportData(data []byte, scannerName string) (*unversione
 	return manifest, nil
 }
 
-// createTempReportFile creates a temporary file with the report data for use with pkg/report
+// createTempReportFile creates a temporary file with the report data for use with pkg/report.
 func (f *Frontend) createTempReportFile(data []byte) (string, error) {
 	// Create a temporary file
 	tmpFile, err := os.CreateTemp("", "copa-report-*.json")
