@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/patch"
-	"github.com/project-copacetic/copacetic/pkg/frontend"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -39,7 +38,6 @@ func newRootCmd() *cobra.Command {
 	flags.BoolVar(&debug, "debug", false, "enable debug level logging")
 
 	rootCmd.AddCommand(patch.NewPatchCmd())
-	rootCmd.AddCommand(frontend.NewFrontendCmd())
 	return rootCmd
 }
 

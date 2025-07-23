@@ -70,38 +70,38 @@ func TestMain(m *testing.M) {
 
 func buildFrontendImage() {
 	fmt.Printf("Building Copa frontend image: %s\n", frontendImage)
-	
+
 	// First build the frontend binary locally to avoid Docker disk space issues
 	fmt.Println("Building frontend binary locally...")
 	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", "copa-frontend", "./cmd/frontend")
 	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
-	
+
 	// Set working directory to project root (3 levels up from test/e2e/frontend)
 	wd, _ := os.Getwd()
 	projectRoot := filepath.Join(wd, "..", "..", "..")
 	buildCmd.Dir = projectRoot
-	
+
 	output, err := buildCmd.CombinedOutput()
 	if err != nil {
 		panic(fmt.Sprintf("failed to build frontend binary: %v\nOutput: %s", err, string(output)))
 	}
-	
+
 	// Create a simple Dockerfile for the frontend image
 	dockerfileContent := `FROM alpine:3.18
 RUN apk add --no-cache ca-certificates busybox
 COPY copa-frontend /usr/bin/copa-frontend
 RUN chmod +x /usr/bin/copa-frontend
 ENTRYPOINT ["/usr/bin/copa-frontend"]`
-	
+
 	dockerfilePath := filepath.Join(projectRoot, "frontend-simple.Dockerfile")
 	binaryPath := filepath.Join(projectRoot, "copa-frontend")
-	
-	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0644); err != nil {
+
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0600); err != nil {
 		panic(fmt.Sprintf("failed to create simple Dockerfile: %v", err))
 	}
 	defer os.Remove(dockerfilePath)
 	defer os.Remove(binaryPath)
-	
+
 	// Build the Docker image
 	cmd := exec.Command("docker", "build", "-f", "frontend-simple.Dockerfile", "-t", frontendImage, ".")
 	cmd.Dir = projectRoot
@@ -111,23 +111,23 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 		panic(fmt.Sprintf("failed to build frontend image: %v", err))
 	}
 	fmt.Printf("Frontend image built successfully: %s\n", frontendImage)
-	
+
 	// Push the frontend image to the local registry so BuildKit can access it
 	// Use localhost for pushing (from host) but bridge gateway for BuildKit access
 	localPushImage := "localhost:5000/copa-frontend:test"
 	buildkitAccessImage := "172.17.0.1:5000/copa-frontend:test"
-	
+
 	tagCmd := exec.Command("docker", "tag", frontendImage, localPushImage)
 	if err := tagCmd.Run(); err != nil {
 		panic(fmt.Sprintf("failed to tag frontend image: %v", err))
 	}
-	
+
 	pushCmd := exec.Command("docker", "push", localPushImage)
 	pushOutput, err := pushCmd.CombinedOutput()
 	if err != nil {
 		panic(fmt.Sprintf("failed to push frontend image: %v\nOutput: %s", err, string(pushOutput)))
 	}
-	
+
 	// Update the frontendImage variable to use the bridge gateway IP for BuildKit access
 	frontendImage = buildkitAccessImage
 	fmt.Printf("Frontend image pushed to local registry and accessible via: %s\n", frontendImage)

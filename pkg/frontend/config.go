@@ -6,12 +6,12 @@ import (
 	"strings"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	"github.com/pkg/errors"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/pkg/errors"
 )
 
-// FrontendConfig holds the parsed configuration for the frontend
-type FrontendConfig struct {
+// Config holds the parsed configuration for the frontend.
+type Config struct {
 	// Base image reference to patch
 	BaseImage string
 
@@ -46,11 +46,11 @@ type FrontendConfig struct {
 	Annotations map[string]string
 }
 
-// ParseConfig parses the frontend options from the build context
-func ParseConfig(ctx context.Context, client gwclient.Client) (*FrontendConfig, error) {
+// ParseConfig parses the frontend options from the build context.
+func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 	opts := client.BuildOpts()
 
-	config := &FrontendConfig{
+	config := &Config{
 		Scanner:     "trivy", // default scanner
 		Annotations: make(map[string]string),
 	}
@@ -132,7 +132,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*FrontendConfig, 
 	return config, nil
 }
 
-// parsePlatform parses a platform string (e.g., "linux/amd64", "linux/arm64/v8")
+// parsePlatform parses a platform string (e.g., "linux/amd64", "linux/arm64/v8").
 func parsePlatform(p string) (*ispec.Platform, error) {
 	parts := strings.Split(p, "/")
 	if len(parts) < 2 {
@@ -151,9 +151,10 @@ func parsePlatform(p string) (*ispec.Platform, error) {
 	return platform, nil
 }
 
-// readReportFromContext reads a file from the build context
+// readReportFromContext reads a file from the build context.
 func readReportFromContext(ctx context.Context, client gwclient.Client, path string) ([]byte, error) {
-	// TODO: Implement reading from build context
+	// TODO: Implement proper build context file reading
 	// For now, this is a placeholder that returns an error
-	return nil, fmt.Errorf("reading from build context not yet implemented - use --opt report=<inline-data> instead")
+	// The BuildKit client API for reading context files needs to be investigated further
+	return nil, fmt.Errorf("reading from build context not yet implemented - file: %s, use --opt report=<inline-data> instead", path)
 }

@@ -50,12 +50,12 @@ func TestFrontendPatch(t *testing.T) {
 		}
 
 		t.Run(img.Description, func(t *testing.T) {
-			runFrontendTest(t, img)
+			runFrontendTest(t, &img)
 		})
 	}
 }
 
-func runFrontendTest(t *testing.T, img testImage) {
+func runFrontendTest(t *testing.T, img *testImage) {
 	// Define image references
 	localPushRef := fmt.Sprintf("%s:%s", img.LocalImage, img.Tag)
 	originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)
@@ -89,7 +89,7 @@ func runFrontendTest(t *testing.T, img testImage) {
 		"--opt", fmt.Sprintf("report=%s", string(reportData)),
 		"--opt", "scanner=trivy",
 		"--opt", "security-mode=sandbox", // Use enhanced security mode
-		"--opt", "cache-mode=local",     // Use local caching
+		"--opt", "cache-mode=local", // Use local caching
 		"--opt", fmt.Sprintf("annotation.test-case=%s", img.Description), // Add test annotation
 		"--output", fmt.Sprintf("type=docker,dest=%s", outputTar),
 	}
@@ -106,7 +106,7 @@ func runFrontendTest(t *testing.T, img testImage) {
 	if buildkitAddr != "docker://" {
 		args = append([]string{"--addr", buildkitAddr}, args...)
 	}
-	
+
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")
 
@@ -223,7 +223,7 @@ func validateAlpinePatching(t *testing.T, imageRef string) {
 	require.NoError(t, err, "patched alpine image should be able to run apk")
 }
 
-func cleanupImage(t *testing.T, imageRef string) {
+func cleanupImage(_ *testing.T, imageRef string) {
 	cmd := exec.Command("docker", "rmi", "-f", imageRef)
 	_ = cmd.Run() // ignore errors during cleanup
 }

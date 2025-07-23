@@ -3,6 +3,7 @@ package frontend
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
@@ -10,12 +11,14 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
+	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
-// BuildPatchedImage builds a patched image using the Copa patching logic
-func (f *Frontend) buildPatchedImage(ctx context.Context, config *FrontendConfig) (llb.State, error) {
+// BuildPatchedImage builds a patched image using the Copa patching logic.
+func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.State, error) {
 	// Initialize buildkit configuration
 	bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, f.client, config.BaseImage, config.Platform)
 	if err != nil {
@@ -54,7 +57,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *FrontendConfig
 	}
 
 	// Apply package updates using existing Copa logic
-	updatedState, _, err := pm.InstallUpdates(ctx, vr, config.IgnoreErrors)
+	updatedState, patchCommands, err := pm.InstallUpdates(ctx, vr, config.IgnoreErrors)
 	if err != nil {
 		if config.IgnoreErrors {
 			// Log error but continue with original state
@@ -66,20 +69,15 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *FrontendConfig
 
 	// Use enhanced LLB graph construction for better layer management
 	graphBuilder := NewLLBGraphBuilder(f.client, config)
-	finalState := *updatedState
-	
-	// Apply any additional LLB enhancements (security constraints, caching, etc.)
-	if config.SecurityMode != "" {
-		finalState = graphBuilder.applySecurityConstraints(finalState)
-	}
-	if config.CacheMode != "" {
-		finalState = graphBuilder.applyCaching(finalState)
+	finalState, err := graphBuilder.BuildPatchedImage(ctx, updatedState, patchCommands)
+	if err != nil {
+		return llb.State{}, errors.Wrap(err, "failed to build patched image")
 	}
 
 	return finalState, nil
 }
 
-// detectOSFromImage attempts to detect the OS type and version from the image
+// detectOSFromImage attempts to detect the OS type and version from the image.
 func (f *Frontend) detectOSFromImage(ctx context.Context, bkConfig *buildkit.Config) (string, string, error) {
 	// Try to read /etc/os-release from the image
 	osReleaseState := bkConfig.ImageState.File(
@@ -113,12 +111,18 @@ func (f *Frontend) detectOSFromImage(ctx context.Context, bkConfig *buildkit.Con
 		return "linux", "", nil
 	}
 
-	// Parse os-release file to extract OS type and version
-	osType, osVersion := parseOSRelease(string(osReleaseData))
-	return osType, osVersion, nil
+	// Use the robust OS detection from pkg/common
+	osInfo, err := common.GetOSInfo(ctx, osReleaseData)
+	if err != nil {
+		// Fallback to parsing manually if common.GetOSInfo fails
+		osType, osVersion := parseOSRelease(string(osReleaseData))
+		return osType, osVersion, nil
+	}
+
+	return osInfo.Type, osInfo.Version, nil
 }
 
-// parseOSRelease parses /etc/os-release content to extract OS info
+// parseOSRelease parses /etc/os-release content to extract OS info.
 func parseOSRelease(content string) (string, string) {
 	lines := strings.Split(content, "\n")
 	var id, version string
@@ -135,20 +139,38 @@ func parseOSRelease(content string) (string, string) {
 	return id, version
 }
 
-
-
-// parseReportData parses vulnerability report data from bytes
+// parseReportData parses vulnerability report data from bytes.
 func (f *Frontend) parseReportData(data []byte, scannerName string) (*unversioned.UpdateManifest, error) {
-	// Use scanner abstraction for report parsing
-	scanner, err := f.scannerFactory.GetScanner(scannerName)
+	// Create a temporary file to work with the existing report parsing infrastructure
+	tempFile, err := f.createTempReportFile(data)
 	if err != nil {
-		return nil, errors.Wrapf(err, "unsupported scanner: %s", scannerName)
+		return nil, errors.Wrap(err, "failed to create temporary report file")
 	}
-	
-	manifest, err := scanner.ParseReport(data)
+	defer os.Remove(tempFile) // Clean up temp file
+
+	// Use the existing pkg/report infrastructure for parsing
+	manifest, err := report.TryParseScanReport(tempFile, scannerName)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to parse %s report", scannerName)
 	}
-	
+
 	return manifest, nil
+}
+
+// createTempReportFile creates a temporary file with the report data for use with pkg/report
+func (f *Frontend) createTempReportFile(data []byte) (string, error) {
+	// Create a temporary file
+	tmpFile, err := os.CreateTemp("", "copa-report-*.json")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create temporary file")
+	}
+	defer tmpFile.Close()
+
+	// Write the report data to the file
+	if _, err := tmpFile.Write(data); err != nil {
+		os.Remove(tmpFile.Name()) // Clean up on error
+		return "", errors.Wrap(err, "failed to write report data to temporary file")
+	}
+
+	return tmpFile.Name(), nil
 }

@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	// Frontend option keys
+	// Frontend option keys.
 	keyImage        = "image"
 	keyReport       = "report"
 	keyReportPath   = "report-path"
@@ -26,15 +26,13 @@ const (
 
 // Frontend implements the BuildKit frontend interface for Copa
 type Frontend struct {
-	client         gwclient.Client
-	scannerFactory *ScannerFactory
+	client gwclient.Client
 }
 
 // Build is the main entry point for the frontend
 func Build(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 	f := &Frontend{
-		client:         client,
-		scannerFactory: NewScannerFactory(),
+		client: client,
 	}
 	return f.build(ctx)
 }
@@ -68,9 +66,8 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 	return res, nil
 }
 
-
 // Main entry point for the frontend
-func RunFrontend(args []string) {
+func RunFrontend(_ []string) {
 	if err := grpcclient.RunFromEnvironment(appcontext.Context(), Build); err != nil {
 		panic(err)
 	}
