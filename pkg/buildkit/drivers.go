@@ -118,12 +118,20 @@ func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, 
 
 	log.Debug("Trying default buildkit addr")
 	c, err = client.New(ctx, DefaultAddr, opts...)
+	var validateErr error
 	if err == nil {
-		if err := ValidateClient(ctx, c); err == nil {
+		if validateErr = ValidateClient(ctx, c); validateErr == nil {
 			return c, nil
 		}
 		c.Close()
 	}
 	log.WithError(err).Debug("Could not use buildkitd driver")
-	return nil, errors.Join(retErr, fmt.Errorf("could not use buildkitd driver: %w", err))
+	if err == nil {
+		err = validateErr
+	}
+	return nil, fmt.Errorf(
+		"%w\n\nAll BuildKit connection checks exhausted. Copa requires a working BuildKit instance to function.\n"+
+			"Please refer to the documentation for setup instructions: https://project-copacetic.github.io/copacetic/website/custom-address",
+		errors.Join(retErr, fmt.Errorf("could not use buildkitd driver: %w", err)),
+	)
 }
