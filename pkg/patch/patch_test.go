@@ -12,6 +12,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -348,7 +349,7 @@ func TestGetOSType(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("TestGetOSType", func(t *testing.T) {
-			osType, err := getOSType(context.TODO(), tc.osRelease)
+			osType, err := common.GetOSType(context.TODO(), tc.osRelease)
 
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.expectedOSType, osType)
@@ -398,7 +399,7 @@ func TestGetOSVersion(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run("TestGetOSVersion", func(t *testing.T) {
-			osVersion, err := getOSVersion(context.TODO(), tc.osRelease)
+			osVersion, err := common.GetOSVersion(context.TODO(), tc.osRelease)
 
 			var errMsg string
 			if err == nil {
@@ -492,7 +493,7 @@ func TestResolvePatchedTag(t *testing.T) {
 				t.Fatalf("failed to parse image reference: %v", err)
 			}
 
-			got, err := resolvePatchedTag(imageRef, tc.explicitTag, tc.suffix)
+			got, err := common.ResolvePatchedTag(imageRef, tc.explicitTag, tc.suffix)
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -514,14 +515,13 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	// Use platforms that match the host to avoid emulation issues in test
 	targetPlatforms := []string{"linux/amd64"}
 
-	err := Patch(
-		context.Background(),
-		30*time.Second,
-		"alpine:3.19", "", "", "", "", "", "", "", "",
-		false, true,
-		targetPlatforms,
-		buildkit.Opts{},
-	)
+	opts := &types.PatchOpts{
+		Image:    "alpine:3.19",
+		Timeout:  30 * time.Second,
+		Push:     true,
+		Platform: targetPlatforms,
+	}
+	err := Patch(context.Background(), opts)
 
 	if err == nil {
 		t.Fatalf("expected error from Build(), got nil")
