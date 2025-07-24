@@ -102,8 +102,16 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 	defer os.Remove(dockerfilePath)
 	defer os.Remove(binaryPath)
 
-	// Build the Docker image
-	cmd := exec.Command("docker", "build", "-f", "frontend-simple.Dockerfile", "-t", frontendImage, ".")
+	// Build the Docker image - use buildx with --load if available
+	var cmd *exec.Cmd
+	if _, err := exec.LookPath("docker"); err == nil {
+		// Check if buildx is available
+		if checkCmd := exec.Command("docker", "buildx", "version"); checkCmd.Run() == nil {
+			cmd = exec.Command("docker", "buildx", "build", "--load", "-f", "frontend-simple.Dockerfile", "-t", frontendImage, ".")
+		} else {
+			cmd = exec.Command("docker", "build", "-f", "frontend-simple.Dockerfile", "-t", frontendImage, ".")
+		}
+	}
 	cmd.Dir = projectRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
