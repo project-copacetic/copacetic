@@ -2,6 +2,8 @@ package frontend
 
 import (
 	"context"
+	"os"
+	"strings"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/frontend/gateway/grpcclient"
@@ -44,6 +46,14 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 		return nil, errors.Wrap(err, "failed to parse frontend configuration")
 	}
 
+	// Clean up temporary report file if created
+	if config.ReportFile != "" {
+		defer func() {
+			// Attempt cleanup, but don't fail the build if cleanup fails
+			_ = cleanupTempFile(config.ReportFile)
+		}()
+	}
+
 	// Build the patched image
 	st, err := f.buildPatchedImage(ctx, config)
 	if err != nil {
@@ -64,6 +74,15 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 	}
 
 	return res, nil
+}
+
+// cleanupTempFile removes a temporary file if it was created by the frontend.
+func cleanupTempFile(filePath string) error {
+	// Only clean up files that look like our temp files
+	if strings.Contains(filePath, "copa-report-") && strings.HasSuffix(filePath, ".json") {
+		return os.Remove(filePath)
+	}
+	return nil // Don't remove files we didn't create
 }
 
 // Main entry point for the frontend.

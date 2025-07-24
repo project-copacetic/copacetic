@@ -3,11 +3,14 @@ package frontend
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+
+	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
 const (
@@ -15,21 +18,13 @@ const (
 )
 
 // Config holds the parsed configuration for the frontend.
+// It extends the common PatchOpts with frontend-specific settings.
 type Config struct {
-	// Base image reference to patch
-	BaseImage string
+	// Embed common patch options
+	*types.PatchOpts
 
-	// Vulnerability report data
-	Report []byte
-
-	// Scanner type (e.g., trivy, grype)
-	Scanner string
-
-	// Platform to patch (if multi-platform)
+	// Frontend-specific options
 	Platform *ispec.Platform
-
-	// Whether to ignore errors during patching
-	IgnoreErrors bool
 
 	// Package manager type (auto-detected if not specified)
 	PkgMgr string
@@ -55,13 +50,15 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 	opts := client.BuildOpts()
 
 	config := &Config{
-		Scanner:     "trivy", // default scanner
+		PatchOpts: &types.PatchOpts{
+			Scanner: "trivy", // default scanner
+		},
 		Annotations: make(map[string]string),
 	}
 
 	// Parse base image
 	if v, ok := opts.Opts[keyImage]; ok {
-		config.BaseImage = v
+		config.Image = v
 	} else {
 		return nil, errors.New("base image reference required via --opt image=<ref>")
 	}
@@ -73,7 +70,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 
 	// Parse ignore errors flag
 	if v, ok := opts.Opts[keyIgnoreErrors]; ok {
-		config.IgnoreErrors = v == trueStr || v == "1"
+		config.IgnoreError = v == trueStr || v == "1"
 	}
 
 	// Parse platform
@@ -87,18 +84,26 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 
 	// Parse vulnerability report
 	if reportData, ok := opts.Opts[keyReport]; ok {
-		// Inline report data
-		config.Report = []byte(reportData)
+		// Inline report data - save to temp file to match pkg/patch approach
+		tempFile, err := saveReportToTempFile([]byte(reportData))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to save inline report to temp file")
+		}
+		config.ReportFile = tempFile
 	} else if reportPath, ok := opts.Opts[keyReportPath]; ok {
-		// Read report from build context
-		report, err := readReportFromContext(ctx, client, reportPath)
+		// Read report from build context and save to persistent location
+		reportData, err := readReportFromContext(ctx, client, reportPath)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to read report from context: %s", reportPath)
 		}
-		config.Report = report
+		tempFile, err := saveReportToTempFile(reportData)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to save report to temp file")
+		}
+		config.ReportFile = tempFile
 	} else if updateAll, ok := opts.Opts["update-all"]; ok && (updateAll == trueStr || updateAll == "1") {
 		// Update all mode - no report needed
-		config.Report = nil
+		config.ReportFile = ""
 	} else {
 		return nil, errors.New("vulnerability report required via --opt report=<data>, --opt report-path=<path>, or --opt update-all=true")
 	}
@@ -137,6 +142,23 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 	}
 
 	return config, nil
+}
+
+// saveReportToTempFile saves report data to a temporary file and returns the file path.
+// This matches the pkg/patch approach of working with file paths.
+func saveReportToTempFile(data []byte) (string, error) {
+	tempFile, err := os.CreateTemp("", "copa-report-*.json")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create temp file")
+	}
+	defer tempFile.Close()
+
+	if _, err := tempFile.Write(data); err != nil {
+		os.Remove(tempFile.Name())
+		return "", errors.Wrap(err, "failed to write report data to temp file")
+	}
+
+	return tempFile.Name(), nil
 }
 
 // parsePlatform parses a platform string (e.g., "linux/amd64", "linux/arm64/v8").

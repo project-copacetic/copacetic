@@ -180,6 +180,11 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	require.NoError(t, err, "failed to create temp directory")
 	defer os.RemoveAll(tempDir)
 
+	// Create report file (Copa always uses file paths, not inline reports)
+	reportFile := filepath.Join(tempDir, "report.json")
+	err = os.WriteFile(reportFile, []byte(reportContent), 0600)
+	require.NoError(t, err, "failed to create report file")
+
 	outputTar := filepath.Join(tempDir, "patched.tar")
 
 	// Build the buildctl command for frontend patching
@@ -189,9 +194,10 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	args := []string{
 		"build",
 		"--frontend=gateway.v0",
+		"--local", fmt.Sprintf("context=%s", tempDir), // Pass temp directory as build context
 		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
 		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", fmt.Sprintf("report=%s", reportContent),
+		"--opt", "report-path=report.json", // Use report-path instead of inline report
 		"--opt", "scanner=trivy",
 		"--opt", "security-mode=sandbox",
 		"--opt", "cache-mode=local",
@@ -211,7 +217,8 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")
 
-	t.Logf("Running buildctl with frontend: %v", args)
+	t.Logf("Running buildctl with frontend using report file: %s", reportFile)
+	t.Logf("BuildKit command: %v", args)
 	cmd := exec.Command("buildctl", args...)
 	output, err = cmd.CombinedOutput()
 

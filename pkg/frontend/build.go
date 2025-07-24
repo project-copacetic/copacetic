@@ -20,21 +20,22 @@ import (
 // BuildPatchedImage builds a patched image using the Copa patching logic.
 func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.State, error) {
 	// Initialize buildkit configuration
-	bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, f.client, config.BaseImage, config.Platform)
+	bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, f.client, config.Image, config.Platform)
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to initialize buildkit config")
 	}
 
 	// Parse the vulnerability report (or use nil for update all mode)
 	var vr *unversioned.UpdateManifest
-	if config.Report != nil {
+	if config.ReportFile != "" {
 		var parseErr error
-		vr, parseErr = f.parseReportData(config.Report, config.Scanner)
+		// Use the same approach as pkg/patch
+		vr, parseErr = report.TryParseScanReport(config.ReportFile, config.Scanner)
 		if parseErr != nil {
 			return llb.State{}, errors.Wrap(parseErr, "failed to parse vulnerability report")
 		}
 	}
-	// If config.Report is nil, vr will be nil, which triggers "update all" mode in package managers
+	// If config.ReportFile is empty, vr will be nil, which triggers "update all" mode in package managers
 
 	// Get the OS information from the report metadata or detect from image
 	var osType, osVersion string
