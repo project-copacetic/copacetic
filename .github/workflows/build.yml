@@ -539,4 +539,5 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/buildx/default
           go test -v ./test/e2e/frontend --copa="$(pwd)/copa" --frontend-image="copa-frontend:test" -timeout 0

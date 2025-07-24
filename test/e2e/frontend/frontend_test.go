@@ -25,8 +25,6 @@ func TestFrontendPatch(t *testing.T) {
 		t.Skip("skipping frontend tests; buildctl binary not found in path")
 	}
 
-	// BuildKit is already set up by the CI workflow via docker/setup-buildx-action
-
 	// Setup local registry for testing
 	ctx := context.Background()
 	setupLocalRegistry(ctx, t)
@@ -214,7 +212,7 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	}
 
 	// Use the copa-frontend-test-builder BuildKit instance with proper insecure registry support
-	args = append([]string{"--addr", "docker-container://buildx_buildkit_copa-frontend-test-builder0"}, args...)
+	args = append([]string{"--addr", buildkitAddr}, args...)
 
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")

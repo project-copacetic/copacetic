@@ -105,7 +105,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 		// Update all mode - no report needed
 		config.ReportFile = ""
 	} else {
-		return nil, errors.New("vulnerability report required via --opt report=<data>, --opt report-path=<path>, or --opt update-all=true")
+		return nil, errors.New("vulnerability report required via --opt report=<path>, or --opt update-all=true")
 	}
 
 	// Parse package manager
