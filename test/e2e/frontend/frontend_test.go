@@ -15,6 +15,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// ensureBuildxBuilder creates a BuildKit builder with insecure registry support for testing.
+func ensureBuildxBuilder(t *testing.T) string {
+	builderName := "copa-frontend-test-builder"
+
+	// Remove existing builder if it exists
+	_ = exec.Command("docker", "buildx", "rm", builderName).Run()
+
+	// Create buildkitd.toml config for insecure registries
+	configContent := `[registry."localhost:5000"]
+  http = true
+  insecure = true
+
+[registry."172.17.0.1:5000"] 
+  http = true
+  insecure = true`
+
+	configFile := "/tmp/buildkitd-frontend-test.toml"
+	err := os.WriteFile(configFile, []byte(configContent), 0o600)
+	if err != nil {
+		t.Fatalf("Failed to create buildkitd config: %v", err)
+	}
+
+	// Create new builder with insecure registry config
+	cmd := exec.Command("docker", "buildx", "create", "--name", builderName,
+		"--driver", "docker-container",
+		"--driver-opt", "network=host",
+		"--config", configFile,
+		"--buildkitd-flags", "--allow-insecure-entitlement=network.host --allow-insecure-entitlement=security.insecure")
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to create buildx builder: %v\nOutput: %s", err, output)
+	}
+
+	// Bootstrap the builder
+	cmd = exec.Command("docker", "buildx", "inspect", "--bootstrap", builderName)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to bootstrap buildx builder: %v\nOutput: %s", err, output)
+	}
+
+	return fmt.Sprintf("docker-container://buildx_buildkit_%s0", builderName)
+}
+
 func TestFrontendPatch(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping test in short mode")
@@ -25,6 +67,11 @@ func TestFrontendPatch(t *testing.T) {
 		t.Skip("skipping frontend tests; buildctl binary not found in path")
 	}
 
+	// Check if trivy is available
+	if _, err := exec.LookPath("trivy"); err != nil {
+		t.Skip("skipping frontend tests; trivy binary not found in path")
+	}
+
 	// Setup local registry for testing
 	ctx := context.Background()
 	setupLocalRegistry(ctx, t)
@@ -33,139 +80,37 @@ func TestFrontendPatch(t *testing.T) {
 	// Build the frontend image
 	buildFrontendImage(t)
 
-	// Test cases
+	// Test cases - now using actual Trivy scans
 	testCases := []struct {
-		name          string
-		baseImage     string
-		localImage    string
-		reportContent string
-		ignoreErrors  bool
+		name       string
+		baseImage  string
+		localImage string
 	}{
 		{
 			name:       "nginx-debian",
 			baseImage:  "docker.io/library/nginx:1.21.6",
 			localImage: "localhost:5000/nginx:1.21.6",
-			reportContent: `{
-				"SchemaVersion": 2,
-				"ArtifactName": "nginx:1.21.6",
-				"ArtifactType": "container_image",
-				"Metadata": {
-					"OS": {
-						"Family": "debian",
-						"Name": "11.3"
-					},
-					"ImageConfig": {
-						"architecture": "amd64"
-					}
-				},
-				"Results": [
-					{
-						"Target": "nginx:1.21.6 (debian 11.3)",
-						"Class": "os-pkgs",
-						"Type": "debian",
-						"Vulnerabilities": [
-							{
-								"VulnerabilityID": "CVE-2023-28321",
-								"PkgID": "curl@7.74.0-1.3+deb11u7",
-								"PkgName": "curl",
-								"InstalledVersion": "7.74.0-1.3+deb11u7",
-								"FixedVersion": "7.74.0-1.3+deb11u8"
-							}
-						]
-					}
-				]
-			}`,
-			ignoreErrors: false,
 		},
 		{
 			name:       "alpine",
 			baseImage:  "docker.io/library/alpine:3.18",
 			localImage: "localhost:5000/alpine:3.18",
-			reportContent: `{
-				"SchemaVersion": 2,
-				"ArtifactName": "alpine:3.18",
-				"ArtifactType": "container_image",
-				"Metadata": {
-					"OS": {
-						"Family": "alpine",
-						"Name": "3.18"
-					},
-					"ImageConfig": {
-						"architecture": "amd64"
-					}
-				},
-				"Results": [
-					{
-						"Target": "alpine:3.18 (alpine 3.18)",
-						"Class": "os-pkgs",
-						"Type": "alpine",
-						"Vulnerabilities": [
-							{
-								"VulnerabilityID": "CVE-2023-0464",
-								"PkgID": "libssl3@3.0.8-r0",
-								"PkgName": "libssl3",
-								"InstalledVersion": "3.0.8-r0",
-								"FixedVersion": "3.0.8-r1"
-							}
-						]
-					}
-				]
-			}`,
-			ignoreErrors: false,
 		},
 		{
-			name:       "ubuntu-error-handling",
+			name:       "ubuntu",
 			baseImage:  "docker.io/library/ubuntu:20.04",
 			localImage: "localhost:5000/ubuntu:20.04",
-			reportContent: `{
-				"SchemaVersion": 2,
-				"ArtifactName": "ubuntu:20.04",
-				"ArtifactType": "container_image",
-				"Metadata": {
-					"OS": {
-						"Family": "ubuntu",
-						"Name": "20.04"
-					},
-					"ImageConfig": {
-						"architecture": "amd64"
-					}
-				},
-				"Results": [
-					{
-						"Target": "ubuntu:20.04 (ubuntu 20.04)",
-						"Class": "os-pkgs",
-						"Type": "ubuntu",
-						"Vulnerabilities": [
-							{
-								"VulnerabilityID": "CVE-2023-28321",
-								"PkgID": "curl@7.68.0-1ubuntu2.18",
-								"PkgName": "curl",
-								"InstalledVersion": "7.68.0-1ubuntu2.18",
-								"FixedVersion": "7.68.0-1ubuntu2.19"
-							},
-							{
-								"VulnerabilityID": "CVE-2023-FAKE",
-								"PkgID": "nonexistent-package@1.0.0",
-								"PkgName": "nonexistent-package",
-								"InstalledVersion": "1.0.0",
-								"FixedVersion": "1.0.1"
-							}
-						]
-					}
-				]
-			}`,
-			ignoreErrors: true,
 		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			runFrontendTest(t, tc.baseImage, tc.localImage, tc.reportContent, tc.ignoreErrors)
+			runFrontendTest(t, tc.baseImage, tc.localImage)
 		})
 	}
 }
 
-func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, ignoreErrors bool) {
+func runFrontendTest(t *testing.T, baseImage, localImage string) {
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)
 	copyCmd := exec.Command("oras", "cp", baseImage, localImage)
@@ -178,10 +123,30 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	require.NoError(t, err, "failed to create temp directory")
 	defer os.RemoveAll(tempDir)
 
-	// Create report file (Copa always uses file paths, not inline reports)
+	// Run Trivy scan to generate actual vulnerability report
 	reportFile := filepath.Join(tempDir, "report.json")
-	err = os.WriteFile(reportFile, []byte(reportContent), 0o600)
-	require.NoError(t, err, "failed to create report file")
+	t.Logf("Scanning %s with Trivy to generate report", localImage)
+
+	trivyCmd := exec.Command("trivy", "image",
+		"--format", "json",
+		"--output", reportFile,
+		"--quiet",
+		"--no-progress",
+		"--insecure", // Allow scanning images from insecure registries
+		localImage)
+
+	trivyOutput, err := trivyCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Trivy scan output: %s", string(trivyOutput))
+		require.NoError(t, err, "failed to run trivy scan")
+	}
+
+	// Verify the report file was created
+	if _, err := os.Stat(reportFile); err != nil {
+		t.Fatalf("Trivy report file was not created: %v", err)
+	}
+
+	t.Logf("Trivy report generated at: %s", reportFile)
 
 	// Create a dummy Dockerfile for context compatibility
 	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
@@ -196,10 +161,10 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 
 	args := []string{
 		"build",
-		"--frontend=gateway.v0", 
+		"--frontend=gateway.v0",
 		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
 		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", fmt.Sprintf("report=%s", reportContent), // Pass report content inline as a workaround
+		"--opt", fmt.Sprintf("report=%s", reportFile), // Pass report file path - consistent with patch command
 		"--opt", "scanner=trivy",
 		"--opt", "security-mode=sandbox",
 		"--opt", "cache-mode=local",
@@ -207,12 +172,15 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 		"--opt", "platform=linux/amd64",
 	}
 
-	if ignoreErrors {
-		args = append(args, "--opt", "ignore-errors=true")
+	// Handle buildx:// address - this buildctl version doesn't support buildx://
+	actualAddr := buildkitAddr
+	if buildkitAddr == "buildx://" {
+		// This buildctl version doesn't support buildx://, so we create our own builder
+		actualAddr = ensureBuildxBuilder(t)
+		t.Logf("buildx:// not supported by this buildctl version, using %s", actualAddr)
 	}
 
-	// Use the copa-frontend-test-builder BuildKit instance with proper insecure registry support
-	args = append([]string{"--addr", buildkitAddr}, args...)
+	args = append([]string{"--addr", actualAddr}, args...)
 
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")
@@ -221,22 +189,10 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	t.Logf("BuildKit command: %v", args)
 	cmd := exec.Command("buildctl", args...)
 	output, err = cmd.CombinedOutput()
-
-	if ignoreErrors {
-		// For error handling tests with ignore-errors, we expect success even if there are patch errors
-		if err != nil {
-			t.Logf("Warning: buildctl failed but ignore-errors was set: %s", string(output))
-		}
-	} else {
-		require.NoError(t, err, fmt.Sprintf("buildctl failed: %s", string(output)))
-	}
+	require.NoError(t, err, fmt.Sprintf("buildctl failed: %s", string(output)))
 
 	// Verify the output tar was created
 	if _, err := os.Stat(outputTar); err != nil {
-		if ignoreErrors {
-			t.Logf("Output tar not created, this may be expected for error-handling tests: %v", err)
-			return
-		}
 		t.Fatalf("Output tar was not created: %v", err)
 	}
 

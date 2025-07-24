@@ -83,13 +83,9 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 	}
 
 	// Parse vulnerability report
-	if reportData, ok := opts.Opts[keyReport]; ok {
-		// Inline report data - save to temp file to match pkg/patch approach
-		tempFile, err := saveReportToTempFile([]byte(reportData))
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to save inline report to temp file")
-		}
-		config.ReportFile = tempFile
+	if reportPath, ok := opts.Opts[keyReport]; ok {
+		// Direct file path - same as patch command --report/-r
+		config.ReportFile = reportPath
 	} else if reportPath, ok := opts.Opts[keyReportPath]; ok {
 		// Read report from build context and save to persistent location
 		reportData, err := readReportFromContext(ctx, client, reportPath)
@@ -105,7 +101,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 		// Update all mode - no report needed
 		config.ReportFile = ""
 	} else {
-		return nil, errors.New("vulnerability report required via --opt report=<path>, or --opt update-all=true")
+		return nil, errors.New("vulnerability report required via --opt report=<file-path> or --opt report-path=<build-context-path>, or --opt update-all=true")
 	}
 
 	// Parse package manager
