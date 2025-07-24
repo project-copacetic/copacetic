@@ -10,6 +10,10 @@ import (
 	"github.com/pkg/errors"
 )
 
+const (
+	trueStr = "true"
+)
+
 // Config holds the parsed configuration for the frontend.
 type Config struct {
 	// Base image reference to patch
@@ -69,7 +73,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 
 	// Parse ignore errors flag
 	if v, ok := opts.Opts[keyIgnoreErrors]; ok {
-		config.IgnoreErrors = v == "true" || v == "1"
+		config.IgnoreErrors = v == trueStr || v == "1"
 	}
 
 	// Parse platform
@@ -92,7 +96,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 			return nil, errors.Wrapf(err, "failed to read report from context: %s", reportPath)
 		}
 		config.Report = report
-	} else if updateAll, ok := opts.Opts["update-all"]; ok && (updateAll == "true" || updateAll == "1") {
+	} else if updateAll, ok := opts.Opts["update-all"]; ok && (updateAll == trueStr || updateAll == "1") {
 		// Update all mode - no report needed
 		config.Report = nil
 	} else {
@@ -106,7 +110,7 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 
 	// Parse offline mode
 	if v, ok := opts.Opts[keyOfflineMode]; ok {
-		config.OfflineMode = v == "true" || v == "1"
+		config.OfflineMode = v == trueStr || v == "1"
 	}
 
 	// Parse cache mode
