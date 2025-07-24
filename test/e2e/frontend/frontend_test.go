@@ -182,7 +182,7 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 
 	// Create report file (Copa always uses file paths, not inline reports)
 	reportFile := filepath.Join(tempDir, "report.json")
-	err = os.WriteFile(reportFile, []byte(reportContent), 0600)
+	err = os.WriteFile(reportFile, []byte(reportContent), 0o600)
 	require.NoError(t, err, "failed to create report file")
 
 	outputTar := filepath.Join(tempDir, "patched.tar")
@@ -361,7 +361,6 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 	frontendImage = buildkitAccessImage
 	t.Logf("Frontend image pushed to local registry and accessible via: %s", frontendImage)
 }
-
 
 func removeLocalImage(_ *testing.T, image string) {
 	cmd := exec.Command("docker", "rmi", "-f", image)

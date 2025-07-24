@@ -3,8 +3,6 @@ package frontend
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -65,9 +63,9 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.S
 	}
 
 	// Apply package updates using existing Copa logic
-	updatedState, patchCommands, err := pm.InstallUpdates(ctx, vr, config.IgnoreErrors)
+	updatedState, patchCommands, err := pm.InstallUpdates(ctx, vr, config.IgnoreError)
 	if err != nil {
-		if config.IgnoreErrors {
+		if config.IgnoreError {
 			// Log error but continue with original state
 			fmt.Printf("Warning: failed to install updates (ignored): %v\n", err)
 			return bkConfig.ImageState, nil
@@ -122,63 +120,8 @@ func (f *Frontend) detectOSFromImage(ctx context.Context, bkConfig *buildkit.Con
 	// Use the robust OS detection from pkg/common
 	osInfo, err := common.GetOSInfo(ctx, osReleaseData)
 	if err != nil {
-		// Fallback to parsing manually if common.GetOSInfo fails
-		osType, osVersion := parseOSRelease(string(osReleaseData))
-		return osType, osVersion, nil
+		return "", "", errors.Wrap(err, "failed to parse OS info from os-release")
 	}
 
 	return osInfo.Type, osInfo.Version, nil
-}
-
-// parseOSRelease parses /etc/os-release content to extract OS info.
-func parseOSRelease(content string) (string, string) {
-	lines := strings.Split(content, "\n")
-	var id, version string
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "ID=") {
-			id = strings.Trim(strings.TrimPrefix(line, "ID="), "\"")
-		} else if strings.HasPrefix(line, "VERSION_ID=") {
-			version = strings.Trim(strings.TrimPrefix(line, "VERSION_ID="), "\"")
-		}
-	}
-
-	return id, version
-}
-
-// parseReportData parses vulnerability report data from bytes.
-func (f *Frontend) parseReportData(data []byte, scannerName string) (*unversioned.UpdateManifest, error) {
-	// Create a temporary file to work with the existing report parsing infrastructure
-	tempFile, err := f.createTempReportFile(data)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create temporary report file")
-	}
-	defer os.Remove(tempFile) // Clean up temp file
-
-	// Use the existing pkg/report infrastructure for parsing
-	manifest, err := report.TryParseScanReport(tempFile, scannerName)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to parse %s report", scannerName)
-	}
-
-	return manifest, nil
-}
-
-// createTempReportFile creates a temporary file with the report data for use with pkg/report.
-func (f *Frontend) createTempReportFile(data []byte) (string, error) {
-	// Create a temporary file
-	tmpFile, err := os.CreateTemp("", "copa-report-*.json")
-	if err != nil {
-		return "", errors.Wrap(err, "failed to create temporary file")
-	}
-	defer tmpFile.Close()
-
-	// Write the report data to the file
-	if _, err := tmpFile.Write(data); err != nil {
-		os.Remove(tmpFile.Name()) // Clean up on error
-		return "", errors.Wrap(err, "failed to write report data to temporary file")
-	}
-
-	return tmpFile.Name(), nil
 }
