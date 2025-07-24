@@ -77,6 +77,11 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.S
 	graphBuilder := NewLLBGraphBuilder(f.client, config)
 	finalState, err := graphBuilder.BuildPatchedImage(ctx, updatedState, patchCommands)
 	if err != nil {
+		if config.IgnoreError {
+			// Log error but continue with original state
+			fmt.Printf("Warning: failed to build patched image (ignored): %v\n", err)
+			return bkConfig.ImageState, nil
+		}
 		return llb.State{}, errors.Wrap(err, "failed to build patched image")
 	}
 

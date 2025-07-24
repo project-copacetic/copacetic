@@ -185,6 +185,11 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 	err = os.WriteFile(reportFile, []byte(reportContent), 0o600)
 	require.NoError(t, err, "failed to create report file")
 
+	// Create a dummy Dockerfile for context compatibility
+	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
+	err = os.WriteFile(dockerfilePath, []byte("FROM scratch\n"), 0o600)
+	require.NoError(t, err, "failed to create dummy Dockerfile")
+
 	outputTar := filepath.Join(tempDir, "patched.tar")
 
 	// Build the buildctl command for frontend patching
@@ -193,11 +198,10 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 
 	args := []string{
 		"build",
-		"--frontend=gateway.v0",
-		"--local", fmt.Sprintf("context=%s", tempDir), // Pass temp directory as build context
+		"--frontend=gateway.v0", 
 		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
 		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", "report-path=report.json", // Use report-path instead of inline report
+		"--opt", fmt.Sprintf("report=%s", reportContent), // Pass report content inline as a workaround
 		"--opt", "scanner=trivy",
 		"--opt", "security-mode=sandbox",
 		"--opt", "cache-mode=local",
@@ -209,10 +213,8 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 		args = append(args, "--opt", "ignore-errors=true")
 	}
 
-	// Add BuildKit address if not using default
-	if buildkitAddr != "docker://" {
-		args = append([]string{"--addr", buildkitAddr}, args...)
-	}
+	// Use the copa-frontend-test-builder BuildKit instance with proper insecure registry support
+	args = append([]string{"--addr", "docker-container://buildx_buildkit_copa-frontend-test-builder0"}, args...)
 
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")
