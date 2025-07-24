@@ -540,4 +540,4 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/buildx/default
-          go test -v ./test/e2e/frontend --copa="$(pwd)/copa" --frontend-image="copa-frontend:test" -timeout 0
+          go test -v ./test/e2e/frontend --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --frontend-image="copa-frontend:test" -timeout 0
