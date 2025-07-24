@@ -25,11 +25,7 @@ func TestFrontendPatch(t *testing.T) {
 		t.Skip("skipping frontend tests; buildctl binary not found in path")
 	}
 
-	// Setup BuildKit if using docker://
-	if buildkitAddr == "docker://" {
-		setupBuildKit(t)
-		defer stopBuildKit(t)
-	}
+	// BuildKit is already set up by the CI workflow via docker/setup-buildx-action
 
 	// Setup local registry for testing
 	ctx := context.Background()
@@ -199,8 +195,8 @@ func runFrontendTest(t *testing.T, baseImage, localImage, reportContent string, 
 		"--opt", "scanner=trivy",
 		"--opt", "security-mode=sandbox",
 		"--opt", "cache-mode=local",
-		"--output", fmt.Sprintf("type=docker,dest=%s", outputTar),
-		"--opt", fmt.Sprintf("platform=linux/amd64"),
+		"--output", "type=docker,dest=" + outputTar,
+		"--opt", "platform=linux/amd64",
 	}
 
 	if ignoreErrors {
@@ -359,74 +355,8 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 	t.Logf("Frontend image pushed to local registry and accessible via: %s", frontendImage)
 }
 
-func setupBuildKit(t *testing.T) {
-	t.Log("Starting BuildKit daemon for frontend tests...")
 
-	// Create BuildKit configuration for insecure registries
-	buildkitConfigContent := `[registry."172.17.0.1:5000"]
-  http = true
-  insecure = true
-[registry."localhost:5000"]
-  http = true
-  insecure = true`
-
-	buildkitConfigPath := "/tmp/buildkitd.toml"
-	err := os.WriteFile(buildkitConfigPath, []byte(buildkitConfigContent), 0600)
-	require.NoError(t, err, "failed to create BuildKit config")
-
-	// Start BuildKit daemon in a container with insecure registry support
-	cmd := exec.Command("docker", "run", "-d", "--rm", "--privileged",
-		"-p", "127.0.0.1:0:1234",
-		"-v", fmt.Sprintf("%s:/etc/buildkit/buildkitd.toml", buildkitConfigPath),
-		"--entrypoint", "buildkitd",
-		"moby/buildkit:v0.19.0",
-		"--addr", "tcp://0.0.0.0:1234",
-		"--allow-insecure-entitlement", "security.insecure")
-
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, fmt.Sprintf("failed to start BuildKit daemon: %v\nOutput: %s", err, string(output)))
-
-	buildkitdID := strings.TrimSpace(string(output))
-	t.Logf("BuildKit daemon started with ID: %s", buildkitdID)
-
-	// Store the container ID for cleanup
-	t.Cleanup(func() {
-		stopBuildKitContainer(buildkitdID)
-		os.Remove(buildkitConfigPath)
-	})
-
-	// Get the mapped port
-	portCmd := exec.Command("docker", "port", buildkitdID, "1234")
-	portOutput, err := portCmd.CombinedOutput()
-	require.NoError(t, err, fmt.Sprintf("failed to get BuildKit port: %v\nOutput: %s", err, string(portOutput)))
-
-	buildkitAddr = "tcp://" + strings.TrimSpace(string(portOutput))
-	t.Logf("BuildKit daemon available at: %s", buildkitAddr)
-
-	// Wait for BuildKit to be ready
-	t.Log("Waiting for BuildKit daemon to be ready...")
-	for i := 0; i < 30; i++ {
-		checkCmd := exec.Command("buildctl", "--addr", buildkitAddr, "debug", "info")
-		if checkCmd.Run() == nil {
-			t.Log("BuildKit daemon is ready")
-			return
-		}
-		time.Sleep(1 * time.Second)
-	}
-
-	t.Fatal("BuildKit daemon did not become ready within 30 seconds")
-}
-
-func stopBuildKit(t *testing.T) {
-	// Cleanup is handled by t.Cleanup in setupBuildKit
-}
-
-func stopBuildKitContainer(containerID string) {
-	cmd := exec.Command("docker", "rm", "-f", containerID)
-	_ = cmd.Run() // ignore errors during cleanup
-}
-
-func removeLocalImage(t *testing.T, image string) {
+func removeLocalImage(_ *testing.T, image string) {
 	cmd := exec.Command("docker", "rmi", "-f", image)
 	_ = cmd.Run() // ignore errors during cleanup
 }
