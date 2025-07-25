@@ -114,6 +114,19 @@ No. To prevent a buildup of layers, Copa discards the previous patch layer with 
 
 If you're seeing errors related to missing **Release files** or `404 Not Found` errors during patching, your base image is likely using an End-of-Life (EOL) release of a distribution. Copa cannot patch images based on EOL operating systems where the package repositories have been removed or archived.
 
+## Why am I seeing GPG key errors when trying to patch or update images?
+
+This can happen if the **GPG key used to sign packages in the image has expired**. Copacetic relies on the GPG keys present in the container image to verify and trust package updates. If these keys are expired, package installations or updates during patching may fail with signature verification errors.
+
+### How to resolve this?
+
+- **Update the expired GPG keys** inside the container image using the package manager.
+
+For Alpine-based images:
+  ```sh
+ apk update && apk upgrade --available
+  ```
+
 ## What does "End-of-Life" mean for patching?
 
 When a release of Linux distribution reaches its End-of-Life date:
