@@ -17,6 +17,19 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// DeduplicateStringSlice removes duplicate strings from a slice while preserving order.
+func DeduplicateStringSlice(input []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, item := range input {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func EnsurePath(path string, perm fs.FileMode) (bool, error) {
 	createdPath := false
 	st, err := os.Stat(path)

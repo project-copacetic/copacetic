@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	pep440 "github.com/aquasecurity/go-pep440-version"
@@ -16,9 +17,52 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	// pipInstallTimeoutSeconds defines the timeout for pip install operations in seconds.
+	pipInstallTimeoutSeconds = 300
+)
+
 type pythonManager struct {
 	config        *buildkit.Config
 	workingFolder string
+}
+
+// validPythonPackageNamePattern defines the regex pattern for valid Python package names
+// Based on PEP 508: https://www.python.org/dev/peps/pep-0508/
+var validPythonPackageNamePattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`)
+
+// validatePythonPackageName validates that a package name is safe for use in shell commands.
+func validatePythonPackageName(name string) error {
+	if name == "" {
+		return fmt.Errorf("package name cannot be empty")
+	}
+	if len(name) > 214 {
+		return fmt.Errorf("package name too long (max 214 characters)")
+	}
+	if !validPythonPackageNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid package name format: %s", name)
+	}
+	// Additional safety checks for shell injection
+	if strings.ContainsAny(name, ";&|`$(){}[]<>\"'\\") {
+		return fmt.Errorf("package name contains unsafe characters: %s", name)
+	}
+	return nil
+}
+
+// validatePythonVersion validates that a version string is safe for use in shell commands.
+func validatePythonVersion(version string) error {
+	if version == "" {
+		return fmt.Errorf("version cannot be empty")
+	}
+	// Check if it's a valid PEP440 version
+	if !isValidPythonVersion(version) {
+		return fmt.Errorf("invalid version format: %s", version)
+	}
+	// Additional safety checks for shell injection
+	if strings.ContainsAny(version, ";&|`$(){}[]<>\"'\\") {
+		return fmt.Errorf("version contains unsafe characters: %s", version)
+	}
+	return nil
 }
 
 // isValidPythonVersion checks if a version string is a valid PEP440 version.
@@ -141,15 +185,7 @@ func (pm *pythonManager) validatePythonPackageVersions(
 				validationIssues = append(validationIssues, fmt.Sprintf("package %s: no freeze data to validate", pkgUpdate.Name))
 			}
 			if !ignoreErrors && len(failedPackages) > 0 {
-				// Create a unique list of failed packages before returning
-				uniqueFailedPkgsMap := make(map[string]bool)
-				var uniqueFailedPkgsList []string
-				for _, pkgName := range failedPackages {
-					if !uniqueFailedPkgsMap[pkgName] {
-						uniqueFailedPkgsMap[pkgName] = true
-						uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
-					}
-				}
+				uniqueFailedPkgsList := utils.DeduplicateStringSlice(failedPackages)
 				return uniqueFailedPkgsList, fmt.Errorf(
 					"failed to validate python packages: %s", strings.Join(validationIssues, "; "))
 			}
@@ -160,12 +196,22 @@ func (pm *pythonManager) validatePythonPackageVersions(
 	installedPkgs := make(map[string]string)
 	scanner := bufio.NewScanner(strings.NewReader(string(resultsBytes)))
 	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, "==", 2)
-		if len(parts) == 2 {
-			installedPkgs[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		// Handle strict package==version format first
+		if parts := strings.SplitN(line, "==", 2); len(parts) == 2 {
+			pkgName := strings.TrimSpace(parts[0])
+			version := strings.TrimSpace(parts[1])
+			installedPkgs[pkgName] = version
 		} else {
-			log.Debugf("Skipping unparsable line in pip freeze output: %s", line)
+			// Handle other formats that might be encountered in pip freeze output
+			// Examples: "package>=1.0", "package~=1.0", etc.
+			// For compatibility, we'll extract the package name but skip version parsing
+			// since we only care about packages with exact version matches (==)
+			log.Debugf("Skipping line without strict '==' format in pip freeze output: %s", line)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -174,14 +220,7 @@ func (pm *pythonManager) validatePythonPackageVersions(
 			failedPackages = append(failedPackages, pkgUpdate.Name)
 		}
 		// Create a unique list of failed packages
-		uniqueFailedPkgsMap := make(map[string]bool)
-		var uniqueFailedPkgsList []string
-		for _, pkgName := range failedPackages {
-			if !uniqueFailedPkgsMap[pkgName] {
-				uniqueFailedPkgsMap[pkgName] = true
-				uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
-			}
-		}
+		uniqueFailedPkgsList := utils.DeduplicateStringSlice(failedPackages)
 		return uniqueFailedPkgsList, fmt.Errorf("error reading pip freeze results: %w", err)
 	}
 
@@ -253,15 +292,9 @@ func (pm *pythonManager) validatePythonPackageVersions(
 		}
 	}
 
-	uniqueFailedPkgsMap := make(map[string]bool)
 	var uniqueFailedPkgsList []string
 	if len(failedPackages) > 0 {
-		for _, pkgName := range failedPackages {
-			if !uniqueFailedPkgsMap[pkgName] {
-				uniqueFailedPkgsMap[pkgName] = true
-				uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
-			}
-		}
+		uniqueFailedPkgsList = utils.DeduplicateStringSlice(failedPackages)
 	}
 
 	if len(validationIssues) > 0 {
@@ -282,7 +315,24 @@ func (pm *pythonManager) upgradePackages(
 ) (*llb.State, []byte, error) {
 	installPkgArgs := []string{}
 	for _, u := range updates {
+		// Validate package name for security
+		if err := validatePythonPackageName(u.Name); err != nil {
+			log.Errorf("Invalid package name %s: %v", u.Name, err)
+			if !ignoreErrors {
+				return nil, nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
+			}
+			continue
+		}
+
 		if u.FixedVersion != "" {
+			// Validate version for security
+			if err := validatePythonVersion(u.FixedVersion); err != nil {
+				log.Errorf("Invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
+				if !ignoreErrors {
+					return nil, nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
+				}
+				continue
+			}
 			installPkgArgs = append(installPkgArgs, fmt.Sprintf("%s==%s", u.Name, u.FixedVersion))
 		} else {
 			// Fallback if FixedVersion is not available, though ideally it should always be.
@@ -306,7 +356,8 @@ func (pm *pythonManager) upgradePackages(
 		var installCommands []string
 		for _, pkgArg := range installPkgArgs {
 			installCommands = append(installCommands,
-				fmt.Sprintf(`pip install %s || echo "WARN: pip install failed for %s"`, pkgArg, pkgArg))
+				fmt.Sprintf(`pip install --timeout %d %s || echo "WARN: pip install failed for %s"`,
+					pipInstallTimeoutSeconds, pkgArg, pkgArg))
 		}
 		installCmd := fmt.Sprintf(`sh -c '%s'`, strings.Join(installCommands, "; "))
 		pipInstalled = pm.config.ImageState.Run(
@@ -315,8 +366,9 @@ func (pm *pythonManager) upgradePackages(
 		).Root()
 	} else {
 		// Normal pip install that will fail on errors - install all packages at once
-		const pipInstallTemplate = `pip install %s`
-		installCmd := fmt.Sprintf(pipInstallTemplate, strings.Join(installPkgArgs, " "))
+		// Add timeout to prevent hanging
+		const pipInstallTemplate = `pip install --timeout %d %s`
+		installCmd := fmt.Sprintf(pipInstallTemplate, pipInstallTimeoutSeconds, strings.Join(installPkgArgs, " "))
 		pipInstalled = pm.config.ImageState.Run(
 			llb.Shlex(installCmd),
 			llb.WithProxy(utils.GetProxy()),

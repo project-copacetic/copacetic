@@ -74,13 +74,14 @@ The patch level determines the maximum version bump allowed for library updates:
 
 - **Allows**: `2.6.0` → `2.6.1` (preferred) or `2.7.0`
 - **Blocks**: `2.6.0` → `3.0.0`
-- **Preference**: Patch versions are preferred over minor versions
+- **Preference**: If both `2.6.1` and `2.7.0` are available, it will choose `2.6.1` (patch) over `2.7.0` (minor)
 - **Use case**: Moderate updates, some new features acceptable
 
 #### `major` Level
 
 - **Allows**: Any version update
-- **Preference**: Patch > Minor > Major (safest compatible version)
+- **Preference**: When comma-separated versions are available, prefers Patch > Minor > Major for compatibility. When no comma-separated versions exist, picks the highest version to fix all CVEs.
+- **Example**: If both `2.6.1` and `2.7.0` are available, it will choose `2.6.1` for better compatibility
 - **Use case**: Aggressive updates, all fixes applied regardless of compatibility risk
 
 :::warning
