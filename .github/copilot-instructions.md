@@ -35,7 +35,7 @@ Copacetic (Copa) is a CLI tool that patches container image vulnerabilities usin
 
 ## Supported Operating Systems & Package Managers
 - **Debian/Ubuntu**: Uses `dpkg` and `apt`
-- **RHEL/CentOS/Rocky/Alma/Oracle/Amazon**: Uses `rpm` and `yum/dnf`
+- **RHEL/CentOS/Rocky/Alma/Oracle/Amazon**: Uses `rpm`, `yum`, and `dnf`
 - **Alpine**: Uses `apk`
 - **CBL-Mariner/Azure Linux**: Uses `rpm` and `tdnf`
 
