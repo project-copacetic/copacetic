@@ -313,7 +313,7 @@ func (pm *pythonManager) upgradePackages(
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, []byte, error) {
-	installPkgArgs := []string{}
+	var installPkgSpecs []string
 	for _, u := range updates {
 		// Validate package name for security
 		if err := validatePythonPackageName(u.Name); err != nil {
@@ -333,46 +333,33 @@ func (pm *pythonManager) upgradePackages(
 				}
 				continue
 			}
-			installPkgArgs = append(installPkgArgs, fmt.Sprintf("%s==%s", u.Name, u.FixedVersion))
+			// Use validated package name and version to create spec
+			installPkgSpecs = append(installPkgSpecs, u.Name+"=="+u.FixedVersion)
 		} else {
 			// Fallback if FixedVersion is not available, though ideally it should always be.
 			// Or, decide if this case should error out or skip the package.
 			// For now, let's assume we want to upgrade it if no specific version is pinned.
-			installPkgArgs = append(installPkgArgs, u.Name)
+			installPkgSpecs = append(installPkgSpecs, u.Name)
 			log.Warnf("No FixedVersion available for Python package %s, attempting upgrade.", u.Name)
 		}
 	}
 
-	if len(installPkgArgs) == 0 {
+	if len(installPkgSpecs) == 0 {
 		log.Info("No Python packages to install or upgrade.")
 		return &pm.config.ImageState, []byte{}, nil
 	}
 
-	// Install all requested update packages
+	// Install all requested update packages using validated package specifications
 	var pipInstalled llb.State
 
 	if ignoreErrors {
-		// When ignoring errors, install packages individually in a single layer
-		var installCommands []string
-		for _, pkgArg := range installPkgArgs {
-			installCommands = append(installCommands,
-				fmt.Sprintf(`pip install --timeout %d %s || echo "WARN: pip install failed for %s"`,
-					pipInstallTimeoutSeconds, pkgArg, pkgArg))
-		}
-		installCmd := fmt.Sprintf(`sh -c '%s'`, strings.Join(installCommands, "; "))
-		pipInstalled = pm.config.ImageState.Run(
-			llb.Shlex(installCmd),
-			llb.WithProxy(utils.GetProxy()),
-		).Root()
+		// When ignoring errors, we need to handle each package installation individually
+		// Build a single command that tries each package and continues on failure
+		pipInstalled = pm.installPackagesWithErrorHandling(installPkgSpecs)
 	} else {
 		// Normal pip install that will fail on errors - install all packages at once
-		// Add timeout to prevent hanging
-		const pipInstallTemplate = `pip install --timeout %d %s`
-		installCmd := fmt.Sprintf(pipInstallTemplate, pipInstallTimeoutSeconds, strings.Join(installPkgArgs, " "))
-		pipInstalled = pm.config.ImageState.Run(
-			llb.Shlex(installCmd),
-			llb.WithProxy(utils.GetProxy()),
-		).Root()
+		// Build command with validated package specifications
+		pipInstalled = pm.installPackagesStandard(installPkgSpecs)
 	}
 
 	// Write updates-manifest to host for post-patch validation
@@ -390,8 +377,36 @@ func (pm *pythonManager) upgradePackages(
 		return nil, nil, err
 	}
 
-	// Diff the installed updates and merge that into the target image
+	// Diff the installed updates and apply only the changes to the target image
 	patchDiff := llb.Diff(pm.config.ImageState, pipInstalled)
-	patchMerge := llb.Merge([]llb.State{pm.config.ImageState, patchDiff})
-	return &patchMerge, resultsBytes, nil
+	return &patchDiff, resultsBytes, nil
+}
+
+// installPackagesWithErrorHandling installs packages individually with error handling.
+func (pm *pythonManager) installPackagesWithErrorHandling(packageSpecs []string) llb.State {
+	// Build individual pip install commands with error handling
+	var installCommands []string
+	for _, spec := range packageSpecs {
+		// Use printf to avoid shell injection - spec is already validated
+		installCommands = append(installCommands,
+			fmt.Sprintf(`pip install --timeout %d '%s' || printf "WARN: pip install failed for %s\n"`,
+				pipInstallTimeoutSeconds, spec, spec))
+	}
+	installCmd := fmt.Sprintf(`sh -c '%s'`, strings.Join(installCommands, "; "))
+	return pm.config.ImageState.Run(
+		llb.Shlex(installCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+}
+
+// installPackagesStandard installs packages in a single pip command.
+func (pm *pythonManager) installPackagesStandard(packageSpecs []string) llb.State {
+	// Build a single pip install command with all validated package specifications
+	args := []string{"pip", "install", fmt.Sprintf("--timeout=%d", pipInstallTimeoutSeconds)}
+	args = append(args, packageSpecs...)
+	
+	return pm.config.ImageState.Run(
+		llb.Args(args), // Use llb.Args for safer command construction
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
 }

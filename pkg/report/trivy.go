@@ -13,6 +13,13 @@ import (
 
 type TrivyParser struct{}
 
+// getSpecialPackagePatchLevels returns a map of package names to their special patch level handling rules.
+func getSpecialPackagePatchLevels() map[string]string {
+	return map[string]string{
+		"certifi": "major", // Always use latest version for certificate handling
+	}
+}
+
 // parseVersion parses a semantic version string and returns major, minor, patch as integers.
 func parseVersion(version string) (major, minor, patch int, err error) {
 	// Remove any prefix like 'v'
@@ -205,7 +212,10 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 				return getHighestVersion(majorVersions)
 			}
 		} else {
-			// When no comma-separated versions, pick highest version to fix all CVEs
+			// When no comma-separated versions, pick the highest version to fix all CVEs.
+			// Note: While this fixes the most vulnerabilities, it may introduce breaking changes
+			// or compatibility issues. Users should weigh the security benefits against the
+			// potential risks of upgrading to a higher version.
 			return getHighestVersion(validCandidates)
 		}
 		return ""
@@ -381,10 +391,10 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		if len(fixedVersions) > 0 {
 			info := langPackageInfo[pkgName]
 
-			// Special handling for certifi package - always use major patch level to get latest version
+			// Determine patch level to use, with special handling for certain packages
 			patchLevelToUse := libraryPatchLevel
-			if pkgName == "certifi" {
-				patchLevelToUse = "major"
+			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[pkgName]; exists {
+				patchLevelToUse = specialPatchLevel
 			}
 
 			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)

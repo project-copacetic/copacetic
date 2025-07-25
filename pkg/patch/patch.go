@@ -627,11 +627,13 @@ func patchSingleArchImage(
 					// Update the main patchedImageState with the result of all language managers
 					patchedImageState = currentProcessingState
 
-					// Merge OS-level error packages with language-level error packages, ensuring uniqueness
+					// Merge OS-level error packages with language-level error packages
 					if len(langErrPkgsFromAllManagers) > 0 {
 						errPkgs = append(errPkgs, langErrPkgsFromAllManagers...)
-						errPkgs = utils.DeduplicateStringSlice(errPkgs)
 					}
+
+					// Ensure uniqueness of all error packages after processing all language managers
+					errPkgs = utils.DeduplicateStringSlice(errPkgs)
 
 					if combinedLangError != nil && !ignoreError {
 						ch <- combinedLangError
