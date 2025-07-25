@@ -598,11 +598,12 @@ func patchSingleArchImage(
 
 					for _, individualLangManager := range languageManagers {
 						log.Debugf("Applying language updates using manager: %T", individualLangManager)
+						var newState *llb.State
 						var tempErrPkgs []string
 						var tempErr error
 
 						// Call InstallUpdates on the individual language manager instance
-						newState, tempErrPkgs, tempErr := individualLangManager.InstallUpdates(ctx, updates, ignoreError)
+						newState, tempErrPkgs, tempErr = individualLangManager.InstallUpdates(ctx, updates, ignoreError)
 
 						currentProcessingState = newState // Update state for the next manager or final result
 
@@ -628,9 +629,6 @@ func patchSingleArchImage(
 
 					// Merge OS-level error packages with language-level error packages, ensuring uniqueness
 					if len(langErrPkgsFromAllManagers) > 0 {
-						if errPkgs == nil {
-							errPkgs = []string{}
-						}
 						errPkgs = append(errPkgs, langErrPkgsFromAllManagers...)
 						errPkgs = utils.DeduplicateStringSlice(errPkgs)
 					}
