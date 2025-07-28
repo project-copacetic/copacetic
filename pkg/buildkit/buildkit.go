@@ -54,18 +54,28 @@ var (
 	lookPath = exec.LookPath
 )
 
-func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage string) (*Config, error) {
+func InitializeBuildkitConfig(
+	ctx context.Context,
+	c gwclient.Client,
+	userImage string,
+	platform *ispec.Platform,
+) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: userImage,
+		Platform:  platform,
 	}
 
 	// Resolve and pull the config for the target image
-	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, sourceresolver.Opt{
+	resolveOpt := sourceresolver.Opt{
 		ImageOpt: &sourceresolver.ResolveImageOpt{
 			ResolveMode: llb.ResolveModePreferLocal.String(),
 		},
-	})
+	}
+	if platform != nil {
+		resolveOpt.Platform = platform
+	}
+	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, resolveOpt)
 	if err != nil {
 		return nil, err
 	}
@@ -78,10 +88,14 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
-	config.ImageState, err = llb.Image(baseImage,
+	imageOpts := []llb.ImageOption{
 		llb.ResolveModePreferLocal,
 		llb.WithMetaResolver(c),
-	).WithImageConfig(config.ConfigData)
+	}
+	if platform != nil {
+		imageOpts = append(imageOpts, llb.Platform(*platform))
+	}
+	config.ImageState, err = llb.Image(baseImage, imageOpts...).WithImageConfig(config.ConfigData)
 	if err != nil {
 		return nil, err
 	}
@@ -90,10 +104,14 @@ func InitializeBuildkitConfig(ctx context.Context, c gwclient.Client, userImage 
 	// An image is deemed to be a patched image if it contains one of two metadata values
 	// BaseImage or ispec.AnnotationBaseImageName
 	if config.PatchedConfigData != nil {
-		config.PatchedImageState, err = llb.Image(userImage,
+		patchedImageOpts := []llb.ImageOption{
 			llb.ResolveModePreferLocal,
 			llb.WithMetaResolver(c),
-		).WithImageConfig(config.PatchedConfigData)
+		}
+		if platform != nil {
+			patchedImageOpts = append(patchedImageOpts, llb.Platform(*platform))
+		}
+		config.PatchedImageState, err = llb.Image(userImage, patchedImageOpts...).WithImageConfig(config.PatchedConfigData)
 		if err != nil {
 			return nil, err
 		}
@@ -133,7 +151,8 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 				Architecture: report.Metadata.Config.Arch,
 				Variant:      report.Metadata.Config.Variant,
 			},
-			ReportFile: filePath,
+			ReportFile:     filePath,
+			ShouldPreserve: false, // This platform has a report, so it should be patched
 		}
 
 		if platform.Architecture == arm64 && platform.Variant == "v8" {
@@ -198,6 +217,8 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					OSVersion:    m.Platform.OSVersion,
 					OSFeatures:   m.Platform.OSFeatures,
 				},
+				ReportFile:     "",    // No report file for platforms discovered from reference
+				ShouldPreserve: false, // Default to false, will be set appropriately later
 			}
 			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
 				// some scanners may not add v8 to arm64 reports, so we
@@ -209,7 +230,35 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return platforms, nil
 	}
 
-	// return nil if not multi-platform, and handle as normal
+	// For single-platform images, try to get the image config to extract platform information
+	img, err := desc.Image()
+	if err != nil {
+		return nil, fmt.Errorf("error getting image %w", err)
+	}
+
+	config, err := img.ConfigFile()
+	if err != nil {
+		return nil, fmt.Errorf("error getting image config %w", err)
+	}
+
+	// Extract platform from image config
+	if config.Architecture != "" && config.OS != "" {
+		platform := types.PatchPlatform{
+			Platform: ispec.Platform{
+				OS:           config.OS,
+				Architecture: config.Architecture,
+				Variant:      config.Variant,
+			},
+			ReportFile:     "",
+			ShouldPreserve: false,
+		}
+		if platform.Architecture == arm64 && platform.Variant == "v8" {
+			platform.Variant = ""
+		}
+		return []types.PatchPlatform{platform}, nil
+	}
+
+	// return nil if platform information is not available
 	return nil, nil
 }
 
@@ -256,11 +305,13 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 			if rp, ok := reportSet[PlatformKey(pl.Platform)]; ok {
 				// Platform has a report - will be patched
 				pl.ReportFile = rp
+				pl.ShouldPreserve = false
 				platforms = append(platforms, pl)
 			} else {
 				// Platform has no report - preserve original without patching
 				log.Debugf("No report found for platform %s, preserving original", PlatformKey(pl.Platform))
 				pl.ReportFile = ""
+				pl.ShouldPreserve = true
 				platforms = append(platforms, pl)
 			}
 		}
