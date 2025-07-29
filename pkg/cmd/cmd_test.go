@@ -1,4 +1,4 @@
-package patch
+package cmd
 
 import "testing"
 
