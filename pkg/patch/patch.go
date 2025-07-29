@@ -33,13 +33,13 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
-	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -708,11 +708,8 @@ func patchSingleArchImage(
 
 	eg.Go(func() error {
 		// not using shared context to not disrupt display but let us finish reporting errors
-		mode := progressui.AutoMode
-		if log.GetLevel() >= log.DebugLevel {
-			mode = progressui.PlainMode
-		}
-		display, err := progressui.NewDisplay(os.Stderr, mode)
+		debugMode := log.GetLevel() >= log.DebugLevel
+		display, err := tui.NewDisplay(os.Stderr, debugMode)
 		if err != nil {
 			return err
 		}
