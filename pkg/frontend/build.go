@@ -42,7 +42,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.S
 		osVersion = vr.Metadata.OS.Version
 	}
 
-	// If no OS info from report (including update-all mode), detect from image
+	// If no OS info from report detect from image
 	if osType == "" {
 		osType, osVersion, err = f.detectOSFromImage(ctx, bkConfig)
 		if err != nil {

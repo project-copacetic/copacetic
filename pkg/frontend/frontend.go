@@ -13,6 +13,7 @@ import (
 
 const (
 	// Frontend option keys.
+	keyBuildArg     = "build-arg"
 	keyImage        = "image"
 	keyReport       = "report"
 	keyReportPath   = "report-path"

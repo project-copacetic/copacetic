@@ -9,6 +9,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
@@ -50,31 +51,42 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 	opts := client.BuildOpts()
 
 	config := &Config{
-		Options: &types.Options{
-			Scanner: "trivy", // default scanner
-		},
+		Options:     &types.Options{},
 		Annotations: make(map[string]string),
 	}
 
+	// Helper function to get option value, checking both direct and build-arg prefixed keys
+	getOpt := func(key string) (string, bool) {
+		// First try direct key (buildctl style)
+		if v, ok := opts.Opts[key]; ok {
+			return v, true
+		}
+		// Then try build-arg prefixed key (docker buildx style)
+		if v, ok := opts.Opts["build-arg:"+key]; ok {
+			return v, true
+		}
+		return "", false
+	}
+
 	// Parse base image
-	if v, ok := opts.Opts[keyImage]; ok {
+	if v, ok := getOpt(keyImage); ok {
 		config.Image = v
 	} else {
 		return nil, errors.New("base image reference required via --opt image=<ref>")
 	}
 
 	// Parse scanner type
-	if v, ok := opts.Opts[keyScanner]; ok {
+	if v, ok := getOpt(keyScanner); ok {
 		config.Scanner = v
 	}
 
 	// Parse ignore errors flag
-	if v, ok := opts.Opts[keyIgnoreErrors]; ok {
+	if v, ok := getOpt(keyIgnoreErrors); ok {
 		config.IgnoreError = v == trueStr || v == "1"
 	}
 
 	// Parse platform
-	if v, ok := opts.Opts[keyPlatform]; ok {
+	if v, ok := getOpt(keyPlatform); ok {
 		p, err := parsePlatform(v)
 		if err != nil {
 			return nil, errors.Wrapf(err, "invalid platform: %s", v)
@@ -83,10 +95,10 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 	}
 
 	// Parse vulnerability report
-	if reportPath, ok := opts.Opts[keyReport]; ok {
+	if reportPath, ok := getOpt(keyReport); ok {
 		// Direct file path - same as patch command --report/-r
 		config.Report = reportPath
-	} else if reportPath, ok := opts.Opts[keyReportPath]; ok {
+	} else if reportPath, ok := getOpt(keyReportPath); ok {
 		// Read report from build context and save to persistent location
 		reportData, err := readReportFromContext(ctx, client, reportPath)
 		if err != nil {
@@ -97,42 +109,46 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 			return nil, errors.Wrap(err, "failed to save report to temp file")
 		}
 		config.Report = tempFile
-	} else if updateAll, ok := opts.Opts["update-all"]; ok && (updateAll == trueStr || updateAll == "1") {
-		// Update all mode - no report needed
-		config.Report = ""
 	} else {
-		return nil, errors.New("vulnerability report required via --opt report=<file-path> or --opt report-path=<build-context-path>, or --opt update-all=true")
+		// update all
+		log.Warn("No vulnerability report provided, using update-all mode")
 	}
 
 	// Parse package manager
-	if v, ok := opts.Opts[keyPkgMgr]; ok {
+	if v, ok := getOpt(keyPkgMgr); ok {
 		config.PkgMgr = v
 	}
 
 	// Parse offline mode
-	if v, ok := opts.Opts[keyOfflineMode]; ok {
+	if v, ok := getOpt(keyOfflineMode); ok {
 		config.OfflineMode = v == trueStr || v == "1"
 	}
 
 	// Parse cache mode
-	if v, ok := opts.Opts[keyCacheMode]; ok {
+	if v, ok := getOpt(keyCacheMode); ok {
 		config.CacheMode = v
 	}
 
 	// Parse security mode
-	if v, ok := opts.Opts[keySecurityMode]; ok {
+	if v, ok := getOpt(keySecurityMode); ok {
 		config.SecurityMode = v
 	}
 
 	// Parse package mirror
-	if v, ok := opts.Opts[keyMirror]; ok {
+	if v, ok := getOpt(keyMirror); ok {
 		config.PackageMirror = v
 	}
 
 	// Parse additional annotations
 	for k, v := range opts.Opts {
+		// Handle direct annotation keys (buildctl style)
 		if strings.HasPrefix(k, "annotation.") {
 			annotKey := strings.TrimPrefix(k, "annotation.")
+			config.Annotations[annotKey] = v
+		}
+		// Handle build-arg prefixed annotation keys (docker buildx style)
+		if strings.HasPrefix(k, "build-arg:annotation.") {
+			annotKey := strings.TrimPrefix(k, "build-arg:annotation.")
 			config.Annotations[annotKey] = v
 		}
 	}

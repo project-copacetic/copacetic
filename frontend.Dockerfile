@@ -19,13 +19,13 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /copa-frontend ./cmd/frontend
 
 # Final image
-FROM alpine:3.18
+FROM scratch
 
-# Install runtime dependencies (for patch operations)
-RUN apk add --no-cache ca-certificates busybox
+# Copy CA certificates for HTTPS connections
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy the frontend binary
-COPY --from=builder /copa-frontend /usr/bin/copa-frontend
+COPY --from=builder /copa-frontend /copa-frontend
 
 # Set the entrypoint
-ENTRYPOINT ["/usr/bin/copa-frontend"]
+ENTRYPOINT ["/copa-frontend"]
