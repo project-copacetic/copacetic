@@ -121,8 +121,16 @@ func TestPatch(t *testing.T) {
 				hostPlatform := platforms.DefaultSpec().Architecture
 				imagePlatforms := getManifestPlatforms(t, ref)
 
+				found := false
+				for _, p := range imagePlatforms {
+					if p.Architecture == hostPlatform {
+						found = true
+						break
+					}
+				}
+
 				targetArch := hostPlatform
-				if len(imagePlatforms) > 0 && imagePlatforms[0].Architecture != hostPlatform {
+				if !found && len(imagePlatforms) > 0 {
 					targetArch = imagePlatforms[0].Architecture
 				}
 				scanTag += "-" + targetArch
@@ -161,14 +169,17 @@ func TestPatch(t *testing.T) {
 
 func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 	validPlatforms := map[string]bool{
-		"linux/amd64":   true,
-		"linux/arm64":   true,
-		"linux/riscv64": true,
-		"linux/ppc64le": true,
-		"linux/s390x":   true,
-		"linux/386":     true,
-		"linux/arm/v7":  true,
-		"linux/arm/v6":  true,
+		"linux/386":      true,
+		"linux/amd64":    true,
+		"linux/arm":      true,
+		"linux/arm/v5":   true,
+		"linux/arm/v6":   true,
+		"linux/arm/v7":   true,
+		"linux/arm64":    true,
+		"linux/arm64/v8": true,
+		"linux/ppc64le":  true,
+		"linux/s390x":    true,
+		"linux/riscv64":  true,
 	}
 
 	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
