@@ -24,6 +24,11 @@ DEFAULT_LDFLAGS   := -X $(BASE_PACKAGE_NAME)/pkg/version.GitCommit=$(GIT_COMMIT)
 GOARCH            := $(shell go env GOARCH)
 GOOS              := $(shell go env GOOS)
 
+# Frontend build variables
+FRONTEND_IMAGE_NAME ?= ghcr.io/robert-cronin/copacetic-frontend
+FRONTEND_VER        ?= latest
+
+
 # Message lack of native build support in Windows
 ifeq ($(GOOS),windows)
   $(error Windows native build is unsupported, use WSL instead)
@@ -55,6 +60,17 @@ $(CLI_BINARY):
 	$(info $(INFOMARK) Building $(CLI_BINARY) ...)
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 	go build $(GCFLAGS) -ldflags $(LDFLAGS) -o $(BINS_OUT_DIR)/$(CLI_BINARY);
+
+################################################################################
+# Target: frontend (frontend image)                                            #
+################################################################################
+.PHONY: frontend
+frontend: $(CLI_BINARY)
+	$(info $(INFOMARK) Creating frontend image ...)
+	docker buildx build \
+		-f frontend.Dockerfile \
+		-t $(FRONTEND_IMAGE_NAME):$(FRONTEND_VER) \
+		--push .
 
 ################################################################################
 # Target: install                                                              #
