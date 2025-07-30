@@ -248,14 +248,27 @@ func Patch(
 	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	targetPlatforms []string,
+	progress string,
 	bkOpts buildkit.Opts,
 ) error {
+	allowedProgressModes := map[string]struct{}{
+		"auto":    {},
+		"plain":   {},
+		"tty":     {},
+		"quiet":   {},
+		"rawjson": {},
+	}
+	if _, ok := allowedProgressModes[progress]; !ok {
+		log.Warnf("Invalid value for --progress: %q. Allowed values are 'auto', 'plain' 'tty', 'quiet' or 'rawjson'. Defaulting to 'auto'.", progress)
+		progress = "auto"
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	ch := make(chan error)
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, targetPlatforms, bkOpts)
+		ch <- patchWithContext(timeoutCtx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, targetPlatforms, progress, bkOpts)
 	}()
 
 	select {
@@ -286,6 +299,7 @@ func patchWithContext(
 	image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
 	ignoreError, push bool,
 	targetPlatforms []string,
+	progress string,
 	bkOpts buildkit.Opts,
 ) error {
 	// Handle empty report path - check if image is manifest list or single platform
@@ -309,7 +323,7 @@ func patchWithContext(
 				platform.OS = LINUX
 			}
 
-			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, progress, bkOpts, false)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 			}
@@ -336,7 +350,7 @@ func patchWithContext(
 				ShouldPreserve: false,
 			}
 
-			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+			result, err := patchSingleArchImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, progress, bkOpts, false)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef)
 			}
@@ -344,7 +358,7 @@ func patchWithContext(
 		}
 
 		log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
-		return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, targetPlatforms, discoveredPlatforms)
+		return patchMultiPlatformImage(ctx, ch, image, "", patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, progress, bkOpts, targetPlatforms, discoveredPlatforms)
 	}
 
 	// Check if reportPath exists
@@ -364,7 +378,7 @@ func patchWithContext(
 		if len(targetPlatforms) > 0 {
 			log.Info("Platform flag ignored when report directory is provided")
 		}
-		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, bkOpts, nil, nil)
+		return patchMultiPlatformImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, ignoreError, push, progress, bkOpts, nil, nil)
 	}
 	// Handle file - single-platform patching
 	log.Debugf("Using report file: %s", reportPath)
@@ -374,7 +388,7 @@ func patchWithContext(
 	if platform.OS != LINUX {
 		platform.OS = LINUX
 	}
-	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, bkOpts, false)
+	result, err := patchSingleArchImage(ctx, ch, image, reportPath, patchedTag, suffix, workingFolder, scanner, format, output, loader, platform, ignoreError, push, progress, bkOpts, false)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", platform.OS+"/"+platform.Architecture, result.PatchedRef.String())
 	}
@@ -388,6 +402,7 @@ func patchSingleArchImage(
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	ignoreError, push bool,
+	progress string,
 	bkOpts buildkit.Opts,
 	multiPlatform bool,
 ) (*types.PatchResult, error) {
@@ -708,7 +723,7 @@ func patchSingleArchImage(
 
 	eg.Go(func() error {
 		// not using shared context to not disrupt display but let us finish reporting errors
-		mode := progressui.AutoMode
+		var mode progressui.DisplayMode = progressui.DisplayMode(progress)
 		if log.GetLevel() >= log.DebugLevel {
 			mode = progressui.PlainMode
 		}
@@ -940,7 +955,7 @@ func patchMultiPlatformImage(
 	ctx context.Context,
 	ch chan error,
 	image, reportDir, patchedTag, suffix, workingFolder, scanner, format, output, loader string,
-	ignoreError, push bool,
+	ignoreError, push bool, progress string,
 	bkOpts buildkit.Opts,
 	targetPlatforms []string,
 	discoveredPlatforms []types.PatchPlatform,
@@ -1107,7 +1122,7 @@ func patchMultiPlatformImage(
 				reportFile = ""
 			}
 
-			res, err := patchSingleArchImage(gctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, p, ignoreError, push, bkOpts, true)
+			res, err := patchSingleArchImage(gctx, ch, image, reportFile, patchedTag, suffix, workingFolder, scanner, format, output, loader, p, ignoreError, push, progress, bkOpts, true)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

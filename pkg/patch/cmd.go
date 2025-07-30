@@ -30,6 +30,7 @@ type patchArgs struct {
 	push          bool
 	platform      []string
 	loader        string
+	progress      string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -59,6 +60,7 @@ func NewPatchCmd() *cobra.Command {
 				ua.ignoreError,
 				ua.push,
 				ua.platform,
+				ua.progress,
 				bkopts)
 		},
 	}
@@ -83,6 +85,7 @@ func NewPatchCmd() *cobra.Command {
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
+	flags.StringVar(&ua.progress, "progress", "auto", "Set type of progress output (auto, plain, tty). Set to plain to disable animations.")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
