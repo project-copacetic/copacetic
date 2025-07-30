@@ -723,7 +723,7 @@ func patchSingleArchImage(
 
 	eg.Go(func() error {
 		// not using shared context to not disrupt display but let us finish reporting errors
-		var mode = progressui.DisplayMode(progress)
+		mode := progressui.DisplayMode(progress)
 		if log.GetLevel() >= log.DebugLevel {
 			mode = progressui.PlainMode
 		}
