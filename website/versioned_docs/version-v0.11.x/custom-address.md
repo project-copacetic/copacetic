@@ -4,6 +4,11 @@ title: Custom BuildKit Addresses
 
 Copa automatically detects available BuildKit instances, but you can specify a custom address using the `--addr` flag for advanced configurations or when automatic detection fails.
 
+:::note
+When using copacetic with the default Docker Desktop driver, you must enable the containerd image store. 
+For instructions, please see the official Docker documentation on using the [containerd image store](https://docs.docker.com/engine/storage/containerd/)
+:::
+
 ## Supported Address Formats
 
 ## Address Format Reference
