@@ -38,7 +38,7 @@ const sidebars = {
         'custom-address',
         'output',
         'scanner-plugins',
-        "multiarch-patching",
+        "multiplatform-patching",
       ],
     },
     {

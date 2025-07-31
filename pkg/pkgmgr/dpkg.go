@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	debVer "github.com/knqyf263/go-deb-version"
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -126,12 +127,17 @@ func getDPKGStatusType(b []byte) dpkgStatusType {
 }
 
 func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
+	}
+
 	// Probe for additional information to execute the appropriate update install graphs
 	toolImageName := getAPTImageName(manifest, dm.osVersion, true) // check if we can resolve the tool image
-	if _, err := tryImage(ctx, toolImageName, dm.config.Client); err != nil {
+	if _, err := tryImage(ctx, toolImageName, dm.config.Client, imagePlatform); err != nil {
 		toolImageName = getAPTImageName(manifest, dm.osVersion, false)
 	}
-	if err := dm.probeDPKGStatus(ctx, toolImageName); err != nil {
+	if err := dm.probeDPKGStatus(ctx, toolImageName, imagePlatform); err != nil {
 		return nil, nil, err
 	}
 
@@ -190,20 +196,15 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 // Probe the target image for:
 // - DPKG status type to distinguish between regular and distroless images.
 // - Whether status.d contains base64-encoded package names.
-func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string) error {
+func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, platform *ocispecs.Platform) error {
 	imageStateCurrent := dm.config.ImageState
 	if dm.config.PatchedConfigData != nil {
 		imageStateCurrent = dm.config.PatchedImageState
 	}
 
-	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
-	if err != nil {
-		return fmt.Errorf("unable to get image platform %w", err)
-	}
-
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(*imagePlatform),
+		llb.Platform(*platform),
 		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(

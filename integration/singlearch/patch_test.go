@@ -9,32 +9,29 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
+	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	//go:embed fixtures/test-images.json
-	testImages []byte
-
-	//go:embed fixtures/trivy_ignore.rego
-	trivyIgnore []byte
-)
+//go:embed fixtures/test-images.json
+var testImages []byte
 
 type testImage struct {
-	Image        string        `json:"image"`
-	Tag          string        `json:"tag"`
-	LocalName    string        `json:"localName,omitempty"`
-	Distro       string        `json:"distro"`
-	Digest       digest.Digest `json:"digest"`
-	Description  string        `json:"description"`
-	IgnoreErrors bool          `json:"ignoreErrors"`
+	Image          string        `json:"image"`
+	Tag            string        `json:"tag"`
+	LocalName      string        `json:"localName,omitempty"`
+	Distro         string        `json:"distro"`
+	Digest         digest.Digest `json:"digest"`
+	Description    string        `json:"description"`
+	IgnoreErrors   bool          `json:"ignoreErrors"`
+	IsManifestList bool          `json:"isManifestList"`
 }
 
 func TestPatch(t *testing.T) {
@@ -44,12 +41,12 @@ func TestPatch(t *testing.T) {
 
 	tmp := t.TempDir()
 	ignoreFile := filepath.Join(tmp, "ignore.rego")
-	err = os.WriteFile(ignoreFile, trivyIgnore, 0o600)
+	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
 	require.NoError(t, err)
 
 	for _, img := range images {
 		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
-		mediaType, err := utils.GetMediaType(imageRef)
+		mediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
 		require.NoError(t, err)
 
 		// Oracle tends to throw false positives with Trivy
@@ -59,7 +56,7 @@ func TestPatch(t *testing.T) {
 		}
 
 		// download the trivy db before running the tests
-		downloadDB(t)
+		common.DownloadDB(t, common.DockerDINDAddress.Env()...)
 
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
@@ -85,21 +82,20 @@ func TestPatch(t *testing.T) {
 			if reportFile {
 				scanResults = filepath.Join(dir, "scan.json")
 				t.Log("scanning original image")
-				scanner().
-					withIgnoreFile(ignoreFile).
-					withOutput(scanResults).
-					withSkipDBUpdate().
+				common.NewScanner().
+					WithIgnoreFile(ignoreFile).
+					WithOutput(scanResults).
+					WithSkipDBUpdate().
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
-					scan(t, ref, img.IgnoreErrors)
+					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
 
 			r, err := reference.ParseNormalizedNamed(ref)
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-			patchedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 
-			patchedMediaType, err := utils.GetMediaType(imageRef)
+			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
 			require.NoError(t, err)
 			fmt.Println("patchedMediaType: ", patchedMediaType)
 
@@ -111,31 +107,39 @@ func TestPatch(t *testing.T) {
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
+			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
+			// The scanning should look for the tag that Copa actually created
+			scanTag := tagPatched
+			if !reportFile && img.IsManifestList {
+				scanTag += "-amd64"
+			}
+			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
+
 			switch {
 			case strings.Contains(img.Image, "oracle"):
 				t.Log("Oracle image detected. Skipping Trivy scan.")
 			case reportFile:
 				t.Log("scanning patched image")
-				scanner().
-					withIgnoreFile(ignoreFile).
-					withSkipDBUpdate().
+				common.NewScanner().
+					WithIgnoreFile(ignoreFile).
+					WithSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
-					withExitCode(1).
-					scan(t, patchedRef, img.IgnoreErrors)
+					WithExitCode(1).
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			default:
 				t.Log("scanning patched image")
-				scanner().
-					withIgnoreFile(ignoreFile).
-					withSkipDBUpdate().
+				common.NewScanner().
+					WithIgnoreFile(ignoreFile).
+					WithSkipDBUpdate().
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
-					withExitCode(1).
-					scan(t, patchedRef, img.IgnoreErrors)
+					WithExitCode(1).
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
 
 			// currently validation is only present when patching with a scan report
 			if reportFile && !strings.Contains(img.Image, "oracle") {
 				t.Log("verifying the vex output")
-				validVEXJSON(t, dir)
+				common.ValidateVEXJSON(t, dir)
 			}
 		})
 	}
@@ -149,38 +153,6 @@ func dockerTag(t *testing.T, ref, newRef string) {
 	dockerCmd(t, `tag`, ref, newRef)
 }
 
-type addrWrapper struct {
-	m       sync.Mutex
-	address *string
-}
-
-var dockerDINDAddress addrWrapper
-
-func (w *addrWrapper) addr() string {
-	w.m.Lock()
-	defer w.m.Unlock()
-
-	if w.address != nil {
-		return *w.address
-	}
-
-	w.address = new(string)
-	if addr := os.Getenv("COPA_BUILDKIT_ADDR"); addr != "" && strings.HasPrefix(addr, "docker://") {
-		*w.address = strings.TrimPrefix(addr, "docker://")
-	}
-
-	return *w.address
-}
-
-func (w *addrWrapper) env() []string {
-	a := dockerDINDAddress.addr()
-	if a == "" {
-		return []string{}
-	}
-
-	return []string{fmt.Sprintf("DOCKER_HOST=%s", a)}
-}
-
 func dockerCmd(t *testing.T, args ...string) {
 	var err error
 	if len(args) == 0 {
@@ -190,7 +162,7 @@ func dockerCmd(t *testing.T, args ...string) {
 
 	a := []string{}
 
-	if addr := dockerDINDAddress.addr(); addr != "" {
+	if addr := common.DockerDINDAddress.Addr(); addr != "" {
 		a = append(a, "-H", addr)
 	}
 
@@ -212,6 +184,11 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		reportPath = "-r=" + path + "/scan.json"
 	}
 
+	var platformFlag string
+	if !reportFile {
+		platformFlag = "--platform=linux/amd64"
+	}
+
 	//#nosec G204
 	cmd := exec.Command(
 		copaPath,
@@ -222,13 +199,14 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		"-s="+scannerPlugin,
 		"--timeout=30m",
 		addrFl,
+		platformFlag,
 		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
 		"--output="+path+"/vex.json",
 		"--debug",
 	)
 
 	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
 
 	out, err := cmd.CombinedOutput()
 
@@ -238,88 +216,4 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	} else {
 		require.NoError(t, err, string(out))
 	}
-}
-
-func scanner() *scannerCmd {
-	return &scannerCmd{}
-}
-
-type scannerCmd struct {
-	output       string
-	skipDBUpdate bool
-	ignoreFile   string
-	exitCode     int
-}
-
-func downloadDB(t *testing.T) {
-	args := []string{
-		"trivy",
-		"image",
-		"--download-db-only",
-		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
-	}
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, string(out))
-}
-
-func (s *scannerCmd) scan(t *testing.T, ref string, ignoreErrors bool) {
-	args := []string{
-		"trivy",
-		"image",
-		"--quiet",
-		"--pkg-types=os",
-		"--ignore-unfixed",
-		"--scanners=vuln",
-	}
-	if s.output != "" {
-		args = append(args, []string{"-o=" + s.output, "-f=json"}...)
-	}
-	if s.skipDBUpdate {
-		args = append(args, "--skip-db-update")
-	}
-	if s.ignoreFile != "" {
-		args = append(args, "--ignore-policy="+s.ignoreFile)
-	}
-	// If ignoreErrors is false, we expect a non-zero exit code.
-	if s.exitCode != 0 && !ignoreErrors {
-		args = append(args, "--exit-code="+strconv.Itoa(s.exitCode))
-	}
-
-	args = append(args, ref)
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, dockerDINDAddress.env()...)
-	out, err := cmd.CombinedOutput()
-
-	assert.NoError(t, err, string(out))
-}
-
-func (s *scannerCmd) withOutput(p string) *scannerCmd {
-	s.output = p
-	return s
-}
-
-func (s *scannerCmd) withSkipDBUpdate() *scannerCmd {
-	s.skipDBUpdate = true
-	return s
-}
-
-func (s *scannerCmd) withIgnoreFile(p string) *scannerCmd {
-	s.ignoreFile = p
-	return s
-}
-
-func (s *scannerCmd) withExitCode(code int) *scannerCmd {
-	s.exitCode = code
-	return s
-}
-
-func validVEXJSON(t *testing.T, path string) {
-	file, err := os.ReadFile(filepath.Join(path, "vex.json"))
-	require.NoError(t, err)
-	isValid := json.Valid(file)
-	assert.True(t, isValid, "vex.json is not valid json")
 }

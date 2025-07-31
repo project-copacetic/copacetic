@@ -4,7 +4,7 @@
     "localImage": "localhost:5000/nginx",
     "tag": "1.27.0",
     "distro": "debian",
-    "description": "Multi-arch nginx 1.27.0, with push",
+    "description": "Multi-platform nginx 1.27.0, with push",
     "ignoreErrors": false,
     "push": true,
     "platforms": [
@@ -21,7 +21,7 @@
     "localImage": "localhost:5000/nginx",
     "tag": "1.27.0",
     "distro": "debian",
-    "description": "Multi-arch nginx 1.27.0, no push",
+    "description": "Multi-platform nginx 1.27.0, no push",
     "ignoreErrors": false,
     "push": false,
     "platforms": [

@@ -1,10 +1,12 @@
 The current Maintainers Group for the Copacetic Project consists of:
 
-| Name | Employer | Responsibilities |
-| ---- | -------- | ---------------- |
-|   Ashna Mehrotra   |     Microsoft     |        ALL          |
-|   Jeremey Rickard   |     Microsoft     |        ALL          |
-|   Sertac Ozercan   |     Microsoft     |        ALL          |
+| Name           | Employer  | Responsibilities |
+| -------------- | --------- | ---------------- |
+| Ashna Mehrotra | Microsoft | ALL              |
+| Jeremy Rickard | Microsoft | ALL              |
+| Sertac Ozercan | Microsoft | ALL              |
+| Robbie Cronin  | Microsoft | ALL              |
+
 
 This list must be kept in sync with the [CNCF Project Maintainers list](https://github.com/cncf/foundation/blob/master/project-maintainers.csv).
 

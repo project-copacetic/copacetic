@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"text/tabwriter"
 	"time"
 
 	"github.com/distribution/reference"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	buildkitclient "github.com/moby/buildkit/client"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 func TestRemoveIfNotDebug(t *testing.T) {
@@ -509,13 +511,17 @@ func init() {
 }
 
 func TestPatch_BuildReturnsNilResponse(t *testing.T) {
+	// Use platforms that match the host to avoid emulation issues in test
+	targetPlatforms := []string{"linux/amd64"}
+
 	err := Patch(
 		context.Background(),
 		30*time.Second,
-		"alpine:3.19", "", "", "", "", "", "", "", "", "",
+		"alpine:3.19", "", "", "", "", "", "", "", "",
 		false, true,
-		"os", "patch",
+		targetPlatforms,
 		buildkit.Opts{},
+		"os", "patch",
 	)
 
 	if err == nil {
@@ -533,7 +539,7 @@ func TestArchTag(t *testing.T) {
 	cases := []struct {
 		base, arch, variant, want string
 	}{
-		{"patched", "arm64", "", "patched-arm64"},
+		{"patched", ARM64, "", "patched-arm64"},
 		{"patched", "arm", "v7", "patched-arm-v7"},
 		{"patched", "mips64", "n32", "patched-mips64-n32"},
 	}
@@ -551,7 +557,7 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 
 	plat := &types.PatchPlatform{}
 	plat.OS = LINUX
-	plat.Architecture = "arm64"
+	plat.Architecture = ARM64
 	plat.Variant = "v8"
 
 	fixed, err := normalizeConfigForPlatform(orig, plat)
@@ -564,7 +570,7 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if m["architecture"] != "arm64" || m["os"] != LINUX || m["variant"] != "v8" {
+	if m["architecture"] != ARM64 || m["os"] != LINUX || m["variant"] != "v8" {
 		t.Fatalf("fields not normalised correctly: %#v", m)
 	}
 
@@ -578,5 +584,85 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 	}
 	if _, ok := m2["variant"]; ok {
 		t.Errorf("variant key should be dropped when empty")
+	}
+}
+
+func TestMultiPlatformSummaryTable(t *testing.T) {
+	platforms := []struct {
+		OS           string
+		Architecture string
+		Variant      string
+	}{
+		{"linux", "amd64", ""},
+		{"linux", ARM64, ""},
+		{"linux", "arm", "v7"},
+		{"windows", "amd64", ""},
+	}
+
+	summaryMap := map[string]*types.MultiPlatformSummary{
+		"linux/amd64": {
+			Platform: "linux/amd64",
+			Status:   "Patched",
+			Ref:      "docker.io/library/nginx:patched-amd64",
+			Message:  "",
+		},
+		"linux/arm64": {
+			Platform: "linux/arm64",
+			Status:   "Error",
+			Ref:      "",
+			Message:  "emulation is not enabled for platform linux/arm64",
+		},
+		"linux/arm/v7": {
+			Platform: "linux/arm/v7",
+			Status:   "Ignored",
+			Ref:      "",
+			Message:  "",
+		},
+		"windows/amd64": {
+			Platform: "windows/amd64",
+			Status:   "Not Patched",
+			Ref:      "docker.io/library/nginx (original reference)",
+			Message:  "Windows Image (Original Preserved)",
+		},
+	}
+
+	var b strings.Builder
+	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	_, _ = w.Write([]byte("PLATFORM\tSTATUS\tREFERENCE\tMESSAGE\n"))
+	for _, p := range platforms {
+		platformKey := buildkit.PlatformKey(ispec.Platform{
+			OS:           p.OS,
+			Architecture: p.Architecture,
+			Variant:      p.Variant,
+		})
+		s := summaryMap[platformKey]
+		if s != nil {
+			ref := s.Ref
+			if ref == "" {
+				ref = "-"
+			}
+			_, _ = w.Write([]byte(
+				s.Platform + "\t" + s.Status + "\t" + ref + "\t" + s.Message + "\n",
+			))
+		}
+	}
+	w.Flush()
+
+	got := b.String()
+	expected := `PLATFORM       STATUS       REFERENCE                                     MESSAGE
+linux/amd64    Patched      docker.io/library/nginx:patched-amd64
+linux/arm64    Error        -                                             emulation is not enabled for platform linux/arm64
+linux/arm/v7   Ignored      -
+windows/amd64  Not Patched  docker.io/library/nginx (original reference)  Windows Image (Original Preserved)
+`
+	gotLines := strings.FieldsFunc(got, func(r rune) bool { return r == '\n' || r == '\r' })
+	expectedLines := strings.FieldsFunc(expected, func(r rune) bool { return r == '\n' || r == '\r' })
+	if len(gotLines) != len(expectedLines) {
+		t.Errorf("line count mismatch:\ngot:\n%s\nwant:\n%s", got, expected)
+	}
+	for i := range gotLines {
+		if strings.TrimSpace(gotLines[i]) != strings.TrimSpace(expectedLines[i]) {
+			t.Errorf("line %d mismatch:\ngot:   %q\nwant:  %q", i+1, gotLines[i], expectedLines[i])
+		}
 	}
 }

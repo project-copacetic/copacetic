@@ -1,37 +1,61 @@
 ---
-title: Custom buildkit addresses
+title: Custom BuildKit Addresses
 ---
 
-You may need to specify a custom address using the `--addr` flag. Here are the supported formats:
+Copa automatically detects available BuildKit instances, but you can specify a custom address using the `--addr` flag for advanced configurations or when automatic detection fails.
 
-- `unix:///path/to/buildkit.sock` - Connect to buildkit over unix socket.
-- `tcp://$BUILDKIT_ADDR:$PORT` - Connect to buildkit over TCP. (not recommended for security reasons)
-- `docker://<docker connection spec>` - Connect to docker, currently only unix sockets are supported, e.g. `docker://unix:///var/run/docker.sock` (or just `docker://`).
-- `docker-container://my-buildkit-container` - Connect to a buildkitd running in a docker container.
-- `buildx://my-builder` - Connect to a buildx builder (or `buildx://` for the currently selected builder). *Note: only container-backed buildx instances are currently supported*
-- `nerdctl-container://my-container-name` - Similar to `docker-container` but uses `nerdctl`.
-- `podman-container://my-container-name` - Similar to `docker-container` but uses `podman`.
-- `ssh://myhost` - Connect to a buildkit instance over SSH. Format of the host spec should mimic the SSH command.
-- `kubepod://mypod` - Connect to buildkit running in a Kubernetes pod. Can also specify kubectl context and pod namespace (`kubepod://mypod?context=foo&namespace=notdefault`).
+## Supported Address Formats
 
-## Buildkit Connection Examples
+| Format                 | Example                                     | Description                                             |
+| ---------------------- | ------------------------------------------- | ------------------------------------------------------- |
+| `unix://`              | `unix:///path/to/buildkit.sock`             | Connect to BuildKit over Unix socket                    |
+| `tcp://`               | `tcp://127.0.0.1:8888`                      | Connect over TCP (not recommended for production)       |
+| `docker://`            | `docker://unix:///var/run/docker.sock`      | Connect to Docker daemon (use `docker://` for default)  |
+| `docker-container://`  | `docker-container://my-buildkit-container`  | Connect to BuildKit running in Docker container         |
+| `buildx://`            | `buildx://my-builder`                       | Connect to buildx builder (use `buildx://` for current) |
+| `nerdctl-container://` | `nerdctl-container://my-container-name`     | Connect via nerdctl to container                        |
+| `podman-container://`  | `podman-container://my-container-name`      | Connect via Podman to container                         |
+| `ssh://`               | `ssh://user@myhost`                         | Connect to remote BuildKit over SSH                     |
+| `kubepod://`           | `kubepod://mypod?context=foo&namespace=bar` | Connect to BuildKit in Kubernetes pod                   |
 
-### Option 1: Connect using defaults
+:::warning
+TCP connections without TLS are insecure and should only be used in trusted environments. Always use TLS encryption for production deployments.
+:::
+
+## Common Use Cases
+
+### Default Connection (Recommended)
+
+Copa automatically detects the best available BuildKit instance:
+
 ```bash
 copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched
 ```
 
-### Option 2: Connect to buildx
+### Using a Specific buildx Builder
+
+Create and use a dedicated buildx builder:
 
 ```bash
-docker buildx create --name demo
-copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr buildx://demo
+# Create a new builder
+docker buildx create --name copa-builder --use
+
+# Use the builder with Copa
+copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr buildx://copa-builder
 ```
 
-### Option 3: Buildkit in a container
+### BuildKit in a Container
+
+Run BuildKit in a dedicated container:
 
 ```bash
-export BUILDKIT_VERSION=v0.12.4
+# Get the latest BuildKit version from GitHub releases
+export BUILDKIT_VERSION=$(curl -s https://api.github.com/repos/moby/buildkit/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+```
+
+#### Docker
+
+```bash
 docker run \
     --detach \
     --rm \
@@ -40,55 +64,21 @@ docker run \
     --entrypoint buildkitd \
     "moby/buildkit:$BUILDKIT_VERSION"
 
+# Use the containerized BuildKit
 copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr docker-container://buildkitd
 ```
 
-### Option 4: Buildkit over TCP
+#### Podman
+
 ```bash
-export BUILDKIT_VERSION=v0.12.4
-export BUILDKIT_PORT=8888
-docker run \
+podman run \
     --detach \
     --rm \
     --privileged \
-    -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
     --name buildkitd \
     --entrypoint buildkitd \
-    "moby/buildkit:$BUILDKIT_VERSION" \
-    --addr tcp://0.0.0.0:$BUILDKIT_PORT
+    "moby/buildkit:$BUILDKIT_VERSION"
 
-copa patch \
-    -i docker.io/library/nginx:1.21.6 \
-    -r nginx.1.21.6.json \
-    -t 1.21.6-patched \
-    -a tcp://0.0.0.0:$BUILDKIT_PORT
-```
-
-### Option 5: Buildkit over TCP with mTLS
-
-```bash
-export BUILDKIT_VERSION=v0.12.4
-export BUILDKIT_PORT=8888
-docker run \
-    --detach \
-    --rm \
-    --privileged \
-    -p 127.0.0.1:$BUILDKIT_PORT:$BUILDKIT_PORT/tcp \
-    --name buildkitd \
-    --entrypoint buildkitd \
-    -v $PWD/.certs:/etc/buildkit/certs \
-    "moby/buildkit:$BUILDKIT_VERSION" \
-    --addr tcp://0.0.0.0:$BUILDKIT_PORT \
-    --tlscacert /etc/buildkit/certs/daemon/ca.pem \
-    --tlscert /etc/buildkit/certs/daemon/cert.pem \
-    --tlskey /etc/buildkit/certs/daemon/key.pem
-
-copa patch \
-    -i docker.io/library/nginx:1.21.6 \
-    -r nginx.1.21.6.json \
-    -t 1.21.6-patched \
-    -a tcp://0.0.0.0:$BUILDKIT_PORT
-    --cacert /path/to/ca-certificate \
-    --cert  /path/to/buildkit/client/cert \
-    --key /path/to/buildkit/key
+# Connect Copa to Podman-managed BuildKit
+copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr podman-container://buildkitd
 ```
