@@ -2,52 +2,53 @@ package frontend
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/util/bklog"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
 // BuildPatchedImage builds a patched image using the Copa patching logic.
-func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.State, error) {
-	// Initialize buildkit configuration
-	bkConfig, err := buildkit.InitializeBuildkitConfig(ctx, f.client, config.Image, config.Platform)
-	if err != nil {
-		return llb.State{}, errors.Wrap(err, "failed to initialize buildkit config")
+// This reuses the same components as the CLI to ensure consistency.
+func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
+	// Initialize buildkit configuration with the frontend client
+	var imageState llb.State
+	if platform != nil {
+		// Platform-specific image
+		imageState = llb.Image(opts.Image, llb.Platform(*platform))
+	} else {
+		// Default platform
+		imageState = llb.Image(opts.Image)
+	}
+	
+	bkConfig := &buildkit.Config{
+		Client:     f.client,
+		ImageState: imageState,
 	}
 
-	// Parse the vulnerability report (or use nil for update all mode)
+	// Parse the vulnerability report if provided
 	var vr *unversioned.UpdateManifest
-	if config.Report != "" {
-		var parseErr error
-		// Use the same approach as pkg/patch
-		vr, parseErr = report.TryParseScanReport(config.Report, config.Scanner)
-		if parseErr != nil {
-			return llb.State{}, errors.Wrap(parseErr, "failed to parse vulnerability report")
-		}
-	}
-	// If config.ReportFile is empty, vr will be nil, which triggers "update all" mode in package managers
-
-	// Get the OS information from the report metadata or detect from image
-	var osType, osVersion string
-	if vr != nil && vr.Metadata.OS.Type != "" {
-		osType = vr.Metadata.OS.Type
-		osVersion = vr.Metadata.OS.Version
-	}
-
-	// If no OS info from report detect from image
-	if osType == "" {
-		osType, osVersion, err = f.detectOSFromImage(ctx, bkConfig)
+	if opts.Report != "" {
+		var err error
+		vr, err = report.TryParseScanReport(opts.Report, opts.Scanner)
 		if err != nil {
-			return llb.State{}, errors.Wrap(err, "failed to detect OS from image")
+			return llb.State{}, errors.Wrap(err, "failed to parse vulnerability report")
 		}
+	}
+
+	// Detect OS from the image
+	osType, osVersion, err := f.detectOSFromImage(ctx, bkConfig.ImageState)
+	if err != nil {
+		return llb.State{}, errors.Wrap(err, "failed to detect OS from image")
 	}
 
 	// Create package manager instance
@@ -56,47 +57,35 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, config *Config) (llb.S
 		return llb.State{}, errors.Wrap(err, "failed to create package manager")
 	}
 
-	// Check if there are packages to update (skip for update-all mode)
+	// Check if there are packages to update
 	if vr != nil && len(vr.Updates) == 0 {
-		// No packages to update, return original image
+		bklog.G(ctx).WithField("component", "copa-frontend").Info("No packages to update, returning original image")
 		return bkConfig.ImageState, nil
 	}
 
-	// Apply package updates using existing Copa logic
-	updatedState, patchCommands, err := pm.InstallUpdates(ctx, vr, config.IgnoreError)
+	// Apply package updates using the same logic as CLI
+	patchedState, _, err := pm.InstallUpdates(ctx, vr, opts.IgnoreError)
 	if err != nil {
-		if config.IgnoreError {
-			// Log error but continue with original state
-			fmt.Printf("Warning: failed to install updates (ignored): %v\n", err)
+		if opts.IgnoreError {
+			bklog.G(ctx).WithError(err).WithField("component", "copa-frontend").Warn("Failed to install updates (ignored)")
 			return bkConfig.ImageState, nil
 		}
 		return llb.State{}, errors.Wrap(err, "failed to install package updates")
 	}
 
-	// Use enhanced LLB graph construction for better layer management
-	graphBuilder := NewLLBGraphBuilder(f.client, config)
-	finalState, err := graphBuilder.BuildPatchedImage(ctx, updatedState, patchCommands)
-	if err != nil {
-		if config.IgnoreError {
-			// Log error but continue with original state
-			fmt.Printf("Warning: failed to build patched image (ignored): %v\n", err)
-			return bkConfig.ImageState, nil
-		}
-		return llb.State{}, errors.Wrap(err, "failed to build patched image")
-	}
-
-	return finalState, nil
+	return *patchedState, nil
 }
 
-// detectOSFromImage attempts to detect the OS type and version from the image.
-func (f *Frontend) detectOSFromImage(ctx context.Context, bkConfig *buildkit.Config) (string, string, error) {
-	// Try to read /etc/os-release from the image
-	osReleaseState := bkConfig.ImageState.File(
-		llb.Copy(bkConfig.ImageState, "/etc/os-release", "/tmp/os-release", &llb.CopyInfo{
+// detectOSFromImage detects the OS type and version from an image state
+func (f *Frontend) detectOSFromImage(ctx context.Context, imageState llb.State) (string, string, error) {
+	// Create a temporary state to read os-release
+	osReleaseState := imageState.File(
+		llb.Copy(imageState, "/etc/os-release", "/tmp/os-release", &llb.CopyInfo{
 			CreateDestPath: true,
 		}),
 	)
 
+	// Marshal and solve to read the file
 	def, err := osReleaseState.Marshal(ctx)
 	if err != nil {
 		return "", "", err
@@ -106,7 +95,8 @@ func (f *Frontend) detectOSFromImage(ctx context.Context, bkConfig *buildkit.Con
 		Definition: def.ToPB(),
 	})
 	if err != nil {
-		return "", "", err
+		// If os-release doesn't exist, default to linux
+		return "linux", "", nil
 	}
 
 	ref, err := res.SingleRef()
@@ -118,15 +108,15 @@ func (f *Frontend) detectOSFromImage(ctx context.Context, bkConfig *buildkit.Con
 		Filename: "/tmp/os-release",
 	})
 	if err != nil {
-		// Fallback to common defaults
 		return "linux", "", nil
 	}
 
-	// Use the robust OS detection from pkg/common
+	// Use the common OS detection logic
 	osInfo, err := common.GetOSInfo(ctx, osReleaseData)
 	if err != nil {
-		return "", "", errors.Wrap(err, "failed to parse OS info from os-release")
+		return "", "", errors.Wrap(err, "failed to parse OS info")
 	}
 
 	return osInfo.Type, osInfo.Version, nil
 }
+

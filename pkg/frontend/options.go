@@ -2,14 +2,12 @@ package frontend
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
-	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
@@ -18,41 +16,12 @@ const (
 	trueStr = "true"
 )
 
-// Config holds the parsed configuration for the frontend.
-// It extends the common PatchOpts with frontend-specific settings.
-type Config struct {
-	// Embed common patch options
-	*types.Options
-
-	// Frontend-specific options
-	Platform *ispec.Platform
-
-	// Package manager type (auto-detected if not specified)
-	PkgMgr string
-
-	// Whether to run in offline mode (air-gapped environments)
-	OfflineMode bool
-
-	// Cache mode for BuildKit operations
-	CacheMode string
-
-	// Security mode constraints
-	SecurityMode string
-
-	// Package mirror for air-gapped environments
-	PackageMirror string
-
-	// Additional annotations to add to patched image
-	Annotations map[string]string
-}
-
-// ParseConfig parses the frontend options from the build context.
-func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
+// ParseOptions parses the frontend options from the build context.
+func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, error) {
 	opts := client.BuildOpts()
 
-	config := &Config{
-		Options:     &types.Options{},
-		Annotations: make(map[string]string),
+	options := &types.Options{
+		Scanner: "trivy", // default scanner
 	}
 
 	// Helper function to get option value, checking both direct and build-arg prefixed keys
@@ -70,34 +39,33 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 
 	// Parse base image
 	if v, ok := getOpt(keyImage); ok {
-		config.Image = v
+		options.Image = v
 	} else {
 		return nil, errors.New("base image reference required via --opt image=<ref>")
 	}
 
 	// Parse scanner type
 	if v, ok := getOpt(keyScanner); ok {
-		config.Scanner = v
+		options.Scanner = v
 	}
 
 	// Parse ignore errors flag
 	if v, ok := getOpt(keyIgnoreErrors); ok {
-		config.IgnoreError = v == trueStr || v == "1"
+		options.IgnoreError = v == trueStr || v == "1"
 	}
 
-	// Parse platform
+
+	// Parse platforms (as string slice for multiarch support)
 	if v, ok := getOpt(keyPlatform); ok {
-		p, err := parsePlatform(v)
-		if err != nil {
-			return nil, errors.Wrapf(err, "invalid platform: %s", v)
-		}
-		config.Platform = p
+		// Split comma-separated platforms
+		options.Platforms = strings.Split(v, ",")
+		bklog.G(ctx).WithField("component", "copa-frontend").WithField("platforms", options.Platforms).Debug("Parsed platforms")
 	}
 
 	// Parse vulnerability report
 	if reportPath, ok := getOpt(keyReport); ok {
 		// Direct file path - same as patch command --report/-r
-		config.Report = reportPath
+		options.Report = reportPath
 	} else if reportPath, ok := getOpt(keyReportPath); ok {
 		// Read report from build context and save to persistent location
 		reportData, err := readReportFromContext(ctx, client, reportPath)
@@ -108,52 +76,33 @@ func ParseConfig(ctx context.Context, client gwclient.Client) (*Config, error) {
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to save report to temp file")
 		}
-		config.Report = tempFile
+		options.Report = tempFile
 	} else {
 		// update all
-		log.Warn("No vulnerability report provided, using update-all mode")
+		bklog.L.WithField("component", "copa-frontend").Info("No vulnerability report provided, using update-all mode")
 	}
 
-	// Parse package manager
-	if v, ok := getOpt(keyPkgMgr); ok {
-		config.PkgMgr = v
+	// Parse patched tag
+	if v, ok := getOpt(keyPatchedTag); ok {
+		options.PatchedTag = v
 	}
 
-	// Parse offline mode
-	if v, ok := getOpt(keyOfflineMode); ok {
-		config.OfflineMode = v == trueStr || v == "1"
+	// Parse suffix
+	if v, ok := getOpt(keySuffix); ok {
+		options.Suffix = v
 	}
 
-	// Parse cache mode
-	if v, ok := getOpt(keyCacheMode); ok {
-		config.CacheMode = v
+	// Parse output (for VEX document)
+	if v, ok := getOpt(keyOutput); ok {
+		options.Output = v
 	}
 
-	// Parse security mode
-	if v, ok := getOpt(keySecurityMode); ok {
-		config.SecurityMode = v
+	// Parse format (for VEX document)
+	if v, ok := getOpt(keyFormat); ok {
+		options.Format = v
 	}
 
-	// Parse package mirror
-	if v, ok := getOpt(keyMirror); ok {
-		config.PackageMirror = v
-	}
-
-	// Parse additional annotations
-	for k, v := range opts.Opts {
-		// Handle direct annotation keys (buildctl style)
-		if strings.HasPrefix(k, "annotation.") {
-			annotKey := strings.TrimPrefix(k, "annotation.")
-			config.Annotations[annotKey] = v
-		}
-		// Handle build-arg prefixed annotation keys (docker buildx style)
-		if strings.HasPrefix(k, "build-arg:annotation.") {
-			annotKey := strings.TrimPrefix(k, "build-arg:annotation.")
-			config.Annotations[annotKey] = v
-		}
-	}
-
-	return config, nil
+	return options, nil
 }
 
 // saveReportToTempFile saves report data to a temporary file and returns the file path.
@@ -171,25 +120,6 @@ func saveReportToTempFile(data []byte) (string, error) {
 	}
 
 	return tempFile.Name(), nil
-}
-
-// parsePlatform parses a platform string (e.g., "linux/amd64", "linux/arm64/v8").
-func parsePlatform(p string) (*ispec.Platform, error) {
-	parts := strings.Split(p, "/")
-	if len(parts) < 2 {
-		return nil, fmt.Errorf("invalid platform format: %s", p)
-	}
-
-	platform := &ispec.Platform{
-		OS:           parts[0],
-		Architecture: parts[1],
-	}
-
-	if len(parts) > 2 {
-		platform.Variant = parts[2]
-	}
-
-	return platform, nil
 }
 
 // readReportFromContext reads a file from the build context.
