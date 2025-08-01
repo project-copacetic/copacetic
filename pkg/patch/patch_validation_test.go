@@ -3,6 +3,7 @@ package patch
 import (
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,38 +17,38 @@ func TestValidateLibraryPkgTypesRequireReport(t *testing.T) {
 	}{
 		{
 			name:           "OS package types without report - should succeed",
-			pkgTypes:       []string{PkgTypeOS},
+			pkgTypes:       []string{utils.PkgTypeOS},
 			reportProvided: false,
 			expectError:    false,
 		},
 		{
 			name:           "OS package types with report - should succeed",
-			pkgTypes:       []string{PkgTypeOS},
+			pkgTypes:       []string{utils.PkgTypeOS},
 			reportProvided: true,
 			expectError:    false,
 		},
 		{
 			name:           "Library package types with report - should succeed",
-			pkgTypes:       []string{PkgTypeLibrary},
+			pkgTypes:       []string{utils.PkgTypeLibrary},
 			reportProvided: true,
 			expectError:    false,
 		},
 		{
 			name:           "Library package types without report - should fail",
-			pkgTypes:       []string{PkgTypeLibrary},
+			pkgTypes:       []string{utils.PkgTypeLibrary},
 			reportProvided: false,
 			expectError:    true,
 			errorMessage:   "library package types require a scanner report file to be provided",
 		},
 		{
 			name:           "Mixed package types with report - should succeed",
-			pkgTypes:       []string{PkgTypeOS, PkgTypeLibrary},
+			pkgTypes:       []string{utils.PkgTypeOS, utils.PkgTypeLibrary},
 			reportProvided: true,
 			expectError:    false,
 		},
 		{
 			name:           "Mixed package types without report - should fail",
-			pkgTypes:       []string{PkgTypeOS, PkgTypeLibrary},
+			pkgTypes:       []string{utils.PkgTypeOS, utils.PkgTypeLibrary},
 			reportProvided: false,
 			expectError:    true,
 			errorMessage:   "library package types require a scanner report file to be provided",
@@ -80,31 +81,31 @@ func TestParsePkgTypes(t *testing.T) {
 		{
 			name:        "empty string defaults to OS",
 			input:       "",
-			expected:    []string{PkgTypeOS},
+			expected:    []string{utils.PkgTypeOS},
 			expectError: false,
 		},
 		{
 			name:        "valid OS type",
 			input:       "os",
-			expected:    []string{PkgTypeOS},
+			expected:    []string{utils.PkgTypeOS},
 			expectError: false,
 		},
 		{
 			name:        "valid library type",
 			input:       "library",
-			expected:    []string{PkgTypeLibrary},
+			expected:    []string{utils.PkgTypeLibrary},
 			expectError: false,
 		},
 		{
 			name:        "valid mixed types",
 			input:       "os,library",
-			expected:    []string{PkgTypeOS, PkgTypeLibrary},
+			expected:    []string{utils.PkgTypeOS, utils.PkgTypeLibrary},
 			expectError: false,
 		},
 		{
 			name:        "valid mixed types with spaces",
 			input:       " os , library ",
-			expected:    []string{PkgTypeOS, PkgTypeLibrary},
+			expected:    []string{utils.PkgTypeOS, utils.PkgTypeLibrary},
 			expectError: false,
 		},
 		{

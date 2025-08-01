@@ -470,7 +470,7 @@ func TestPkgTypesFiltering(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			manifest, err := TryParseScanReport(testFile, "trivy", "major", tc.pkgTypes)
+			manifest, err := TryParseScanReport(testFile, "trivy", tc.pkgTypes, "major")
 			if err != nil {
 				t.Fatalf("TryParseScanReport failed: %v", err)
 			}

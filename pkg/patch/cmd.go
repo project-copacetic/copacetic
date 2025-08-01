@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/spf13/cobra"
 
 	// Register connection helpers for buildkit.
@@ -123,9 +124,9 @@ func NewPatchCmd() *cobra.Command {
 func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 	// Valid library patch levels
 	validLevels := map[string]bool{
-		"patch": true,
-		"minor": true,
-		"major": true,
+		utils.PatchTypePatch: true,
+		utils.PatchTypeMinor: true,
+		utils.PatchTypeMajor: true,
 	}
 
 	// Check if the provided level is valid
@@ -134,7 +135,7 @@ func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 	}
 
 	// If library patch level is specified and not the default, ensure library is in pkg-types
-	if libraryPatchLevel != "patch" && !strings.Contains(pkgTypes, "library") {
+	if libraryPatchLevel != utils.PatchTypePatch && !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
 		return fmt.Errorf("--library-patch-level can only be used when 'library' is included in --pkg-types")
 	}
 

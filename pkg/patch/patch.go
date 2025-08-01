@@ -55,10 +55,6 @@ const (
 	LINUX                   = "linux"
 	ARM64                   = "arm64"
 	copaAnnotationKeyPrefix = "sh.copa"
-
-	// Package types.
-	PkgTypeOS      = "os"
-	PkgTypeLibrary = "library"
 )
 
 // for testing.
@@ -71,7 +67,7 @@ var (
 // parsePkgTypes parses a comma-separated string of package types and validates them.
 func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	if pkgTypesStr == "" {
-		return []string{PkgTypeOS}, nil // default to OS
+		return []string{utils.PkgTypeOS}, nil // default to OS
 	}
 
 	types := strings.Split(pkgTypesStr, ",")
@@ -79,15 +75,15 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 
 	for _, t := range types {
 		t = strings.TrimSpace(t)
-		if t == PkgTypeOS || t == PkgTypeLibrary {
+		if t == utils.PkgTypeOS || t == utils.PkgTypeLibrary {
 			validTypes = append(validTypes, t)
 		} else {
-			return nil, fmt.Errorf("invalid package type '%s'. Valid types are: %s, %s", t, PkgTypeOS, PkgTypeLibrary)
+			return nil, fmt.Errorf("invalid package type '%s'. Valid types are: %s, %s", t, utils.PkgTypeOS, utils.PkgTypeLibrary)
 		}
 	}
 
 	if len(validTypes) == 0 {
-		return []string{PkgTypeOS}, nil // default to OS
+		return []string{utils.PkgTypeOS}, nil // default to OS
 	}
 
 	return validTypes, nil
@@ -95,12 +91,12 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 
 // shouldIncludeOSUpdates returns true if OS updates should be included based on package types.
 func shouldIncludeOSUpdates(pkgTypes []string) bool {
-	return slices.Contains(pkgTypes, PkgTypeOS)
+	return slices.Contains(pkgTypes, utils.PkgTypeOS)
 }
 
 // shouldIncludeLibraryUpdates returns true if library updates should be included based on package types.
 func shouldIncludeLibraryUpdates(pkgTypes []string) bool {
-	return slices.Contains(pkgTypes, PkgTypeLibrary)
+	return slices.Contains(pkgTypes, utils.PkgTypeLibrary)
 }
 
 // validateLibraryPkgTypesRequireReport validates that library package types require a scanner report.

@@ -9,6 +9,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/types/v1alpha1"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 type ErrorUnsupported struct {
@@ -74,11 +75,11 @@ func defaultParseScanReport(file, pkgTypes, libraryPatchLevel string) (*unversio
 			// Filter updates based on pkg-types early
 			if manifest != nil {
 				// Only process library updates if "library" is in pkg-types
-				if !strings.Contains(pkgTypes, "library") {
+				if !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
 					manifest.LangUpdates = []unversioned.UpdatePackage{}
 				}
 				// Only process OS updates if "os" is in pkg-types
-				if !strings.Contains(pkgTypes, "os") {
+				if !strings.Contains(pkgTypes, utils.PkgTypeOS) {
 					manifest.OSUpdates = []unversioned.UpdatePackage{}
 				}
 			}
