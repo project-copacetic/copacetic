@@ -12,6 +12,10 @@ github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092 h1:aM1
 github.com/anchore/go-struct-converter v0.0.0-20221118182256-c68fdcfa2092/go.mod h1:rYqSE9HbjzpHTI74vwPvae4ZVYZd1lue2ta6xHPdblA=
 github.com/apparentlymart/go-textseg/v15 v15.0.0 h1:uYvfpb3DyLSCGWnctWKGj857c6ew1u1fNQOlOtuGxQY=
 github.com/apparentlymart/go-textseg/v15 v15.0.0/go.mod h1:K8XmNZdhEBkdlyDdvbmmsvpAG721bKi0joRfFdHIWJ4=
+github.com/aquasecurity/go-pep440-version v0.0.1 h1:8VKKQtH2aV61+0hovZS3T//rUF+6GDn18paFTVS0h0M=
+github.com/aquasecurity/go-pep440-version v0.0.1/go.mod h1:3naPe+Bp6wi3n4l5iBFCZgS0JG8vY6FT0H4NGhFJ+i4=
+github.com/aquasecurity/go-version v0.0.1 h1:4cNl516agK0TCn5F7mmYN+xVs1E3S45LkgZk3cbaW2E=
+github.com/aquasecurity/go-version v0.0.1/go.mod h1:s1UU6/v2hctXcOa3OLwfj5d9yoXHa3ahf+ipSwEvGT0=
 github.com/aquasecurity/trivy v0.64.1 h1:CybygdAEaIhC8PqDaCbPfc8Tkk0IdqKo874T817bqrI=
 github.com/aquasecurity/trivy v0.64.1/go.mod h1:3FO8leQCDAqeQb3YlkHpd9v4a0gg8T/K3rqWz80E9Kw=
 github.com/aquasecurity/trivy-db v0.0.0-20250627124416-ca81c496a932 h1:5GKQ53uGGHEEtZ/FX94jcIdfEGeyiHZ7tmJ5nCtDz5c=

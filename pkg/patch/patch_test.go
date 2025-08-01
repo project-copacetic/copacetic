@@ -521,6 +521,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 		false, true,
 		targetPlatforms,
 		buildkit.Opts{},
+		"os", "patch",
 	)
 
 	if err == nil {
