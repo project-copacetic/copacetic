@@ -11,7 +11,7 @@ import (
 )
 
 func mockTagLister(tags []string, err error) func(repo name.Repository) ([]string, error) {
-	return func(repo name.Repository) ([]string, error) {
+	return func(_ name.Repository) ([]string, error) {
 		return tags, err
 	}
 }

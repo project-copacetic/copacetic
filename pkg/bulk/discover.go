@@ -10,6 +10,12 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	StrategyList    = "list"
+	StrategyPattern = "pattern"
+	StrategyLatest  = "latest"
+)
+
 func FindTagsToPatch(spec *ImageSpec) ([]string, error) {
 	log.Infof("Discovering tags for '%s' with strategy: %s", spec.Name, spec.Tags.Strategy)
 
@@ -19,11 +25,11 @@ func FindTagsToPatch(spec *ImageSpec) ([]string, error) {
 	}
 
 	switch spec.Tags.Strategy {
-	case "list":
+	case StrategyList:
 		return findTagsByList(repo, spec.Tags.List), nil
-	case "pattern":
+	case StrategyPattern:
 		return findTagsByPattern(repo, spec)
-	case "latest":
+	case StrategyLatest:
 		return findTagsByLatest(repo, spec)
 	}
 
