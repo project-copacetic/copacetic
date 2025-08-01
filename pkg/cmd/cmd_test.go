@@ -1,31 +1,63 @@
 package cmd
 
-import "testing"
+import (
+	"errors"
+	"testing"
 
-func TestNewPatchCmd(t *testing.T) {
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+)
+
+func TestNewPatchCmdValidation(t *testing.T) {
 	tests := []struct {
-		name     string
-		args     []string
-		expected string
+		name                  string
+		args                  []string
+		expectValidationError bool
+		expectedErrorContains string
 	}{
 		{
-			name:     "Missing image flag",
-			args:     []string{"-r", "trivy.json", "-t", "3.7-alpine-patched"},
-			expected: "required flag(s) \"image\" not set",
+			name:                  "FAIL: No flags provided",
+			args:                  []string{},
+			expectValidationError: true,
+			expectedErrorContains: "either --config or --image must be provided",
+		},
+		{
+			name:                  "FAIL: Conflicting flags (--config and --image)",
+			args:                  []string{"--config", "config.yaml", "--image", "alpine"},
+			expectValidationError: true,
+			expectedErrorContains: "--config cannot be used with --image, --report, or --tag",
+		},
+		{
+			name:                  "PASS: Single image mode validation",
+			args:                  []string{"--image", "alpine:latest"},
+			expectValidationError: false, // This combination of flags is valid.
+		},
+		{
+			name:                  "PASS: Bulk mode validation",
+			args:                  []string{"--config", "config.yaml"},
+			expectValidationError: false, // This combination of flags is valid.
 		},
 	}
 
-	// Run test cases
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a new command with the test args
 			cmd := NewPatchCmd()
 			cmd.SetArgs(tt.args)
 
-			// Run the command and capture the output
+			if !tt.expectValidationError {
+				cmd.RunE = func(_ *cobra.Command, _ []string) error {
+					return errors.New("validation passed")
+				}
+			}
+
 			err := cmd.Execute()
-			if err == nil || err.Error() != tt.expected {
-				t.Errorf("Unexpected error: %v, expected: %v", err, tt.expected)
+
+			if tt.expectValidationError {
+				assert.Error(t, err, "Expected a validation error, but got none")
+				assert.Contains(t, err.Error(), tt.expectedErrorContains, "Error message did not match")
+			} else {
+				assert.Error(t, err)
+				assert.Equal(t, "validation passed", err.Error(), "Expected to see the dummy error, indicating validation passed")
 			}
 		})
 	}
