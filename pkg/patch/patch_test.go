@@ -513,6 +513,7 @@ func init() {
 func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	// Use platforms that match the host to avoid emulation issues in test
 	targetPlatforms := []string{"linux/amd64"}
+	progress := "auto"
 
 	err := Patch(
 		context.Background(),
@@ -520,6 +521,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 		"alpine:3.19", "", "", "", "", "", "", "", "",
 		false, true,
 		targetPlatforms,
+		progress,
 		buildkit.Opts{},
 	)
 
