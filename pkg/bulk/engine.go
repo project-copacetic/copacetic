@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"html/template"
 	"os"
+	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"text/tabwriter"
@@ -38,7 +40,7 @@ type patchJobStatus struct {
 	Error  error
 }
 
-func PatchFromConfig(ctx context.Context, configPath string, opts OrchestratorOptions) error {
+func PatchFromConfig(ctx context.Context, configPath string, opts *OrchestratorOptions) error {
 	yamlFile, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("failed to read config file %s: %w", configPath, err)
@@ -54,99 +56,175 @@ func PatchFromConfig(ctx context.Context, configPath string, opts OrchestratorOp
 		return fmt.Errorf("invalid timeout duration: %w", err)
 	}
 
+	log.Debug("Discovering all tags to calculate total job count...")
+	type job struct {
+		spec *ImageSpec
+		tag  string
+	}
+	var jobsToRun []job
+	var discoveryErrors *multierror.Error
+
+	for i := range config.Images {
+		imageSpec := &config.Images[i]
+		tagsToPatch, err := FindTagsToPatch(imageSpec)
+		if err != nil {
+			discoveryErrors = multierror.Append(discoveryErrors, fmt.Errorf("error discovering tags for '%s': %w", imageSpec.Name, err))
+			continue
+		}
+		for _, tag := range tagsToPatch {
+			jobsToRun = append(jobsToRun, job{spec: imageSpec, tag: tag})
+		}
+	}
+
+	if discoveryErrors.ErrorOrNil() != nil {
+		log.Warnf("Encountered errors during tag discovery phase:\n%s", discoveryErrors.Error())
+	}
+
+	if len(jobsToRun) == 0 {
+		log.Warn("No tags found to patch across all image specs.")
+		return nil
+	}
+
+	log.Debugf("Total number of patch jobs to execute: %d", len(jobsToRun))
+
+	numWorkers := runtime.NumCPU()
+	log.Debugf("initializing worker pool with %d concurrent workers.", numWorkers)
+
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	errChan := make(chan error, 1000)
-	results := make([]patchJobStatus, 0)
+	jobsChan := make(chan job, len(jobsToRun))
+	errChan := make(chan error, len(jobsToRun))
+	results := make([]patchJobStatus, 0, len(jobsToRun))
+
+	for w := 1; w <= numWorkers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			for j := range jobsChan {
+				spec := j.spec
+				tag := j.tag
+				imageWithTag := fmt.Sprintf("%s:%s", spec.Image, tag)
+				targetTag, err := resolveTargetTag(spec.Target, tag)
+				if err != nil {
+					errChan <- fmt.Errorf("worker %d: error resolving target tag for '%s:%s': %w", workerID, spec.Name, tag, err)
+					return
+				}
+
+				err = patch.Patch(ctx, timeout,
+					imageWithTag,
+					"", // reportPath is empty for update-all mode
+					targetTag,
+					"", // suffix is empty since we provide an explicit targetTag
+					opts.WorkingFolder,
+					opts.Scanner,
+					opts.Format,
+					opts.Output,
+					opts.Loader,
+					opts.IgnoreErrors,
+					opts.Push,
+					spec.Platforms,
+					opts.BKOOpts,
+				)
+				mu.Lock()
+				jobResult := patchJobStatus{
+					Name:   spec.Name,
+					Source: imageWithTag,
+					Target: targetTag,
+				}
+				if err != nil {
+					jobResult.Status = "Failed"
+					jobResult.Error = err
+					errChan <- err
+					log.Errorf("Failed to patch %s: %v", imageWithTag, err)
+				} else {
+					jobResult.Status = "Patched"
+				}
+				results = append(results, jobResult)
+				mu.Unlock()
+			}
+		}(w)
+	}
 
 	log.Infof("Starting bulk patch for %d image(s) defined in %s...", len(config.Images), configPath)
 
-	for _, imageSpec := range config.Images {
+	for _, j := range jobsToRun {
 		wg.Add(1)
 
-		go func(spec ImageSpec) {
+		go func(currentJob job) {
 			defer wg.Done()
 
-			tagsToPatch, err := FindTagsToPatch(ctx, spec)
+			spec := currentJob.spec
+			tag := currentJob.tag
+
+			imageWithTag := fmt.Sprintf("%s:%s", spec.Image, tag)
+			targetTag, err := resolveTargetTag(spec.Target, tag)
 			if err != nil {
-				errChan <- fmt.Errorf("error discovering tags for '%s': %w", spec.Name, err)
+				errChan <- fmt.Errorf("error resolving target tag for '%s:%s': %w", spec.Name, tag, err)
 				return
 			}
 
-			if len(tagsToPatch) == 0 {
-				log.Warnf("No tags found to patch for '%s', skipping.", spec.Name)
-				return
+			log.Infof("Starting patch for %s", imageWithTag)
+
+			err = patch.Patch(ctx, timeout,
+				imageWithTag,
+				"", // reportPath is empty for update-all mode
+				targetTag,
+				"", // suffix is empty since we provide an explicit targetTag
+				opts.WorkingFolder,
+				opts.Scanner,
+				opts.Format,
+				opts.Output,
+				opts.Loader,
+				opts.IgnoreErrors,
+				opts.Push,
+				spec.Platforms,
+				opts.BKOOpts,
+			)
+
+			mu.Lock()
+			jobResult := patchJobStatus{
+				Name:   spec.Name,
+				Source: imageWithTag,
+				Target: targetTag,
 			}
-			log.Infof("For '%s', found %d tag(s) to patch: %v", spec.Name, len(tagsToPatch), tagsToPatch)
-
-			var innerWg sync.WaitGroup
-			for _, tag := range tagsToPatch {
-				innerWg.Add(1)
-
-				go func(t string) {
-					defer innerWg.Done()
-
-					imageWithTag := fmt.Sprintf("%s:%s", spec.Image, t)
-					targetTag, err := resolveTargetTag(spec.Target, t)
-					if err != nil {
-						errChan <- fmt.Errorf("error resolving target tag for '%s:%s': %w", spec.Name, t, err)
-						return
-					}
-
-					log.Infof("--> Starting patch for %s", imageWithTag)
-
-					err = patch.Patch(ctx, timeout,
-						imageWithTag,
-						"", // reportPath is empty for update-all mode
-						targetTag,
-						"", // suffix is empty since we provide an explicit targetTag
-						opts.WorkingFolder,
-						opts.Scanner,
-						opts.Format,
-						opts.Output,
-						opts.Loader,
-						opts.IgnoreErrors,
-						opts.Push,
-						spec.Platforms,
-						opts.BKOOpts,
-					)
-
-					mu.Lock()
-					jobResult := patchJobStatus{
-						Name:   spec.Name,
-						Source: imageWithTag,
-						Target: targetTag,
-					}
-					if err != nil {
-						jobResult.Status = "Failed"
-						jobResult.Error = err
-						errChan <- err
-						log.Errorf("--> Failed to patch %s: %v", imageWithTag, err)
-					} else {
-						jobResult.Status = "Patched"
-						log.Infof("--> Successfully patched %s -> %s", imageWithTag, targetTag)
-					}
-					results = append(results, jobResult)
-					mu.Unlock()
-
-				}(tag)
+			if err != nil {
+				jobResult.Status = "Failed"
+				jobResult.Error = err
+				errChan <- err
+				log.Errorf("Failed to patch %s: %v", imageWithTag, err)
+			} else {
+				jobResult.Status = "Patched"
 			}
-			innerWg.Wait()
-		}(imageSpec)
+			results = append(results, jobResult)
+			mu.Unlock()
+		}(j)
 	}
+
+	log.Info("Distributing jobs to workers...")
+	for _, j := range jobsToRun {
+		jobsChan <- j
+	}
+	close(jobsChan)
 
 	wg.Wait()
 	close(errChan)
-
-	printSummary(results)
 
 	var multiErr *multierror.Error
 	for err := range errChan {
 		multiErr = multierror.Append(multiErr, err)
 	}
 
-	log.Info("Bulk patch run completed.")
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].Name != results[j].Name {
+			return results[i].Name < results[j].Name
+		}
+		return results[i].Source < results[j].Source
+	})
+
+	printSummary(results)
+
 	return multiErr.ErrorOrNil()
 }
 
@@ -178,17 +256,17 @@ func printSummary(results []patchJobStatus) {
 	var buf bytes.Buffer
 	writer := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
 
-	fmt.Fprintln(writer, "NAME\tSOURCE IMAGE\tPATCHED TAG\tSTATUS\tDETAILS")
+	fmt.Fprintln(writer, "NAME\tSTATUS\tSOURCE IMAGE\tPATCHED TAG\tDETAILS")
 
 	for _, res := range results {
 		details := "OK"
 		if res.Error != nil {
 			details = res.Error.Error()
 		}
-		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", res.Name, res.Source, res.Target, res.Status, details)
+		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", res.Name, res.Status, res.Source, res.Target, details)
 		fmt.Fprintln(writer, row)
 	}
 
 	writer.Flush()
-	log.Infof("\n\n--- Bulk Patch Summary ---\n%s", buf.String())
+	log.Infof("\n\nBulk Patch Summary:\n%s", buf.String())
 }

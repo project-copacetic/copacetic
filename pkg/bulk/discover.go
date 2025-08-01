@@ -1,7 +1,6 @@
 package bulk
 
 import (
-	"context"
 	"fmt"
 	"sort"
 
@@ -11,7 +10,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func FindTagsToPatch(ctx context.Context, spec ImageSpec) ([]string, error) {
+func FindTagsToPatch(spec *ImageSpec) ([]string, error) {
 	log.Infof("Discovering tags for '%s' with strategy: %s", spec.Name, spec.Tags.Strategy)
 
 	repo, err := name.NewRepository(spec.Image)
@@ -31,14 +30,14 @@ func FindTagsToPatch(ctx context.Context, spec ImageSpec) ([]string, error) {
 	return nil, fmt.Errorf("internal error: unhandled strategy '%s'", spec.Tags.Strategy)
 }
 
-// Filter by list
+// Filter by list.
 func findTagsByList(repo name.Repository, list []string) []string {
 	log.Debugf("Using explicit list of tags for '%s': %v", repo.Name(), list)
 	return list
 }
 
-// Filter by latest
-func findTagsByLatest(repo name.Repository, spec ImageSpec) ([]string, error) {
+// Filter by latest.
+func findTagsByLatest(repo name.Repository, spec *ImageSpec) ([]string, error) {
 	allTags, err := listAllTags(repo)
 	if err != nil {
 		return nil, err
@@ -68,13 +67,13 @@ func findTagsByLatest(repo name.Repository, spec ImageSpec) ([]string, error) {
 	return []string{latestTag}, nil
 }
 
-func findTagsByPattern(repo name.Repository, spec ImageSpec) ([]string, error) {
+func findTagsByPattern(repo name.Repository, spec *ImageSpec) ([]string, error) {
 	allTags, err := listAllTags(repo)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter by regex pattern
+	// Filter by regex pattern.
 	matchingTags := []string{}
 	for _, tag := range allTags {
 		if spec.Tags.compiledPattern.MatchString(tag) {

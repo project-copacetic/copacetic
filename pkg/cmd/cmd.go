@@ -44,20 +44,18 @@ func NewPatchCmd() *cobra.Command {
 		Short: "Patch container images with upgrade packages specified by a vulnerability report or by comprehensive update",
 		Example: `  copa patch -i images/python:3.7-alpine -r trivy.json
   copa patch --config copa-bulk-config.yaml --push`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-
+		RunE: func(_ *cobra.Command, _ []string) error {
 			if ua.configFile == "" && ua.appImage == "" {
 				return errors.New("either --config or --image must be provided")
 			}
 
 			// bulk patch
 			if ua.configFile != "" {
-
 				if ua.appImage != "" || ua.reportFile != "" || ua.patchedTag != "" {
 					return errors.New("--config cannot be used with --image, --report, or --tag")
 				}
 
-				log.Info("Starting in bulk patching mode...")
+				log.Info("Starting in bulk image patching mode...")
 
 				bkopts := buildkit.Opts{
 					Addr:       ua.bkOpts.Addr,
@@ -65,7 +63,7 @@ func NewPatchCmd() *cobra.Command {
 					CertPath:   ua.bkOpts.CertPath,
 					KeyPath:    ua.bkOpts.KeyPath,
 				}
-				bulkOpts := bulk.OrchestratorOptions{
+				bulkOpts := &bulk.OrchestratorOptions{
 					Timeout:       ua.timeout.String(),
 					Push:          ua.push,
 					IgnoreErrors:  ua.ignoreError,
@@ -78,36 +76,33 @@ func NewPatchCmd() *cobra.Command {
 				}
 
 				return bulk.PatchFromConfig(context.Background(), ua.configFile, bulkOpts)
-
-			} else { // single image patch
-
-				if ua.appImage == "" {
-					return errors.New("--image is required when not using --config")
-				}
-				log.Info("Starting in single image patching mode...")
-
-				bkopts := buildkit.Opts{
-					Addr:       ua.bkOpts.Addr,
-					CACertPath: ua.bkOpts.CACertPath,
-					CertPath:   ua.bkOpts.CertPath,
-					KeyPath:    ua.bkOpts.KeyPath,
-				}
-				return patch.Patch(context.Background(),
-					ua.timeout,
-					ua.appImage,
-					ua.reportFile,
-					ua.patchedTag,
-					ua.suffix,
-					ua.workingFolder,
-					ua.scanner,
-					ua.format,
-					ua.output,
-					ua.loader,
-					ua.ignoreError,
-					ua.push,
-					ua.platform,
-					bkopts)
 			}
+			if ua.appImage == "" {
+				return errors.New("--image is required when not using --config")
+			}
+			log.Info("Starting in single image patching mode...")
+
+			bkopts := buildkit.Opts{
+				Addr:       ua.bkOpts.Addr,
+				CACertPath: ua.bkOpts.CACertPath,
+				CertPath:   ua.bkOpts.CertPath,
+				KeyPath:    ua.bkOpts.KeyPath,
+			}
+			return patch.Patch(context.Background(),
+				ua.timeout,
+				ua.appImage,
+				ua.reportFile,
+				ua.patchedTag,
+				ua.suffix,
+				ua.workingFolder,
+				ua.scanner,
+				ua.format,
+				ua.output,
+				ua.loader,
+				ua.ignoreError,
+				ua.push,
+				ua.platform,
+				bkopts)
 		},
 	}
 	flags := patchCmd.Flags()

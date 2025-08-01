@@ -60,8 +60,6 @@ func (t *TagStrategy) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	default:
 		return fmt.Errorf("unknown tag strategy '%s', must be one of: list, pattern, latest", raw.Strategy)
 	}
-
 	*t = TagStrategy(raw)
 	return nil
-
 }
