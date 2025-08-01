@@ -3,6 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.24.4
 
 require (
+	github.com/Masterminds/semver/v3 v3.3.0
 	github.com/aquasecurity/trivy v0.64.1
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
@@ -30,6 +31,7 @@ require (
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
 	golang.org/x/sync v0.16.0
 	google.golang.org/grpc v1.74.2
+	gopkg.in/yaml.v2 v2.4.0
 	k8s.io/apimachinery v0.33.3
 )
 
