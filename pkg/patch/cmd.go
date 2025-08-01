@@ -101,16 +101,16 @@ func NewPatchCmd() *cobra.Command {
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
-		flags.StringVar(&ua.pkgTypes, "pkg-types", "os",
+		flags.StringVar(&ua.pkgTypes, "pkg-types", utils.PkgTypeOS,
 			"[EXPERIMENTAL] Package types to patch, comma-separated list of 'os' and 'library'. "+
 				"Defaults to 'os' for OS vulnerabilities only")
-		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", "patch",
+		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", utils.PatchTypePatch,
 			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
 				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
 	} else {
 		// Set default values when experimental flags are not enabled
-		ua.pkgTypes = "os"
-		ua.libraryPatchLevel = "patch"
+		ua.pkgTypes = utils.PkgTypeOS
+		ua.libraryPatchLevel = utils.PatchTypePatch
 	}
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {

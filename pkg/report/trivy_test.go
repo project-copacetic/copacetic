@@ -7,6 +7,7 @@ import (
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -470,7 +471,7 @@ func TestPkgTypesFiltering(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			manifest, err := TryParseScanReport(testFile, "trivy", tc.pkgTypes, "major")
+			manifest, err := TryParseScanReport(testFile, "trivy", tc.pkgTypes, utils.PatchTypeMajor)
 			if err != nil {
 				t.Fatalf("TryParseScanReport failed: %v", err)
 			}

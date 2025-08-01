@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -47,7 +48,7 @@ func TestDummyProvider(t *testing.T) {
 	// Loop over test cases and run TryParseScanReport function with each input file
 	for _, tc := range testCases {
 		t.Run(tc.file, func(t *testing.T) {
-			_, err := TryParseScanReport(tc.file, "dummy", "patch", "os")
+			_, err := TryParseScanReport(tc.file, "dummy", utils.PkgTypeOS, utils.PatchTypePatch)
 
 			// We will get error from dummy provider because the binary "copa-dummy" does not exist
 			assert.EqualError(t, err, tc.err.Error())
