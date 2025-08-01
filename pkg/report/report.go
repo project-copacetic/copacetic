@@ -22,9 +22,9 @@ type ScanReportParser interface {
 	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
-func TryParseScanReport(file, scanner, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
+func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
-		return defaultParseScanReport(file, libraryPatchLevel, pkgTypes)
+		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
 	}
 	return customParseScanReport(file, scanner)
 }
@@ -64,7 +64,7 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 	return updateManifest, nil
 }
 
-func defaultParseScanReport(file, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
+func defaultParseScanReport(file, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
 	}
