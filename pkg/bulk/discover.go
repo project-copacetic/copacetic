@@ -48,10 +48,10 @@ func findTagsByLatest(repo name.Repository, spec *ImageSpec) ([]string, error) {
 	versions := make([]*semver.Version, 0, len(filteredTags))
 	for _, t := range filteredTags {
 		v, err := semver.NewVersion(t)
-		if err == nil {
+		if err == nil && v.Prerelease() == "" {
 			versions = append(versions, v)
 		} else {
-			log.Warnf("Could not parse tag '%s' as semver for '%s', skipping", t, repo.Name())
+			log.Warnf("Could not parse tag '%s' as stable semver for '%s', skipping", t, repo.Name())
 		}
 	}
 
@@ -87,7 +87,7 @@ func findTagsByPattern(repo name.Repository, spec *ImageSpec) ([]string, error) 
 	versions := make([]*semver.Version, 0, len(matchingTags))
 	for _, t := range matchingTags {
 		v, err := semver.NewVersion(t)
-		if err == nil {
+		if err == nil && v.Prerelease() == "" {
 			versions = append(versions, v)
 		} else {
 			log.Warnf("Could not parse tag '%s' as semver for '%s', skipping", t, repo.Name())
@@ -115,7 +115,7 @@ func findTagsByPattern(repo name.Repository, spec *ImageSpec) ([]string, error) 
 	return finalTags, nil
 }
 
-func listAllTags(repo name.Repository) ([]string, error) {
+var listAllTags = func(repo name.Repository) ([]string, error) {
 	tags, err := remote.List(repo)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tags for repository '%s': %w", repo.Name(), err)
