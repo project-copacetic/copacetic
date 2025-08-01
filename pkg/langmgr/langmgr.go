@@ -22,7 +22,7 @@ const (
 )
 
 type LangManager interface {
-	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
+	InstallUpdates(context.Context, *llb.State, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
 }
 
 // GetLanguageManagers returns a list of all available language managers.

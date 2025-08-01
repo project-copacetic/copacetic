@@ -184,7 +184,9 @@ func TestPythonManagerInstallUpdates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			state, errPkgs, err := pm.InstallUpdates(ctx, tt.manifest, tt.ignoreErrors)
+			// Create a mock current state (using the same imageState from pm.config)
+			currentState := &pm.config.ImageState
+			state, errPkgs, err := pm.InstallUpdates(ctx, currentState, tt.manifest, tt.ignoreErrors)
 
 			if tt.expectError {
 				// In test environment, we expect errors due to missing buildkit setup

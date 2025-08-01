@@ -89,6 +89,7 @@ func isLessThanPythonVersion(v1, v2 string) bool {
 
 func (pm *pythonManager) InstallUpdates(
 	ctx context.Context,
+	currentState *llb.State,
 	manifest *unversioned.UpdateManifest,
 	ignoreErrors bool,
 ) (*llb.State, []string, error) {
@@ -101,30 +102,30 @@ func (pm *pythonManager) InstallUpdates(
 		for _, u := range manifest.LangUpdates {
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
-		return &pm.config.ImageState, errPkgsReported, fmt.Errorf("failed to determine unique latest Python updates: %w", err)
+		return currentState, errPkgsReported, fmt.Errorf("failed to determine unique latest Python updates: %w", err)
 	}
 
 	if len(updatesToAttempt) == 0 {
 		log.Warn("No Python update packages were specified to apply.")
-		return &pm.config.ImageState, []string{}, nil
+		return currentState, []string{}, nil
 	}
 	log.Debugf("Attempting to update latest unique pips: %v", updatesToAttempt)
 
 	// Perform the upgrade.
-	updatedImageState, resultsBytes, upgradeErr := pm.upgradePackages(ctx, updatesToAttempt, ignoreErrors)
+	updatedImageState, resultsBytes, upgradeErr := pm.upgradePackages(ctx, currentState, updatesToAttempt, ignoreErrors)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Python packages: %v. Cannot proceed to validation.", upgradeErr)
 		if !ignoreErrors {
 			for _, u := range updatesToAttempt {
 				errPkgsReported = append(errPkgsReported, u.Name)
 			}
-			return &pm.config.ImageState, errPkgsReported, fmt.Errorf("python package upgrade operation failed: %w", upgradeErr)
+			return currentState, errPkgsReported, fmt.Errorf("python package upgrade operation failed: %w", upgradeErr)
 		}
 		log.Warnf("Python package upgrade operation failed but errors are ignored. Original image state will be used.")
 		for _, u := range updatesToAttempt {
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
-		return &pm.config.ImageState, errPkgsReported, nil
+		return currentState, errPkgsReported, nil
 	}
 
 	// If upgradePackages succeeded, upgradeErr is nil. Now validate.
@@ -310,6 +311,7 @@ func (pm *pythonManager) validatePythonPackageVersions(
 
 func (pm *pythonManager) upgradePackages(
 	ctx context.Context,
+	currentState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, []byte, error) {
@@ -346,7 +348,7 @@ func (pm *pythonManager) upgradePackages(
 
 	if len(installPkgSpecs) == 0 {
 		log.Info("No Python packages to install or upgrade.")
-		return &pm.config.ImageState, []byte{}, nil
+		return currentState, []byte{}, nil
 	}
 
 	// Install all requested update packages using validated package specifications
@@ -355,11 +357,11 @@ func (pm *pythonManager) upgradePackages(
 	if ignoreErrors {
 		// When ignoring errors, we need to handle each package installation individually
 		// Build a single command that tries each package and continues on failure
-		pipInstalled = pm.installPackagesWithErrorHandling(installPkgSpecs)
+		pipInstalled = pm.installPackagesWithErrorHandling(currentState, installPkgSpecs)
 	} else {
 		// Normal pip install that will fail on errors - install all packages at once
 		// Build command with validated package specifications
-		pipInstalled = pm.installPackagesStandard(installPkgSpecs)
+		pipInstalled = pm.installPackagesStandard(currentState, installPkgSpecs)
 	}
 
 	// Write updates-manifest to host for post-patch validation
@@ -377,13 +379,12 @@ func (pm *pythonManager) upgradePackages(
 		return nil, nil, err
 	}
 
-	// Diff the installed updates and apply only the changes to the target image
-	patchDiff := llb.Diff(pm.config.ImageState, pipInstalled)
-	return &patchDiff, resultsBytes, nil
+	// Return the complete state with all changes (current state + pip installs)
+	return &pipInstalled, resultsBytes, nil
 }
 
 // installPackagesWithErrorHandling installs packages individually with error handling.
-func (pm *pythonManager) installPackagesWithErrorHandling(packageSpecs []string) llb.State {
+func (pm *pythonManager) installPackagesWithErrorHandling(currentState *llb.State, packageSpecs []string) llb.State {
 	// Build individual pip install commands with error handling
 	var installCommands []string
 	for _, spec := range packageSpecs {
@@ -393,19 +394,19 @@ func (pm *pythonManager) installPackagesWithErrorHandling(packageSpecs []string)
 				pipInstallTimeoutSeconds, spec, spec))
 	}
 	installCmd := fmt.Sprintf(`sh -c '%s'`, strings.Join(installCommands, "; "))
-	return pm.config.ImageState.Run(
+	return currentState.Run(
 		llb.Shlex(installCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 }
 
 // installPackagesStandard installs packages in a single pip command.
-func (pm *pythonManager) installPackagesStandard(packageSpecs []string) llb.State {
+func (pm *pythonManager) installPackagesStandard(currentState *llb.State, packageSpecs []string) llb.State {
 	// Build a single pip install command with all validated package specifications
 	args := []string{"pip", "install", fmt.Sprintf("--timeout=%d", pipInstallTimeoutSeconds)}
 	args = append(args, packageSpecs...)
 
-	return pm.config.ImageState.Run(
+	return currentState.Run(
 		llb.Args(args), // Use llb.Args for safer command construction
 		llb.WithProxy(utils.GetProxy()),
 	).Root()

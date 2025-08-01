@@ -768,7 +768,7 @@ func patchSingleArchImage(
 					var tempErr error
 
 					// Call InstallUpdates on the individual language manager instance
-					newState, tempErrPkgs, tempErr = individualLangManager.InstallUpdates(ctx, updates, ignoreError)
+					newState, tempErrPkgs, tempErr = individualLangManager.InstallUpdates(ctx, currentProcessingState, updates, ignoreError)
 
 					currentProcessingState = newState // Update state for the next manager or final result
 
