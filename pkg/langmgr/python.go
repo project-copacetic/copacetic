@@ -404,7 +404,7 @@ func (pm *pythonManager) installPackagesStandard(packageSpecs []string) llb.Stat
 	// Build a single pip install command with all validated package specifications
 	args := []string{"pip", "install", fmt.Sprintf("--timeout=%d", pipInstallTimeoutSeconds)}
 	args = append(args, packageSpecs...)
-	
+
 	return pm.config.ImageState.Run(
 		llb.Args(args), // Use llb.Args for safer command construction
 		llb.WithProxy(utils.GetProxy()),

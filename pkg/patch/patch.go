@@ -824,8 +824,8 @@ func patchSingleArchImage(
 			if validatedManifest != nil {
 				for _, update := range updates.OSUpdates {
 					if !slices.Contains(errPkgs, update.Name) {
-							validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, update)
-							// TODO (sertac): add lang updates to vex
+						validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, update)
+						// TODO (sertac): add lang updates to vex
 					}
 				}
 			}

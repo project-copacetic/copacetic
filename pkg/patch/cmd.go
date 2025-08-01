@@ -19,23 +19,22 @@ import (
 )
 
 type patchArgs struct {
-	appImage      string
-	reportFile    string
-	patchedTag    string
-	suffix        string
-	workingFolder string
-	timeout       time.Duration
-	scanner       string
-	ignoreError   bool
-	format        string
-	output        string
-	bkOpts        buildkit.Opts
-	push          bool
-	platform      []string
-	loader        string
-	platformSpecificErrors string
-	pkgTypes               string
-	libraryPatchLevel      string
+	appImage          string
+	reportFile        string
+	patchedTag        string
+	suffix            string
+	workingFolder     string
+	timeout           time.Duration
+	scanner           string
+	ignoreError       bool
+	format            string
+	output            string
+	bkOpts            buildkit.Opts
+	push              bool
+	platform          []string
+	loader            string
+	pkgTypes          string
+	libraryPatchLevel string
 }
 
 func NewPatchCmd() *cobra.Command {
