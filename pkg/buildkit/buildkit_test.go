@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -85,12 +87,27 @@ func makeCapList(capIDs ...apicaps.CapID) []*caps.APICap {
 }
 
 func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
-	tmp := t.TempDir()
-	l, err := net.Listen("unix", filepath.Join(tmp, "buildkitd.sock"))
+	// Use a shorter path strategy that works across platforms
+	var sockPath string
+	if runtime.GOOS == "darwin" {
+		// On macOS, use /tmp directly for shorter paths to avoid socket path length limits
+		sockPath = filepath.Join("/tmp", fmt.Sprintf("bk-%d.sock", time.Now().UnixNano()))
+	} else {
+		// On other platforms, use temp dir but with shorter name
+		tmp := t.TempDir()
+		sockPath = filepath.Join(tmp, "bk.sock")
+	}
+	
+	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() { 
+		l.Close()
+		if runtime.GOOS == "darwin" {
+			os.Remove(sockPath) // Clean up manually on macOS since we're not using TempDir
+		}
+	})
 
 	srv := grpc.NewServer()
 	t.Cleanup(srv.Stop)
@@ -480,7 +497,7 @@ func TestQemuAvailable_Mocked(t *testing.T) {
 			stubDir:  func(string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil },
 			stubRead: func(string) ([]byte, error) { return nil, nil },
 			stubPath: func(string) (string, error) { return "", os.ErrNotExist },
-			want:     false,
+			want:     runtime.GOOS == "darwin" || runtime.GOOS == "windows", // true on macOS/Windows due to Docker Desktop assumption
 		},
 	}
 
