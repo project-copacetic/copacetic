@@ -1,0 +1,36 @@
+# Ignore large directories that aren't needed for building
+website/
+docs/
+demo/
+test/
+*.tar.gz
+*.zip
+
+# Ignore build artifacts
+dist/
+*.exe
+copa
+frontend
+
+# Ignore version control
+.git/
+.gitignore
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore temporary files
+tmp/
+*.tmp
+*.log
+
+# Keep only what's needed for the build
+!go.mod
+!go.sum
+!pkg/
+!cmd/
+!scripts/
+!*.go
