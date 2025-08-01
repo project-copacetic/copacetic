@@ -1,5 +1,3 @@
-// In file: pkg/bulk/discover_test.go
-
 package bulk
 
 import (
@@ -17,7 +15,7 @@ func mockTagLister(tags []string, err error) func(repo name.Repository) ([]strin
 }
 
 func TestFindTagsByPattern(t *testing.T) {
-	allMockTags := []string{"1.10.1", "1.9.5", "1.10.0", "1.10.2", "latest", "1.8.0", "1.10.3-alpine"}
+	allMockTags := []string{"1.10.1", "1.9.5", "1.10.0", "1.10.2", "latest", "1.8.0", "1.10.3-alpine", "1.11.0-beta"}
 
 	repo, _ := name.NewRepository("mock/repo")
 
@@ -33,9 +31,9 @@ func TestFindTagsByPattern(t *testing.T) {
 			spec: &ImageSpec{
 				Name: "test",
 				Tags: TagStrategy{
-					Strategy:        "pattern",
-					Pattern:         "^1\\.10\\.[0-9]+$",
-					compiledPattern: regexp.MustCompile(`^1\\.10\\.[0-9]+$`),
+					Strategy:        StrategyPattern,
+					Pattern:         `^1\.10\.[0-9]+$`,
+					compiledPattern: regexp.MustCompile(`^1\.10\.[0-9]+$`),
 				},
 			},
 			mockTags:  allMockTags,
@@ -47,10 +45,10 @@ func TestFindTagsByPattern(t *testing.T) {
 			spec: &ImageSpec{
 				Name: "test",
 				Tags: TagStrategy{
-					Strategy:        "pattern",
-					Pattern:         "^1\\.10\\.[0-9]+$",
+					Strategy:        StrategyPattern,
+					Pattern:         `^1\.10\.[0-9]+$`,
 					MaxTags:         2,
-					compiledPattern: regexp.MustCompile(`^1\\.10\\.[0-9]+$`),
+					compiledPattern: regexp.MustCompile(`^1\.10\.[0-9]+$`),
 				},
 			},
 			mockTags:  allMockTags,
@@ -62,10 +60,10 @@ func TestFindTagsByPattern(t *testing.T) {
 			spec: &ImageSpec{
 				Name: "test",
 				Tags: TagStrategy{
-					Strategy:        "pattern",
-					Pattern:         "^1\\.10\\.[0-9]+$",
+					Strategy:        StrategyPattern,
+					Pattern:         `^1\.10\.[0-9]+$`,
 					Exclude:         []string{"1.10.1"},
-					compiledPattern: regexp.MustCompile(`^1\\.10\\.[0-9]+$`),
+					compiledPattern: regexp.MustCompile(`^1\.10\.[0-9]+$`),
 				},
 			},
 			mockTags:  allMockTags,
@@ -77,9 +75,23 @@ func TestFindTagsByPattern(t *testing.T) {
 			spec: &ImageSpec{
 				Name: "test",
 				Tags: TagStrategy{
-					Strategy:        "pattern",
-					Pattern:         "latest",
+					Strategy:        StrategyPattern,
+					Pattern:         `latest`,
 					compiledPattern: regexp.MustCompile("latest"),
+				},
+			},
+			mockTags:  allMockTags,
+			expected:  []string{},
+			expectErr: false,
+		},
+		{
+			name: "Pattern does not match pre-releases",
+			spec: &ImageSpec{
+				Name: "test",
+				Tags: TagStrategy{
+					Strategy:        StrategyPattern,
+					Pattern:         `^1\.11\..*$`,
+					compiledPattern: regexp.MustCompile(`^1\.11\..*$`),
 				},
 			},
 			mockTags:  allMockTags,
@@ -115,7 +127,6 @@ func TestFindTagsByLatest(t *testing.T) {
 	originalLister := listAllTags
 	listAllTags = mockTagLister(allMockTags, nil)
 	defer func() { listAllTags = originalLister }()
-
 	result, err := findTagsByLatest(repo, spec)
 	if err != nil {
 		t.Fatalf("Got unexpected error: %v", err)
