@@ -97,6 +97,8 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *OrchestratorO
 	errChan := make(chan error, len(jobsToRun))
 	results := make([]patchJobStatus, 0, len(jobsToRun))
 
+	log.Infof("Starting bulk patch for %d image(s) defined in %s...", len(config.Images), configPath)
+
 	for w := 1; w <= numWorkers; w++ {
 		wg.Add(1)
 		go func(workerID int) {
@@ -111,6 +113,8 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *OrchestratorO
 					errChan <- fmt.Errorf("worker %d: error resolving target tag for '%s:%s': %w", workerID, spec.Name, tag, err)
 					return
 				}
+
+				log.Debugf("[Worker %d] --> Starting patch for %s", workerID, imageWithTag)
 
 				err = patch.Patch(ctx, timeout,
 					imageWithTag,
@@ -145,61 +149,6 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *OrchestratorO
 				mu.Unlock()
 			}
 		}(w)
-	}
-
-	log.Infof("Starting bulk patch for %d image(s) defined in %s...", len(config.Images), configPath)
-
-	for _, j := range jobsToRun {
-		wg.Add(1)
-
-		go func(currentJob job) {
-			defer wg.Done()
-
-			spec := currentJob.spec
-			tag := currentJob.tag
-
-			imageWithTag := fmt.Sprintf("%s:%s", spec.Image, tag)
-			targetTag, err := resolveTargetTag(spec.Target, tag)
-			if err != nil {
-				errChan <- fmt.Errorf("error resolving target tag for '%s:%s': %w", spec.Name, tag, err)
-				return
-			}
-
-			log.Infof("Starting patch for %s", imageWithTag)
-
-			err = patch.Patch(ctx, timeout,
-				imageWithTag,
-				"", // reportPath is empty for update-all mode
-				targetTag,
-				"", // suffix is empty since we provide an explicit targetTag
-				opts.WorkingFolder,
-				opts.Scanner,
-				opts.Format,
-				opts.Output,
-				opts.Loader,
-				opts.IgnoreErrors,
-				opts.Push,
-				spec.Platforms,
-				opts.BKOOpts,
-			)
-
-			mu.Lock()
-			jobResult := patchJobStatus{
-				Name:   spec.Name,
-				Source: imageWithTag,
-				Target: targetTag,
-			}
-			if err != nil {
-				jobResult.Status = "Failed"
-				jobResult.Error = err
-				errChan <- err
-				log.Errorf("Failed to patch %s: %v", imageWithTag, err)
-			} else {
-				jobResult.Status = "Patched"
-			}
-			results = append(results, jobResult)
-			mu.Unlock()
-		}(j)
 	}
 
 	log.Info("Distributing jobs to workers...")
