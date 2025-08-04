@@ -86,7 +86,7 @@ func NewPatchCmd() *cobra.Command {
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
-	flags.StringVar(&ua.progress, "progress", "auto", "Set type of buildkit output within Copa (auto, plain, tty, quiet or rawjson). Set to quiet to disable animations.")
+	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
