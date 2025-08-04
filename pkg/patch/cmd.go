@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/spf13/cobra"
 
 	// Register connection helpers for buildkit.
@@ -17,7 +18,7 @@ import (
 
 type patchArgs struct {
 	appImage      string
-	reportFile    string
+	report        string
 	patchedTag    string
 	suffix        string
 	workingFolder string
@@ -40,33 +41,32 @@ func NewPatchCmd() *cobra.Command {
 		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
 		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			bkopts := buildkit.Opts{
-				Addr:       ua.bkOpts.Addr,
-				CACertPath: ua.bkOpts.CACertPath,
-				CertPath:   ua.bkOpts.CertPath,
-				KeyPath:    ua.bkOpts.KeyPath,
+			opts := &types.Options{
+				Image:         ua.appImage,
+				Report:        ua.report,
+				PatchedTag:    ua.patchedTag,
+				Suffix:        ua.suffix,
+				WorkingFolder: ua.workingFolder,
+				Timeout:       ua.timeout,
+				Scanner:       ua.scanner,
+				IgnoreError:   ua.ignoreError,
+				Format:        ua.format,
+				Output:        ua.output,
+				BkAddr:        ua.bkOpts.Addr,
+				BkCACertPath:  ua.bkOpts.CACertPath,
+				BkCertPath:    ua.bkOpts.CertPath,
+				BkKeyPath:     ua.bkOpts.KeyPath,
+				Push:          ua.push,
+				Platforms:     ua.platform,
+        Progress:      ua.progress,
+				Loader:        ua.loader,
 			}
-			return Patch(context.Background(),
-				ua.timeout,
-				ua.appImage,
-				ua.reportFile,
-				ua.patchedTag,
-				ua.suffix,
-				ua.workingFolder,
-				ua.scanner,
-				ua.format,
-				ua.output,
-				ua.loader,
-				ua.ignoreError,
-				ua.push,
-				ua.platform,
-				ua.progress,
-				bkopts)
+			return Patch(context.Background(), opts)
 		},
 	}
 	flags := patchCmd.Flags()
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
-	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file or directory path")
+	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
