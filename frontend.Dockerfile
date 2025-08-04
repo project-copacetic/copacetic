@@ -27,5 +27,9 @@ COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 # Copy the frontend binary
 COPY --from=builder /copa-frontend /copa-frontend
 
+# Add BuildKit frontend capability labels
+LABEL moby.buildkit.frontend.network.none="true"
+LABEL moby.buildkit.frontend.caps="moby.buildkit.frontend.inputs,moby.buildkit.frontend.subrequests,moby.buildkit.frontend.contexts"
+
 # Set the entrypoint
 ENTRYPOINT ["/copa-frontend"]
