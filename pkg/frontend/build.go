@@ -2,6 +2,9 @@ package frontend
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -38,8 +41,31 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	// Parse the vulnerability report if provided
 	var vr *unversioned.UpdateManifest
 	if opts.Report != "" {
+		reportPath := opts.Report
+		
+		// If report is a directory and we have a platform, look for platform-specific report
+		if platform != nil {
+			if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
+				// Build platform-specific filename
+				platformFile := fmt.Sprintf("%s-%s", platform.OS, platform.Architecture)
+				if platform.Variant != "" {
+					platformFile = fmt.Sprintf("%s-%s", platformFile, platform.Variant)
+				}
+				platformFile += ".json"
+				
+				reportPath = filepath.Join(opts.Report, platformFile)
+				
+				// Check if platform-specific report exists
+				if _, err := os.Stat(reportPath); os.IsNotExist(err) {
+					bklog.G(ctx).WithField("component", "copa-frontend").WithField("platform", platformFile).Warn("No report found for platform")
+					// Return original image if no report for this platform
+					return bkConfig.ImageState, nil
+				}
+			}
+		}
+		
 		var err error
-		vr, err = report.TryParseScanReport(opts.Report, opts.Scanner)
+		vr, err = report.TryParseScanReport(reportPath, opts.Scanner)
 		if err != nil {
 			return llb.State{}, errors.Wrap(err, "failed to parse vulnerability report")
 		}
