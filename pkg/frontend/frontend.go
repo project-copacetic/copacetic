@@ -19,7 +19,6 @@ const (
 	// Frontend option keys - matching CLI options
 	keyImage        = "image"
 	keyReport       = "report"
-	keyReportPath   = "report-path"
 	keyScanner      = "scanner"
 	keyIgnoreErrors = "ignore-errors"
 	keyPlatform     = "platform"
@@ -61,6 +60,14 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 		}()
 	}
 
+	// Check if report is a directory - if so, handle as multiplatform
+	if opts.Report != "" {
+		if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
+			bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportDir", opts.Report).Info("Detected report directory, using multiplatform patching")
+			return f.buildMultiarch(ctx, opts)
+		}
+	}
+
 	// Handle all platform builds through multiarch logic for consistency
 	if len(opts.Platforms) > 0 {
 		if len(opts.Platforms) > 1 {
@@ -96,14 +103,29 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 
 // buildMultiarch handles multiarch builds by processing each platform separately
 func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gwclient.Result, error) {
-	// Parse platforms
 	var targetPlatforms []ocispecs.Platform
-	for _, platformStr := range opts.Platforms {
-		platform, err := platforms.Parse(platformStr)
-		if err != nil {
-			return nil, errors.Wrapf(err, "failed to parse platform: %s", platformStr)
+
+	// If report is a directory, discover platforms from report files
+	if opts.Report != "" {
+		if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
+			discoveredPlatforms, err := discoverPlatformsFromReportDirectory(opts.Report)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to discover platforms from report directory")
+			}
+			targetPlatforms = discoveredPlatforms
+			bklog.G(ctx).WithField("component", "copa-frontend").WithField("platforms", targetPlatforms).Info("Discovered platforms from report directory")
 		}
-		targetPlatforms = append(targetPlatforms, platform)
+	}
+
+	// Otherwise parse platforms from options
+	if len(targetPlatforms) == 0 {
+		for _, platformStr := range opts.Platforms {
+			platform, err := platforms.Parse(platformStr)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to parse platform: %s", platformStr)
+			}
+			targetPlatforms = append(targetPlatforms, platform)
+		}
 	}
 
 	// Create a new result that will hold all platform references
@@ -156,11 +178,57 @@ func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gw
 	return res, nil
 }
 
-// cleanupTempFile removes a temporary file if it was created by the frontend.
+// cleanupTempFile removes a temporary file or directory if it was created by the frontend.
 func cleanupTempFile(filePath string) error {
-	// Only clean up files that look like our temp files
+	// Clean up temp files
 	if strings.Contains(filePath, "copa-report-") && strings.HasSuffix(filePath, ".json") {
 		return os.Remove(filePath)
 	}
-	return nil // Don't remove files we didn't create
+	// Clean up temp directories
+	if strings.Contains(filePath, "copa-reports-") {
+		return os.RemoveAll(filePath)
+	}
+	return nil // Don't remove files/directories we didn't create
+}
+
+// discoverPlatformsFromReportDirectory discovers platforms from report files in a directory
+func discoverPlatformsFromReportDirectory(reportDir string) ([]ocispecs.Platform, error) {
+	var platforms []ocispecs.Platform
+	
+	entries, err := os.ReadDir(reportDir)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to read report directory: %s", reportDir)
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		
+		// Extract platform from filename
+		// Expected format: <os>-<arch>[-<variant>].json
+		filename := strings.TrimSuffix(entry.Name(), ".json")
+		parts := strings.Split(filename, "-")
+		
+		if len(parts) < 2 {
+			continue // Skip files that don't match expected format
+		}
+		
+		platform := ocispecs.Platform{
+			OS:           parts[0],
+			Architecture: parts[1],
+		}
+		
+		if len(parts) > 2 {
+			platform.Variant = strings.Join(parts[2:], "-")
+		}
+		
+		platforms = append(platforms, platform)
+	}
+	
+	if len(platforms) == 0 {
+		return nil, errors.Errorf("no valid platform report files found in directory: %s", reportDir)
+	}
+	
+	return platforms, nil
 }
