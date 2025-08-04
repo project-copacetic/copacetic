@@ -12,6 +12,9 @@ type Options struct {
 	PatchedTag string
 	Suffix     string
 
+	// Bulk image patch configuration
+	ConfigFile string
+
 	// Working environment
 	WorkingFolder string
 	Timeout       time.Duration

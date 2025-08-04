@@ -16,6 +16,7 @@ const (
 	StrategyLatest  = "latest"
 )
 
+// FindTagsToPatch discovers image tags based on the specified strategy in the ImageSpec.
 func FindTagsToPatch(spec *ImageSpec) ([]string, error) {
 	log.Infof("Discovering tags for '%s' with strategy: %s", spec.Name, spec.Tags.Strategy)
 
@@ -27,8 +28,11 @@ func FindTagsToPatch(spec *ImageSpec) ([]string, error) {
 	switch spec.Tags.Strategy {
 	case StrategyList:
 		return findTagsByList(repo, spec.Tags.List), nil
+	// StrategyPattern uses a regex pattern to match tags and can optionally limit the number of tags.
 	case StrategyPattern:
 		return findTagsByPattern(repo, spec)
+	// StrategyLatest finds the latest semver-compliant tag, excluding pre-releases.
+
 	case StrategyLatest:
 		return findTagsByLatest(repo, spec)
 	}
@@ -36,13 +40,13 @@ func FindTagsToPatch(spec *ImageSpec) ([]string, error) {
 	return nil, fmt.Errorf("internal error: unhandled strategy '%s'", spec.Tags.Strategy)
 }
 
-// Filter by list.
+// findTagsByList filters tags based on an explicit list provided in the configuration.
 func findTagsByList(repo name.Repository, list []string) []string {
 	log.Debugf("Using explicit list of tags for '%s': %v", repo.Name(), list)
 	return list
 }
 
-// Filter by latest.
+// findTagsByLatest finds the latest semver-compliant tag for a given repository.
 func findTagsByLatest(repo name.Repository, spec *ImageSpec) ([]string, error) {
 	allTags, err := listAllTags(repo)
 	if err != nil {
@@ -73,6 +77,7 @@ func findTagsByLatest(repo name.Repository, spec *ImageSpec) ([]string, error) {
 	return []string{latestTag}, nil
 }
 
+// findTagsByPattern filters tags based on a regular expression pattern.
 func findTagsByPattern(repo name.Repository, spec *ImageSpec) ([]string, error) {
 	allTags, err := listAllTags(repo)
 	if err != nil {
@@ -121,6 +126,7 @@ func findTagsByPattern(repo name.Repository, spec *ImageSpec) ([]string, error) 
 	return finalTags, nil
 }
 
+// listAllTags is a function variable that can be overridden for testing purposes.
 var listAllTags = func(repo name.Repository) ([]string, error) {
 	tags, err := remote.List(repo)
 	if err != nil {
@@ -129,6 +135,7 @@ var listAllTags = func(repo name.Repository) ([]string, error) {
 	return tags, nil
 }
 
+// excludeTags removes tags from a given list that are present in the exclusions list.
 func excludeTags(tags, exclusions []string) []string {
 	if len(exclusions) == 0 {
 		return tags

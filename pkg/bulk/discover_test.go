@@ -14,6 +14,7 @@ func mockTagLister(tags []string, err error) func(repo name.Repository) ([]strin
 	}
 }
 
+// TestFindTagsByPattern tests the findTagsByPattern function with various scenarios.
 func TestFindTagsByPattern(t *testing.T) {
 	allMockTags := []string{"1.10.1", "1.9.5", "1.10.0", "1.10.2", "latest", "1.8.0", "1.10.3-alpine", "1.11.0-beta"}
 
@@ -119,11 +120,15 @@ func TestFindTagsByPattern(t *testing.T) {
 	}
 }
 
+// TestFindTagsByLatest tests the findTagsByLatest function.
 func TestFindTagsByLatest(t *testing.T) {
 	allMockTags := []string{"2.1.0", "3.0.0-alpha", "latest", "2.0.0", "2.1.1"}
+	// Create a mock repository name.
 	repo, _ := name.NewRepository("mock/repo")
+	// Create a basic ImageSpec for testing.
 	spec := &ImageSpec{Name: "test"}
 
+	// Override the global listAllTags function with a mock for testing.
 	originalLister := listAllTags
 	listAllTags = mockTagLister(allMockTags, nil)
 	defer func() { listAllTags = originalLister }()

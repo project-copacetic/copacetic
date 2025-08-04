@@ -39,8 +39,10 @@ func TestNewPatchCmdValidation(t *testing.T) {
 		},
 	}
 
+	// Run test cases
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Create a new command with the test args
 			cmd := NewPatchCmd()
 			cmd.SetArgs(tt.args)
 
@@ -50,6 +52,7 @@ func TestNewPatchCmdValidation(t *testing.T) {
 				}
 			}
 
+			// Run the command and capture the output
 			err := cmd.Execute()
 
 			if tt.expectValidationError {
