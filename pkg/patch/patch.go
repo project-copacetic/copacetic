@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -20,18 +21,17 @@ var (
 
 // Patch executes the patching workflow for a given set of options.
 func Patch(ctx context.Context, opts *types.Options) error {
-  allowedProgressModes := map[string]struct{}{
+	allowedProgressModes := map[string]struct{}{
 		"auto":    {},
 		"plain":   {},
 		"tty":     {},
 		"quiet":   {},
 		"rawjson": {},
 	}
-	if _, ok := allowedProgressModes[progress]; !ok {
-		log.Warnf("Invalid value for --progress: %q. Allowed values are 'auto', 'plain' 'tty', 'quiet' or 'rawjson'. Defaulting to 'auto'.", progress)
-		progress = "auto"
+	if _, ok := allowedProgressModes[string(opts.Progress)]; !ok {
+		log.Warnf("Invalid value for --progress: %q. Allowed values are 'auto', 'plain' 'tty', 'quiet' or 'rawjson'. Defaulting to 'auto'.", string(opts.Progress))
+		opts.Progress = progressui.DisplayMode("auto")
 	}
-  
 	// Create timeout context
 	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
@@ -158,6 +158,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	}
 	return err
 }
+
 // validateBuildConfiguration validates the build configuration and source policies.
 func validateBuildConfiguration(opts *types.Options) error {
 	// Validate source policy if build options are provided

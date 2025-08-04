@@ -14,6 +14,7 @@ import (
 	_ "github.com/moby/buildkit/client/connhelper/nerdctlcontainer"
 	_ "github.com/moby/buildkit/client/connhelper/podmancontainer"
 	_ "github.com/moby/buildkit/client/connhelper/ssh"
+	"github.com/moby/buildkit/util/progress/progressui"
 )
 
 type patchArgs struct {
@@ -58,7 +59,7 @@ func NewPatchCmd() *cobra.Command {
 				BkKeyPath:     ua.bkOpts.KeyPath,
 				Push:          ua.push,
 				Platforms:     ua.platform,
-        Progress:      ua.progress,
+				Progress:      progressui.DisplayMode(ua.progress),
 				Loader:        ua.loader,
 			}
 			return Patch(context.Background(), opts)
