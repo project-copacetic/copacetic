@@ -21,7 +21,7 @@ import (
 
 type patchArgs struct {
 	appImage      string
-	reportFile    string
+	report        string
 	patchedTag    string
 	suffix        string
 	workingFolder string
@@ -108,7 +108,7 @@ func NewPatchCmd() *cobra.Command {
 	flags := patchCmd.Flags()
 	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file. If used, --image and --report are ignored.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
-	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file or directory path")
+	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched", "Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
