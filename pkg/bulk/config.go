@@ -5,6 +5,11 @@ import (
 	"regexp"
 )
 
+const (
+	ExpectedAPIVersion = "copa.sh/v1alpha1"
+	ExpectedKind       = "PatchConfig"
+)
+
 // PatchConfig represents the top-level structure for the bulk patching configuration.
 type PatchConfig struct {
 	APIVersion string      `yaml:"apiVersion"`

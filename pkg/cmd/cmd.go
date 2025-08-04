@@ -42,9 +42,9 @@ func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
 		Use:   "patch",
-		Short: "Patch container images with upgrade packages specified by a vulnerability report or by comprehensive update",
-		Example: `  copa patch -i images/python:3.7-alpine -r trivy.json
-  copa patch --config copa-bulk-config.yaml --push`,
+		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
+		Example: ` copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
+  copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			opts := &types.Options{
 				Image:         ua.appImage,
@@ -89,7 +89,7 @@ func NewPatchCmd() *cobra.Command {
 		},
 	}
 	flags := patchCmd.Flags()
-	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file. If used, --image and --report are ignored.")
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). If used, --image and --report are ignored.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")

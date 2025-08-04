@@ -16,7 +16,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
 )
 
 // patchJobStatus represents the status of a single image patching job.
@@ -38,6 +38,13 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	var config PatchConfig
 	if err := yaml.Unmarshal(yamlFile, &config); err != nil {
 		return fmt.Errorf("failed to parse YAML from %s: %w", configPath, err)
+	}
+
+	if config.APIVersion != ExpectedAPIVersion {
+		return fmt.Errorf("invalid apiVersion: expected '%s', but got '%s'", ExpectedAPIVersion, config.APIVersion)
+	}
+	if config.Kind != ExpectedKind {
+		return fmt.Errorf("invalid kind: expected '%s', but got '%s'", ExpectedKind, config.Kind)
 	}
 
 	log.Debug("Discovering all tags to calculate total job count...")
@@ -98,8 +105,18 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 				// Resolve the target tag for the patched image.
 				targetTag, err := resolveTargetTag(spec.Target, tag)
 				if err != nil {
-					errChan <- fmt.Errorf("worker %d: error resolving target tag for '%s:%s': %w", workerID, spec.Name, tag, err)
-					return
+					errMessage := fmt.Errorf("worker %d: error resolving target tag for '%s:%s': %w", workerID, spec.Name, tag, err)
+					mu.Lock()
+					results = append(results, patchJobStatus{
+						Name:   spec.Name,
+						Source: imageWithTag,
+						Target: "N/A",
+						Status: "Error",
+						Error:  errMessage,
+					})
+					mu.Unlock()
+					errChan <- errMessage
+					continue
 				}
 
 				log.Debugf("[Worker %d] --> Starting patch for %s", workerID, imageWithTag)
@@ -159,6 +176,9 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	// Print a summary of all patch jobs.
 	printSummary(results)
 
+	if opts.IgnoreError {
+		return nil
+	}
 	return multiErr.ErrorOrNil()
 }
 
