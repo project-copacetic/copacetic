@@ -92,7 +92,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 
 	// Handle Language Specific Updates
-	if updates.OSUpdates != nil && len(updates.LangUpdates) > 0 {
+	if updates != nil && updates.OSUpdates != nil && len(updates.LangUpdates) > 0 {
 		languageManagers := langmgr.GetLanguageManagers(config, workingFolder)
 		var langErrPkgsFromAllManagers []string
 		var combinedLangError error
@@ -183,12 +183,14 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 
 	// for the vex document, only include updates that were successfully applied
 	if validatedUpdates != nil {
+		var successfulOSUpdates []unversioned.UpdatePackage
 		for _, update := range validatedUpdates.OSUpdates {
 			if !slices.Contains(errPkgs, update.Name) {
-				validatedUpdates.OSUpdates = append(validatedUpdates.OSUpdates, update)
+				successfulOSUpdates = append(successfulOSUpdates, update)
 				// TODO (sertac): add lang updates to vex
 			}
 		}
+		validatedUpdates.OSUpdates = successfulOSUpdates
 	}
 
 	return &Result{
@@ -235,5 +237,8 @@ func setupPackageManager(ctx context.Context, c gwclient.Client, config *buildki
 	}
 
 	// Use OS information from the vulnerability report
+	if opts.Updates.Metadata.OS.Type == "" || opts.Updates.Metadata.OS.Version == "" {
+		return nil, fmt.Errorf("vulnerability report metadata is incomplete: OS type=%q, version=%q", opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version)
+	}
 	return pkgmgr.GetPackageManager(opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version, config, opts.WorkingFolder)
 }
