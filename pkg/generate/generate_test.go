@@ -107,7 +107,7 @@ func TestCreateTarStream(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "test-output.tar")
 
-	err = createTarStream("ubuntu:22.04", "patched", patchBuf.Bytes(), outputPath)
+	err = createTarStream("ubuntu:22.04", patchBuf.Bytes(), outputPath)
 	require.NoError(t, err)
 
 	// Read the file back
@@ -176,7 +176,7 @@ func TestCreateTarStream_OutputToFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "output.tar")
 
-	err = createTarStream("alpine:3.18", "fixed", patchBuf.Bytes(), outputPath)
+	err = createTarStream("alpine:3.18", patchBuf.Bytes(), outputPath)
 	require.NoError(t, err)
 
 	// Verify file was created
@@ -276,7 +276,7 @@ func TestCreateTarStream_PathSanitization(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "test-paths.tar")
 
-	err = createTarStream("test:latest", "patched", patchBuf.Bytes(), outputPath)
+	err = createTarStream("test:latest", patchBuf.Bytes(), outputPath)
 	require.NoError(t, err)
 
 	// Read the file back

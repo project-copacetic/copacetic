@@ -23,7 +23,7 @@ import (
 	"github.com/docker/cli/cli/config"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
-	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
+	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -146,7 +146,7 @@ func generateWithContext(
 	}
 
 	// Create tar stream with Dockerfile and patch layer
-	return createTarStream(ref, patchedTag, patchLayer, outputPath)
+	return createTarStream(image, patchLayer, outputPath)
 }
 
 func extractPatchLayer(
@@ -192,38 +192,89 @@ func extractPatchLayer(
 	}
 
 	eg.Go(func() error {
-		_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		solveResponse, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 			// Get default platform
 			platform := common.GetDefaultLinuxPlatform()
 
-			// Setup buildkit config and package manager
-			var config *buildkit.Config
-			var manager pkgmgr.PackageManager
-			var osInfo *common.OSInfo
-
-			if updates != nil {
-				// Use OS info from report
-				osInfo = &common.OSInfo{
-					Type:    updates.Metadata.OS.Type,
-					Version: updates.Metadata.OS.Version,
-				}
+			// Create patch platform
+			patchPlatform := types.PatchPlatform{
+				Platform: platform,
 			}
 
-			config, manager, err := common.SetupBuildkitConfigAndManager(ctx, c, image, &platform, workingFolder, osInfo)
+			// Setup patch options
+			patchOpts := &patch.Options{
+				ImageName:      image,
+				TargetPlatform: &patchPlatform,
+				Updates:        updates,
+				WorkingFolder:  workingFolder,
+				IgnoreError:    ignoreErrors,
+				ErrorChannel:   ch,
+			}
+
+			// Create patch context
+			patchCtx := &patch.Context{
+				Context: ctx,
+				Client:  c,
+			}
+
+			// Execute core patching logic
+			result, err := patch.ExecutePatchCore(patchCtx, patchOpts)
 			if err != nil {
+				// Check if the error is due to no upgradable packages
+				// In this case, we should return an empty diff
+				if updates == nil && (strings.Contains(err.Error(), "exit code: 1") || strings.Contains(err.Error(), "upgradable")) {
+					log.Info("No upgradable packages found, generating empty patch")
+					// Create an empty diff by using the same image state
+					config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, &platform)
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
+
+					// Create empty diff - this will result in an empty tar layer
+					diffState := llb.Diff(config.ImageState, config.ImageState)
+					def, err := diffState.Marshal(ctx, llb.Platform(platform))
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
+
+					res, err := c.Solve(ctx, gwclient.SolveRequest{
+						Definition: def.ToPB(),
+					})
+					if err != nil {
+						ch <- err
+						return nil, err
+					}
+
+					return res, nil
+				}
 				ch <- err
 				return nil, err
 			}
 
-			// Install updates and get the patched state
-			patchedImageState, _, err := manager.InstallUpdates(ctx, updates, ignoreErrors)
+			// Get the patched image state from result
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, &platform)
 			if err != nil {
 				ch <- err
 				return nil, err
 			}
 
 			// Create a diff between original and patched states
-			diffState := llb.Diff(config.ImageState, *patchedImageState)
+			// We need to resolve the result to get the patched state
+			patchedRef, err := result.Result.SingleRef()
+			if err != nil {
+				ch <- err
+				return nil, err
+			}
+
+			patchedState, err := patchedRef.ToState()
+			if err != nil {
+				ch <- err
+				return nil, err
+			}
+
+			diffState := llb.Diff(config.ImageState, patchedState)
 
 			// Export just the diff layer
 			def, err := diffState.Marshal(ctx, llb.Platform(platform))
@@ -243,6 +294,23 @@ func extractPatchLayer(
 			return res, nil
 		}, buildChannel)
 
+		// // Currently can only validate updates if updating via scanner
+		// var patchedImageDigest string
+		// if err == nil && solveResponse != nil {
+		// 	digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
+		// 	patchedImageDigest = digest
+		// }
+		// if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+		// 	nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
+		// 	// vex document must contain at least one statement
+		// 	if output != "" && len(validatedManifest.Updates) > 0 {
+		// 		if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
+		// 			ch <- err
+		// 			return err
+		// 		}
+		// 	}
+		// }
+		fmt.Printf("solveResponse: %+v\n", solveResponse)
 		return err
 	})
 
@@ -256,12 +324,26 @@ func extractPatchLayer(
 	select {
 	case patchData := <-patchChannel:
 		return patchData, nil
+	case <-time.After(5 * time.Second):
+		// Check if we have data in the channel after a timeout
+		select {
+		case patchData := <-patchChannel:
+			return patchData, nil
+		default:
+			return nil, errors.New("timeout waiting for patch data")
+		}
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		// Check if we have data even if context is done
+		select {
+		case patchData := <-patchChannel:
+			return patchData, nil
+		default:
+			return nil, ctx.Err()
+		}
 	}
 }
 
-func createTarStream(image, _ string, patchLayer []byte, outputPath string) error {
+func createTarStream(image string, patchLayer []byte, outputPath string) error {
 	// Open output writer
 	var w io.Writer = os.Stdout
 	if outputPath != "" {
