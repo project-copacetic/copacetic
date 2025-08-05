@@ -3,7 +3,6 @@ package patch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -96,324 +96,6 @@ func TestRemoveIfNotDebug(t *testing.T) {
 	})
 }
 
-func TestGetOSType(t *testing.T) {
-	testCases := []struct {
-		osRelease      []byte
-		err            error
-		expectedOSType string
-	}{
-		{
-			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
-			NAME="Debian GNU/Linux"
-			VERSION_ID="11"
-			VERSION="11 (bullseye)"
-			VERSION_CODENAME=bullseye
-			ID=debian
-			HOME_URL="https://www.debian.org/"
-			SUPPORT_URL="https://www.debian.org/support"
-			BUG_REPORT_URL="https://bugs.debian.org/"
-			`),
-			err:            nil,
-			expectedOSType: "debian",
-		},
-		{
-			osRelease: []byte(`NAME="Alpine Linux"
-			ID=alpine
-			VERSION_ID=3.7.3
-			PRETTY_NAME="Alpine Linux v3.7"
-			HOME_URL="http://alpinelinux.org"
-			BUG_REPORT_URL="http://bugs.alpinelinux.org"`),
-			err:            nil,
-			expectedOSType: "alpine",
-		},
-		{
-			osRelease: []byte(`PRETTY_NAME="Ubuntu 22.04.4 LTS"
-			NAME="Ubuntu"
-			VERSION_ID="22.04"
-			VERSION="22.04.4 LTS (Jammy Jellyfish)"
-			VERSION_CODENAME=jammy
-			ID=ubuntu
-			ID_LIKE=debian
-			HOME_URL="https://www.ubuntu.com/"
-			SUPPORT_URL="https://help.ubuntu.com/"
-			BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
-			PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
-			UBUNTU_CODENAME=jammy`),
-			err:            nil,
-			expectedOSType: "ubuntu",
-		},
-		{
-			osRelease: []byte(`NAME="Amazon Linux"
-			VERSION="2023"
-			ID="amzn"
-			ID_LIKE="fedora"
-			VERSION_ID="2023"
-			PLATFORM_ID="platform:al2023"
-			PRETTY_NAME="Amazon Linux 2023.3.20240312"
-			ANSI_COLOR="0;33"
-			CPE_NAME="cpe:2.3:o:amazon:amazon_linux:2023"
-			HOME_URL="https://aws.amazon.com/linux/amazon-linux-2023/"
-			DOCUMENTATION_URL="https://docs.aws.amazon.com/linux/"
-			SUPPORT_URL="https://aws.amazon.com/premiumsupport/"
-			BUG_REPORT_URL="https://github.com/amazonlinux/amazon-linux-2023"
-			VENDOR_NAME="AWS"
-			VENDOR_URL="https://aws.amazon.com/"
-			SUPPORT_END="2028-03-15"`),
-			err:            nil,
-			expectedOSType: "amazon",
-		},
-		{
-			osRelease: []byte(`NAME="CentOS Linux"
-			VERSION="8"
-			ID="centos"
-			ID_LIKE="rhel fedora"
-			VERSION_ID="8"
-			PLATFORM_ID="platform:el8"
-			PRETTY_NAME="CentOS Linux 8"
-			ANSI_COLOR="0;31"
-			CPE_NAME="cpe:/o:centos:centos:8"
-			HOME_URL="https://centos.org/"
-			BUG_REPORT_URL="https://bugs.centos.org/"
-			CENTOS_MANTISBT_PROJECT="CentOS-8"
-			CENTOS_MANTISBT_PROJECT_VERSION="8"`),
-			err:            nil,
-			expectedOSType: "centos",
-		},
-		{
-			osRelease: []byte(`NAME="Common Base Linux Mariner"
-			VERSION="2.0.20240117"
-			ID=mariner
-			VERSION_ID="2.0"
-			PRETTY_NAME="CBL-Mariner/Linux"
-			ANSI_COLOR="1;34"
-			HOME_URL="https://aka.ms/cbl-mariner"
-			BUG_REPORT_URL="https://aka.ms/cbl-mariner"
-			SUPPORT_URL="https://aka.ms/cbl-mariner"`),
-			err:            nil,
-			expectedOSType: "cbl-mariner",
-		},
-		{
-			osRelease: []byte(`NAME="Microsoft Azure Linux"
-			VERSION="3.0.20240727"
-			ID=azurelinux
-			VERSION_ID="3.0"
-			PRETTY_NAME="Microsoft Azure Linux 3.0"
-			ANSI_COLOR="1;34"
-			HOME_URL="https://aka.ms/azurelinux"
-			BUG_REPORT_URL="https://aka.ms/azurelinux"
-			SUPPORT_URL="https://aka.ms/azurelinux"`),
-			err:            nil,
-			expectedOSType: "azurelinux",
-		},
-		{
-			osRelease: []byte(`NAME="Red Hat Enterprise Linux"
-			VERSION="8.9 (Ootpa)"
-			ID="rhel"
-			ID_LIKE="fedora"
-			VERSION_ID="8.9"
-			PLATFORM_ID="platform:el8"
-			PRETTY_NAME="Red Hat Enterprise Linux 8.9 (Ootpa)"
-			ANSI_COLOR="0;31"
-			CPE_NAME="cpe:/o:redhat:enterprise_linux:8::baseos"
-			HOME_URL="https://www.redhat.com/"
-			DOCUMENTATION_URL="https://access.redhat.com/documentation/en-us/red_hat_enterprise_linux/8"
-			BUG_REPORT_URL="https://bugzilla.redhat.com/"
-
-			REDHAT_BUGZILLA_PRODUCT="Red Hat Enterprise Linux 8"
-			REDHAT_BUGZILLA_PRODUCT_VERSION=8.9
-			REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
-			REDHAT_SUPPORT_PRODUCT_VERSION="8.9"`),
-			err:            nil,
-			expectedOSType: "redhat",
-		},
-		{
-			osRelease: []byte(`NAME="Rocky Linux"
-			VERSION="9.3 (Blue Onyx)"
-			ID="rocky"
-			ID_LIKE="rhel centos fedora"
-			VERSION_ID="9.3"
-			PLATFORM_ID="platform:el9"
-			PRETTY_NAME="Rocky Linux 9.3 (Blue Onyx)"
-			ANSI_COLOR="0;32"
-			LOGO="fedora-logo-icon"
-			CPE_NAME="cpe:/o:rocky:rocky:9::baseos"
-			HOME_URL="https://rockylinux.org/"
-			BUG_REPORT_URL="https://bugs.rockylinux.org/"
-			SUPPORT_END="2032-05-31"
-			ROCKY_SUPPORT_PRODUCT="Rocky-Linux-9"
-			ROCKY_SUPPORT_PRODUCT_VERSION="9.3"
-			REDHAT_SUPPORT_PRODUCT="Rocky Linux"
-			REDHAT_SUPPORT_PRODUCT_VERSION="9.3"`),
-			err:            nil,
-			expectedOSType: "rocky",
-		},
-		{
-			osRelease: []byte(`NAME="Oracle Linux Server"
-			VERSION="7.9"
-			ID="ol"
-			ID_LIKE="fedora"
-			VARIANT="Server"
-			VARIANT_ID="server"
-			VERSION_ID="7.9"
-			PRETTY_NAME="Oracle Linux Server 7.9"
-			ANSI_COLOR="0;31"
-			CPE_NAME="cpe:/o:oracle:linux:7:9:server"
-			HOME_URL="https://linux.oracle.com/"
-			BUG_REPORT_URL="https://github.com/oracle/oracle-linux"
-
-			ORACLE_BUGZILLA_PRODUCT="Oracle Linux 7"
-			ORACLE_BUGZILLA_PRODUCT_VERSION=7.9
-			ORACLE_SUPPORT_PRODUCT="Oracle Linux"
-			ORACLE_SUPPORT_PRODUCT_VERSION=7.9`),
-			err:            nil,
-			expectedOSType: "oracle",
-		},
-		{
-			osRelease: []byte(`NAME="Oracle Linux Server"
-			VERSION="8.9"
-			ID="ol"
-			ID_LIKE="fedora"
-			VARIANT="Server"
-			VARIANT_ID="server"
-			VERSION_ID="8.9"
-			PLATFORM_ID="platform:el8"
-			PRETTY_NAME="Oracle Linux Server 8.9"
-			ANSI_COLOR="0;31"
-			CPE_NAME="cpe:/o:oracle:linux:8:9:server"
-			HOME_URL="https://linux.oracle.com/"
-			BUG_REPORT_URL="https://github.com/oracle/oracle-linux"
-
-			ORACLE_BUGZILLA_PRODUCT="Oracle Linux 8"
-			ORACLE_BUGZILLA_PRODUCT_VERSION=8.9
-			ORACLE_SUPPORT_PRODUCT="Oracle Linux"
-			ORACLE_SUPPORT_PRODUCT_VERSION=8.9`),
-			err:            nil,
-			expectedOSType: "oracle",
-		},
-		{
-			osRelease:      nil,
-			err:            errors.ErrUnsupported,
-			expectedOSType: "",
-		},
-		{
-			osRelease: []byte(`NAME="AlmaLinux"
-			VERSION="9.4 (Seafoam Ocelot)"
-			ID="almalinux"
-			ID_LIKE="rhel centos fedora"
-			VERSION_ID="9.4"
-			PLATFORM_ID="platform:el9"
-			PRETTY_NAME="AlmaLinux 9.4 (Seafoam Ocelot)"
-			ANSI_COLOR="0;34"
-			CPE_NAME="cpe:/o:almalinux:almalinux:9::baseos"
-			HOME_URL="https://almalinux.org/"
-			DOCUMENTATION_URL="https://wiki.almalinux.org/"
-			BUG_REPORT_URL="https://bugs.almalinux.org/"
-
-			SUPPORT_END="2032-06-01"
-			ALMALINUX_MANTISBT_PROJECT="AlmaLinux-9"
-    		ALMALINUX_MANTISBT_PROJECT_VERSION="9.4"
-			REDHAT_SUPPORT_PRODUCT="AlmaLinux"
-			REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`),
-			err:            nil,
-			expectedOSType: "alma",
-		},
-		{
-			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
-			NAME="Debian GNU/Linux"
-			VERSION_ID="11"
-			`),
-			err:            nil,
-			expectedOSType: "debian",
-		},
-		{
-			osRelease: []byte(`NAME="Alpine Linux"
-			ID=alpine
-			VERSION_ID=3.7.3`),
-			err:            nil,
-			expectedOSType: "alpine",
-		},
-		{
-			osRelease: []byte(`NAME="SomeRandomOS"
-			ID=someos
-			VERSION_ID=1.0`),
-			err:            errors.ErrUnsupported,
-			expectedOSType: "",
-		},
-		{
-			osRelease:      nil,
-			err:            errors.ErrUnsupported,
-			expectedOSType: "",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run("TestGetOSType", func(t *testing.T) {
-			osType, err := getOSType(context.TODO(), tc.osRelease)
-
-			// Use testify package to assert that the output manifest and error match the expected ones
-			assert.Equal(t, tc.expectedOSType, osType)
-			assert.Equal(t, tc.err, err)
-		})
-	}
-}
-
-func TestGetOSVersion(t *testing.T) {
-	testCases := []struct {
-		osRelease         []byte
-		errMsg            string
-		expectedOSVersion string
-	}{
-		{
-			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
-			NAME="Debian GNU/Linux"
-			VERSION_ID="11"
-			VERSION="11 (bullseye)"
-			VERSION_CODENAME=bullseye
-			ID=debian
-			HOME_URL="https://www.debian.org/"
-			SUPPORT_URL="https://www.debian.org/support"
-			BUG_REPORT_URL="https://bugs.debian.org/"
-			`),
-			errMsg:            "",
-			expectedOSVersion: "11",
-		},
-		{
-			osRelease:         []byte("Cannot Parse Version_ID"),
-			errMsg:            "unable to parse os-release data osrelease: malformed line \"Cannot Parse Version_ID\"",
-			expectedOSVersion: "",
-		},
-		{
-			osRelease: []byte(`PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
-			VERSION_ID="11"
-			ID=debian`),
-			errMsg:            "",
-			expectedOSVersion: "11",
-		},
-		{
-			osRelease:         []byte("Cannot Parse Version_ID"),
-			errMsg:            `unable to parse os-release data osrelease: malformed line "Cannot Parse Version_ID"`,
-			expectedOSVersion: "",
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run("TestGetOSVersion", func(t *testing.T) {
-			osVersion, err := getOSVersion(context.TODO(), tc.osRelease)
-
-			var errMsg string
-			if err == nil {
-				errMsg = ""
-			} else {
-				errMsg = err.Error()
-			}
-
-			// Use testify package to assert that the output manifest and error match the expected ones
-			assert.Equal(t, tc.expectedOSVersion, osVersion)
-			assert.Equal(t, tc.errMsg, errMsg)
-		})
-	}
-}
-
 func TestGetRepoNameWithDigest(t *testing.T) {
 	result := getRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
 	if result != "nginx@sha256:mocked-digest" {
@@ -492,7 +174,7 @@ func TestResolvePatchedTag(t *testing.T) {
 				t.Fatalf("failed to parse image reference: %v", err)
 			}
 
-			got, err := resolvePatchedTag(imageRef, tc.explicitTag, tc.suffix)
+			got, err := common.ResolvePatchedTag(imageRef, tc.explicitTag, tc.suffix)
 			if tc.wantErr {
 				assert.Error(t, err)
 			} else {
@@ -514,15 +196,15 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	// Use platforms that match the host to avoid emulation issues in test
 	targetPlatforms := []string{"linux/amd64"}
 
-	err := Patch(
-		context.Background(),
-		30*time.Second,
-		"alpine:3.19", "", "", "", "", "", "", "", "",
-		false, true,
-		targetPlatforms,
-		buildkit.Opts{},
-		"os", "patch",
-	)
+	opts := &types.Options{
+		Image:             "alpine:3.19",
+		Timeout:           30 * time.Second,
+		Push:              true,
+		Platforms:         targetPlatforms,
+		PkgTypes:          "os",
+		LibraryPatchLevel: "patch",
+	}
+	err := Patch(context.Background(), opts)
 
 	if err == nil {
 		t.Fatalf("expected error from Build(), got nil")
@@ -539,7 +221,7 @@ func TestArchTag(t *testing.T) {
 	cases := []struct {
 		base, arch, variant, want string
 	}{
-		{"patched", ARM64, "", "patched-arm64"},
+		{"patched", "arm64", "", "patched-arm64"},
 		{"patched", "arm", "v7", "patched-arm-v7"},
 		{"patched", "mips64", "n32", "patched-mips64-n32"},
 	}
@@ -556,8 +238,8 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 	orig := []byte(`{"architecture":"amd64"}`)
 
 	plat := &types.PatchPlatform{}
-	plat.OS = LINUX
-	plat.Architecture = ARM64
+	plat.OS = "linux"
+	plat.Architecture = "arm64"
 	plat.Variant = "v8"
 
 	fixed, err := normalizeConfigForPlatform(orig, plat)
@@ -570,7 +252,7 @@ func TestNormalizeConfigForPlatform(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if m["architecture"] != ARM64 || m["os"] != LINUX || m["variant"] != "v8" {
+	if m["architecture"] != "arm64" || m["os"] != "linux" || m["variant"] != "v8" {
 		t.Fatalf("fields not normalised correctly: %#v", m)
 	}
 
@@ -594,7 +276,7 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 		Variant      string
 	}{
 		{"linux", "amd64", ""},
-		{"linux", ARM64, ""},
+		{"linux", "arm64", ""},
 		{"linux", "arm", "v7"},
 		{"windows", "amd64", ""},
 	}

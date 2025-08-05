@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/spf13/cobra"
 
@@ -21,7 +22,7 @@ import (
 
 type patchArgs struct {
 	appImage          string
-	reportFile        string
+	report            string
 	patchedTag        string
 	suffix            string
 	workingFolder     string
@@ -50,34 +51,33 @@ func NewPatchCmd() *cobra.Command {
 				return err
 			}
 
-			bkopts := buildkit.Opts{
-				Addr:       ua.bkOpts.Addr,
-				CACertPath: ua.bkOpts.CACertPath,
-				CertPath:   ua.bkOpts.CertPath,
-				KeyPath:    ua.bkOpts.KeyPath,
+			opts := &types.Options{
+				Image:             ua.appImage,
+				Report:            ua.report,
+				PatchedTag:        ua.patchedTag,
+				Suffix:            ua.suffix,
+				WorkingFolder:     ua.workingFolder,
+				Timeout:           ua.timeout,
+				Scanner:           ua.scanner,
+				IgnoreError:       ua.ignoreError,
+				Format:            ua.format,
+				Output:            ua.output,
+				BkAddr:            ua.bkOpts.Addr,
+				BkCACertPath:      ua.bkOpts.CACertPath,
+				BkCertPath:        ua.bkOpts.CertPath,
+				BkKeyPath:         ua.bkOpts.KeyPath,
+				Push:              ua.push,
+				Platforms:         ua.platform,
+				Loader:            ua.loader,
+				PkgTypes:          ua.pkgTypes,
+				LibraryPatchLevel: ua.libraryPatchLevel,
 			}
-			return Patch(context.Background(),
-				ua.timeout,
-				ua.appImage,
-				ua.reportFile,
-				ua.patchedTag,
-				ua.suffix,
-				ua.workingFolder,
-				ua.scanner,
-				ua.format,
-				ua.output,
-				ua.loader,
-				ua.ignoreError,
-				ua.push,
-				ua.platform,
-				bkopts,
-				ua.pkgTypes,
-				ua.libraryPatchLevel)
+			return Patch(context.Background(), opts)
 		},
 	}
 	flags := patchCmd.Flags()
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
-	flags.StringVarP(&ua.reportFile, "report", "r", "", "Vulnerability report file or directory path")
+	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched",
 		"Suffix for the patched image (if no explicit --tag provided)")
