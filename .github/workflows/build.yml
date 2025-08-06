@@ -194,11 +194,11 @@ jobs:
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
             fi
-      
+
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
-            
+
             if ! grep -q foo "${tmp}"; then
                 echo "Error: openssl.cnf content replaced" >&2
                 rm "${tmp}"
@@ -248,11 +248,11 @@ jobs:
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
                 trap '_cleanup' EXIT
             fi
-      
+
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/ssl/openssl.cnf "${tmp}"
-            
+
             if ! grep -q foo "${tmp}"; then
                 echo "Error: openssl.cnf content replaced" >&2
                 rm "${tmp}"
@@ -348,7 +348,7 @@ jobs:
           set -eu -o pipefail
           go test -v ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"
 
-          
+
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
@@ -359,6 +359,15 @@ jobs:
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
     steps:
+      - uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
       - name: Change docker daemon config
         run: |
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
@@ -418,7 +427,7 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          
+
           if [[ "${{ matrix.buildkit_mode }}" == "docker" ]]; then
             # For docker mode, use the default docker daemon
             export COPA_BUILDKIT_ADDR="docker://"
@@ -426,7 +435,7 @@ jobs:
             # For other modes, source the corresponding script in the same shell session
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
           fi
-          
+
           go test -v ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
 
   test-patch-multiplatform-plugin:
