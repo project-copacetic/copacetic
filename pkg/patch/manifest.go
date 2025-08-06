@@ -41,7 +41,19 @@ func createMultiPlatformManifest(
 	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage)
 	if err != nil {
 		log.Warnf("Failed to get original image annotations: %v", err)
-		// continue without annotations rather than failing
+		// Even if we fail to get original annotations, we should add Copa annotations
+		createdKey := exptypes.AnnotationKey{
+			Type: exptypes.AnnotationIndex,
+			Key:  "org.opencontainers.image.created",
+		}
+		annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
+		
+		// Add Copa-specific annotation at index level
+		copaKey := exptypes.AnnotationKey{
+			Type: exptypes.AnnotationIndex,
+			Key:  copaAnnotationKeyPrefix + ".patched",
+		}
+		annotations[copaKey] = time.Now().UTC().Format(time.RFC3339)
 	} else {
 		log.Infof("Retrieved %d annotations from original image %s", len(originalAnnotations), originalImage)
 		if len(originalAnnotations) > 0 {
@@ -94,6 +106,13 @@ func createMultiPlatformManifest(
 			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
 		}
 	}
+	
+	// Always ensure we have Copa-specific annotation at index level
+	copaKey := exptypes.AnnotationKey{
+		Type: exptypes.AnnotationIndex,
+		Key:  copaAnnotationKeyPrefix + ".patched",
+	}
+	annotations[copaKey] = time.Now().UTC().Format(time.RFC3339)
 
 	// add manifest descriptor level annotations for each platform
 	for _, it := range items {

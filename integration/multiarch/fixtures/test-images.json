@@ -30,6 +30,19 @@
     ]
   },
   {
+    "originalImage": "mcr.microsoft.com/dotnet/runtime",
+    "localImage": "localhost:5000/dotnet-runtime",
+    "tag": "6.0",
+    "description": "Multi-platform .NET 6.0 runtime, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "skipAnnotations": true,
+    "platforms": [
+      "linux/arm/v7",
+      "linux/arm64"
+    ]
+  },
+  {
     "originalImage": "quay.io/jupyter/base-notebook",
     "localImage": "localhost:5000/jupyter-base-notebook",
     "tag": "2025-01-27",

@@ -56,7 +56,6 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		return fmt.Errorf("build configuration validation failed: %w", err)
 	}
 
-	// TODO: move this to validateBuildConfiguration
 	// Parse and validate package types early
 	pkgTypesList, err := parsePkgTypes(pkgTypes)
 	if err != nil {
