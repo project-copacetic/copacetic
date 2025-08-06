@@ -47,7 +47,7 @@ func createMultiPlatformManifest(
 			Key:  "org.opencontainers.image.created",
 		}
 		annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
-		
+
 		// Add Copa-specific annotation at index level
 		copaKey := exptypes.AnnotationKey{
 			Type: exptypes.AnnotationIndex,
@@ -106,7 +106,7 @@ func createMultiPlatformManifest(
 			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
 		}
 	}
-	
+
 	// Always ensure we have Copa-specific annotation at index level
 	copaKey := exptypes.AnnotationKey{
 		Type: exptypes.AnnotationIndex,
