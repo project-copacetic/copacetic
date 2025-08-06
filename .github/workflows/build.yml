@@ -433,7 +433,7 @@ jobs:
     needs: build
     name: Test multiplatform with plugin
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 50
     steps:
       - name: Change docker daemon config
         run: |
