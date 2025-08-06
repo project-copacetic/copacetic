@@ -9,7 +9,7 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/go-docker v0.4.0
 	github.com/distribution/reference v0.6.0
-	github.com/docker/buildx v0.25.0
+	github.com/docker/buildx v0.26.1
 	github.com/docker/cli v28.3.3+incompatible
 	github.com/docker/docker v28.3.3+incompatible
 	github.com/google/go-containerregistry v0.20.6
@@ -129,10 +129,10 @@ require (
 	github.com/zclconf/go-cty v1.16.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.56.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.60.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/otel v1.36.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.32.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.35.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.36.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.36.0 // indirect
 	go.opentelemetry.io/otel/metric v1.36.0 // indirect
