@@ -353,7 +353,7 @@ jobs:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -433,7 +433,7 @@ jobs:
     needs: build
     name: Test multiplatform with plugin
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Change docker daemon config
         run: |

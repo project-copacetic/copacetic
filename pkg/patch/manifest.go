@@ -137,7 +137,10 @@ func createMultiPlatformManifest(
 						annotations[ak] = v
 					}
 				}
-				log.Debugf("Added %d manifest-descriptor annotations for platform %s", len(it.PatchedDesc.Annotations), fmt.Sprintf("%s/%s", it.PatchedDesc.Platform.OS, it.PatchedDesc.Platform.Architecture))
+				log.Infof("Added %d manifest-descriptor annotations for platform %s", len(it.PatchedDesc.Annotations), fmt.Sprintf("%s/%s", it.PatchedDesc.Platform.OS, it.PatchedDesc.Platform.Architecture))
+				for k, v := range it.PatchedDesc.Annotations {
+					log.Debugf("Platform %s annotation: %s = %s", fmt.Sprintf("%s/%s", it.PatchedDesc.Platform.OS, it.PatchedDesc.Platform.Architecture), k, v)
+				}
 			}
 		}
 	}
@@ -155,15 +158,22 @@ func createMultiPlatformManifest(
 		})
 	}
 
+	log.Infof("Creating manifest list with %d annotations and %d sources", len(annotations), len(srcRefs))
+	for ak, v := range annotations {
+		log.Debugf("Index annotation: %s = %s", ak.Key, v)
+	}
+
 	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, annotations, false)
 	if err != nil {
 		return fmt.Errorf("failed to combine sources into manifest list: %w", err)
 	}
 
+	log.Infof("Successfully created manifest list, pushing to %s", imageName.String())
 	err = resolver.Push(ctx, imageName, desc, idxBytes)
 	if err != nil {
 		return fmt.Errorf("failed to push multi-platform manifest list: %w", err)
 	}
 
+	log.Infof("Successfully pushed multi-platform manifest list to %s", imageName.String())
 	return nil
 }

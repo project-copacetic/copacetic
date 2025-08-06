@@ -211,7 +211,7 @@ func patchSingleArchImage(
 	}
 
 	// Get patched descriptor and add annotations
-	return createPatchResult(ctx, imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
+	return createPatchResult(ctx, imageName, patchedImageName, &targetPlatform, image, finalLoaderType, push)
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -337,7 +337,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 
 // createPatchResult creates the final patch result with descriptor and annotations.
 func createPatchResult(ctx context.Context, imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, image, loaderType string,
+	targetPlatform *types.PatchPlatform, image, loaderType string, wasPushed bool,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -351,33 +351,59 @@ func createPatchResult(ctx context.Context, imageName reference.Named, patchedIm
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
 	}
 
-	// Add original manifest annotations if we have a patched descriptor
+	// Always create a descriptor with annotations, even if we couldn't retrieve the full descriptor
+	var augmentedDesc ispec.Descriptor
 	if patchedDesc != nil {
-		originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
-			OS:           targetPlatform.OS,
-			Architecture: targetPlatform.Architecture,
-			Variant:      targetPlatform.Variant,
-		})
-		if err != nil {
-			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
-		} else if len(originalAnnotations) > 0 {
-			// Create augmented descriptor with original annotations
-			augmentedDesc := *patchedDesc
-			if augmentedDesc.Annotations == nil {
-				augmentedDesc.Annotations = make(map[string]string)
-			}
-
-			// Copy original annotations
-			maps.Copy(augmentedDesc.Annotations, originalAnnotations)
-
-			// Update creation timestamp and add Copa annotations
-			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
-			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
-
-			patchedDesc = &augmentedDesc
-			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+		// Use the retrieved descriptor as base
+		augmentedDesc = *patchedDesc
+	} else {
+		// Create a minimal descriptor with platform info
+		augmentedDesc = ispec.Descriptor{
+			Platform: &ispec.Platform{
+				OS:           targetPlatform.OS,
+				Architecture: targetPlatform.Architecture,
+				Variant:      targetPlatform.Variant,
+			},
 		}
 	}
+
+	if augmentedDesc.Annotations == nil {
+		augmentedDesc.Annotations = make(map[string]string)
+	}
+
+	// Try to get original annotations
+	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+		OS:           targetPlatform.OS,
+		Architecture: targetPlatform.Architecture,
+		Variant:      targetPlatform.Variant,
+	})
+	if err != nil {
+		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
+	} else if len(originalAnnotations) > 0 {
+		// Copy original annotations
+		maps.Copy(augmentedDesc.Annotations, originalAnnotations)
+		log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+	}
+
+	// If the image was pushed, also get annotations from the pushed manifest
+	if wasPushed {
+		pushedAnnotations, err := utils.GetSinglePlatformManifestAnnotations(ctx, patchedImageName)
+		if err != nil {
+			log.Warnf("Failed to get pushed manifest annotations for %s: %v", patchedImageName, err)
+		} else if len(pushedAnnotations) > 0 {
+			// Merge pushed annotations (they may contain Copa annotations added during push)
+			maps.Copy(augmentedDesc.Annotations, pushedAnnotations)
+			log.Debugf("Retrieved %d annotations from pushed manifest for %s", len(pushedAnnotations), patchedImageName)
+		}
+	}
+
+	// Always update creation timestamp and add Copa annotations
+	// This ensures they're present even if not retrieved from the pushed manifest
+	augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
+	augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
+
+	patchedDesc = &augmentedDesc
+	log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
 	log.Debugf("Patched image name: %s", patchedImageName)
