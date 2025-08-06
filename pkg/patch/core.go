@@ -8,7 +8,6 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
@@ -181,16 +180,11 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
 
-	// for the vex document, only include updates that were successfully applied
-	if validatedUpdates != nil {
-		var successfulOSUpdates []unversioned.UpdatePackage
-		for _, update := range validatedUpdates.OSUpdates {
-			if !slices.Contains(errPkgs, update.Name) {
-				successfulOSUpdates = append(successfulOSUpdates, update)
-				// TODO (sertac): add lang updates to vex
-			}
-		}
-		validatedUpdates.OSUpdates = successfulOSUpdates
+	// for the vex document, return all updates that were processed
+	// The VEX generation logic will handle filtering based on success/failure
+	if validatedUpdates != nil && updates != nil {
+		validatedUpdates.OSUpdates = updates.OSUpdates
+		validatedUpdates.LangUpdates = updates.LangUpdates
 	}
 
 	return &Result{

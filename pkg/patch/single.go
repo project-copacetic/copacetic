@@ -469,7 +469,7 @@ func executePatchBuild(
 	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
 		nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
 		// vex document must contain at least one statement
-		if output != "" && len(validatedManifest.OSUpdates) > 0 {
+		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
 				ch <- err
 				return err
