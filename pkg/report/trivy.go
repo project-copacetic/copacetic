@@ -213,7 +213,7 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 			}
 		} else {
 			// When no comma-separated versions, pick the highest version to fix all CVEs.
-			// Note: While this fixes the most vulnerabilities, it may introduce breaking changes
+			// While this approach fixes the most vulnerabilities, it may introduce breaking changes
 			// or compatibility issues. Users should weigh the security benefits against the
 			// potential risks of upgrading to a higher version.
 			return getHighestVersion(validCandidates)
