@@ -3,6 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.24.4
 
 require (
+	github.com/aquasecurity/go-pep440-version v0.0.1
 	github.com/aquasecurity/trivy v0.65.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
@@ -38,6 +39,7 @@ require (
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
+	github.com/aquasecurity/go-version v0.0.1 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20250723062229-56ec1e482238 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.36.6 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.29.18 // indirect

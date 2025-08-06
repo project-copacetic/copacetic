@@ -197,10 +197,12 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	targetPlatforms := []string{"linux/amd64"}
 
 	opts := &types.Options{
-		Image:     "alpine:3.19",
-		Timeout:   30 * time.Second,
-		Push:      true,
-		Platforms: targetPlatforms,
+		Image:             "alpine:3.19",
+		Timeout:           30 * time.Second,
+		Push:              true,
+		Platforms:         targetPlatforms,
+		PkgTypes:          "os",
+		LibraryPatchLevel: "patch",
 	}
 	err := Patch(context.Background(), opts)
 

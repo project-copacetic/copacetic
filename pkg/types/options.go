@@ -35,6 +35,10 @@ type Options struct {
 	Platforms []string
 	Loader    string
 
+	// Package types and library patch level
+	PkgTypes          string
+	LibraryPatchLevel string
+
 	// Generate specific
 	OutputContext string
 }

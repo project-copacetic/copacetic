@@ -1,11 +1,14 @@
 package unversioned
 
 type UpdateManifest struct {
-	Metadata Metadata       `json:"metadata"`
-	Updates  UpdatePackages `json:"updates"`
+	Metadata    Metadata           `json:"metadata"`
+	OSUpdates   UpdatePackages     `json:"osupdates"`
+	LangUpdates LangUpdatePackages `json:"langupdates"`
 }
 
 type UpdatePackages []UpdatePackage
+
+type LangUpdatePackages []UpdatePackage
 
 type Metadata struct {
 	OS     OS     `json:"os"`
@@ -27,4 +30,6 @@ type UpdatePackage struct {
 	InstalledVersion string `json:"installedVersion"`
 	FixedVersion     string `json:"fixedVersion"`
 	VulnerabilityID  string `json:"vulnerabilityID"`
+	Type             string `json:"type"`
+	Class            string `json:"class"`
 }
