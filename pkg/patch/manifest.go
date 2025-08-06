@@ -2,6 +2,8 @@ package patch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +13,7 @@ import (
 	"github.com/docker/buildx/util/imagetools"
 	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	"github.com/opencontainers/go-digest"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -166,6 +169,50 @@ func createMultiPlatformManifest(
 	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, annotations, false)
 	if err != nil {
 		return fmt.Errorf("failed to combine sources into manifest list: %w", err)
+	}
+
+	// Workaround for buildx v0.25.0 bug: manually inject index-level annotations into manifest bytes
+	// TODO: fixed in buildx v0.26.0+ so remove after upgrading
+	log.Infof("Successfully created manifest list with descriptor: %+v", desc)
+	if len(desc.Annotations) > 0 {
+		log.Infof("Descriptor has %d annotations after Combine", len(desc.Annotations))
+		for k, v := range desc.Annotations {
+			log.Debugf("Descriptor annotation: %s = %s", k, v)
+		}
+	} else {
+		log.Warnf("Descriptor has no annotations after Combine operation!")
+	}
+	indexAnnotations := make(map[string]string)
+	for ak, v := range annotations {
+		if ak.Type == exptypes.AnnotationIndex {
+			indexAnnotations[ak.Key] = v
+		}
+	}
+	if len(indexAnnotations) > 0 {
+		log.Infof("Applying workaround: injecting %d index-level annotations into manifest bytes", len(indexAnnotations))
+
+		// Parse the manifest JSON
+		var manifest map[string]any
+		if err := json.Unmarshal(idxBytes, &manifest); err != nil {
+			log.Warnf("Failed to parse manifest JSON for annotation injection: %v", err)
+		} else {
+			// Inject the index-level annotations
+			manifest["annotations"] = indexAnnotations
+
+			// Re-serialize the manifest
+			modifiedBytes, err := json.Marshal(manifest)
+			if err != nil {
+				log.Warnf("Failed to re-serialize manifest with annotations: %v", err)
+			} else {
+				idxBytes = modifiedBytes
+				// Update the descriptor size and digest to match the modified manifest
+				desc.Size = int64(len(modifiedBytes))
+				hash := sha256.Sum256(modifiedBytes)
+				desc.Digest = digest.NewDigestFromBytes(digest.SHA256, hash[:])
+				log.Infof("Successfully injected index-level annotations into manifest bytes")
+				log.Debugf("Updated manifest size to %d bytes and digest to %s", len(modifiedBytes), desc.Digest)
+			}
+		}
 	}
 
 	log.Infof("Successfully created manifest list, pushing to %s", imageName.String())
