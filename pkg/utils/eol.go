@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -26,7 +27,20 @@ type EOLAPIResponse struct {
 var (
 	apiBaseURL = "https://endoflife.date/api/v1/products"
 	httpClient = &http.Client{Timeout: 10 * time.Second}
+	retryTimeout = 15 * time.Second
 )
+
+// SetEOLAPIBaseURL allows configuration of the EOL API base URL
+func SetEOLAPIBaseURL(url string) {
+	if url != "" {
+		apiBaseURL = strings.TrimSuffix(url, "/")
+	}
+}
+
+// GetEOLAPIBaseURL returns the current EOL API base URL
+func GetEOLAPIBaseURL() string {
+	return apiBaseURL
+}
 
 func isNumericPrefix(s string) bool {
 	if s == "" {
@@ -130,53 +144,83 @@ func CheckEOSL(osType, osVersion string) (bool, string, error) {
 	url := fmt.Sprintf("%s/%s/releases/%s", apiBaseURL, apiProduct, apiVersion)
 	log.Debugf("EOL Check: Querying URL: %s", url)
 
+	// Retry logic for 429 responses
+	startTime := time.Now()
+	attempt := 0
+	for {
+		attempt++
+		resp, err := makeEOLAPIRequest(url)
+		if err != nil {
+			return false, "", fmt.Errorf("failed to call EOL API for %s/%s: %w", apiProduct, apiVersion, err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			log.Warnf("EOL Check: OS/Version %s/%s not found in the database (404).", apiProduct, apiVersion)
+			return false, "Not in EOL DB", nil
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests {
+			elapsed := time.Since(startTime)
+			if elapsed >= retryTimeout {
+				log.Warnf("EOL Check: Rate limited by API for %s/%s (429). Retry timeout exceeded after %v.", apiProduct, apiVersion, elapsed)
+				return false, "API Rate Limited", fmt.Errorf("rate limited by EOL API, retry timeout exceeded")
+			}
+
+			// Exponential backoff: 1s, 2s, 4s, 8s...
+			backoffDuration := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+			// Cap the backoff to avoid very long waits
+			if backoffDuration > 8*time.Second {
+				backoffDuration = 8 * time.Second
+			}
+			// Don't wait longer than the remaining timeout
+			if elapsed+backoffDuration > retryTimeout {
+				backoffDuration = retryTimeout - elapsed
+			}
+
+			log.Debugf("EOL Check: Rate limited (429) for %s/%s, retrying in %v (attempt %d)", apiProduct, apiVersion, backoffDuration, attempt)
+			time.Sleep(backoffDuration)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			return false, "", fmt.Errorf("EOL API for %s/%s returned non-OK status: %d - %s", apiProduct, apiVersion, resp.StatusCode, string(bodyBytes))
+		}
+
+		// Success case - parse the response
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return false, "", fmt.Errorf("failed to read EOL API response body for %s/%s: %w", apiProduct, apiVersion, err)
+		}
+
+		var apiResp EOLAPIResponse
+		if err := json.Unmarshal(body, &apiResp); err != nil {
+			log.Debugf("EOL Check: Failed to unmarshal API response for %s/%s. Body: %s. Error: %v", apiProduct, apiVersion, string(body), err)
+			return false, "", fmt.Errorf("failed to unmarshal EOL API response for %s/%s: %w", apiProduct, apiVersion, err)
+		}
+		releaseData := apiResp.Result
+
+		log.Debugf("EOL: API Response for %s/%s - IsEOL: %t, EOLDate: '%s', IsMaintained: %t",
+			apiProduct, apiVersion, releaseData.IsEOL, releaseData.EOLDate, releaseData.IsMaintained)
+
+		isEffectivelyEOL := releaseData.IsEOL || !releaseData.IsMaintained
+		displayEOLDate := releaseData.EOLDate
+		if displayEOLDate == "" || strings.EqualFold(displayEOLDate, "null") {
+			displayEOLDate = "Unknown"
+		}
+
+		return isEffectivelyEOL, displayEOLDate, nil
+	}
+}
+
+// makeEOLAPIRequest creates and executes an HTTP request to the EOL API
+func makeEOLAPIRequest(url string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return false, "", fmt.Errorf("failed to create EOL API request for %s/%s: %w", apiProduct, apiVersion, err)
+		return nil, fmt.Errorf("failed to create EOL API request: %w", err)
 	}
 	req.Header.Set("User-Agent", "copacetic")
 
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return false, "", fmt.Errorf("failed to call EOL API for %s/%s: %w", apiProduct, apiVersion, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		log.Warnf("EOL Check: OS/Version %s/%s not found in the database (404).", apiProduct, apiVersion)
-		return false, "Not in EOL DB", nil
-	}
-
-	if resp.StatusCode == http.StatusTooManyRequests {
-		log.Warnf("EOL Check: Rate limited by API for %s/%s (429).", apiProduct, apiVersion)
-		return false, "API Rate Limited", fmt.Errorf("rate limited by EOL API")
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return false, "", fmt.Errorf("EOL API for %s/%s returned non-OK status: %d - %s", apiProduct, apiVersion, resp.StatusCode, string(bodyBytes))
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false, "", fmt.Errorf("failed to read EOL API response body for %s/%s: %w", apiProduct, apiVersion, err)
-	}
-
-	var apiResp EOLAPIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		log.Debugf("EOL Check: Failed to unmarshal API response for %s/%s. Body: %s. Error: %v", apiProduct, apiVersion, string(body), err)
-		return false, "", fmt.Errorf("failed to unmarshal EOL API response for %s/%s: %w", apiProduct, apiVersion, err)
-	}
-	releaseData := apiResp.Result
-
-	log.Debugf("EOL: API Response for %s/%s - IsEOL: %t, EOLDate: '%s', IsMaintained: %t",
-		apiProduct, apiVersion, releaseData.IsEOL, releaseData.EOLDate, releaseData.IsMaintained)
-
-	isEffectivelyEOL := releaseData.IsEOL || !releaseData.IsMaintained
-	displayEOLDate := releaseData.EOLDate
-	if displayEOLDate == "" || strings.EqualFold(displayEOLDate, "null") {
-		displayEOLDate = "Unknown"
-	}
-
-	return isEffectivelyEOL, displayEOLDate, nil
+	return httpClient.Do(req)
 }

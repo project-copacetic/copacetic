@@ -31,6 +31,8 @@ type patchArgs struct {
 	push          bool
 	platform      []string
 	loader        string
+	eolAPIBaseURL string
+	exitOnEOL     bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -58,6 +60,8 @@ func NewPatchCmd() *cobra.Command {
 				Push:          ua.push,
 				Platforms:     ua.platform,
 				Loader:        ua.loader,
+				EOLAPIBaseURL: ua.eolAPIBaseURL,
+				ExitOnEOL:     ua.exitOnEOL,
 			}
 			return Patch(context.Background(), opts)
 		},
@@ -83,6 +87,8 @@ func NewPatchCmd() *cobra.Command {
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
+	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
+	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)
