@@ -675,7 +675,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			# Convert OS_VERSION from X.Y.Z to X.Y format
+			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
+			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
 			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
 				exit $?
