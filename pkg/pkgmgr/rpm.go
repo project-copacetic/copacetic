@@ -116,7 +116,11 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 
 	if osType == "azurelinux" {
 		image = "azurelinux/base/core"
-		version = osVersion
+		if strings.Contains(osVersion, "3.0") {
+			version = "3.0"
+		} else {
+			version = osVersion
+		}
 	} else {
 		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
 		image = "cbl-mariner/base/core"
