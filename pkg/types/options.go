@@ -2,11 +2,13 @@ package types
 
 import (
 	"time"
+
+	"github.com/moby/buildkit/util/progress/progressui"
 )
 
 // Options contains common copacetic options.
 type Options struct {
-	// Core image configuration
+	// Core single image patch configuration
 	Image      string
 	Report     string
 	PatchedTag string
@@ -24,8 +26,9 @@ type Options struct {
 	IgnoreError bool
 
 	// Output configuration
-	Format string
-	Output string
+	Format   string
+	Output   string
+	Progress progressui.DisplayMode
 
 	// Buildkit connection options
 	BkAddr       string

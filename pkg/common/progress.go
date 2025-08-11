@@ -12,10 +12,10 @@ import (
 
 // DisplayProgress starts a goroutine to display build progress.
 // This encapsulates the common pattern used in both generate and patch commands.
-func DisplayProgress(ctx context.Context, eg *errgroup.Group, buildChannel chan *client.SolveStatus) {
+func DisplayProgress(ctx context.Context, eg *errgroup.Group, buildChannel chan *client.SolveStatus, progress progressui.DisplayMode) {
 	eg.Go(func() error {
 		// Display progress
-		mode := progressui.AutoMode
+		mode := progress
 		if log.GetLevel() >= log.DebugLevel {
 			mode = progressui.PlainMode
 		}

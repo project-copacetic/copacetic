@@ -18,6 +18,7 @@ import (
 	_ "github.com/moby/buildkit/client/connhelper/nerdctlcontainer"
 	_ "github.com/moby/buildkit/client/connhelper/podmancontainer"
 	_ "github.com/moby/buildkit/client/connhelper/ssh"
+	"github.com/moby/buildkit/util/progress/progressui"
 )
 
 type patchArgs struct {
@@ -35,6 +36,7 @@ type patchArgs struct {
 	push          bool
 	platform      []string
 	loader        string
+	progress      string
 	configFile    string
 }
 
@@ -63,6 +65,7 @@ func NewPatchCmd() *cobra.Command {
 				BkKeyPath:     ua.bkOpts.KeyPath,
 				Push:          ua.push,
 				Platforms:     ua.platform,
+				Progress:      progressui.DisplayMode(ua.progress),
 				Loader:        ua.loader,
 				ConfigFile:    ua.configFile,
 			}
@@ -110,6 +113,10 @@ func NewPatchCmd() *cobra.Command {
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
+
+	if err := patchCmd.MarkFlagRequired("image"); err != nil {
+		panic(err)
+	}
 
 	return patchCmd
 }
