@@ -102,12 +102,12 @@ func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
 		tmp := t.TempDir()
 		sockPath = filepath.Join(tmp, "bk.sock")
 	}
-	
+
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { 
+	t.Cleanup(func() {
 		l.Close()
 		if runtime.GOOS == goosDarwin {
 			os.Remove(sockPath) // Clean up manually on macOS since we're not using TempDir
