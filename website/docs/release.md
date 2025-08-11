@@ -32,28 +32,106 @@ All releases follow the format `vX.Y.Z`, where X is the major version, Y is the 
 
 ## Release Process
 
-Copacetic uses [GoReleaser](https://goreleaser.com/) for automating releases.
+Copacetic uses [GoReleaser](https://goreleaser.com/) for automating releases. The release process differs depending on whether you're cutting a major/minor release or a patch release.
 
-### Steps to Cut a Release
+### Major/Minor Release Process
+
+For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):
 
 1. **Prepare the Release Branch**
 
    ```sh
-   git checkout <BRANCH NAME>
-   git pull origin <BRANCH NAME>
+   git checkout main
+   git pull upstream main
    ```
 
-2. **Create and Push the Tag**
+2. **Create Release Branch**
+
+   Create the release branch:
+
+   ```sh
+   git checkout -b release-<MAJOR>.<MINOR>.x
+   git push upstream release-<MAJOR>.<MINOR>.x
+   ```
+
+3. **Create and Push the Tag**
 
    ```sh
    git tag -a <NEW VERSION> -m '<NEW VERSION>'
-   git push origin <NEW VERSION>
+   git push upstream <NEW VERSION>
    ```
 
-3. **Publishing**
-   - GoReleaser will automatically create a new release.
+4. **Publishing**
+   - GoReleaser will automatically create a new release
    - Review and edit the release at: [GitHub Releases](https://github.com/project-copacetic/copacetic/releases)
-   - Review the respective copa-action image at: [GitHub Container Registry](https://github.com/orgs/project-copacetic/packages/container/package/copa-action)
+   - Review the respective copa-action image at: [GitHub Container Registry](https://github.com/project-copacetic/copacetic/pkgs/container/copa-action)
+   - Review the respective copa-extension image at: [GitHub Container Registry](https://github.com/project-copacetic/copacetic/pkgs/container/copa-extension)
+
+### Patch Release Process
+
+For patch releases (e.g., v<MAJOR>.<MINOR>.<PATCH>) that contain bug fixes or security patches:
+
+1. **Create Release Branch (if it doesn't exist)**
+
+   Create the release branch from the tag:
+
+   ```sh
+   git checkout -b release-<MAJOR>.<MINOR>.x v<MAJOR>.<MINOR>.0
+   git push upstream release-<MAJOR>.<MINOR>.x
+   ```
+
+   If the release branch already exists:
+
+   ```sh
+   git checkout release-<MAJOR>.<MINOR>.x
+   git pull upstream release-<MAJOR>.<MINOR>.x
+   ```
+
+2. **Cherry-pick the Fix**
+
+   Cherry-pick the commit(s) that contain the fix from the main branch:
+
+   ```sh
+   git cherry-pick <COMMIT_HASH>
+   ```
+
+   For multiple commits:
+
+   ```sh
+   git cherry-pick <COMMIT_HASH_1> <COMMIT_HASH_2>
+   ```
+
+3. **Open a Pull Request**
+
+   Create a PR to the release branch:
+
+   ```sh
+   git push origin release-<MAJOR>.<MINOR>.x
+   gh pr create --base release-<MAJOR>.<MINOR>.x --title "Cherry-pick fix for v<MAJOR>.<MINOR>.<PATCH>" --body "Cherry-picking fix from main branch for patch release v<MAJOR>.<MINOR>.<PATCH>"
+   ```
+
+4. **Review and Merge**
+
+   - Get the PR reviewed by maintainers
+   - Ensure all CI checks pass
+   - Merge the PR to the release branch
+
+5. **Tag the Release**
+
+   After the PR is merged, tag the release from the release branch:
+
+   ```sh
+   git checkout release-<MAJOR>.<MINOR>.x
+   git pull upstream release-<MAJOR>.<MINOR>.x
+   git tag -a v<MAJOR>.<MINOR>.<PATCH> -m "Release v<MAJOR>.<MINOR>.<PATCH>"
+   git push upstream v<MAJOR>.<MINOR>.<PATCH>
+   ```
+
+6. **Publishing**
+   - GoReleaser will automatically create a new release
+   - Review and edit the release at: [GitHub Releases](https://github.com/project-copacetic/copacetic/releases)
+   - Review the respective copa-action image at: [GitHub Container Registry](https://github.com/project-copacetic/copacetic/pkgs/container/copa-action)
+   - Review the respective copa-extension image at: [GitHub Container Registry](https://github.com/project-copacetic/copacetic/pkgs/container/copa-extension)
 
 ## Supported Releases
 
