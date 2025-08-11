@@ -114,9 +114,5 @@ func NewPatchCmd() *cobra.Command {
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 
-	if err := patchCmd.MarkFlagRequired("image"); err != nil {
-		panic(err)
-	}
-
 	return patchCmd
 }
