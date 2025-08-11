@@ -31,6 +31,11 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	goosDarwin  = "darwin"
+	goosWindows = "windows"
+)
+
 type mockControlServer struct {
 	controlapi.ControlServer
 }
@@ -89,7 +94,7 @@ func makeCapList(capIDs ...apicaps.CapID) []*caps.APICap {
 func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
 	// Use a shorter path strategy that works across platforms
 	var sockPath string
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == goosDarwin {
 		// On macOS, use /tmp directly for shorter paths to avoid socket path length limits
 		sockPath = filepath.Join("/tmp", fmt.Sprintf("bk-%d.sock", time.Now().UnixNano()))
 	} else {
@@ -104,7 +109,7 @@ func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
 	}
 	t.Cleanup(func() { 
 		l.Close()
-		if runtime.GOOS == "darwin" {
+		if runtime.GOOS == goosDarwin {
 			os.Remove(sockPath) // Clean up manually on macOS since we're not using TempDir
 		}
 	})
@@ -497,7 +502,7 @@ func TestQemuAvailable_Mocked(t *testing.T) {
 			stubDir:  func(string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil },
 			stubRead: func(string) ([]byte, error) { return nil, nil },
 			stubPath: func(string) (string, error) { return "", os.ErrNotExist },
-			want:     runtime.GOOS == "darwin" || runtime.GOOS == "windows", // true on macOS/Windows due to Docker Desktop assumption
+			want:     runtime.GOOS == goosDarwin || runtime.GOOS == goosWindows, // true on macOS/Windows due to Docker Desktop assumption
 		},
 	}
 
