@@ -62,11 +62,6 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
 
-	// Validate configuration based on source policy if present
-	if err := validateBuildConfiguration(opts); err != nil {
-		return fmt.Errorf("build configuration validation failed: %w", err)
-	}
-
 	// Handle empty report path - check if image is manifest list or single platform
 	if reportPath == "" {
 		// Discover platforms from the image reference to determine if it's multi-platform
@@ -157,24 +152,4 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
-}
-
-// validateBuildConfiguration validates the build configuration and source policies.
-func validateBuildConfiguration(opts *types.Options) error {
-	// Validate source policy if build options are provided
-	if opts.BkAddr != "" {
-		bkOpts := buildkit.Opts{
-			Addr:       opts.BkAddr,
-			CACertPath: opts.BkCACertPath,
-			CertPath:   opts.BkCertPath,
-			KeyPath:    opts.BkKeyPath,
-		}
-
-		// Create temporary build config to validate source policy
-		_, err := createBuildConfig("temp", false, false, bkOpts, nil)
-		if err != nil {
-			return fmt.Errorf("failed to create build configuration: %w", err)
-		}
-	}
-	return nil
 }
