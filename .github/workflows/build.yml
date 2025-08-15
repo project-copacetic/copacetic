@@ -141,7 +141,11 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          go test -v ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
   test-patch-no-report:
     needs: build
@@ -184,7 +188,11 @@ jobs:
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
-          go test -v ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
       - name: Test RPM validation - noreplace files
         if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
@@ -304,7 +312,11 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/direct/tcp
-          go test -v ./test/e2e/plugin --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/plugin --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
   test-push:
     needs: build
@@ -346,7 +358,11 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          go test -v ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
           
   test-patch-multiplatform:
@@ -427,7 +443,11 @@ jobs:
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
           fi
           
-          go test -v ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
   test-patch-multiplatform-plugin:
     needs: build
@@ -497,4 +517,8 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          go test -v ./test/e2e/multiplatform-plugin --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/multiplatform-plugin --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
