@@ -97,29 +97,29 @@ func TestRemoveIfNotDebug(t *testing.T) {
 }
 
 func TestGetRepoNameWithDigest(t *testing.T) {
-	result := getRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
+	result := common.GetRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
 	if result != "nginx@sha256:mocked-digest" {
 		t.Fatalf("unexpected result: %s", result)
 	}
 	t.Run("WithTagAndDigest", func(t *testing.T) {
-		result := getRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
+		result := common.GetRepoNameWithDigest("docker.io/library/nginx:1.21.6-patched", "sha256:mocked-digest")
 		assert.Equal(t, "nginx@sha256:mocked-digest", result)
 	})
 
 	t.Run("NoTagUsesFullImageName", func(t *testing.T) {
-		result := getRepoNameWithDigest("docker.io/library/nginx", "sha256:abc123")
+		result := common.GetRepoNameWithDigest("docker.io/library/nginx", "sha256:abc123")
 		// there's no trailing :tag, so we strip library/ prefix -> "nginx@sha256:abc123"
 		assert.Equal(t, "nginx@sha256:abc123", result)
 	})
 
 	t.Run("RandomLocalImageName", func(t *testing.T) {
-		result := getRepoNameWithDigest("localhost:5000/repo/image:mytag", "sha256:abcdef1234")
+		result := common.GetRepoNameWithDigest("localhost:5000/repo/image:mytag", "sha256:abcdef1234")
 		// last portion is "image:mytag" => we only keep "image" for the name portion
 		assert.Equal(t, "image@sha256:abcdef1234", result)
 	})
 
 	t.Run("NoRegistryNoTag", func(t *testing.T) {
-		result := getRepoNameWithDigest("myimage", "sha256:short")
+		result := common.GetRepoNameWithDigest("myimage", "sha256:short")
 		// no registry, no tag, just "myimage" => name is "myimage@sha256:short"
 		assert.Equal(t, "myimage@sha256:short", result)
 	})
