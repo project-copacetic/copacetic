@@ -50,8 +50,8 @@ For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):
    Create the release branch:
 
    ```sh
-   git checkout -b release-<MAJOR>.<MINOR>.x
-   git push upstream release-<MAJOR>.<MINOR>.x
+   git checkout -b release-<MAJOR>.<MINOR>
+   git push upstream release-<MAJOR>.<MINOR>
    ```
 
 3. **Create and Push the Tag**
@@ -106,7 +106,7 @@ For patch releases (e.g., v<MAJOR>.<MINOR>.<PATCH>) that contain bug fixes or se
    Create a PR to the release branch:
 
    ```sh
-   git push origin release-<MAJOR>.<MINOR>.x
+   git push upstream release-<MAJOR>.<MINOR>.x
    gh pr create --base release-<MAJOR>.<MINOR>.x --title "Cherry-pick fix for v<MAJOR>.<MINOR>.<PATCH>" --body "Cherry-picking fix from main branch for patch release v<MAJOR>.<MINOR>.<PATCH>"
    ```
 
