@@ -32,7 +32,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		// Default platform
 		imageState = llb.Image(opts.Image)
 	}
-	
+
 	bkConfig := &buildkit.Config{
 		Client:     f.client,
 		ImageState: imageState,
@@ -42,7 +42,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	var vr *unversioned.UpdateManifest
 	if opts.Report != "" {
 		reportPath := opts.Report
-		
+
 		// If report is a directory and we have a platform, look for platform-specific report
 		if platform != nil {
 			if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
@@ -52,9 +52,9 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 					platformFile = fmt.Sprintf("%s-%s", platformFile, platform.Variant)
 				}
 				platformFile += ".json"
-				
+
 				reportPath = filepath.Join(opts.Report, platformFile)
-				
+
 				// Check if platform-specific report exists
 				if _, err := os.Stat(reportPath); os.IsNotExist(err) {
 					bklog.G(ctx).WithField("component", "copa-frontend").WithField("platform", platformFile).Warn("No report found for platform")
@@ -63,7 +63,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 				}
 			}
 		}
-		
+
 		var err error
 		vr, err = report.TryParseScanReport(reportPath, opts.Scanner)
 		if err != nil {
@@ -72,7 +72,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	}
 
 	// Detect OS from the image
-	osType, osVersion, err := f.detectOSFromImage(ctx, bkConfig.ImageState)
+	osType, osVersion, err := f.detectOSFromImage(ctx, &bkConfig.ImageState)
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to detect OS from image")
 	}
@@ -102,8 +102,11 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	return *patchedState, nil
 }
 
-// detectOSFromImage detects the OS type and version from an image state
-func (f *Frontend) detectOSFromImage(ctx context.Context, imageState llb.State) (string, string, error) {
+// detectOSFromImage detects the OS type and version from an image state.
+func (f *Frontend) detectOSFromImage(ctx context.Context, imageState *llb.State) (string, string, error) {
+	if imageState == nil {
+		return "", "", errors.New("image state is nil")
+	}
 	// Create a temporary state to read os-release
 	osReleaseState := imageState.File(
 		llb.Copy(imageState, "/etc/os-release", "/tmp/os-release", &llb.CopyInfo{
@@ -145,4 +148,3 @@ func (f *Frontend) detectOSFromImage(ctx context.Context, imageState llb.State) 
 
 	return osInfo.Type, osInfo.Version, nil
 }
-

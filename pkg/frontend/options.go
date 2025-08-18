@@ -55,7 +55,6 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 		options.IgnoreError = v == trueStr || v == "1"
 	}
 
-
 	// Parse platforms (as string slice for multiarch support)
 	if v, ok := getOpt(keyPlatform); ok {
 		// Split comma-separated platforms
@@ -66,7 +65,7 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	// Parse vulnerability report
 	if reportPath, ok := getOpt(keyReport); ok {
 		bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Info("Processing report option")
-		
+
 		// Check if it's an absolute path (direct file/directory)
 		if strings.HasPrefix(reportPath, "/") {
 			options.Report = reportPath
@@ -153,36 +152,39 @@ func processReportFromBuildContext(ctx context.Context, client gwclient.Client, 
 	return nil
 }
 
-// readFileFromBuildContexts tries to read a file from any available build context
+// readFileFromBuildContexts tries to read a file from any available build context.
 func readFileFromBuildContexts(ctx context.Context, client gwclient.Client, inputs map[string]llb.State, filePath string) ([]byte, string, error) {
 	// Try reading from each context
 	for contextName, contextState := range inputs {
-		data, err := readFileFromContext(ctx, client, contextState, filePath)
+		data, err := readFileFromContext(ctx, client, &contextState, filePath)
 		if err == nil {
 			return data, contextName, nil
 		}
 		bklog.G(ctx).WithField("component", "copa-frontend").WithField("context", contextName).WithError(err).Debug("Failed to read file from context")
 	}
-	
+
 	return nil, "", errors.Errorf("file not found in any build context: %s", filePath)
 }
 
-// readDirectoryFromBuildContexts tries to read a directory from any available build context
+// readDirectoryFromBuildContexts tries to read a directory from any available build context.
 func readDirectoryFromBuildContexts(ctx context.Context, client gwclient.Client, inputs map[string]llb.State, dirPath string) (string, string, error) {
 	// Try reading from each context
 	for contextName, contextState := range inputs {
-		tempDir, err := readDirectoryFromContext(ctx, client, contextState, dirPath)
+		tempDir, err := readDirectoryFromContext(ctx, client, &contextState, dirPath)
 		if err == nil {
 			return tempDir, contextName, nil
 		}
 		bklog.G(ctx).WithField("component", "copa-frontend").WithField("context", contextName).WithError(err).Debug("Failed to read directory from context")
 	}
-	
+
 	return "", "", errors.Errorf("directory not found in any build context: %s", dirPath)
 }
 
-// readFileFromContext reads a file from a specific build context
-func readFileFromContext(ctx context.Context, client gwclient.Client, contextState llb.State, filePath string) ([]byte, error) {
+// readFileFromContext reads a file from a specific build context.
+func readFileFromContext(ctx context.Context, client gwclient.Client, contextState *llb.State, filePath string) ([]byte, error) {
+	if contextState == nil {
+		return nil, errors.New("context state is nil")
+	}
 	// Solve the context state to get a reference
 	def, err := contextState.Marshal(ctx)
 	if err != nil {
@@ -212,9 +214,12 @@ func readFileFromContext(ctx context.Context, client gwclient.Client, contextSta
 	return data, nil
 }
 
-// readDirectoryFromContext reads a directory from a specific build context
-func readDirectoryFromContext(ctx context.Context, client gwclient.Client, contextState llb.State, dirPath string) (string, error) {
-	// Solve the context state to get a reference
+// readDirectoryFromContext reads a directory from a specific build context.
+func readDirectoryFromContext(ctx context.Context, client gwclient.Client, contextState *llb.State, dirPath string) (string, error) {
+	if contextState == nil {
+		return "", errors.New("context state is nil")
+	}
+	// Solve the context state to get a reference.
 	def, err := contextState.Marshal(ctx)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to marshal context state")
@@ -275,9 +280,9 @@ func readDirectoryFromContext(ctx context.Context, client gwclient.Client, conte
 			parts := strings.Split(filePath, "/")
 			fileName = parts[len(parts)-1]
 		}
-		
+
 		tempFilePath := tempDir + "/" + fileName
-		if err := os.WriteFile(tempFilePath, data, 0644); err != nil {
+		if err := os.WriteFile(tempFilePath, data, 0o600); err != nil {
 			os.RemoveAll(tempDir)
 			return "", errors.Wrapf(err, "failed to write file: %s", tempFilePath)
 		}
