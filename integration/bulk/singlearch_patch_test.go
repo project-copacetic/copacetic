@@ -42,7 +42,7 @@ func TestComprehensiveBulkPatching(t *testing.T) {
 		"nginx:1.25.3",
 		"alpine:3.18.0",
 		"alpine:3.19.1",
-		"ubuntu:22.04",
+		"ubuntu:20.04",
 	}
 	for _, img := range seedImages {
 		err := pushToLocalRegistry(img, registryHost)
@@ -82,7 +82,7 @@ func TestComprehensiveBulkPatching(t *testing.T) {
 		"1.25.3-patched-e2e",
 		"1.25.2-patched-e2e",
 		"3.19.1-patched-e2e",
-		"22.04-patched-e2e",
+		"20.04-patched-e2e",
 	}
 
 	assert.ElementsMatch(t, expectedPatchedTags, allPatchedTags, "The set of patched tags in the registry did not match expectations")

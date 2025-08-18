@@ -20,7 +20,7 @@ images:
     image: "__UBUNTU_REPO__"
     tags:
       strategy: "list"
-      list: ["22.04"]
+      list: ["20.04"]
     target:
       tag: "{{ .SourceTag }}-patched-e2e"
       

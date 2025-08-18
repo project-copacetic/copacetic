@@ -36,18 +36,22 @@ func Patch(ctx context.Context, opts *types.Options) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	ch := make(chan error)
-	defer close(ch)
+	ch := make(chan error, 1)
 
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, opts)
+		defer close(ch)
+		err := patchWithContext(timeoutCtx, ch, opts)
+		if err != nil {
+			ch <- err
+		}
 	}()
-
 	select {
-	case err := <-ch:
+	case err, ok := <-ch:
+		if !ok {
+			return nil
+		}
 		return err
 	case <-timeoutCtx.Done():
-		// add a grace period for long running deferred cleanup functions to complete
 		<-time.After(1 * time.Second)
 
 		err := fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
