@@ -6,10 +6,7 @@ import (
 	"testing"
 )
 
-var (
-	buildkitAddr string
-	copaPath     string
-)
+var copaPath string
 
 func TestMain(m *testing.M) {
 	flag.StringVar(&copaPath, "copa", "./copa", "path to copa binary")

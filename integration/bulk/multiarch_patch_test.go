@@ -42,7 +42,7 @@ func TestMultiArchBulkPatching(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "copa-multiarch.yaml")
 
 	configContent := strings.Replace(multiArchConfigTemplate, "__DEBIAN_REPO__", localDebianRepo, 1)
-	err = os.WriteFile(configPath, []byte(configContent), 0600)
+	err = os.WriteFile(configPath, []byte(configContent), 0600) //nolint:gofumpt
 	require.NoError(t, err, "failed to write temporary config file")
 
 	cmd := exec.Command(copaPath, "patch", "--config", configPath, "--debug", "--push", "--timeout=20m")
