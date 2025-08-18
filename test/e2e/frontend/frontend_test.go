@@ -153,6 +153,14 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 	err = os.WriteFile(dockerfilePath, []byte("FROM scratch\n"), 0o600)
 	require.NoError(t, err, "failed to create dummy Dockerfile")
 
+	// Copy report file to the build context directory
+	reportBaseName := filepath.Base(reportFile)
+	contextReportPath := filepath.Join(tempDir, reportBaseName)
+	reportData, err := os.ReadFile(reportFile)
+	require.NoError(t, err, "failed to read report file")
+	err = os.WriteFile(contextReportPath, reportData, 0o644)
+	require.NoError(t, err, "failed to copy report to build context")
+
 	outputTar := filepath.Join(tempDir, "patched.tar")
 
 	// Build the buildctl command for frontend patching
@@ -164,7 +172,7 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 		"--frontend=gateway.v0",
 		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
 		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", fmt.Sprintf("report=%s", reportFile), // Pass report file path - consistent with patch command
+		"--opt", fmt.Sprintf("report=%s", reportBaseName), // Pass relative path within build context
 		"--opt", "scanner=trivy",
 		"--opt", "security-mode=sandbox",
 		"--opt", "cache-mode=local",
@@ -185,7 +193,10 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")
 
-	t.Logf("Running buildctl with frontend using report file: %s", reportFile)
+	// Add the build context directory
+	args = append(args, tempDir)
+
+	t.Logf("Running buildctl with frontend using report file: %s", reportBaseName)
 	t.Logf("BuildKit command: %v", args)
 	cmd := exec.Command("buildctl", args...)
 	output, err = cmd.CombinedOutput()

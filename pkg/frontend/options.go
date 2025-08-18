@@ -66,20 +66,19 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	if reportPath, ok := getOpt(keyReport); ok {
 		bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Info("Processing report option")
 
-		// Check if it's an absolute path (direct file/directory)
-		if strings.HasPrefix(reportPath, "/") {
+		// For BuildKit frontends, file paths need to be read from the build context
+		// since the frontend runs in a container without access to host filesystem
+		if err := processReportFromBuildContext(ctx, client, reportPath, options); err != nil {
+			// If reading from build context fails, try using the path directly
+			// This handles cases where the report might be mounted or available in the container
+			bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Debug("Failed to read from build context, trying direct path")
 			options.Report = reportPath
-			bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Info("Using direct path for report")
 		} else {
-			// Try to read from build context
-			if err := processReportFromBuildContext(ctx, client, reportPath, options); err != nil {
-				return nil, errors.Wrapf(err, "failed to read report from build context: %s", reportPath)
-			}
 			bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", options.Report).Info("Successfully read report from build context")
 		}
 	} else {
 		// update all
-		bklog.L.WithField("component", "copa-frontend").Info("No vulnerability report provided, using update-all mode")
+		bklog.G(ctx).WithField("component", "copa-frontend").Info("No vulnerability report provided, using update-all mode")
 	}
 
 	// Parse patched tag
