@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	// Frontend option keys - matching CLI options
+	// Frontend option keys - matching CLI options.
 	keyImage        = "image"
 	keyReport       = "report"
 	keyScanner      = "scanner"
@@ -101,7 +101,7 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 	return res, nil
 }
 
-// buildMultiarch handles multiarch builds by processing each platform separately
+// buildMultiarch handles multiarch builds by processing each platform separately.
 func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gwclient.Result, error) {
 	var targetPlatforms []ocispecs.Platform
 
@@ -191,44 +191,44 @@ func cleanupTempFile(filePath string) error {
 	return nil // Don't remove files/directories we didn't create
 }
 
-// discoverPlatformsFromReportDirectory discovers platforms from report files in a directory
+// discoverPlatformsFromReportDirectory discovers platforms from report files in a directory.
 func discoverPlatformsFromReportDirectory(reportDir string) ([]ocispecs.Platform, error) {
 	var platforms []ocispecs.Platform
-	
+
 	entries, err := os.ReadDir(reportDir)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to read report directory: %s", reportDir)
 	}
-	
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		
+
 		// Extract platform from filename
 		// Expected format: <os>-<arch>[-<variant>].json
 		filename := strings.TrimSuffix(entry.Name(), ".json")
 		parts := strings.Split(filename, "-")
-		
+
 		if len(parts) < 2 {
 			continue // Skip files that don't match expected format
 		}
-		
+
 		platform := ocispecs.Platform{
 			OS:           parts[0],
 			Architecture: parts[1],
 		}
-		
+
 		if len(parts) > 2 {
 			platform.Variant = strings.Join(parts[2:], "-")
 		}
-		
+
 		platforms = append(platforms, platform)
 	}
-	
+
 	if len(platforms) == 0 {
 		return nil, errors.Errorf("no valid platform report files found in directory: %s", reportDir)
 	}
-	
+
 	return platforms, nil
 }
