@@ -34,6 +34,7 @@ type Options struct {
 	Push      bool
 	Platforms []string
 	Loader    string
+	OCIDir    string
 
 	// Generate specific
 	OutputContext string

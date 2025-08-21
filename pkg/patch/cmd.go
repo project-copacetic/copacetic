@@ -31,6 +31,7 @@ type patchArgs struct {
 	push          bool
 	platform      []string
 	loader        string
+	ociDir        string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -58,6 +59,7 @@ func NewPatchCmd() *cobra.Command {
 				Push:          ua.push,
 				Platforms:     ua.platform,
 				Loader:        ua.loader,
+				OCIDir:        ua.ociDir,
 			}
 			return Patch(context.Background(), opts)
 		},
@@ -78,6 +80,7 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+	flags.StringVar(&ua.ociDir, "oci-dir", "", "Create OCI layout at specified directory for multi-platform images (only used when --push is not specified)")
 	flags.StringSliceVar(&ua.platform, "platform", nil,
 		"Target platform(s) for multi-arch images when no report directory is provided (e.g., linux/amd64,linux/arm64). "+
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
