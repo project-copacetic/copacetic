@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
@@ -14,9 +15,10 @@ func TestDisplayProgress(t *testing.T) {
 	ctx := context.Background()
 	eg, egCtx := errgroup.WithContext(ctx)
 	buildChannel := make(chan *client.SolveStatus)
+	progress := progressui.AutoMode
 
 	// Start the display progress goroutine
-	DisplayProgress(egCtx, eg, buildChannel)
+	DisplayProgress(egCtx, eg, buildChannel, progress)
 
 	// Simulate some build status updates
 	go func() {
@@ -65,9 +67,10 @@ func TestDisplayProgress_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	eg, egCtx := errgroup.WithContext(ctx)
 	buildChannel := make(chan *client.SolveStatus)
+	progress := progressui.AutoMode
 
 	// Start the display progress goroutine
-	DisplayProgress(egCtx, eg, buildChannel)
+	DisplayProgress(egCtx, eg, buildChannel, progress)
 
 	// Cancel the context immediately
 	cancel()

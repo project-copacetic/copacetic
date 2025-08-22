@@ -13,3 +13,5 @@ rm buildkit.tar.gz
 sudo apt-get update
 sudo apt-get install -y podman
 systemctl --user enable --now podman.socket || true
+
+go install gotest.tools/gotestsum@latest
