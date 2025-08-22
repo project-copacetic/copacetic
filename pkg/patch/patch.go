@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -20,6 +21,17 @@ var (
 
 // Patch command applies package updates to an OCI image given a vulnerability report for a given set of options.
 func Patch(ctx context.Context, opts *types.Options) error {
+	allowedProgressModes := map[string]struct{}{
+		"auto":    {},
+		"plain":   {},
+		"tty":     {},
+		"quiet":   {},
+		"rawjson": {},
+	}
+	if _, ok := allowedProgressModes[string(opts.Progress)]; !ok {
+		log.Warnf("Invalid value for --progress: %q. Allowed values are 'auto', 'plain' 'tty', 'quiet' or 'rawjson'. Defaulting to 'auto'.", string(opts.Progress))
+		opts.Progress = progressui.DisplayMode("auto")
+	}
 	// Create timeout context
 	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
@@ -180,6 +192,5 @@ func validateBuildConfiguration(opts *types.Options) error {
 			return fmt.Errorf("failed to create build configuration: %w", err)
 		}
 	}
-
 	return nil
 }

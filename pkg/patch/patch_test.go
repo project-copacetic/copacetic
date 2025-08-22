@@ -203,6 +203,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 		Platforms:         targetPlatforms,
 		PkgTypes:          "os",
 		LibraryPatchLevel: "patch",
+		Progress:          "auto",
 	}
 	err := Patch(context.Background(), opts)
 

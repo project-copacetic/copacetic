@@ -1,6 +1,7 @@
 package pkgmgr
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -106,28 +107,6 @@ func LessThan(v1, v2 string) bool {
 	return v1 < v2
 }
 
-// isEqualIgnoreOrder compares two slices of UpdatePackage without considering order.
-func isEqualIgnoreOrder(a, b unversioned.UpdatePackages) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	// Use a map to count occurrences
-	counts := make(map[unversioned.UpdatePackage]int)
-	for _, v := range a {
-		counts[v]++
-	}
-
-	for _, v := range b {
-		counts[v]--
-		if counts[v] < 0 {
-			return false // Found more of v in b than in a
-		}
-	}
-
-	return true
-}
-
 func TestGetUniqueLatestUpdates(t *testing.T) {
 	cmp := VersionComparer{IsValid, LessThan}
 
@@ -195,8 +174,8 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			},
 			ignoreErrors: false,
 			want: unversioned.UpdatePackages{
-				{Name: "pkg2", FixedVersion: "2.0"},
 				{Name: "pkg1", FixedVersion: "1.0"},
+				{Name: "pkg2", FixedVersion: "2.0"},
 			},
 			expectedError: "",
 		},
@@ -241,8 +220,8 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 				t.Errorf("GetUniqueLatestUpdates() expected error %v, got none", tt.expectedError)
 			}
 
-			if !isEqualIgnoreOrder(got, tt.want) {
-				t.Errorf("%s: got = %v, want %v (order ignored)", tt.name, got, tt.want)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("%s: got = %v, want %v", tt.name, got, tt.want)
 			}
 		})
 	}
