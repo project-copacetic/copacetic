@@ -345,8 +345,16 @@ func TestPythonManagerType(t *testing.T) {
 	// Test that pythonManager implements LangManager interface
 	var _ LangManager = pm
 
-	// Test that GetLanguageManagers returns a pythonManager
-	managers := GetLanguageManagers(config, workingFolder)
+	// Test that GetLanguageManagers returns a pythonManager when there are Python packages
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name: "urllib3",
+				Type: "python-pkg",
+			},
+		},
+	}
+	managers := GetLanguageManagers(config, workingFolder, manifest)
 	require.Len(t, managers, 1)
 
 	pythonMgr, ok := managers[0].(*pythonManager)

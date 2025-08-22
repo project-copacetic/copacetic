@@ -19,7 +19,33 @@ func TestGetLanguageManagers(t *testing.T) {
 	config := &buildkit.Config{}
 	workingFolder := testWorkingFolder
 
-	managers := GetLanguageManagers(config, workingFolder)
+	// Test with empty manifest
+	emptyManifest := &unversioned.UpdateManifest{}
+	managers := GetLanguageManagers(config, workingFolder, emptyManifest)
+	assert.Empty(t, managers, "Should return no managers for empty manifest")
+
+	// Test with invalid package type
+	invalidManifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name: "foo",
+				Type: "bar",
+			},
+		},
+	}
+	managers = GetLanguageManagers(config, workingFolder, invalidManifest)
+	assert.Empty(t, managers, "Should return no managers for invalid manifest")
+
+	// Test with Python packages
+	manifestWithPython := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name: "urllib3",
+				Type: "python-pkg",
+			},
+		},
+	}
+	managers = GetLanguageManagers(config, workingFolder, manifestWithPython)
 
 	assert.NotEmpty(t, managers, "Should return at least one language manager")
 	assert.Len(t, managers, 1, "Should return exactly one manager (Python)")
