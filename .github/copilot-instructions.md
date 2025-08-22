@@ -10,8 +10,11 @@ Copacetic (Copa) is a CLI tool that patches container image vulnerabilities usin
 - `pkg/patch/`: CLI commands and core patching logic
 - `pkg/buildkit/`: BuildKit integration and platform discovery
 - `pkg/pkgmgr/`: Package manager adapters (dpkg, rpm, apk)
-- `pkg/report/`: Vulnerability report parsing
+- `pkg/report/`: Vulnerability report parsing and scanner plugin interface
+- `pkg/imageloader/`: Container engine integration (Docker, Podman)
 - `pkg/types/`: Type definitions and configurations
+- `website/docs/`: Project documentation and user guides
+- `integration/`: Integration tests for multi-arch and single-arch scenarios
 - `main.go`: Root CLI setup with Cobra framework
 
 ## Libraries and Frameworks
@@ -25,13 +28,17 @@ Copacetic (Copa) is a CLI tool that patches container image vulnerabilities usin
 - Follow Go best practices and `golangci-lint` rules
 - Use structured logging with `logrus`
 - Implement proper error wrapping with `fmt.Errorf`
-- Write comprehensive tests for new functionality
+- Write comprehensive tests for new functionality:
+  - Unit tests for individual functions and components
+  - Integration tests for end-to-end patching scenarios
+- Add relevant documentation for new functionality in `website/docs/`
 
 ## Key Architecture Concepts
 - **Patching modes**: Targeted (with vulnerability reports) or comprehensive (all available updates)
 - **Multi-platform support**: Handles amd64, arm64, and other architectures with QEMU emulation
 - **Package managers**: Debian (apt/dpkg), RHEL (yum/rpm), Alpine (apk), Azure Linux (tdnf)
 - **BuildKit integration**: Uses LLB operations for image building and manipulation
+- **Scanner plugins**: Supports custom vulnerability scanners via `customParseScanReport` interface
 
 ## Supported Operating Systems & Package Managers
 - **Debian/Ubuntu**: Uses `dpkg` and `apt`
@@ -44,3 +51,4 @@ Copacetic (Copa) is a CLI tool that patches container image vulnerabilities usin
 - `patchSingleArchImage()` / `patchMultiPlatformImage()`: Core patching logic
 - `DiscoverPlatformsFromReference()` / `DiscoverPlatformsFromReport()`: Platform discovery
 - `InstallUpdates()`: Package manager interface for applying updates
+- `InitializeBuildkitConfig()`: Initializes BuildKit configuration for patching operations
