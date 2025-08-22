@@ -10,6 +10,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -25,15 +26,40 @@ type LangManager interface {
 	InstallUpdates(context.Context, *llb.State, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
 }
 
-// GetLanguageManagers returns a list of all available language managers.
-// As new language managers are implemented, they should be added to this list.
-func GetLanguageManagers(config *buildkit.Config, workingFolder string) []LangManager {
+// GetLanguageManagers returns a list of language managers that have relevant packages to process.
+// Uses a switch-based approach to determine which managers to include based on package types.
+func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest *unversioned.UpdateManifest) []LangManager {
 	var managers []LangManager
 
-	// Add Python manager
-	managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
+	if manifest == nil || len(manifest.LangUpdates) == 0 {
+		return managers
+	}
+
+	// Determine which package types are present
+	packageTypes := getPackageTypes(manifest.LangUpdates)
+
+	// Switch on each package type to add appropriate managers
+	for packageType := range packageTypes {
+		switch packageType {
+		case utils.PythonPackages:
+			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
+		default:
+			log.Warnf("Unknown package type '%s' found in language updates", packageType)
+		}
+	}
 
 	return managers
+}
+
+// getPackageTypes returns a set of unique package types found in the language updates
+func getPackageTypes(langUpdates unversioned.LangUpdatePackages) map[string]bool {
+	packageTypes := make(map[string]bool)
+	for _, pkg := range langUpdates {
+		if pkg.Type != "" {
+			packageTypes[pkg.Type] = true
+		}
+	}
+	return packageTypes
 }
 
 // Utility functions for package manager implementations to share

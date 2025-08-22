@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	pep440 "github.com/aquasecurity/go-pep440-version"
@@ -72,19 +73,30 @@ func isValidPythonVersion(v string) bool {
 }
 
 // isLessThanPythonVersion compares two PEP440 version strings.
-// It returns true if v1 is less than v2.
+// It returns true if v1 is less than v2, and false if there's an error.
 func isLessThanPythonVersion(v1, v2 string) bool {
 	ver1, err1 := pep440.Parse(v1)
 	if err1 != nil {
 		log.Warnf("Error parsing Python version '%s': %v", v1, err1)
-		return false // Or handle error as appropriate
+		return false
 	}
 	ver2, err2 := pep440.Parse(v2)
 	if err2 != nil {
 		log.Warnf("Error parsing Python version '%s': %v", v2, err2)
-		return false // Or handle error as appropriate
+		return false
 	}
 	return ver1.LessThan(ver2)
+}
+
+// filterPythonPackages returns only the packages that are Python packages
+func filterPythonPackages(langUpdates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
+	var pythonPackages unversioned.LangUpdatePackages
+	for _, pkg := range langUpdates {
+		if pkg.Type == utils.PythonPackages {
+			pythonPackages = append(pythonPackages, pkg)
+		}
+	}
+	return pythonPackages
 }
 
 func (pm *pythonManager) InstallUpdates(
@@ -95,11 +107,18 @@ func (pm *pythonManager) InstallUpdates(
 ) (*llb.State, []string, error) {
 	var errPkgsReported []string // Packages that will be reported as problematic
 
+	// Filter for Python packages only
+	pythonUpdates := filterPythonPackages(manifest.LangUpdates)
+	if len(pythonUpdates) == 0 {
+		log.Debug("No Python packages found to update.")
+		return currentState, []string{}, nil
+	}
+
 	pythonComparer := VersionComparer{isValidPythonVersion, isLessThanPythonVersion}
-	updatesToAttempt, err := GetUniqueLatestUpdates(manifest.LangUpdates, pythonComparer, ignoreErrors)
+	updatesToAttempt, err := GetUniqueLatestUpdates(pythonUpdates, pythonComparer, ignoreErrors)
 	if err != nil {
 		// Collect error packages when GetUniqueLatestUpdates fails
-		for _, u := range manifest.LangUpdates {
+		for _, u := range pythonUpdates {
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
 		return currentState, errPkgsReported, fmt.Errorf("failed to determine unique latest Python updates: %w", err)
@@ -135,14 +154,7 @@ func (pm *pythonManager) InstallUpdates(
 	if len(failedValidationPkgs) > 0 {
 		log.Warnf("Python packages failed version validation: %v", failedValidationPkgs)
 		for _, pkgName := range failedValidationPkgs {
-			isAlreadyListed := false
-			for _, p := range errPkgsReported {
-				if p == pkgName {
-					isAlreadyListed = true
-					break
-				}
-			}
-			if !isAlreadyListed {
+			if !slices.Contains(errPkgsReported, pkgName) {
 				errPkgsReported = append(errPkgsReported, pkgName)
 			}
 		}
@@ -337,12 +349,6 @@ func (pm *pythonManager) upgradePackages(
 			}
 			// Use validated package name and version to create spec
 			installPkgSpecs = append(installPkgSpecs, u.Name+"=="+u.FixedVersion)
-		} else {
-			// Fallback if FixedVersion is not available, though ideally it should always be.
-			// Or, decide if this case should error out or skip the package.
-			// For now, let's assume we want to upgrade it if no specific version is pinned.
-			installPkgSpecs = append(installPkgSpecs, u.Name)
-			log.Warnf("No FixedVersion available for Python package %s, attempting upgrade.", u.Name)
 		}
 	}
 

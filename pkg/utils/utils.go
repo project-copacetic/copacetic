@@ -30,6 +30,10 @@ const (
 	PatchTypeMajor = "major"
 	PatchTypeMinor = "minor"
 	PatchTypePatch = "patch"
+
+	// Package types for language managers
+	LangPackages   = "lang-pkgs"
+	PythonPackages = "python-pkg"
 )
 
 // DeduplicateStringSlice removes duplicate strings from a slice while preserving order.

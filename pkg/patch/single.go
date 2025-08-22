@@ -345,7 +345,7 @@ func createPatchResult(ctx context.Context, imageName reference.Named, patchedIm
 		runtime = imageloader.Podman
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(context.Background(), patchedImageName, runtime)
+	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
 	if err != nil {
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)

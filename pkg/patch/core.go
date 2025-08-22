@@ -92,7 +92,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 
 	// Handle Language Specific Updates
 	if updates != nil && len(updates.LangUpdates) > 0 {
-		languageManagers := langmgr.GetLanguageManagers(config, workingFolder)
+		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates)
 		var langErrPkgsFromAllManagers []string
 		var combinedLangError error
 

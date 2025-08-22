@@ -9,6 +9,7 @@ import (
 
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 type TrivyParser struct{}
@@ -327,7 +328,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 	for i := range report.Results {
 		r := &report.Results[i]
 
-		// Process OS packages using the original simple logic
+		// Process OS packages
 		if r.Class == "os-pkgs" {
 			for v := range r.Vulnerabilities {
 				vuln := &r.Vulnerabilities[v]
@@ -344,10 +345,10 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			}
 		}
 
-		// Process Language packages with optimal version selection
-		if r.Class == "lang-pkgs" {
+		// Process Language packages
+		if r.Class == utils.LangPackages {
 			// Check if this is a Python-related target
-			if r.Type == "python-pkg" {
+			if r.Type == utils.PythonPackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
