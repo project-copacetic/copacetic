@@ -23,6 +23,32 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	PkgTypeLibrary = "library"
+	PkgTypeOS      = "os"
+
+	PatchTypeMajor = "major"
+	PatchTypeMinor = "minor"
+	PatchTypePatch = "patch"
+
+	// Package types for language managers.
+	LangPackages   = "lang-pkgs"
+	PythonPackages = "python-pkg"
+)
+
+// DeduplicateStringSlice removes duplicate strings from a slice while preserving order.
+func DeduplicateStringSlice(input []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, item := range input {
+		if !seen[item] {
+			seen[item] = true
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
 func EnsurePath(path string, perm fs.FileMode) (bool, error) {
 	createdPath := false
 	st, err := os.Stat(path)
@@ -330,4 +356,32 @@ func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPl
 	}
 
 	return nil, fmt.Errorf("platform %s/%s/%s not found in image index", targetPlatform.OS, targetPlatform.Architecture, targetPlatform.Variant)
+}
+
+// GetSinglePlatformManifestAnnotations retrieves annotations from a single-platform manifest.
+// This is used when we need to get annotations from a pushed single-platform image.
+func GetSinglePlatformManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
+	ref, err := name.ParseReference(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
+	}
+
+	// Get the image
+	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image '%s': %w", imageRef, err)
+	}
+
+	// Get the manifest
+	manifest, err := img.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get manifest for '%s': %w", imageRef, err)
+	}
+
+	// Return the annotations from the manifest
+	if manifest.Annotations != nil {
+		return manifest.Annotations, nil
+	}
+
+	return map[string]string{}, nil
 }
