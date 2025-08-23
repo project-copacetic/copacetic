@@ -88,7 +88,7 @@ func isLessThanPythonVersion(v1, v2 string) bool {
 	return ver1.LessThan(ver2)
 }
 
-// filterPythonPackages returns only the packages that are Python packages
+// filterPythonPackages returns only the packages that are Python packages.
 func filterPythonPackages(langUpdates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
 	var pythonPackages unversioned.LangUpdatePackages
 	for _, pkg := range langUpdates {

@@ -51,7 +51,7 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 	return managers
 }
 
-// getPackageTypes returns a set of unique package types found in the language updates
+// getPackageTypes returns a set of unique package types found in the language updates.
 func getPackageTypes(langUpdates unversioned.LangUpdatePackages) map[string]bool {
 	packageTypes := make(map[string]bool)
 	for _, pkg := range langUpdates {

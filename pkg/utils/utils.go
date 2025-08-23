@@ -31,7 +31,7 @@ const (
 	PatchTypeMinor = "minor"
 	PatchTypePatch = "patch"
 
-	// Package types for language managers
+	// Package types for language managers.
 	LangPackages   = "lang-pkgs"
 	PythonPackages = "python-pkg"
 )
