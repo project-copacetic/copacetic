@@ -1,60 +1,65 @@
-package pkgmgr
+package langmgr
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
-	"github.com/moby/buildkit/frontend/gateway/client"
-	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
-	copaPrefix       = "copa-"
-	inputPath        = "/" + copaPrefix + "input"
-	resultsPath      = "/" + copaPrefix + "out"
-	downloadPath     = "/" + copaPrefix + "downloads"
-	unpackPath       = "/" + copaPrefix + "unpacked"
-	resultManifest   = "results.manifest"
-	imageCachePrefix = "ghcr.io/project-copacetic/copacetic"
+	copaPrefix     = "copa-"
+	resultsPath    = "/" + copaPrefix + "out"
+	downloadPath   = "/" + copaPrefix + "downloads"
+	unpackPath     = "/" + copaPrefix + "unpacked"
+	resultManifest = "langresults.manifest"
 )
 
-type PackageManager interface {
-	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
-	GetPackageType() string
+type LangManager interface {
+	InstallUpdates(context.Context, *llb.State, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
 }
 
-func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
-	switch osType {
-	case "alpine":
-		return &apkManager{
-			config:        config,
-			workingFolder: workingFolder,
-		}, nil
-	case "debian", "ubuntu":
-		return &dpkgManager{
-			config:        config,
-			workingFolder: workingFolder,
-			osVersion:     osVersion,
-			osType:        osType,
-		}, nil
-	case "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma", "almalinux":
-		return &rpmManager{
-			config:        config,
-			workingFolder: workingFolder,
-			osType:        osType,
-			osVersion:     osVersion,
-		}, nil
-	default:
-		return nil, fmt.Errorf("unsupported osType %s specified", osType)
+// GetLanguageManagers returns a list of language managers that have relevant packages to process.
+// Uses a switch-based approach to determine which managers to include based on package types.
+func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest *unversioned.UpdateManifest) []LangManager {
+	var managers []LangManager
+
+	if manifest == nil || len(manifest.LangUpdates) == 0 {
+		return managers
 	}
+
+	// Determine which package types are present
+	packageTypes := getPackageTypes(manifest.LangUpdates)
+
+	// Switch on each package type to add appropriate managers
+	for packageType := range packageTypes {
+		switch packageType {
+		case utils.PythonPackages:
+			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
+		default:
+			log.Warnf("Unknown package type '%s' found in language updates", packageType)
+		}
+	}
+
+	return managers
+}
+
+// getPackageTypes returns a set of unique package types found in the language updates.
+func getPackageTypes(langUpdates unversioned.LangUpdatePackages) map[string]bool {
+	packageTypes := make(map[string]bool)
+	for _, pkg := range langUpdates {
+		if pkg.Type != "" {
+			packageTypes[pkg.Type] = true
+		}
+	}
+	return packageTypes
 }
 
 // Utility functions for package manager implementations to share
@@ -64,9 +69,13 @@ type VersionComparer struct {
 	LessThan func(string, string) bool
 }
 
-func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.UpdatePackages, error) {
+func GetUniqueLatestUpdates(
+	updates unversioned.LangUpdatePackages,
+	cmp VersionComparer,
+	ignoreErrors bool,
+) (unversioned.LangUpdatePackages, error) {
 	if len(updates) == 0 {
-		return unversioned.UpdatePackages{}, nil
+		return unversioned.LangUpdatePackages{}, nil
 	}
 
 	dict := make(map[string]string)
@@ -95,13 +104,10 @@ func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionCompa
 		return nil, allErrors.ErrorOrNil()
 	}
 
-	out := unversioned.UpdatePackages{}
+	out := unversioned.LangUpdatePackages{}
 	for k, v := range dict {
 		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
-	})
 	return out, nil
 }
 
@@ -117,7 +123,12 @@ type PackageInfoReader interface {
 
 type UpdateMap map[string]*UpdatePackageInfo
 
-func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionComparer, reader PackageInfoReader, stagingPath string) (UpdateMap, error) {
+func GetValidatedUpdatesMap(
+	updates unversioned.LangUpdatePackages,
+	cmp VersionComparer,
+	reader PackageInfoReader,
+	stagingPath string,
+) (UpdateMap, error) {
 	m := make(UpdateMap)
 	for _, update := range updates {
 		m[update.Name] = &UpdatePackageInfo{Version: update.FixedVersion}
@@ -171,33 +182,4 @@ func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionCompa
 		return nil, allErrors.ErrorOrNil()
 	}
 	return m, nil
-}
-
-// tryImage attempts to create an llb.Image reference and call c.Solve() on it
-// to confirm it exists. If it doesn't, it will return an error so we can fallback.
-func tryImage(ctx context.Context, imageRef string, c client.Client, platform *ocispecs.Platform) (llb.State, error) {
-	imageOpts := []llb.ImageOption{
-		llb.ResolveModeDefault,
-	}
-	if platform != nil {
-		imageOpts = append(imageOpts, llb.Platform(*platform))
-	}
-	st := llb.Image(
-		imageRef,
-		imageOpts...,
-	)
-	def, err := st.Marshal(ctx)
-	if err != nil {
-		return llb.State{}, err
-	}
-
-	// Evaluate the solve to see if BuildKit can actually resolve it
-	_, err = c.Solve(ctx, client.SolveRequest{
-		Definition: def.ToPB(),
-		Evaluate:   true,
-	})
-	if err != nil {
-		return llb.State{}, fmt.Errorf("failed to resolve %s: %w", imageRef, err)
-	}
-	return st, nil
 }

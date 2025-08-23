@@ -1,3 +1,4 @@
+// Package common provides shared testing utilities for integration tests.
 package common
 
 import (
@@ -21,6 +22,7 @@ type ScannerCmd struct {
 	ExitCode     int
 	Platform     string
 	ImageSrc     string
+	PkgTypes     string
 }
 
 func NewScanner() *ScannerCmd {
@@ -57,12 +59,22 @@ func (s *ScannerCmd) WithImageSrc(imageSrc string) *ScannerCmd {
 	return s
 }
 
+func (s *ScannerCmd) WithPkgTypes(pkgTypes string) *ScannerCmd {
+	s.PkgTypes = pkgTypes
+	return s
+}
+
 func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars ...string) {
+	pkgTypes := "os"
+	if s.PkgTypes != "" {
+		pkgTypes = s.PkgTypes
+	}
+	
 	args := []string{
 		"trivy",
 		"image",
 		"--quiet",
-		"--pkg-types=os",
+		"--pkg-types=" + pkgTypes,
 		"--ignore-unfixed",
 		"--scanners=vuln",
 	}
