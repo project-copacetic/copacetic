@@ -215,5 +215,27 @@
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false,
         "isManifestList": false
+    },
+    {
+        "image": "mcr.microsoft.com/azure-cli",
+        "tag": "2.50.0",
+        "digest": "sha256:2fb34567983929799f0f373df79aed6ad57d9f327176c734122ee93b5b48ca52",
+        "distro": "Debian",
+        "description": "Azure CLI with Python packages for library patching",
+        "ignoreErrors": false,
+        "isManifestList": true,
+        "pkgTypes": "os,library",
+        "libraryPatchLevels": ["patch", "minor"]
+    },
+    {
+        "image": "quay.io/jupyter/base-notebook",
+        "tag": "2025-01-27",
+        "digest": "sha256:16f3390fd95ce5a25b7cf297ceb06f3495ccab4d5eafcb2a9b991c50cb935c1c",
+        "distro": "Ubuntu",
+        "description": "Jupyter base notebook with Python packages for library patching",
+        "ignoreErrors": false,
+        "isManifestList": true,
+        "pkgTypes": "os,library",
+        "libraryPatchLevels": ["major"]
     }
 ]
