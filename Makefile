@@ -66,10 +66,11 @@ $(CLI_BINARY):
 ################################################################################
 .PHONY: frontend
 frontend: $(CLI_BINARY)
-	$(info $(INFOMARK) Creating frontend image ...)
+	$(info $(INFOMARK) Creating multiplatform frontend image ...)
 	docker buildx build \
 		-f frontend.Dockerfile \
 		-t $(FRONTEND_IMAGE_NAME):$(FRONTEND_VER) \
+		--platform linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/386,linux/ppc64le,linux/s390x,linux/riscv64 \
 		--push .
 
 ################################################################################
