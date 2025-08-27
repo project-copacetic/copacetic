@@ -4,6 +4,11 @@ title: Custom buildkit addresses
 
 You may need to specify a custom address using the `--addr` flag. Here are the supported formats:
 
+:::note
+When using copacetic with the default Docker Desktop driver, you must enable the containerd image store. 
+For instructions, please see the official Docker documentation on using the [containerd image store](https://docs.docker.com/engine/storage/containerd/)
+:::
+
 - `unix:///path/to/buildkit.sock` - Connect to buildkit over unix socket.
 - `tcp://$BUILDKIT_ADDR:$PORT` - Connect to buildkit over TCP. (not recommended for security reasons)
 - `docker://<docker connection spec>` - Connect to docker, currently only unix sockets are supported, e.g. `docker://unix:///var/run/docker.sock` (or just `docker://`).

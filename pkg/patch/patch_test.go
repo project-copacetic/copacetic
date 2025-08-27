@@ -201,6 +201,7 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 		Timeout:   30 * time.Second,
 		Push:      true,
 		Platforms: targetPlatforms,
+		Progress:  "auto",
 	}
 	err := Patch(context.Background(), opts)
 

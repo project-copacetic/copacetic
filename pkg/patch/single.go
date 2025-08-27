@@ -166,7 +166,7 @@ func patchSingleArchImage(
 	})
 
 	// Display progress
-	common.DisplayProgress(ctx, eg, buildChannel)
+	common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
 
 	// Handle image loading if not pushing
 	if !push {
