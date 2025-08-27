@@ -23,14 +23,17 @@ import (
 // BuildPatchedImage builds a patched image using the Copa patching logic.
 // This reuses the same components as the CLI to ensure consistency.
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
+	// Create progress group for the overall patching process
+	patchGroup := llb.ProgressGroup("copa-patch", "Installing security updates", false)
+	
 	// Initialize buildkit configuration with the frontend client
 	var imageState llb.State
 	if platform != nil {
 		// Platform-specific image
-		imageState = llb.Image(opts.Image, llb.Platform(*platform))
+		imageState = llb.Image(opts.Image, llb.Platform(*platform), llb.WithCustomName("Loading base image"), patchGroup)
 	} else {
 		// Default platform
-		imageState = llb.Image(opts.Image)
+		imageState = llb.Image(opts.Image, llb.WithCustomName("Loading base image"), patchGroup)
 	}
 
 	bkConfig := &buildkit.Config{
@@ -72,7 +75,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	}
 
 	// Detect OS from the image
-	osType, osVersion, err := f.detectOSFromImage(ctx, &bkConfig.ImageState)
+	osType, osVersion, err := f.detectOSFromImage(ctx, &bkConfig.ImageState, patchGroup)
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to detect OS from image")
 	}
@@ -103,7 +106,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 }
 
 // detectOSFromImage detects the OS type and version from an image state.
-func (f *Frontend) detectOSFromImage(ctx context.Context, imageState *llb.State) (string, string, error) {
+func (f *Frontend) detectOSFromImage(ctx context.Context, imageState *llb.State, patchGroup llb.ConstraintsOpt) (string, string, error) {
 	if imageState == nil {
 		return "", "", errors.New("image state is nil")
 	}
@@ -112,6 +115,7 @@ func (f *Frontend) detectOSFromImage(ctx context.Context, imageState *llb.State)
 		llb.Copy(imageState, "/etc/os-release", "/tmp/os-release", &llb.CopyInfo{
 			CreateDestPath: true,
 		}),
+		llb.WithCustomName("Detecting OS and packages"), patchGroup,
 	)
 
 	// Marshal and solve to read the file

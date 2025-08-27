@@ -122,9 +122,16 @@ func processReportFromBuildContext(ctx context.Context, client gwclient.Client, 
 	}
 	bklog.G(ctx).WithField("component", "copa-frontend").WithField("inputs", inputNames).Debug("Available build contexts")
 
-	// Check if we have any build context inputs available
+	// If no named inputs are available, use the default build context
 	if len(inputs) == 0 {
-		return errors.Errorf("report path '%s' was provided but no build context inputs are available", reportPath)
+		bklog.G(ctx).WithField("component", "copa-frontend").Debug("No named inputs available, using default build context")
+		// Create a default context state for the build context directory with proper session and progress feedback
+		defaultContext := llb.Local("context",
+			llb.SessionID(client.BuildOpts().SessionID),
+			llb.WithCustomName("Loading vulnerability report"))
+		inputs = map[string]llb.State{
+			"context": defaultContext,
+		}
 	}
 
 	// First try to read as a single file from any context
