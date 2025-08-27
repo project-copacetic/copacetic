@@ -3,6 +3,7 @@ package buildkit
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,7 +25,9 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	v1types "github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 type Config struct {
@@ -188,7 +191,107 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// This approach will not work for local images, add future support for this.
+// tryGetManifestFromLocal attempts to get manifest data from the local Docker daemon
+// using docker manifest inspect CLI command, which can access local manifest lists
+// stored in Docker's manifest store (created with 'docker manifest create')
+func tryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
+	imageName := ref.String()
+	log.Debugf("Trying: docker manifest inspect %s", imageName)
+
+	cmd := exec.Command("docker", "manifest", "inspect", imageName)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Debugf("docker manifest inspect failed for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to inspect manifest using docker CLI: %v", err)
+	}
+
+	// Parse the manifest data
+	var manifestData map[string]interface{}
+	if err := json.Unmarshal(output, &manifestData); err != nil {
+		log.Debugf("Failed to parse manifest JSON for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to parse manifest JSON: %v", err)
+	}
+
+	// Check if this is a manifest list (has "manifests" field)
+	if manifests, ok := manifestData["manifests"]; ok {
+		if manifestSlice, ok := manifests.([]interface{}); ok && len(manifestSlice) > 0 {
+			log.Debugf("Found multi-platform manifest via CLI with %d platforms", len(manifestSlice))
+
+			// Parse the manifest list to extract individual platform image references
+			var enhancedManifestData struct {
+				MediaType string `json:"mediaType"`
+				Manifests []struct {
+					Digest    string `json:"digest"`
+					MediaType string `json:"mediaType"`
+					Size      int64  `json:"size"`
+					Platform  struct {
+						Architecture string `json:"architecture"`
+						OS           string `json:"os"`
+						Variant      string `json:"variant,omitempty"`
+					} `json:"platform"`
+				} `json:"manifests"`
+			}
+
+			if err := json.Unmarshal(output, &enhancedManifestData); err != nil {
+				log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
+				return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
+			}
+
+			// Log platform information for debugging
+			log.Debugf("Manifest list contains the following platforms:")
+			for i, manifest := range enhancedManifestData.Manifests {
+				log.Debugf("  Platform %d: %s/%s (digest: %s)", i+1,
+					manifest.Platform.OS, manifest.Platform.Architecture,
+					manifest.Digest[:12]+"...")
+			}
+
+			// Determine media type
+			mediaType := "application/vnd.docker.distribution.manifest.list.v2+json"
+			if enhancedManifestData.MediaType != "" {
+				mediaType = enhancedManifestData.MediaType
+			}
+
+			// Calculate digest from the manifest content
+			digest := fmt.Sprintf("%x", sha256.Sum256(output))
+
+			return &remote.Descriptor{
+				Descriptor: v1.Descriptor{
+					MediaType: v1types.MediaType(mediaType),
+					Size:      int64(len(output)),
+					Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
+				},
+				Manifest: output,
+			}, nil
+		}
+	} else {
+		// Single platform image
+		log.Debugf("Found single-platform image via CLI: %s", imageName)
+
+		mediaType := "application/vnd.docker.distribution.manifest.v2+json"
+		if mt, ok := manifestData["mediaType"].(string); ok && mt != "" {
+			mediaType = mt
+		}
+
+		digest := fmt.Sprintf("%x", sha256.Sum256(output))
+
+		return &remote.Descriptor{
+			Descriptor: v1.Descriptor{
+				MediaType: v1types.MediaType(mediaType),
+				Size:      int64(len(output)),
+				Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
+			},
+			Manifest: output,
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unexpected manifest format")
+}
+
+// DiscoverPlatformsFromReference discovers platforms from both local and remote manifests.
+// It first attempts to inspect the manifest locally using Docker API
+// to get raw manifest data and determine if it's multi-platform.
+// If local inspection fails, it falls back to remote registry inspection.
+// This allows Copa to patch multi-platform manifests that exist locally but not in the registry.
 func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
@@ -197,9 +300,17 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	desc, err := remote.Get(ref)
+	// Try local daemon first, then fall back to remote
+	desc, err := tryGetManifestFromLocal(ref)
 	if err != nil {
-		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
+		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		desc, err = remote.Get(ref)
+		if err != nil {
+			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
+		}
+		log.Debugf("Successfully fetched descriptor from remote registry for %s", manifestRef)
+	} else {
+		log.Debugf("Successfully fetched descriptor from local daemon for %s", manifestRef)
 	}
 
 	if desc.MediaType.IsIndex() {
