@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -595,4 +596,118 @@ func mapGoArch(arch, variant string) string {
 
 	// fallback: hope QEMU name == GOARCH
 	return arch
+}
+
+// CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter
+func CreateOCILayoutFromResults(ctx context.Context, outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+	log.Infof("Creating multi-platform OCI layout in directory: %s with %d platforms", outputDir, len(platforms))
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Map platforms to their corresponding images
+	platformImages := make(map[string]string)
+
+	// Process results to build platform->image mapping
+	for _, result := range results {
+		// Determine which platform this result belongs to
+		for _, platform := range platforms {
+			platformKey := PlatformKey(platform.Platform)
+
+			// Check if this result matches this platform
+			if result.PatchedRef.String() != result.OriginalRef.String() {
+				// This is a patched image - check if it has the platform suffix
+				expectedSuffix := getPlatformSuffix(platform.Platform)
+				if strings.HasSuffix(result.PatchedRef.String(), expectedSuffix) {
+					platformImages[platformKey] = result.PatchedRef.String()
+					log.Debugf("Platform %s: using patched image %s", platformKey, result.PatchedRef.String())
+					break
+				}
+			} else {
+				// This is a preserved image - assign it to unassigned platforms
+				if _, exists := platformImages[platformKey]; !exists {
+					platformImages[platformKey] = result.OriginalRef.String()
+					log.Debugf("Platform %s: using preserved image %s", platformKey, result.OriginalRef.String())
+				}
+			}
+		}
+	}
+
+	if len(platformImages) == 0 {
+		return fmt.Errorf("no platform images found")
+	}
+
+	log.Infof("Found %d platform images, creating BuildKit-based OCI layout", len(platformImages))
+
+	// Use docker buildx to create proper multi-platform OCI layout
+	return createMultiPlatformOCIWithBuildx(outputDir, platformImages, platforms)
+}
+
+// createMultiPlatformOCIWithBuildx uses docker buildx to create a proper multi-platform OCI layout
+func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
+	// Create a Dockerfile that references all platform images
+	dockerfile := "# Multi-platform Copa image\n"
+	dockerfile += "ARG TARGETPLATFORM\n\n"
+
+	// Add FROM statements for each platform
+	var platformList []string
+	for _, platform := range platforms {
+		platformKey := PlatformKey(platform.Platform)
+		if imageRef, exists := platformImages[platformKey]; exists {
+			dockerfile += fmt.Sprintf("FROM --platform=%s %s\n", platformKey, imageRef)
+			platformList = append(platformList, platformKey)
+		}
+	}
+
+	if len(platformList) == 0 {
+		return fmt.Errorf("no platforms to build")
+	}
+
+	// Create temporary build context
+	tempDir, err := os.MkdirTemp("", "copa-oci-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Write Dockerfile
+	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
+		return fmt.Errorf("failed to write Dockerfile: %w", err)
+	}
+
+	log.Debugf("Created Dockerfile with %d platforms", len(platformList))
+	log.Debugf("Platform list: %s", strings.Join(platformList, ","))
+
+	// Remove the target directory if it exists since buildx OCI exporter creates it
+	os.RemoveAll(outputDir)
+
+	// Use docker buildx to build and export to OCI layout
+	platformsArg := strings.Join(platformList, ",")
+	cmd := exec.Command("docker", "buildx", "build",
+		"--platform", platformsArg,
+		"--output", fmt.Sprintf("type=oci,dest=%s,tar=false", outputDir),
+		"--file", dockerfilePath,
+		tempDir)
+
+	log.Infof("Running buildx: docker buildx build --platform %s --output type=oci,dest=%s,tar=false", platformsArg, outputDir)
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		log.Errorf("buildx build failed: %v", err)
+		log.Errorf("buildx output: %s", string(output))
+		return fmt.Errorf("buildx build failed: %v", err)
+	}
+
+	return nil
+}
+
+// getPlatformSuffix returns the expected image tag suffix for a platform
+func getPlatformSuffix(platform ispec.Platform) string {
+	suffix := "-" + platform.Architecture
+	if platform.Variant != "" {
+		suffix += "-" + platform.Variant
+	}
+	return suffix
 }
