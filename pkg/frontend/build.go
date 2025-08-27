@@ -45,6 +45,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	var vr *unversioned.UpdateManifest
 	if opts.Report != "" {
 		reportPath := opts.Report
+		bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Info("About to parse vulnerability report")
 
 		// If report is a directory and we have a platform, look for platform-specific report
 		if platform != nil {
@@ -70,7 +71,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		var err error
 		vr, err = report.TryParseScanReport(reportPath, opts.Scanner)
 		if err != nil {
-			return llb.State{}, errors.Wrap(err, "failed to parse vulnerability report")
+			return llb.State{}, errors.Wrapf(err, "failed to parse vulnerability report from path: %s", reportPath)
 		}
 	}
 

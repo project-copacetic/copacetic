@@ -143,7 +143,15 @@ func processReportFromBuildContext(ctx context.Context, client gwclient.Client, 
 			return errors.Wrap(err, "failed to save report to temp file")
 		}
 		options.Report = tempFile
-		bklog.G(ctx).WithField("component", "copa-frontend").WithField("context", contextName).WithField("tempFile", tempFile).Info("Read report file from build context")
+		bklog.G(ctx).WithField("component", "copa-frontend").WithField("context", contextName).WithField("tempFile", tempFile).WithField("originalPath", reportPath).Info("Read report file from build context and saved to temp file")
+		
+		// Verify the temp file exists
+		if _, err := os.Stat(tempFile); err != nil {
+			bklog.G(ctx).WithField("component", "copa-frontend").WithField("tempFile", tempFile).WithError(err).Error("Temp file does not exist after creation")
+		} else {
+			bklog.G(ctx).WithField("component", "copa-frontend").WithField("tempFile", tempFile).Info("Temp file verified to exist")
+		}
+		
 		return nil
 	}
 
