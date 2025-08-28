@@ -152,7 +152,7 @@ func processReportFromBuildContext(ctx context.Context, client gwclient.Client, 
 	return nil
 }
 
-// readFileFromBuildContexts tries to read a file from any available build context
+// readFileFromBuildContexts tries to read a file from any available build context.
 func readFileFromBuildContexts(ctx context.Context, client gwclient.Client, inputs map[string]llb.State, filePath string) ([]byte, string, error) {
 	// Try reading from each context
 	for contextName, contextState := range inputs {
@@ -166,7 +166,7 @@ func readFileFromBuildContexts(ctx context.Context, client gwclient.Client, inpu
 	return nil, "", errors.Errorf("file not found in any build context: %s", filePath)
 }
 
-// readDirectoryFromBuildContexts tries to read a directory from any available build context
+// readDirectoryFromBuildContexts tries to read a directory from any available build context.
 func readDirectoryFromBuildContexts(ctx context.Context, client gwclient.Client, inputs map[string]llb.State, dirPath string) (string, string, error) {
 	// Try reading from each context
 	for contextName, contextState := range inputs {
@@ -180,7 +180,7 @@ func readDirectoryFromBuildContexts(ctx context.Context, client gwclient.Client,
 	return "", "", errors.Errorf("directory not found in any build context: %s", dirPath)
 }
 
-// readFileFromContext reads a file from a specific build context
+// readFileFromContext reads a file from a specific build context.
 func readFileFromContext(ctx context.Context, client gwclient.Client, contextState *llb.State, filePath string) ([]byte, error) {
 	// Solve the context state to get a reference
 	def, err := contextState.Marshal(ctx)
@@ -211,7 +211,7 @@ func readFileFromContext(ctx context.Context, client gwclient.Client, contextSta
 	return data, nil
 }
 
-// readDirectoryFromContext reads a directory from a specific build context
+// readDirectoryFromContext reads a directory from a specific build context.
 func readDirectoryFromContext(ctx context.Context, client gwclient.Client, contextState *llb.State, dirPath string) (string, error) {
 	// Solve the context state to get a reference
 	def, err := contextState.Marshal(ctx)
@@ -276,7 +276,7 @@ func readDirectoryFromContext(ctx context.Context, client gwclient.Client, conte
 		}
 
 		tempFilePath := tempDir + "/" + fileName
-		if err := os.WriteFile(tempFilePath, data, 0644); err != nil {
+		if err := os.WriteFile(tempFilePath, data, 0o600); err != nil {
 			os.RemoveAll(tempDir)
 			return "", errors.Wrapf(err, "failed to write file: %s", tempFilePath)
 		}

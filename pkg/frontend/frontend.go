@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	// Frontend option keys - matching CLI options
+	// Frontend option keys - matching CLI options.
 	keyImage        = "image"
 	keyReport       = "report"
 	keyScanner      = "scanner"
@@ -191,7 +191,7 @@ func cleanupTempFile(filePath string) error {
 	return nil // Don't remove files/directories we didn't create
 }
 
-// discoverPlatformsFromReportDirectory discovers platforms from report files in a directory
+// discoverPlatformsFromReportDirectory discovers platforms from report files in a directory.
 func discoverPlatformsFromReportDirectory(reportDir string) ([]ocispecs.Platform, error) {
 	var platforms []ocispecs.Platform
 
