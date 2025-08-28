@@ -671,7 +671,7 @@ func mapGoArch(arch, variant string) string {
 	return arch
 }
 
-// CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter
+// CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter.
 func CreateOCILayoutFromResults(ctx context.Context, outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
 	log.Infof("Creating multi-platform OCI layout in directory: %s with %d platforms", outputDir, len(platforms))
 
@@ -692,7 +692,7 @@ func CreateOCILayoutFromResults(ctx context.Context, outputDir string, results [
 			// Check if this result matches this platform
 			if result.PatchedRef.String() != result.OriginalRef.String() {
 				// This is a patched image - check if it has the platform suffix
-				expectedSuffix := getPlatformSuffix(platform.Platform)
+				expectedSuffix := getPlatformSuffix(&platform.Platform)
 				if strings.HasSuffix(result.PatchedRef.String(), expectedSuffix) {
 					platformImages[platformKey] = result.PatchedRef.String()
 					log.Debugf("Platform %s: using patched image %s", platformKey, result.PatchedRef.String())
@@ -718,7 +718,7 @@ func CreateOCILayoutFromResults(ctx context.Context, outputDir string, results [
 	return createMultiPlatformOCIWithBuildx(outputDir, platformImages, platforms)
 }
 
-// createMultiPlatformOCIWithBuildx uses docker buildx to create a proper multi-platform OCI layout
+// createMultiPlatformOCIWithBuildx uses docker buildx to create a proper multi-platform OCI layout.
 func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
 	// Create a Dockerfile that references all platform images
 	dockerfile := "# Multi-platform Copa image\n"
@@ -777,7 +777,7 @@ func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[strin
 }
 
 // getPlatformSuffix returns the expected image tag suffix for a platform
-func getPlatformSuffix(platform ispec.Platform) string {
+func getPlatformSuffix(platform *ispec.Platform) string {
 	suffix := "-" + platform.Architecture
 	if platform.Variant != "" {
 		suffix += "-" + platform.Variant
