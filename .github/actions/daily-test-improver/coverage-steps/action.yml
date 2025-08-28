@@ -1,0 +1,68 @@
+name: 'Daily Test Improver Coverage Steps'
+description: 'Build, test, and generate coverage reports for the copacetic project'
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24'
+        check-latest: true
+
+    - name: Install dependencies and build tools
+      shell: bash
+      run: |
+        make setup
+        
+    - name: Build project
+      shell: bash
+      run: |
+        make build
+        
+    - name: Run tests with coverage
+      shell: bash
+      run: |
+        CODECOV_OPTS="-coverprofile=coverage.txt -covermode=atomic" make test || true
+        
+    - name: Generate individual package coverage reports
+      shell: bash
+      run: |
+        # Skip buildkit package due to external dependencies
+        go test -v -coverprofile=coverage_detailed.txt -covermode=atomic \
+          ./pkg/buildkit/connhelpers \
+          ./pkg/common \
+          ./pkg/imageloader \
+          ./pkg/patch \
+          ./pkg/pkgmgr \
+          ./pkg/report \
+          ./pkg/test_utils \
+          ./pkg/types/v1alpha1 \
+          ./pkg/utils \
+          ./pkg/vex \
+          || true
+          
+    - name: Generate HTML coverage report
+      shell: bash
+      run: |
+        if [ -f coverage_detailed.txt ]; then
+          go tool cover -html=coverage_detailed.txt -o coverage_report.html
+        fi
+        
+    - name: Generate coverage summary
+      shell: bash
+      run: |
+        if [ -f coverage_detailed.txt ]; then
+          go tool cover -func=coverage_detailed.txt > coverage_summary.txt
+        fi
+        echo "Coverage reports generated:"
+        ls -la coverage*.txt coverage*.html || true
+        
+    - name: Upload coverage artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-reports
+        path: |
+          coverage*.txt
+          coverage*.html
+        retention-days: 7
