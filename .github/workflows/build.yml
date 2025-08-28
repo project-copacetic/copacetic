@@ -576,12 +576,12 @@ jobs:
         run: |
           set -eu -o pipefail
           
-          # Test image details - using local registry
+          # Test image details - using local registry approach  
           BASE_IMAGE="docker.io/library/nginx:1.21.6"
           LOCAL_REGISTRY="localhost:5000"
           PLATFORM_AMD64_IMAGE="${LOCAL_REGISTRY}/nginx:1.21.6-amd64"
           PLATFORM_ARM64_IMAGE="${LOCAL_REGISTRY}/nginx:1.21.6-arm64"
-          LOCAL_MANIFEST="nginx:1.21.6"
+          LOCAL_MANIFEST="${LOCAL_REGISTRY}/nginx:1.21.6"
           
           echo "Building and pushing platform-specific images to local registry..."
           
@@ -597,17 +597,19 @@ jobs:
           
           echo "Verifying platform-specific images exist in local registry..."
           curl -s http://localhost:5000/v2/nginx/tags/list || { echo "ERROR: Failed to list nginx tags"; exit 1; }
-          docker manifest inspect "${PLATFORM_AMD64_IMAGE}" > /dev/null || { echo "ERROR: ${PLATFORM_AMD64_IMAGE} not found"; exit 1; }
-          docker manifest inspect "${PLATFORM_ARM64_IMAGE}" > /dev/null || { echo "ERROR: ${PLATFORM_ARM64_IMAGE} not found"; exit 1; }
+          
+          # Verify images using registry API
+          curl -s -f "http://localhost:5000/v2/nginx/manifests/1.21.6-amd64" > /dev/null || { echo "ERROR: ${PLATFORM_AMD64_IMAGE} not found"; exit 1; }
+          curl -s -f "http://localhost:5000/v2/nginx/manifests/1.21.6-arm64" > /dev/null || { echo "ERROR: ${PLATFORM_ARM64_IMAGE} not found"; exit 1; }
           echo "Both platform images exist in local registry"
           
           echo "Enabling Docker CLI experimental features for manifest commands..."
           export DOCKER_CLI_EXPERIMENTAL=enabled
           
           echo "Creating local Docker manifest that references local registry platform images..."
-          # Create local manifest list that references registry images
-          docker manifest create "${LOCAL_MANIFEST}" \
-            "${PLATFORM_AMD64_IMAGE}" \
+          # Create local manifest list using --insecure for local registry
+          docker manifest create --insecure "${LOCAL_MANIFEST}" 
+            "${PLATFORM_AMD64_IMAGE}" 
             "${PLATFORM_ARM64_IMAGE}"
           
           echo "Verifying local manifest was created..."
