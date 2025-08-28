@@ -519,3 +519,149 @@ jobs:
         uses: test-summary/action@v2
         with:
           paths: "test-results.xml"
+
+  test-patch-local-multiplatform-oci-layout:
+    needs: build
+    name: Test multiplatform OCI layout creation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Change docker daemon config
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        with:
+          install: true
+          platforms: linux/amd64,linux/arm64
+      - name: Check out code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.24"
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Install multiplatform tooling
+        shell: bash
+        run: .github/workflows/scripts/download-multiplatform-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - run: docker system prune -a -f --volumes
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Test OCI layout creation with local multiplatform manifest
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          
+          # Test image details
+          BASE_IMAGE="docker.io/library/nginx:1.21.6"
+          
+          echo "Pull and tag specific platform images for manifest creation..."
+          docker pull --platform linux/amd64 "${BASE_IMAGE}"
+          docker tag "${BASE_IMAGE}" "nginx-local:1.21.6-amd64"
+          docker pull --platform linux/arm64 "${BASE_IMAGE}"
+          docker tag "${BASE_IMAGE}" "nginx-local:1.21.6-arm64"
+          
+          echo "Creating local Docker manifest..."
+          # Create local manifest list using docker manifest create
+          docker manifest create "${BASE_IMAGE}" \
+            "nginx-local:1.21.6-amd64" \
+            "nginx-local:1.21.6-arm64"
+          
+          echo "Verifying local manifest was created..."
+          docker manifest inspect "${BASE_IMAGE}"
+          
+          # Create temp directory for OCI layout
+          OCI_LAYOUT_DIR=$(mktemp -d)
+          
+          echo "Patching local multiplatform manifest and creating OCI layout (no reports - patch all mode)..."
+          
+          # Patch the local manifest with OCI layout output (no reports, patch all packages)
+          ./copa patch \
+            -i="${BASE_IMAGE}" \
+            -t="patched" \
+            --timeout=30m \
+            --ignore-errors=true \
+            --oci-dir="${OCI_LAYOUT_DIR}" \
+            --debug
+          
+          echo "Validating OCI layout structure..."
+          
+          # Check that OCI layout directory was created
+          if [ ! -d "${OCI_LAYOUT_DIR}" ]; then
+            echo "ERROR: OCI layout directory was not created"
+            exit 1
+          fi
+          
+          # Check for required OCI layout files
+          if [ ! -f "${OCI_LAYOUT_DIR}/oci-layout" ]; then
+            echo "ERROR: oci-layout file missing"
+            exit 1
+          fi
+          
+          if [ ! -f "${OCI_LAYOUT_DIR}/index.json" ]; then
+            echo "ERROR: index.json file missing"
+            exit 1
+          fi
+          
+          if [ ! -d "${OCI_LAYOUT_DIR}/blobs" ]; then
+            echo "ERROR: blobs directory missing"
+            exit 1
+          fi
+          
+          echo "Validating OCI layout content..."
+          
+          # Check that index.json contains multiplatform manifest
+          MEDIA_TYPE=$(jq -r '.manifests[0].mediaType' "${OCI_LAYOUT_DIR}/index.json")
+          echo "Manifest media type: ${MEDIA_TYPE}"
+          
+          # Get the manifest digest
+          MANIFEST_DIGEST=$(jq -r '.manifests[0].digest' "${OCI_LAYOUT_DIR}/index.json")
+          echo "Manifest digest: ${MANIFEST_DIGEST}"
+          
+          # Check that the manifest blob exists
+          BLOB_PATH="${OCI_LAYOUT_DIR}/blobs/sha256/${MANIFEST_DIGEST#sha256:}"
+          if [ ! -f "${BLOB_PATH}" ]; then
+            echo "ERROR: Manifest blob not found at ${BLOB_PATH}"
+            exit 1
+          fi
+          
+          echo "Validating multiplatform manifest content..."
+          
+          # Check manifest content for multiple platforms
+          PLATFORM_COUNT=$(jq '.manifests | length' "${BLOB_PATH}")
+          echo "Found ${PLATFORM_COUNT} platform(s) in manifest"
+          
+          if [ "${PLATFORM_COUNT}" -ne 2 ]; then
+            echo "ERROR: Expected exactly 2 platforms in local multiplatform manifest, found ${PLATFORM_COUNT}"
+            echo "Local manifest should have 2 platforms: linux/amd64, linux/arm64"
+            exit 1
+          fi
+          
+          # Validate specific platforms exist
+          AMD64_FOUND=$(jq -r '.manifests[] | select(.platform.architecture=="amd64") | .platform.architecture' "${BLOB_PATH}")
+          ARM64_FOUND=$(jq -r '.manifests[] | select(.platform.architecture=="arm64") | .platform.architecture' "${BLOB_PATH}")
+          
+          if [ "${AMD64_FOUND}" != "amd64" ]; then
+            echo "ERROR: amd64 platform not found in manifest"
+            exit 1
+          fi
+          
+          if [ "${ARM64_FOUND}" != "arm64" ]; then
+            echo "ERROR: arm64 platform not found in manifest"
+            exit 1
+          fi
+          
+          # Cleanup
+          rm -rf "${OCI_LAYOUT_DIR}"
