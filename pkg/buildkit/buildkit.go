@@ -263,28 +263,9 @@ func tryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 				Manifest: output,
 			}, nil
 		}
-	} else {
-		// Single platform image
-		log.Debugf("Found single-platform image via CLI: %s", imageName)
-
-		mediaType := "application/vnd.docker.distribution.manifest.v2+json"
-		if mt, ok := manifestData["mediaType"].(string); ok && mt != "" {
-			mediaType = mt
-		}
-
-		digest := fmt.Sprintf("%x", sha256.Sum256(output))
-
-		return &remote.Descriptor{
-			Descriptor: v1.Descriptor{
-				MediaType: v1types.MediaType(mediaType),
-				Size:      int64(len(output)),
-				Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
-			},
-			Manifest: output,
-		}, nil
 	}
 
-	return nil, fmt.Errorf("unexpected manifest format")
+	return nil, fmt.Errorf("single-platform image")
 }
 
 // DiscoverPlatformsFromReference discovers platforms from both local and remote manifests.
