@@ -102,7 +102,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	return *patchedState, nil
 }
 
-// detectOSFromImage detects the OS type and version from an image state
+// detectOSFromImage detects the OS type and version from an image state.
 func (f *Frontend) detectOSFromImage(ctx context.Context, imageState *llb.State) (string, string, error) {
 	// Create a temporary state to read os-release
 	osReleaseState := imageState.File(

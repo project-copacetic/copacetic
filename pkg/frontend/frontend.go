@@ -101,7 +101,7 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 	return res, nil
 }
 
-// buildMultiarch handles multiarch builds by processing each platform separately
+// buildMultiarch handles multiarch builds by processing each platform separately.
 func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gwclient.Result, error) {
 	var targetPlatforms []ocispecs.Platform
 

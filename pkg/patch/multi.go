@@ -316,7 +316,7 @@ func patchMultiPlatformImage(
 
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
-		if err := buildkit.CreateOCILayoutFromResults(ctx, opts.OCIDir, patchResults, platforms); err != nil {
+		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)
 		}
