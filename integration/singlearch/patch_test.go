@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/opencontainers/go-digest"
 	"github.com/project-copacetic/copacetic/integration/common"
@@ -32,6 +33,12 @@ type testImage struct {
 	Description    string        `json:"description"`
 	IgnoreErrors   bool          `json:"ignoreErrors"`
 	IsManifestList bool          `json:"isManifestList"`
+}
+
+type manifestPlatform struct {
+	OS           string `json:"os"`
+	Architecture string `json:"architecture"`
+	Variant      string `json:"variant,omitempty"`
 }
 
 func TestPatch(t *testing.T) {
@@ -111,7 +118,22 @@ func TestPatch(t *testing.T) {
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
 			if !reportFile && img.IsManifestList {
-				scanTag += "-amd64"
+				hostPlatform := platforms.DefaultSpec().Architecture
+				imagePlatforms := getManifestPlatforms(t, ref)
+
+				found := false
+				for _, p := range imagePlatforms {
+					if p.Architecture == hostPlatform {
+						found = true
+						break
+					}
+				}
+
+				targetArch := hostPlatform
+				if !found && len(imagePlatforms) > 0 {
+					targetArch = imagePlatforms[0].Architecture
+				}
+				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 
@@ -143,6 +165,49 @@ func TestPatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
+	validPlatforms := map[string]bool{
+		"linux/386":      true,
+		"linux/amd64":    true,
+		"linux/arm":      true,
+		"linux/arm/v5":   true,
+		"linux/arm/v6":   true,
+		"linux/arm/v7":   true,
+		"linux/arm64":    true,
+		"linux/arm64/v8": true,
+		"linux/ppc64le":  true,
+		"linux/s390x":    true,
+		"linux/riscv64":  true,
+	}
+
+	cmd := exec.Command("docker", "manifest", "inspect", imageRef)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil
+	}
+	var manifest struct {
+		Manifests []struct {
+			Platform manifestPlatform `json:"platform"`
+		} `json:"manifests"`
+	}
+	err = json.Unmarshal(output, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON")
+
+	var filteredPlatforms []manifestPlatform
+	for _, m := range manifest.Manifests {
+		p := m.Platform
+		platformStr := p.OS + "/" + p.Architecture
+		if p.Variant != "" {
+			platformStr += "/" + p.Variant
+		}
+
+		if _, ok := validPlatforms[platformStr]; ok {
+			filteredPlatforms = append(filteredPlatforms, p)
+		}
+	}
+	return filteredPlatforms
 }
 
 func dockerPull(t *testing.T, ref string) {

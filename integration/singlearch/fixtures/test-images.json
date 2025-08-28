@@ -19,6 +19,15 @@
         "isManifestList": false
     },
     {
+        "image": "docker.io/arm64v8/redis",
+        "tag": "7.4.0-alpine",
+        "digest": "sha256:b7b10e22a82307ec3992e740fd6db023217414c16fafa43950b61edf6e719983",
+        "distro": "Alpine",
+        "description": "Valid apk/db, apk present, arm64 cross-arch",
+        "ignoreErrors": false,
+        "isManifestList": false
+    },
+    {
         "image": "docker.io/library/nginx",
         "tag": "1.21.6",
         "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
@@ -63,25 +72,6 @@
         "description": "Custom dpkg/status.d with text names, with both libssl1.1 and libssl1",
         "ignoreErrors": false,
         "isManifestList": true
-    },
-    {
-        "image": "docker.io/fluent/fluent-bit",
-        "tag": "1.8.4",
-        "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
-        "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with base64 names",
-        "ignoreErrors": false,
-        "isManifestList": true
-    },
-    {
-        "image": "docker.io/fluent/fluent-bit",
-        "tag": "1.8.4",
-        "digest": "sha256:2d80c13c2e7e06aa6a2e54a1825c6adbb3829c8a133ff617a0a61790bd61c53d",
-        "localName": "localimage:tag",
-        "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with base64 names, locally tagged with image name only",
-        "ignoreErrors": false,
-        "isManifestList": false
     },
     {
         "image": "docker.io/openpolicyagent/opa",

@@ -35,14 +35,13 @@ jobs:
     name: Unit Test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.3.1
+        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -57,7 +56,7 @@ jobs:
           CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@18283e04ce6e62d37312384ff67231eb8fd56d24 # v5.4.3
+        uses: codecov/codecov-action@fdcc8476540edceab3de004e990f80d881c6cc00 # v5.5.0
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
@@ -72,10 +71,10 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.3.1
+        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.3.1
         with:
           egress-policy: audit
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -107,19 +106,18 @@ jobs:
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     strategy:
       fail-fast: false
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -128,7 +126,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -143,26 +141,29 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          go test -v ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     strategy:
       fail-fast: false
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -171,7 +172,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -187,7 +188,11 @@ jobs:
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
-          go test -v ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
       - name: Test RPM validation - noreplace files
         if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
         shell: bash
@@ -271,14 +276,13 @@ jobs:
     name: Test plugin
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@6c439dc8bdf85cadbbce9ed30d1c7b959517bc49 # v2.3.1
+        uses: step-security/harden-runner@ec9f2d5744a09debf3a187a3f4f675c53b671911 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -293,7 +297,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -308,17 +312,20 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/direct/tcp
-          go test -v ./test/e2e/plugin --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/plugin --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" --scanner fake -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
   test-push:
     needs: build
     name: Test push
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: read-all
     steps:
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -337,7 +344,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -351,7 +358,11 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          go test -v ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/push --addr="docker://" --copa="$(pwd)/copa"
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
           
   test-patch-multiplatform:
@@ -359,7 +370,6 @@ jobs:
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     strategy:
       fail-fast: false
       matrix:
@@ -393,12 +403,12 @@ jobs:
           docker tag nginx:latest localhost:5000/nginx:latest
           docker push localhost:5000/nginx:latest
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -410,7 +420,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-multiplatform-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -433,14 +443,17 @@ jobs:
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
           fi
           
-          go test -v ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
 
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions: read-all
     steps:
       - name: Change docker daemon config
         run: |
@@ -471,7 +484,7 @@ jobs:
           docker tag nginx:latest localhost:5000/nginx:latest
           docker push localhost:5000/nginx:latest
       - name: Check out code
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
         with:
           go-version: "1.24"
@@ -489,7 +502,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-multiplatform-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
@@ -504,4 +517,8 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          go test -v ./test/e2e/multiplatform-plugin --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/multiplatform-plugin --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"

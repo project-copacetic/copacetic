@@ -116,7 +116,11 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 
 	if osType == "azurelinux" {
 		image = "azurelinux/base/core"
-		version = osVersion
+		if strings.Contains(osVersion, "3.0") {
+			version = "3.0"
+		} else {
+			version = osVersion
+		}
 	} else {
 		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
 		image = "cbl-mariner/base/core"
@@ -646,8 +650,11 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
+								# Convert OS_VERSION from X.Y.Z to X.Y format
+								OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
 								tdnf makecache
-								tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
+								tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
 
 								ls /tmp/rootfs/var/lib/rpm
 						`,
@@ -672,7 +679,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			# Convert OS_VERSION from X.Y.Z to X.Y format
+			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
+			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
 			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
 				exit $?
