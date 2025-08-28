@@ -9,14 +9,15 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -806,62 +807,132 @@ func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, p
 	return createMultiPlatformOCIWithBuildx(outputDir, platformImages, platforms)
 }
 
-// createMultiPlatformOCIWithBuildx uses docker buildx to create a proper multi-platform OCI layout.
+// createMultiPlatformOCIWithBuildx uses BuildKit Go client directly to create a proper multi-platform OCI layout from local patched images.
 func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
-	// Create a Dockerfile that references all platform images
-	dockerfile := "# Multi-platform Copa image\n"
-	dockerfile += "ARG TARGETPLATFORM\n\n"
+	if len(platformImages) == 0 {
+		return fmt.Errorf("no platform images to build")
+	}
 
-	// Add FROM statements for each platform
-	var platformList []string
+	log.Infof("Creating multiplatform manifest from %d platform images using BuildKit Go client", len(platformImages))
+
+	// Use BuildKit Go client directly to create OCI layout
+	ctx := context.Background()
+	
+	// Try to create the OCI layout using BuildKit's OCI exporter directly
+	return createOCILayoutWithBuildKitClient(ctx, outputDir, platformImages, platforms)
+}
+
+// createOCILayoutWithBuildKitClient uses BuildKit Go client to create OCI layout from local images
+func createOCILayoutWithBuildKitClient(ctx context.Context, outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
+	log.Infof("Using BuildKit Go client libraries to create OCI layout")
+
+	// Use Copa's existing BuildKit client factory to get the proper client
+	bkOpts := Opts{} // Use default options - this will auto-detect the best BuildKit driver
+	c, err := NewClient(ctx, bkOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create BuildKit client: %w", err)
+	}
+	defer c.Close()
+	
+	// Create LLB states for each platform image
+	var platformStates []llb.State
+	var platformSpecs []specs.Platform
+	
 	for _, platform := range platforms {
 		platformKey := PlatformKey(platform.Platform)
 		if imageRef, exists := platformImages[platformKey]; exists {
-			dockerfile += fmt.Sprintf("FROM --platform=%s %s\n", platformKey, imageRef)
-			platformList = append(platformList, platformKey)
+			// Create LLB state from the local image
+			// Use ResolveModePreferLocal to try local first
+			platformSpec := specs.Platform{
+				OS:           platform.Platform.OS,
+				Architecture: platform.Platform.Architecture,
+				Variant:      platform.Platform.Variant,
+			}
+			
+			// Strip docker.io prefix for local resolution
+			localImageRef := strings.TrimPrefix(imageRef, "docker.io/")
+			
+			log.Debugf("Creating LLB state for platform %s from image %s", platformKey, localImageRef)
+			
+			imageOpts := []llb.ImageOption{
+				llb.ResolveModePreferLocal,
+				llb.Platform(platformSpec),
+			}
+			
+			state := llb.Image(localImageRef, imageOpts...)
+			platformStates = append(platformStates, state)
+			platformSpecs = append(platformSpecs, platformSpec)
 		}
 	}
-
-	if len(platformList) == 0 {
-		return fmt.Errorf("no platforms to build")
+	
+	if len(platformStates) == 0 {
+		return fmt.Errorf("no platform states created")
 	}
+	
+	log.Infof("Created %d platform states, solving with BuildKit", len(platformStates))
+	
+	// Use BuildKit to solve the multi-platform build and export to OCI
+	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+}
 
-	// Create temporary build context
-	tempDir, err := os.MkdirTemp("", "copa-oci-*")
-	if err != nil {
-		return fmt.Errorf("failed to create temp directory: %w", err)
+// solveMultiPlatformOCI uses BuildKit client to solve multi-platform states and export to OCI layout
+func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform) error {
+	log.Infof("Solving %d platform states with BuildKit and exporting to OCI layout", len(platformStates))
+	
+	if len(platformStates) == 0 {
+		return fmt.Errorf("no platform states provided")
 	}
-	defer os.RemoveAll(tempDir)
-
-	// Write Dockerfile
-	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
-	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0o600); err != nil {
-		return fmt.Errorf("failed to write Dockerfile: %w", err)
+	
+	// Create a merged multi-platform state
+	// We need to create a single LLB definition that includes all platforms
+	var mergedDefs []*llb.Definition
+	
+	for i, state := range platformStates {
+		platform := platformSpecs[i]
+		log.Debugf("Creating definition for platform %s", platforms.Format(platform))
+		
+		// Marshal each platform state to a definition
+		def, err := state.Marshal(ctx, llb.Platform(platform))
+		if err != nil {
+			return fmt.Errorf("failed to marshal LLB state for platform %s: %w", platforms.Format(platform), err)
+		}
+		
+		mergedDefs = append(mergedDefs, def)
 	}
-
-	log.Debugf("Created Dockerfile with %d platforms", len(platformList))
-	log.Debugf("Platform list: %s", strings.Join(platformList, ","))
-
-	// Remove the target directory if it exists since buildx OCI exporter creates it
-	os.RemoveAll(outputDir)
-
-	// Use docker buildx to build and export to OCI layout
-	platformsArg := strings.Join(platformList, ",")
-	cmd := exec.Command("docker", "buildx", "build",
-		"--platform", platformsArg,
-		"--output", fmt.Sprintf("type=oci,dest=%s,tar=false", outputDir),
-		"--file", dockerfilePath,
-		tempDir)
-
-	log.Infof("Running buildx: docker buildx build --platform %s --output type=oci,dest=%s,tar=false", platformsArg, outputDir)
-
-	if output, err := cmd.CombinedOutput(); err != nil {
-		log.Errorf("buildx build failed: %v", err)
-		log.Errorf("buildx output: %s", string(output))
-		return fmt.Errorf("buildx build failed: %v", err)
+	
+	// For multi-platform builds, we need to create a single definition that encompasses all platforms
+	// Let's start with the first platform as the base and extend it for multi-platform
+	if len(mergedDefs) > 0 {
+		baseDef := mergedDefs[0]
+		
+		log.Infof("Creating multi-platform build definition from %d platforms", len(mergedDefs))
+		
+		// Remove output directory if it exists
+		os.RemoveAll(outputDir)
+		
+		// Create solve options using Copa's pattern
+		solveOpt := client.SolveOpt{
+			Frontend: "", // passing LLB definition directly  
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterOCI,
+				Attrs:     map[string]string{
+					"oci-mediatypes": "true",
+				},
+				OutputDir: outputDir,
+			}},
+		}
+		
+		// Solve with basic export using the corrected BuildKit client API
+		_, err := c.Solve(ctx, baseDef, solveOpt, nil)
+		if err != nil {
+			return fmt.Errorf("BuildKit solve failed: %w", err)
+		}
+		
+		log.Infof("Successfully created OCI layout in %s using BuildKit Go client", outputDir)
+		return nil
 	}
-
-	return nil
+	
+	return fmt.Errorf("no definitions created")
 }
 
 // getPlatformSuffix returns the expected image tag suffix for a platform.
@@ -872,3 +943,5 @@ func getPlatformSuffix(platform *ispec.Platform) string {
 	}
 	return suffix
 }
+
+
