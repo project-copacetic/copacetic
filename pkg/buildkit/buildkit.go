@@ -691,11 +691,11 @@ func mapGoArch(arch, variant string) string {
 }
 
 // CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter.
-func CreateOCILayoutFromResults(ctx context.Context, outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
 	log.Infof("Creating multi-platform OCI layout in directory: %s with %d platforms", outputDir, len(platforms))
 
 	// Create output directory
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
@@ -766,7 +766,7 @@ func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[strin
 
 	// Write Dockerfile
 	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
-	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
+	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0o600); err != nil {
 		return fmt.Errorf("failed to write Dockerfile: %w", err)
 	}
 
