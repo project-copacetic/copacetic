@@ -191,9 +191,7 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// tryGetManifestFromLocal attempts to get manifest data from the local Docker daemon
-// using docker manifest inspect CLI command, which can access local manifest lists
-// stored in Docker's manifest store (created with 'docker manifest create')
+// tryGetManifestFromLocal attempts to get manifest data from the local Docker daemon.
 func tryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 	imageName := ref.String()
 	log.Debugf("Trying: docker manifest inspect %s", imageName)
@@ -795,7 +793,7 @@ func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[strin
 	return nil
 }
 
-// getPlatformSuffix returns the expected image tag suffix for a platform
+// getPlatformSuffix returns the expected image tag suffix for a platform.
 func getPlatformSuffix(platform *ispec.Platform) string {
 	suffix := "-" + platform.Architecture
 	if platform.Variant != "" {
