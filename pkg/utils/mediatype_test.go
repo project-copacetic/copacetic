@@ -164,3 +164,61 @@ func TestGetMediaType_RemoteFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(fakeRemoteType), mt)
 }
+
+func TestPodmanMediaType_ImageNotFound(t *testing.T) {
+	// This test covers the case where podman inspect fails because image doesn't exist
+	// Since podman is available in the test environment, we test with non-existent image
+
+	_, err := podmanMediaType("non-existent-image:test")
+	require.Error(t, err)
+	// Should get an error from podman command execution
+}
+
+func TestGetMediaType_PodmanRuntime(t *testing.T) {
+	// Test that GetMediaType correctly calls podmanMediaType when runtime is Podman
+	// Since we can't easily mock the podman command, we test the fallback to remote
+
+	// Mock remote lookup to succeed
+	mr := new(mockRemote)
+	fakeRemoteType := types.MediaType("application/vnd.oci.image.manifest.v1+json")
+	mr.On("Get", mock.Anything, mock.Anything).Return(
+		&remote.Descriptor{Descriptor: v1.Descriptor{MediaType: fakeRemoteType}},
+		nil,
+	)
+
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(ref name.Reference, opts ...remote.Option) (*remote.Descriptor, error) {
+		return mr.Get(ref, opts...)
+	}
+
+	// This should fail locally (podman not available) but succeed with remote fallback
+	mt, err := GetMediaType("alpine:latest", imageloader.Podman)
+	require.NoError(t, err)
+	require.Equal(t, string(fakeRemoteType), mt)
+}
+
+func TestLocalMediaType_NilDescriptor(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return(
+		image.InspectResponse{
+			Descriptor: nil, // Nil descriptor should return error
+		},
+		nil,
+	)
+
+	origNewClient := newClient
+	defer func() { newClient = origNewClient }()
+	newClient = func() (dockerClient.APIClient, error) { return md, nil }
+
+	mt, err := localMediaType("alpine:latest")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "descriptor is nil")
+	require.Empty(t, mt)
+}
+
+func TestRemoteMediaType_InvalidReference(t *testing.T) {
+	// Test with invalid image reference
+	_, err := remoteMediaType("invalid::reference")
+	require.Error(t, err)
+}
