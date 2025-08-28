@@ -249,7 +249,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var updatedImageState *llb.State
 	var resultManifestBytes []byte
 	if rm.isDistroless {
-		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, ignoreErrors)
+		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, imagePlatform, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -578,16 +578,11 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	return err == nil
 }
 
-func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
-	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
-	if err != nil {
-		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
-	}
-
+func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(*imagePlatform),
+		llb.Platform(*platform),
 		llb.ResolveModeDefault,
 	)
 
