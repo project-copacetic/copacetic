@@ -579,9 +579,15 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
+	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
+	}
+
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 	toolingBase := llb.Image(toolImage,
+		llb.Platform(*imagePlatform),
 		llb.ResolveModeDefault,
 	)
 
