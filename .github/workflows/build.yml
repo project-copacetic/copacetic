@@ -559,28 +559,46 @@ jobs:
           ./copa --version
       - name: Set up QEMU
         uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Set up local registry
+        run: |
+          docker run -d -p 5000:5000 --restart=always --name registry registry:2
+          # wait for the registry to be healthy
+          for i in $(seq 1 60); do
+            if curl -f http://localhost:5000/v2/_catalog; then
+              break
+            fi
+            sleep 1
+          done
       - name: Test OCI layout creation with local multiplatform manifest
         shell: bash
         run: |
           set -eu -o pipefail
           
           # Test image details
-          BASE_IMAGE="docker.io/library/nginx:1.21.6"
+          REGISTRY_IMAGE="docker.io/library/nginx:1.21.6"
+          LOCAL_REGISTRY="localhost:5000"
+          LOCAL_MANIFEST="${LOCAL_REGISTRY}/nginx:1.21.6"
           
-          echo "Pull and tag specific platform images for manifest creation..."
-          docker pull --platform linux/amd64 "${BASE_IMAGE}"
-          docker tag "${BASE_IMAGE}" "nginx-local:1.21.6-amd64"
-          docker pull --platform linux/arm64 "${BASE_IMAGE}"
-          docker tag "${BASE_IMAGE}" "nginx-local:1.21.6-arm64"
+          echo "Pull, tag and push platform-specific images to local registry..."
+          
+          # Pull and push amd64 image
+          docker pull --platform linux/amd64 "${REGISTRY_IMAGE}"
+          docker tag "${REGISTRY_IMAGE}" "${LOCAL_REGISTRY}/nginx:1.21.6-amd64"
+          docker push "${LOCAL_REGISTRY}/nginx:1.21.6-amd64"
+          
+          # Pull and push arm64 image
+          docker pull --platform linux/arm64 "${REGISTRY_IMAGE}"
+          docker tag "${REGISTRY_IMAGE}" "${LOCAL_REGISTRY}/nginx:1.21.6-arm64"
+          docker push "${LOCAL_REGISTRY}/nginx:1.21.6-arm64"
           
           echo "Creating local Docker manifest..."
-          # Create local manifest list using docker manifest create
-          docker manifest create "${BASE_IMAGE}" \
-            "nginx-local:1.21.6-amd64" \
-            "nginx-local:1.21.6-arm64"
+          # Create local manifest list using registry images with proper digests
+          docker manifest create "${LOCAL_MANIFEST}" \
+            "${LOCAL_REGISTRY}/nginx:1.21.6-amd64" \
+            "${LOCAL_REGISTRY}/nginx:1.21.6-arm64"
           
           echo "Verifying local manifest was created..."
-          docker manifest inspect "${BASE_IMAGE}"
+          docker manifest inspect "${LOCAL_MANIFEST}"
           
           # Create temp directory for OCI layout
           OCI_LAYOUT_DIR=$(mktemp -d)
@@ -589,7 +607,7 @@ jobs:
           
           # Patch the local manifest with OCI layout output (no reports, patch all packages)
           ./copa patch \
-            -i="${BASE_IMAGE}" \
+            -i="${LOCAL_MANIFEST}" \
             -t="patched" \
             --timeout=30m \
             --ignore-errors=true \
@@ -664,4 +682,8 @@ jobs:
           fi
           
           # Cleanup
+          echo "Cleaning up..."
           rm -rf "${OCI_LAYOUT_DIR}"
+          docker stop registry || true
+          
+          echo "OCI layout test with local multiplatform manifest completed successfully!"
