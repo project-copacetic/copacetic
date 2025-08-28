@@ -413,6 +413,77 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 	return p, nil
 }
 
+// GetPlatformImageReference resolves a platform-specific image reference from a local manifest.
+// For multi-platform images that exist locally but not in the registry, this function extracts
+// the platform-specific digest and constructs a reference that BuildKit can resolve.
+func GetPlatformImageReference(manifestRef string, targetPlatform *ispec.Platform) (string, error) {
+	ref, err := name.ParseReference(manifestRef)
+	if err != nil {
+		return "", fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
+	}
+
+	// Try to get the local manifest first
+	desc, err := tryGetManifestFromLocal(ref)
+	if err != nil {
+		// Not a local manifest, return original reference
+		return manifestRef, nil
+	}
+
+	if !desc.MediaType.IsIndex() {
+		// Single platform image, return original reference
+		return manifestRef, nil
+	}
+
+	// Parse the manifest to extract platform-specific information
+	var manifestData struct {
+		Manifests []struct {
+			Digest   string `json:"digest"`
+			Platform struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+				Variant      string `json:"variant,omitempty"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(desc.Manifest, &manifestData); err != nil {
+		return "", fmt.Errorf("failed to parse manifest JSON: %w", err)
+	}
+
+	// Find the matching platform
+	for _, manifest := range manifestData.Manifests {
+		manifestPlatform := manifest.Platform
+
+		// Normalize arm64 variant for comparison
+		if manifestPlatform.Architecture == "arm64" && manifestPlatform.Variant == "v8" {
+			manifestPlatform.Variant = ""
+		}
+		targetVariant := targetPlatform.Variant
+		if targetPlatform.Architecture == "arm64" && targetVariant == "v8" {
+			targetVariant = ""
+		}
+
+		// Check if platforms match
+		if manifestPlatform.OS == targetPlatform.OS &&
+			manifestPlatform.Architecture == targetPlatform.Architecture &&
+			manifestPlatform.Variant == targetVariant {
+
+			// For local manifests, we need to construct a reference to the platform-specific image
+			// Extract the base repository name (without tag/digest)
+			baseRepo := ref.Context().Name()
+
+			// Construct platform-specific image reference with digest
+			platformImageRef := baseRepo + "@" + manifest.Digest
+
+			log.Debugf("Found platform %s/%s in local manifest, using image reference: %s",
+				manifestPlatform.OS, manifestPlatform.Architecture, platformImageRef)
+			return platformImageRef, nil
+		}
+	}
+
+	return "", fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
+}
+
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
 	baseImage, userImageConfig, err := setupLabels(image, configData)
 	if err != nil {
