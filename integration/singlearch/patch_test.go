@@ -25,14 +25,16 @@ import (
 var testImages []byte
 
 type testImage struct {
-	Image          string        `json:"image"`
-	Tag            string        `json:"tag"`
-	LocalName      string        `json:"localName,omitempty"`
-	Distro         string        `json:"distro"`
-	Digest         digest.Digest `json:"digest"`
-	Description    string        `json:"description"`
-	IgnoreErrors   bool          `json:"ignoreErrors"`
-	IsManifestList bool          `json:"isManifestList"`
+	Image              string        `json:"image"`
+	Tag                string        `json:"tag"`
+	LocalName          string        `json:"localName,omitempty"`
+	Distro             string        `json:"distro"`
+	Digest             digest.Digest `json:"digest"`
+	Description        string        `json:"description"`
+	IgnoreErrors       bool          `json:"ignoreErrors"`
+	IsManifestList     bool          `json:"isManifestList"`
+	PkgTypes           string        `json:"pkgTypes,omitempty"`
+	LibraryPatchLevels []string      `json:"libraryPatchLevels,omitempty"`
 }
 
 type manifestPlatform struct {
@@ -281,4 +283,145 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	} else {
 		require.NoError(t, err, string(out))
 	}
+}
+
+// TestPatchLibraries tests patching library vulnerabilities using experimental features.
+func TestPatchLibraries(t *testing.T) {
+	var images []testImage
+	err := json.Unmarshal(testImages, &images)
+	require.NoError(t, err)
+
+	// Filter to only images that support library patching
+	var libraryImages []testImage
+	for _, img := range images {
+		if strings.Contains(img.PkgTypes, "library") && len(img.LibraryPatchLevels) > 0 {
+			libraryImages = append(libraryImages, img)
+		}
+	}
+
+	if len(libraryImages) == 0 {
+		t.Skip("No library-capable images found in test configuration")
+	}
+
+	tmp := t.TempDir()
+	ignoreFile := filepath.Join(tmp, "ignore.rego")
+	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
+	require.NoError(t, err)
+
+	for _, img := range libraryImages {
+		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
+
+		// download the trivy db before running the tests
+		common.DownloadDB(t, common.DockerDINDAddress.Env()...)
+
+		for _, patchLevel := range img.LibraryPatchLevels {
+			testName := fmt.Sprintf("%s-library-%s", img.Description, patchLevel)
+			t.Run(testName, func(t *testing.T) {
+				t.Parallel()
+
+				dir := t.TempDir()
+
+				ref := imageRef
+				if img.LocalName != "" {
+					dockerPull(t, ref)
+					dockerTag(t, ref, img.LocalName)
+					ref = img.LocalName
+				}
+
+				// Create scan report with library packages
+				scanResults := filepath.Join(dir, "scan.json")
+				t.Log("scanning original image with package types:", img.PkgTypes)
+				common.NewScanner().
+					WithIgnoreFile(ignoreFile).
+					WithOutput(scanResults).
+					WithSkipDBUpdate().
+					WithPkgTypes(img.PkgTypes).
+					// Do not set a non-zero exit code because we are expecting vulnerabilities.
+					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+
+				r, err := reference.ParseNormalizedNamed(ref)
+				require.NoError(t, err)
+
+				patchedTag := img.Tag + "-library-" + patchLevel + "-patched"
+				patchedRef := fmt.Sprintf("%s:%s", r.Name(), patchedTag)
+
+				t.Logf("patching image with package types %s using patch level: %s", img.PkgTypes, patchLevel)
+				patchSingleWithLibrarySupport(t, ref, patchedTag, scanResults, dir, img.IgnoreErrors, img.PkgTypes, patchLevel)
+
+				// Verify the patched image doesn't have the same vulnerabilities
+				// For manifest lists, get supported platform and test against it
+				scanTag := patchedTag
+				if img.IsManifestList {
+					hostPlatform := platforms.DefaultSpec().Architecture
+					imagePlatforms := getManifestPlatforms(t, ref)
+
+					found := false
+					for _, p := range imagePlatforms {
+						if p.Architecture == hostPlatform {
+							found = true
+							break
+						}
+					}
+
+					targetArch := hostPlatform
+					if !found && len(imagePlatforms) > 0 {
+						targetArch = imagePlatforms[0].Architecture
+					}
+					scanTag += "-" + targetArch
+					patchedRef = fmt.Sprintf("%s:%s", r.Name(), scanTag)
+				}
+
+				t.Log("scanning patched image for vulnerabilities")
+				common.NewScanner().
+					WithIgnoreFile(ignoreFile).
+					WithSkipDBUpdate().
+					WithPkgTypes(img.PkgTypes).
+					// here we want a non-zero exit code because we are expecting no vulnerabilities.
+					WithExitCode(1).
+					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
+
+				t.Log("verifying the vex output")
+				common.ValidateVEXJSON(t, dir)
+			})
+		}
+	}
+}
+
+// patchSingleWithLibrarySupport patches a single architecture image with library support enabled.
+func patchSingleWithLibrarySupport(t *testing.T, ref, patchedTag, scanResults, path string, ignoreErrors bool, pkgTypes, libraryPatchLevel string) {
+	var addrFl string
+	if buildkitAddr != "" {
+		addrFl = "-a=" + buildkitAddr
+	}
+
+	var reportPath string
+	if scanResults != "" {
+		reportPath = "-r=" + scanResults
+	}
+
+	//#nosec G204
+	cmd := exec.Command(
+		copaPath,
+		"patch",
+		"-i="+ref,
+		"-t="+patchedTag,
+		reportPath,
+		"-s="+scannerPlugin,
+		"--timeout=30m",
+		addrFl,
+		"--platform=linux/amd64",
+		"--ignore-errors="+strconv.FormatBool(ignoreErrors),
+		"--output="+path+"/vex.json",
+		"--pkg-types="+pkgTypes,
+		"--library-patch-level="+libraryPatchLevel,
+		"--debug",
+	)
+
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+	// Enable experimental features for library patching
+	cmd.Env = append(cmd.Env, "COPA_EXPERIMENTAL=1")
+
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }
