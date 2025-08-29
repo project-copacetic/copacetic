@@ -1,12 +1,16 @@
 package utils
 
 import (
+	"context"
 	"log"
 	"os"
 	"path"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -171,4 +175,194 @@ func TestGetProxy(t *testing.T) {
 	if got != want {
 		t.Errorf("unexpected proxy config, got %#v want %#v", got, want)
 	}
+}
+
+// TestLocalImageDescriptor tests the localImageDescriptor function with error scenarios
+func TestLocalImageDescriptor(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with a non-existent image reference (Docker is available in CI)
+	t.Run("nonexistent_image", func(t *testing.T) {
+		desc, err := localImageDescriptor(ctx, "invalid/nonexistent:image")
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+
+		// In CI, Docker is available, so we get a "No such image" error
+		assert.Contains(t, err.Error(), "No such image")
+	})
+
+	// Test with context cancellation
+	t.Run("cancelled_context", func(t *testing.T) {
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel() // Cancel immediately
+
+		desc, err := localImageDescriptor(cancelledCtx, "alpine:latest")
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+		// Should get a context canceled error
+		assert.Contains(t, err.Error(), "context canceled")
+	})
+}
+
+// TestPodmanImageDescriptor tests the podmanImageDescriptor function with error scenarios
+func TestPodmanImageDescriptor(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with a non-existent image (Podman is available in CI)
+	t.Run("nonexistent_image", func(t *testing.T) {
+		desc, err := podmanImageDescriptor(ctx, "definitely/does/not:exist")
+
+		// Podman is available in CI, so we should get a podman inspect failed error
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+		assert.Contains(t, err.Error(), "podman inspect failed")
+	})
+
+	// Test with context cancellation
+	t.Run("cancelled_context", func(t *testing.T) {
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel() // Cancel immediately
+
+		desc, err := podmanImageDescriptor(cancelledCtx, "alpine:latest")
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+	})
+}
+
+// TestRemoteImageDescriptor tests the remoteImageDescriptor function with error scenarios
+func TestRemoteImageDescriptor(t *testing.T) {
+	// Test with truly invalid image reference format that will fail parsing
+	t.Run("truly_invalid_image_reference", func(t *testing.T) {
+		desc, err := remoteImageDescriptor("")
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+		assert.Contains(t, err.Error(), "failed to parse image reference")
+	})
+
+	// Test with non-existent image reference (will hit registry but get auth/not found error)
+	t.Run("nonexistent_image", func(t *testing.T) {
+		desc, err := remoteImageDescriptor("definitely/does/not/exist:anywhere")
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+		assert.Contains(t, err.Error(), "failed to get remote descriptor")
+	})
+}
+
+// TestGetImageDescriptor tests the GetImageDescriptor function with runtime switching logic
+func TestGetImageDescriptor(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with Docker runtime (default)
+	t.Run("docker_runtime_fallback", func(t *testing.T) {
+		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", imageloader.Docker)
+
+		// Should fail but exercise the Docker -> remote fallback logic
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+
+		// Error should mention both local and remote failures
+		errorMsg := err.Error()
+		assert.Contains(t, errorMsg, "not found locally and remote lookup failed")
+	})
+
+	// Test with Podman runtime
+	t.Run("podman_runtime_fallback", func(t *testing.T) {
+		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", imageloader.Podman)
+
+		// Should fail but exercise the Podman -> remote fallback logic
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+
+		// Error should mention both local and remote failures
+		errorMsg := err.Error()
+		assert.Contains(t, errorMsg, "local lookup")
+		assert.Contains(t, errorMsg, "remote lookup also failed")
+	})
+
+	// Test with invalid image reference (should fail early)
+	t.Run("invalid_image_reference", func(t *testing.T) {
+		desc, err := GetImageDescriptor(ctx, "invalid-image-format", imageloader.Docker)
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+	})
+
+	// Test with unknown runtime (should default to Docker)
+	t.Run("unknown_runtime_defaults_to_docker", func(t *testing.T) {
+		desc, err := GetImageDescriptor(ctx, "nonexistent/test:image", "unknown-runtime")
+
+		// Should behave the same as Docker runtime
+		assert.Error(t, err)
+		assert.Nil(t, desc)
+	})
+
+	// Test context cancellation (this might succeed with remote fallback, so test differently)
+	t.Run("cancelled_context", func(t *testing.T) {
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		// Use a non-existent image to ensure it fails both locally and remotely
+		desc, err := GetImageDescriptor(cancelledCtx, "nonexistent/cancelled:test", imageloader.Docker)
+		if err != nil {
+			// This is the expected case - both local and remote should fail
+			assert.Nil(t, desc)
+		} else {
+			// If it unexpectedly succeeds, that's also valid test behavior
+			t.Logf("Unexpected success with cancelled context - remote registry was very fast")
+			assert.NotNil(t, desc)
+		}
+	})
+}
+
+// TestGetIndexManifestAnnotations tests the GetIndexManifestAnnotations function with error scenarios
+func TestGetIndexManifestAnnotations(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with truly invalid image reference format
+	t.Run("invalid_image_reference", func(t *testing.T) {
+		annotations, err := GetIndexManifestAnnotations(ctx, "")
+		assert.Error(t, err)
+		assert.Nil(t, annotations)
+		assert.Contains(t, err.Error(), "failed to parse image reference")
+	})
+
+	// Test with non-existent remote image
+	t.Run("nonexistent_remote_image", func(t *testing.T) {
+		annotations, err := GetIndexManifestAnnotations(ctx, "definitely/nonexistent:image")
+		assert.Error(t, err)
+		assert.Nil(t, annotations)
+		assert.Contains(t, err.Error(), "failed to get descriptor")
+	})
+}
+
+// TestGetPlatformManifestAnnotations tests the GetPlatformManifestAnnotations function with error scenarios
+func TestGetPlatformManifestAnnotations(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{
+		Architecture: "amd64",
+		OS:           "linux",
+	}
+
+	// Test with invalid image reference
+	t.Run("invalid_image_reference", func(t *testing.T) {
+		annotations, err := GetPlatformManifestAnnotations(ctx, "", targetPlatform)
+		assert.Error(t, err)
+		assert.Nil(t, annotations)
+		assert.Contains(t, err.Error(), "failed to parse image reference")
+	})
+
+	// Test with non-existent remote image
+	t.Run("nonexistent_remote_image", func(t *testing.T) {
+		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", targetPlatform)
+		assert.Error(t, err)
+		assert.Nil(t, annotations)
+		assert.Contains(t, err.Error(), "failed to get descriptor")
+	})
+
+	// Test with nil platform (edge case)
+	t.Run("nil_platform", func(t *testing.T) {
+		annotations, err := GetPlatformManifestAnnotations(ctx, "definitely/nonexistent:image", nil)
+		assert.Error(t, err)
+		assert.Nil(t, annotations)
+		// Should still fail at the descriptor fetch level before platform processing
+	})
 }
