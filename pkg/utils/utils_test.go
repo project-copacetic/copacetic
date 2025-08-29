@@ -172,3 +172,53 @@ func TestGetProxy(t *testing.T) {
 		t.Errorf("unexpected proxy config, got %#v want %#v", got, want)
 	}
 }
+
+func TestDeduplicateStringSlice(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "empty slice",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "no duplicates",
+			input:    []string{"a", "b", "c"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "with duplicates",
+			input:    []string{"a", "b", "a", "c", "b"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "all duplicates",
+			input:    []string{"a", "a", "a"},
+			expected: []string{"a"},
+		},
+		{
+			name:     "single item",
+			input:    []string{"a"},
+			expected: []string{"a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeduplicateStringSlice(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("expected length %d, got %d", len(tt.expected), len(result))
+				return
+			}
+			for i, v := range result {
+				if v != tt.expected[i] {
+					t.Errorf("expected %v, got %v", tt.expected, result)
+					break
+				}
+			}
+		})
+	}
+}
