@@ -52,6 +52,7 @@ Copacetic uses [GoReleaser](https://goreleaser.com/) for automating releases.
 
 3. **Publishing**
    - GoReleaser will automatically create a new release.
+   - **Release branches are automatically created** during the release process. When a tag is pushed, the GitHub workflow automatically creates a corresponding release branch (e.g., `release-0.11` for tag `v0.11.0`) if it doesn't already exist.
    - Review and edit the release at: [GitHub Releases](https://github.com/project-copacetic/copacetic/releases)
    - Review the respective copa-action image at: [GitHub Container Registry](https://github.com/orgs/project-copacetic/packages/container/package/copa-action)
 
