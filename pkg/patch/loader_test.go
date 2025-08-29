@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestDetectLoaderFromBuildkitAddr tests the detectLoaderFromBuildkitAddr function
+// TestDetectLoaderFromBuildkitAddr tests the detectLoaderFromBuildkitAddr function.
 func TestDetectLoaderFromBuildkitAddr(t *testing.T) {
 	testCases := []struct {
 		name     string

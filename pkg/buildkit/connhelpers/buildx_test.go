@@ -32,9 +32,9 @@ func TestSupportsDialStio(t *testing.T) {
 			expectError: false, // We don't know if docker buildx is available, so we just test it doesn't crash
 		},
 		{
-			name:        "cancelled_context",
+			name:        "canceled_context",
 			ctx:         func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
-			expectError: true, // Cancelled context should cause command to fail
+			expectError: true, // Canceled context should cause command to fail
 		},
 	}
 
@@ -45,9 +45,9 @@ func TestSupportsDialStio(t *testing.T) {
 			result := supportsDialStio(tt.ctx)
 
 			// For valid context, result could be true or false depending on environment
-			// For cancelled context, it should return false
+			// For canceled context, it should return false
 			if tt.expectError {
-				assert.False(t, result, "Expected false result for cancelled context")
+				assert.False(t, result, "Expected false result for canceled context")
 			} else {
 				// For valid context, we just verify it returns a boolean without panicking
 				assert.IsType(t, true, result, "Should return a boolean")
@@ -64,7 +64,7 @@ func TestBuildxDialStdio(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "cancelled_context",
+			name:        "canceled_context",
 			ctx:         func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
 			builder:     "",
 			expectError: true,
@@ -74,11 +74,11 @@ func TestBuildxDialStdio(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test that the function handles context and builder parameters properly
-			// Only test with cancelled context to avoid hanging in CI
+			// Only test with canceled context to avoid hanging in CI
 			conn, err := buildxDialStdio(tt.ctx, tt.builder)
 
 			if tt.expectError || err != nil {
-				assert.Error(t, err, "Expected error for cancelled context")
+				assert.Error(t, err, "Expected error for canceled context")
 				assert.Nil(t, conn, "Connection should be nil on error")
 			}
 		})
@@ -94,7 +94,7 @@ func TestContainerContextDialer(t *testing.T) {
 		expectError   bool
 	}{
 		{
-			name:          "cancelled_context",
+			name:          "canceled_context",
 			ctx:           func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(),
 			host:          "unix:///var/run/docker.sock",
 			containerName: "test-container",
@@ -130,7 +130,7 @@ func TestContainerContextDialer(t *testing.T) {
 	}
 }
 
-// Test helper functions for command availability
+// Test helper functions for command availability.
 func TestDockerBuildxAvailability(t *testing.T) {
 	// This is a helper test to understand the CI environment
 	cmd := exec.Command("docker", "version")

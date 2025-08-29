@@ -26,7 +26,7 @@ func TestGetDefaultLinuxPlatform_NonLinux(t *testing.T) {
 	assert.Equal(t, originalPlatform, platforms.DefaultSpec())
 }
 
-// Test OSInfo struct initialization and validation
+// Test OSInfo struct initialization and validation.
 func TestOSInfo_Initialization(t *testing.T) {
 	osInfo := &OSInfo{
 		Type:    "debian",
@@ -37,7 +37,7 @@ func TestOSInfo_Initialization(t *testing.T) {
 	assert.Equal(t, "11", osInfo.Version)
 }
 
-// Test OSInfo with different operating systems
+// Test OSInfo with different operating systems.
 func TestOSInfo_DifferentOperatingSystems(t *testing.T) {
 	testCases := []struct {
 		name    string
@@ -63,7 +63,7 @@ func TestOSInfo_DifferentOperatingSystems(t *testing.T) {
 	}
 }
 
-// Test OSInfo with empty values
+// Test OSInfo with empty values.
 func TestOSInfo_EmptyValues(t *testing.T) {
 	osInfo := &OSInfo{}
 
@@ -71,7 +71,7 @@ func TestOSInfo_EmptyValues(t *testing.T) {
 	assert.Empty(t, osInfo.Version)
 }
 
-// Test platform normalization for different architectures
+// Test platform normalization for different architectures.
 func TestGetDefaultLinuxPlatform_DifferentArchitectures(t *testing.T) {
 	// This tests that the function consistently returns a Linux platform
 	// regardless of the system's default
@@ -83,7 +83,7 @@ func TestGetDefaultLinuxPlatform_DifferentArchitectures(t *testing.T) {
 	assert.Contains(t, validArchs, platform.Architecture)
 }
 
-// Test LINUX constant
+// Test LINUX constant.
 func TestLinuxConstant(t *testing.T) {
 	assert.Equal(t, "linux", LINUX)
 	assert.NotEmpty(t, LINUX)

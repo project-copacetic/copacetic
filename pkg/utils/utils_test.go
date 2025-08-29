@@ -177,7 +177,7 @@ func TestGetProxy(t *testing.T) {
 	}
 }
 
-// TestLocalImageDescriptor tests the localImageDescriptor function with error scenarios
+// TestLocalImageDescriptor tests the localImageDescriptor function with error scenarios.
 func TestLocalImageDescriptor(t *testing.T) {
 	ctx := context.Background()
 
@@ -192,7 +192,7 @@ func TestLocalImageDescriptor(t *testing.T) {
 	})
 
 	// Test with context cancellation
-	t.Run("cancelled_context", func(t *testing.T) {
+	t.Run("canceled_context", func(t *testing.T) {
 		cancelledCtx, cancel := context.WithCancel(ctx)
 		cancel() // Cancel immediately
 
@@ -204,7 +204,7 @@ func TestLocalImageDescriptor(t *testing.T) {
 	})
 }
 
-// TestPodmanImageDescriptor tests the podmanImageDescriptor function with error scenarios
+// TestPodmanImageDescriptor tests the podmanImageDescriptor function with error scenarios.
 func TestPodmanImageDescriptor(t *testing.T) {
 	ctx := context.Background()
 
@@ -219,7 +219,7 @@ func TestPodmanImageDescriptor(t *testing.T) {
 	})
 
 	// Test with context cancellation
-	t.Run("cancelled_context", func(t *testing.T) {
+	t.Run("canceled_context", func(t *testing.T) {
 		cancelledCtx, cancel := context.WithCancel(ctx)
 		cancel() // Cancel immediately
 
@@ -229,7 +229,7 @@ func TestPodmanImageDescriptor(t *testing.T) {
 	})
 }
 
-// TestRemoteImageDescriptor tests the remoteImageDescriptor function with error scenarios
+// TestRemoteImageDescriptor tests the remoteImageDescriptor function with error scenarios.
 func TestRemoteImageDescriptor(t *testing.T) {
 	// Test with truly invalid image reference format that will fail parsing
 	t.Run("truly_invalid_image_reference", func(t *testing.T) {
@@ -248,7 +248,7 @@ func TestRemoteImageDescriptor(t *testing.T) {
 	})
 }
 
-// TestGetImageDescriptor tests the GetImageDescriptor function with runtime switching logic
+// TestGetImageDescriptor tests the GetImageDescriptor function with runtime switching logic.
 func TestGetImageDescriptor(t *testing.T) {
 	ctx := context.Background()
 
@@ -296,24 +296,24 @@ func TestGetImageDescriptor(t *testing.T) {
 	})
 
 	// Test context cancellation (this might succeed with remote fallback, so test differently)
-	t.Run("cancelled_context", func(t *testing.T) {
+	t.Run("canceled_context", func(t *testing.T) {
 		cancelledCtx, cancel := context.WithCancel(ctx)
 		cancel()
 
 		// Use a non-existent image to ensure it fails both locally and remotely
-		desc, err := GetImageDescriptor(cancelledCtx, "nonexistent/cancelled:test", imageloader.Docker)
+		desc, err := GetImageDescriptor(cancelledCtx, "nonexistent/canceled:test", imageloader.Docker)
 		if err != nil {
 			// This is the expected case - both local and remote should fail
 			assert.Nil(t, desc)
 		} else {
 			// If it unexpectedly succeeds, that's also valid test behavior
-			t.Logf("Unexpected success with cancelled context - remote registry was very fast")
+			t.Logf("Unexpected success with canceled context - remote registry was very fast")
 			assert.NotNil(t, desc)
 		}
 	})
 }
 
-// TestGetIndexManifestAnnotations tests the GetIndexManifestAnnotations function with error scenarios
+// TestGetIndexManifestAnnotations tests the GetIndexManifestAnnotations function with error scenarios.
 func TestGetIndexManifestAnnotations(t *testing.T) {
 	ctx := context.Background()
 
@@ -334,7 +334,7 @@ func TestGetIndexManifestAnnotations(t *testing.T) {
 	})
 }
 
-// TestGetPlatformManifestAnnotations tests the GetPlatformManifestAnnotations function with error scenarios
+// TestGetPlatformManifestAnnotations tests the GetPlatformManifestAnnotations function with error scenarios.
 func TestGetPlatformManifestAnnotations(t *testing.T) {
 	ctx := context.Background()
 	targetPlatform := &ocispec.Platform{

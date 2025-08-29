@@ -80,14 +80,14 @@ func TestParseTrivyReport(t *testing.T) {
 	}
 }
 
-// TestNewTrivyParser tests the NewTrivyParser constructor function
+// TestNewTrivyParser tests the NewTrivyParser constructor function.
 func TestNewTrivyParser(t *testing.T) {
 	parser := NewTrivyParser()
 	assert.NotNil(t, parser)
 	assert.IsType(t, &TrivyParser{}, parser)
 }
 
-// TestTrivyParserParseEdgeCases tests edge cases for TrivyParser.Parse
+// TestTrivyParserParseEdgeCases tests edge cases for TrivyParser.Parse.
 func TestTrivyParserParseEdgeCases(t *testing.T) {
 	testCases := []struct {
 		name        string

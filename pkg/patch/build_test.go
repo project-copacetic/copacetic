@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestValidateSourcePolicy tests the validateSourcePolicy function
+// TestValidateSourcePolicy tests the validateSourcePolicy function.
 func TestValidateSourcePolicy(t *testing.T) {
 	testCases := []struct {
 		name        string

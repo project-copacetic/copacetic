@@ -59,7 +59,7 @@ func TestTryParseScanReport(t *testing.T) {
 	}
 }
 
-// TestErrorUnsupported tests the ErrorUnsupported error type
+// TestErrorUnsupported tests the ErrorUnsupported error type.
 func TestErrorUnsupported(t *testing.T) {
 	originalErr := fmt.Errorf("original error message")
 	errUnsupported := &ErrorUnsupported{err: originalErr}
@@ -68,7 +68,7 @@ func TestErrorUnsupported(t *testing.T) {
 	assert.Contains(t, errUnsupported.Error(), "original error message")
 }
 
-// TestConvertToUnversionedAPI tests the convertToUnversionedAPI function
+// TestConvertToUnversionedAPI tests the convertToUnversionedAPI function.
 func TestConvertToUnversionedAPI(t *testing.T) {
 	testCases := []struct {
 		name          string
@@ -133,7 +133,7 @@ func TestConvertToUnversionedAPI(t *testing.T) {
 	}
 }
 
-// TestCustomParseScanReport tests customParseScanReport function
+// TestCustomParseScanReport tests customParseScanReport function.
 func TestCustomParseScanReport(t *testing.T) {
 	testCases := []struct {
 		name        string
@@ -176,7 +176,7 @@ func TestCustomParseScanReport(t *testing.T) {
 	}
 }
 
-// TestTryParseScanReportWithNativeScanner tests TryParseScanReport with native scanner
+// TestTryParseScanReportWithNativeScanner tests TryParseScanReport with native scanner.
 func TestTryParseScanReportWithNativeScanner(t *testing.T) {
 	// Create a valid v1alpha1 format test file content
 	validV1Alpha1Content := `{
@@ -202,7 +202,7 @@ func TestTryParseScanReportWithNativeScanner(t *testing.T) {
 
 	// Write test file
 	tmpFile := "testdata/native_test.json"
-	err := os.WriteFile(tmpFile, []byte(validV1Alpha1Content), 0o644)
+	err := os.WriteFile(tmpFile, []byte(validV1Alpha1Content), 0o600)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}

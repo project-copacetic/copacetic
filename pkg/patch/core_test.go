@@ -3,14 +3,14 @@ package patch
 import (
 	"testing"
 
-	"github.com/opencontainers/image-spec/specs-go/v1"
+	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
-// Test Options struct initialization and validation
+// Test Options struct initialization and validation.
 func TestOptions_Initialization(t *testing.T) {
 	opts := &Options{
 		ImageName: "test:latest",
@@ -25,13 +25,13 @@ func TestOptions_Initialization(t *testing.T) {
 	}
 
 	assert.Equal(t, "test:latest", opts.ImageName)
-	assert.Equal(t, "linux", opts.TargetPlatform.Platform.OS)
-	assert.Equal(t, "amd64", opts.TargetPlatform.Platform.Architecture)
+	assert.Equal(t, "linux", opts.TargetPlatform.OS)
+	assert.Equal(t, "amd64", opts.TargetPlatform.Architecture)
 	assert.Equal(t, "/tmp/test", opts.WorkingFolder)
 	assert.True(t, opts.IgnoreError)
 }
 
-// Test Options with Updates
+// Test Options with Updates.
 func TestOptions_WithUpdates(t *testing.T) {
 	updates := &unversioned.UpdateManifest{
 		Updates: []unversioned.UpdatePackage{
@@ -61,7 +61,7 @@ func TestOptions_WithUpdates(t *testing.T) {
 	assert.Equal(t, "debian", opts.Updates.Metadata.OS.Type)
 }
 
-// Test Options with error channel
+// Test Options with error channel.
 func TestOptions_WithErrorChannel(t *testing.T) {
 	errorChannel := make(chan error, 10)
 
@@ -75,7 +75,7 @@ func TestOptions_WithErrorChannel(t *testing.T) {
 	assert.Equal(t, cap(errorChannel), cap(opts.ErrorChannel))
 }
 
-// Test Result struct initialization and validation
+// Test Result struct initialization and validation.
 func TestResult_Initialization(t *testing.T) {
 	result := &Result{
 		PackageType:     "deb",
@@ -91,7 +91,7 @@ func TestResult_Initialization(t *testing.T) {
 	assert.Equal(t, "pkg3", result.ValidatedUpdates[0].Name)
 }
 
-// Test Result with empty fields
+// Test Result with empty fields.
 func TestResult_Empty(t *testing.T) {
 	result := &Result{}
 
@@ -101,7 +101,7 @@ func TestResult_Empty(t *testing.T) {
 	assert.Nil(t, result.Result)
 }
 
-// Test Result with multiple validated updates
+// Test Result with multiple validated updates.
 func TestResult_MultipleValidatedUpdates(t *testing.T) {
 	result := &Result{
 		PackageType: "rpm",
@@ -119,7 +119,7 @@ func TestResult_MultipleValidatedUpdates(t *testing.T) {
 	assert.Equal(t, "pkg3", result.ValidatedUpdates[2].Name)
 }
 
-// Test Context struct initialization
+// Test Context struct initialization.
 func TestContext_Initialization(t *testing.T) {
 	// Test with nil values
 	patchCtx := &Context{}
@@ -128,7 +128,7 @@ func TestContext_Initialization(t *testing.T) {
 	assert.Nil(t, patchCtx.Client)
 }
 
-// Test package types commonly used
+// Test package types commonly used.
 func TestResult_CommonPackageTypes(t *testing.T) {
 	testCases := []struct {
 		name        string
@@ -149,7 +149,7 @@ func TestResult_CommonPackageTypes(t *testing.T) {
 	}
 }
 
-// Test Options with different platform architectures
+// Test Options with different platform architectures.
 func TestOptions_DifferentArchitectures(t *testing.T) {
 	architectures := []string{"amd64", "arm64", "386", "arm"}
 
@@ -165,13 +165,13 @@ func TestOptions_DifferentArchitectures(t *testing.T) {
 				},
 			}
 
-			assert.Equal(t, arch, opts.TargetPlatform.Platform.Architecture)
-			assert.Equal(t, "linux", opts.TargetPlatform.Platform.OS)
+			assert.Equal(t, arch, opts.TargetPlatform.Architecture)
+			assert.Equal(t, "linux", opts.TargetPlatform.OS)
 		})
 	}
 }
 
-// Test Options validation scenarios
+// Test Options validation scenarios.
 func TestOptions_ValidationScenarios(t *testing.T) {
 	testCases := []struct {
 		name     string
