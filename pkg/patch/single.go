@@ -159,9 +159,26 @@ func patchSingleArchImage(
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 
+	// Resolve image reference for BuildKit operations
+	// For multi-platform images with local manifests, use platform-specific reference
+	buildkitImageRef := imageName
+	if multiPlatform {
+		platformImageRef, err := buildkit.GetPlatformImageReference(image, &targetPlatform.Platform)
+		if err == nil {
+			// Successfully resolved platform-specific reference for local manifest
+			log.Debugf("Using platform-specific image reference for BuildKit: %s", platformImageRef)
+			buildkitImageRefNamed, err := reference.ParseNormalizedNamed(platformImageRef)
+			if err == nil {
+				buildkitImageRef = buildkitImageRefNamed
+			}
+		} else {
+			log.Debugf("Could not resolve platform-specific reference, using original: %v", err)
+		}
+	}
+
 	// Start the main build process
 	eg.Go(func() error {
-		return executePatchBuild(ctx, ch, bkClient, buildConfig, imageName, &targetPlatform,
+		return executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel)
 	})
 

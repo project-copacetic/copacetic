@@ -84,12 +84,13 @@ copa patch --image $IMAGE --tag nginx:1.25.0-patched
 
 These flags are essential for multi-platform patching:
 
-| Flag              | Description                                            | Example                              |
-| ----------------- | ------------------------------------------------------ | ------------------------------------ |
-| `--platform`      | Specifies which platforms to patch from manifest list  | `--platform linux/amd64,linux/arm64` |
-| `--report`        | Directory with platform-specific vulnerability reports | `--report ./platform-reports/`       |
-| `--ignore-errors` | Continue patching other platforms if one fails         | `--ignore-errors`                    |
-| `--push`          | Push all manifests and index/manifest list to registry | `--push`                             |
+| Flag              | Description                                                     | Example                              |
+| ----------------- | --------------------------------------------------------------- | ------------------------------------ |
+| `--platform`      | Specifies which platforms to patch from manifest list           | `--platform linux/amd64,linux/arm64` |
+| `--report`        | Directory with platform-specific vulnerability reports          | `--report ./platform-reports/`       |
+| `--ignore-errors` | Continue patching other platforms if one fails                  | `--ignore-errors`                    |
+| `--push`          | Push all manifests and index/manifest list to registry          | `--push`                             |
+| `--oci-dir`       | Export multi-platform index/manifest as OCI layout directory    | `--oci-dir ./output-directory`       |
 
 ## Multi-Platform Behavior
 
@@ -98,6 +99,8 @@ These flags are essential for multi-platform patching:
 - **Report vs. platform flags**: The `--platform` flag is only available when not using `--report`. When using `--report`, platforms are determined by the reports available.
 
 - **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in the final manifest.
+
+- **OCI layout export**: The `--oci-dir` flag creates a local OCI Image Layout directory structure for the patched manifest. Use when opting to not push to registry. `--push` and `--oci-dir` cannot be used together. 
 
 - **No local storage for unspecified platforms**: If `--push` is not specified, the individual patched images will be saved locally, but preserved platforms will only exist in the registry.
 

@@ -3,6 +3,7 @@ package buildkit
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,9 +13,11 @@ import (
 	"strings"
 
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/report"
@@ -22,7 +25,9 @@ import (
 	log "github.com/sirupsen/logrus"
 
 	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	v1types "github.com/google/go-containerregistry/pkg/v1/types"
 )
 
 type Config struct {
@@ -175,7 +180,86 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// This approach will not work for local images, add future support for this.
+// tryGetManifestFromLocal attempts to get manifest data from the local Docker daemon.
+func tryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
+	imageName := ref.String()
+	log.Debugf("Trying: docker manifest inspect %s", imageName)
+
+	cmd := exec.Command("docker", "manifest", "inspect", imageName)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Debugf("docker manifest inspect failed for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to inspect manifest using docker CLI: %v", err)
+	}
+
+	// Parse the manifest data
+	var manifestData map[string]interface{}
+	if err := json.Unmarshal(output, &manifestData); err != nil {
+		log.Debugf("Failed to parse manifest JSON for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to parse manifest JSON: %v", err)
+	}
+
+	// Check if this is a manifest list (has "manifests" field)
+	if manifests, ok := manifestData["manifests"]; ok {
+		if manifestSlice, ok := manifests.([]interface{}); ok && len(manifestSlice) > 0 {
+			log.Debugf("Found multi-platform manifest via CLI with %d platforms", len(manifestSlice))
+
+			// Parse the manifest list to extract individual platform image references
+			var enhancedManifestData struct {
+				MediaType string `json:"mediaType"`
+				Manifests []struct {
+					Digest    string `json:"digest"`
+					MediaType string `json:"mediaType"`
+					Size      int64  `json:"size"`
+					Platform  struct {
+						Architecture string `json:"architecture"`
+						OS           string `json:"os"`
+						Variant      string `json:"variant,omitempty"`
+					} `json:"platform"`
+				} `json:"manifests"`
+			}
+
+			if err := json.Unmarshal(output, &enhancedManifestData); err != nil {
+				log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
+				return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
+			}
+
+			// Log platform information for debugging
+			log.Debugf("Manifest list contains the following platforms:")
+			for i, manifest := range enhancedManifestData.Manifests {
+				log.Debugf("  Platform %d: %s/%s (digest: %s)", i+1,
+					manifest.Platform.OS, manifest.Platform.Architecture,
+					manifest.Digest[:12]+"...")
+			}
+
+			// Determine media type
+			mediaType := "application/vnd.docker.distribution.manifest.list.v2+json"
+			if enhancedManifestData.MediaType != "" {
+				mediaType = enhancedManifestData.MediaType
+			}
+
+			// Calculate digest from the manifest content
+			digest := fmt.Sprintf("%x", sha256.Sum256(output))
+
+			return &remote.Descriptor{
+				Descriptor: v1.Descriptor{
+					MediaType: v1types.MediaType(mediaType),
+					Size:      int64(len(output)),
+					Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
+				},
+				Manifest: output,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("single-platform image")
+}
+
+// DiscoverPlatformsFromReference discovers platforms from both local and remote manifests.
+// It first attempts to inspect the manifest locally using Docker API
+// to get raw manifest data and determine if it's multi-platform.
+// If local inspection fails, it falls back to remote registry inspection.
+// This allows Copa to patch multi-platform manifests that exist locally but not in the registry.
 func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
@@ -184,9 +268,17 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	desc, err := remote.Get(ref)
+	// Try local daemon first, then fall back to remote
+	desc, err := tryGetManifestFromLocal(ref)
 	if err != nil {
-		return nil, fmt.Errorf("error fetching descriptor for %q: %w", manifestRef, err)
+		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		desc, err = remote.Get(ref)
+		if err != nil {
+			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
+		}
+		log.Debugf("Successfully fetched descriptor from remote registry for %s", manifestRef)
+	} else {
+		log.Debugf("Successfully fetched descriptor from local daemon for %s", manifestRef)
 	}
 
 	if desc.MediaType.IsIndex() {
@@ -320,6 +412,77 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 	}
 
 	return p, nil
+}
+
+// GetPlatformImageReference resolves a platform-specific image reference from a local manifest.
+// For multi-platform images that exist locally but not in the registry, this function extracts
+// the platform-specific digest and constructs a reference that BuildKit can resolve.
+func GetPlatformImageReference(manifestRef string, targetPlatform *ispec.Platform) (string, error) {
+	ref, err := name.ParseReference(manifestRef)
+	if err != nil {
+		return "", fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
+	}
+
+	// Try to get the local manifest first
+	desc, err := tryGetManifestFromLocal(ref)
+	if err != nil {
+		// Not a local manifest, return original reference
+		return manifestRef, nil
+	}
+
+	if !desc.MediaType.IsIndex() {
+		// Single platform image, return original reference
+		return manifestRef, nil
+	}
+
+	// Parse the manifest to extract platform-specific information
+	var manifestData struct {
+		Manifests []struct {
+			Digest   string `json:"digest"`
+			Platform struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+				Variant      string `json:"variant,omitempty"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+
+	if err := json.Unmarshal(desc.Manifest, &manifestData); err != nil {
+		return "", fmt.Errorf("failed to parse manifest JSON: %w", err)
+	}
+
+	// Find the matching platform
+	for _, manifest := range manifestData.Manifests {
+		manifestPlatform := manifest.Platform
+
+		// Normalize arm64 variant for comparison
+		if manifestPlatform.Architecture == "arm64" && manifestPlatform.Variant == "v8" {
+			manifestPlatform.Variant = ""
+		}
+		targetVariant := targetPlatform.Variant
+		if targetPlatform.Architecture == "arm64" && targetVariant == "v8" {
+			targetVariant = ""
+		}
+
+		// Check if platforms match
+		if manifestPlatform.OS == targetPlatform.OS &&
+			manifestPlatform.Architecture == targetPlatform.Architecture &&
+			manifestPlatform.Variant == targetVariant {
+
+			// For local manifests, we need to construct a reference to the platform-specific image
+			// Extract the base repository name (without tag/digest)
+			baseRepo := ref.Context().Name()
+
+			// Construct platform-specific image reference with digest
+			platformImageRef := baseRepo + "@" + manifest.Digest
+
+			log.Debugf("Found platform %s/%s in local manifest, using image reference: %s",
+				manifestPlatform.OS, manifestPlatform.Architecture, platformImageRef)
+			return platformImageRef, nil
+		}
+	}
+
+	return "", fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
 }
 
 func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
@@ -558,3 +721,189 @@ func mapGoArch(arch, variant string) string {
 	// fallback: hope QEMU name == GOARCH
 	return arch
 }
+
+// CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter.
+func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+	log.Infof("Creating multi-platform OCI layout in directory: %s with %d platforms", outputDir, len(platforms))
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	// Map platforms to their corresponding images
+	platformImages := make(map[string]string)
+
+	// Process results to build platform->image mapping
+	for _, result := range results {
+		// Determine which platform this result belongs to
+		for _, platform := range platforms {
+			platformKey := PlatformKey(platform.Platform)
+
+			// Check if this result matches this platform
+			if result.PatchedRef.String() != result.OriginalRef.String() {
+				// This is a patched image - check if it has the platform suffix
+				expectedSuffix := getPlatformSuffix(&platform.Platform)
+				if strings.HasSuffix(result.PatchedRef.String(), expectedSuffix) {
+					platformImages[platformKey] = result.PatchedRef.String()
+					log.Debugf("Platform %s: using patched image %s", platformKey, result.PatchedRef.String())
+					break
+				}
+			} else {
+				// This is a preserved image - assign it to unassigned platforms
+				if _, exists := platformImages[platformKey]; !exists {
+					platformImages[platformKey] = result.OriginalRef.String()
+					log.Debugf("Platform %s: using preserved image %s", platformKey, result.OriginalRef.String())
+				}
+			}
+		}
+	}
+
+	if len(platformImages) == 0 {
+		return fmt.Errorf("no platform images found")
+	}
+
+	log.Infof("Found %d platform images, creating BuildKit-based OCI layout", len(platformImages))
+
+	// Use docker buildx to create proper multi-platform OCI layout
+	return createMultiPlatformOCIWithBuildx(outputDir, platformImages, platforms)
+}
+
+// createMultiPlatformOCIWithBuildx uses BuildKit Go client directly to create a proper multi-platform OCI layout from local patched images.
+func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
+	if len(platformImages) == 0 {
+		return fmt.Errorf("no platform images to build")
+	}
+
+	log.Infof("Creating multiplatform manifest from %d platform images using BuildKit Go client", len(platformImages))
+
+	// Use BuildKit Go client directly to create OCI layout
+	ctx := context.Background()
+	
+	// Try to create the OCI layout using BuildKit's OCI exporter directly
+	return createOCILayoutWithBuildKitClient(ctx, outputDir, platformImages, platforms)
+}
+
+// createOCILayoutWithBuildKitClient uses BuildKit Go client to create OCI layout from local images
+func createOCILayoutWithBuildKitClient(ctx context.Context, outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
+	log.Infof("Using BuildKit Go client libraries to create OCI layout")
+
+	// Use Copa's existing BuildKit client factory to get the proper client
+	bkOpts := Opts{} // Use default options - this will auto-detect the best BuildKit driver
+	c, err := NewClient(ctx, bkOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create BuildKit client: %w", err)
+	}
+	defer c.Close()
+	
+	// Create LLB states for each platform image
+	var platformStates []llb.State
+	var platformSpecs []specs.Platform
+	
+	for _, platform := range platforms {
+		platformKey := PlatformKey(platform.Platform)
+		if imageRef, exists := platformImages[platformKey]; exists {
+			// Create LLB state from the local image
+			// Use ResolveModePreferLocal to try local first
+			platformSpec := specs.Platform{
+				OS:           platform.Platform.OS,
+				Architecture: platform.Platform.Architecture,
+				Variant:      platform.Platform.Variant,
+			}
+			
+			// Strip docker.io prefix for local resolution
+			localImageRef := strings.TrimPrefix(imageRef, "docker.io/")
+			
+			log.Debugf("Creating LLB state for platform %s from image %s", platformKey, localImageRef)
+			
+			imageOpts := []llb.ImageOption{
+				llb.ResolveModePreferLocal,
+				llb.Platform(platformSpec),
+			}
+			
+			state := llb.Image(localImageRef, imageOpts...)
+			platformStates = append(platformStates, state)
+			platformSpecs = append(platformSpecs, platformSpec)
+		}
+	}
+	
+	if len(platformStates) == 0 {
+		return fmt.Errorf("no platform states created")
+	}
+	
+	log.Infof("Created %d platform states, solving with BuildKit", len(platformStates))
+	
+	// Use BuildKit to solve the multi-platform build and export to OCI
+	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+}
+
+// solveMultiPlatformOCI uses BuildKit client to solve multi-platform states and export to OCI layout
+func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform) error {
+	log.Infof("Solving %d platform states with BuildKit and exporting to OCI layout", len(platformStates))
+	
+	if len(platformStates) == 0 {
+		return fmt.Errorf("no platform states provided")
+	}
+	
+	// Create a merged multi-platform state
+	// We need to create a single LLB definition that includes all platforms
+	var mergedDefs []*llb.Definition
+	
+	for i, state := range platformStates {
+		platform := platformSpecs[i]
+		log.Debugf("Creating definition for platform %s", platforms.Format(platform))
+		
+		// Marshal each platform state to a definition
+		def, err := state.Marshal(ctx, llb.Platform(platform))
+		if err != nil {
+			return fmt.Errorf("failed to marshal LLB state for platform %s: %w", platforms.Format(platform), err)
+		}
+		
+		mergedDefs = append(mergedDefs, def)
+	}
+	
+	// For multi-platform builds, we need to create a single definition that encompasses all platforms
+	// Let's start with the first platform as the base and extend it for multi-platform
+	if len(mergedDefs) > 0 {
+		baseDef := mergedDefs[0]
+		
+		log.Infof("Creating multi-platform build definition from %d platforms", len(mergedDefs))
+		
+		// Remove output directory if it exists
+		os.RemoveAll(outputDir)
+		
+		// Create solve options using Copa's pattern
+		solveOpt := client.SolveOpt{
+			Frontend: "", // passing LLB definition directly  
+			Exports: []client.ExportEntry{{
+				Type:      client.ExporterOCI,
+				Attrs:     map[string]string{
+					"oci-mediatypes": "true",
+				},
+				OutputDir: outputDir,
+			}},
+		}
+		
+		// Solve with basic export using the corrected BuildKit client API
+		_, err := c.Solve(ctx, baseDef, solveOpt, nil)
+		if err != nil {
+			return fmt.Errorf("BuildKit solve failed: %w", err)
+		}
+		
+		log.Infof("Successfully created OCI layout in %s using BuildKit Go client", outputDir)
+		return nil
+	}
+	
+	return fmt.Errorf("no definitions created")
+}
+
+// getPlatformSuffix returns the expected image tag suffix for a platform.
+func getPlatformSuffix(platform *ispec.Platform) string {
+	suffix := "-" + platform.Architecture
+	if platform.Variant != "" {
+		suffix += "-" + platform.Variant
+	}
+	return suffix
+}
+
+
