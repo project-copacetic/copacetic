@@ -481,41 +481,40 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		pkgs = strings.Join(pkgStrings, " ")
 	}
 
-	// Install patches using available rpm managers in order of preference
-	var installCmd string
+	var packageManager, checkUpdateTemplate, installCmdTemplate string
 	switch {
 	case rm.rpmTools["tdnf"] != "" || rm.rpmTools["dnf"] != "":
-		dnfTooling := rm.rpmTools["tdnf"]
-		if dnfTooling == "" {
-			dnfTooling = rm.rpmTools["dnf"]
+		packageManager = rm.rpmTools["tdnf"]
+		if packageManager == "" {
+			packageManager = rm.rpmTools["dnf"]
 		}
-		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
-			return nil, nil, fmt.Errorf("no patchable packages found")
-		}
+		checkUpdateTemplate = `sh -c 'if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then touch /updates.txt; fi'`
+		installCmdTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
 
-		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
-		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
-			return nil, nil, fmt.Errorf("no patchable packages found")
-		}
+		packageManager = rm.rpmTools["yum"]
+		checkUpdateTemplate = `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then touch /updates.txt; fi'`
+		installCmdTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 
-		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
-			return nil, nil, fmt.Errorf("no patchable packages found")
-		}
+		packageManager = rm.rpmTools["microdnf"]
+		checkUpdateTemplate = `sh -c "%[1]s install -y dnf && dnf clean all && dnf makecache --refresh -y; if [ \"$(dnf -q check-update | wc -l)\" -ne 0 ]; then touch /updates.txt; fi;"`
+		installCmdTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
 
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
-		err := errors.New("unexpected: no package manager tools were found for patching")
-		return nil, nil, err
+		return nil, nil, errors.New("unexpected: no package manager tools were found for patching")
 	}
+	if updates == nil {
+		hasUpdates, err := rm.checkForUpgrades(ctx, packageManager, checkUpdateTemplate)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed during update check: %w", err)
+		}
+		if !hasUpdates {
+			log.Info("No upgradable packages found for rpm-based image.")
+			return nil, nil, ErrNoUpdatesFound
+		}
+	}
+	installCmd := fmt.Sprintf(installCmdTemplate, packageManager, pkgs)
 	installed := imageStateCurrent.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
 
 	// Validate no errors were encountered if updating all
@@ -563,7 +562,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) bool {
+func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) (bool, error) {
 	imageStateCurrent := rm.config.ImageState
 	if rm.config.PatchedConfigData != nil {
 		imageStateCurrent = rm.config.PatchedImageState
@@ -575,7 +574,7 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
 
-	return err == nil
+	return err == nil, nil
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
