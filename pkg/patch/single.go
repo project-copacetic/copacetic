@@ -208,10 +208,16 @@ func patchSingleArchImage(
 		}
 	}
 
-	// Start the main build process
+	// Start the main build process and capture preserved states
+	var patchResult *Result
 	eg.Go(func() error {
-		return executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+		result, err := executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel)
+		if err != nil {
+			return err
+		}
+		patchResult = result
+		return nil
 	})
 
 	// Display progress
@@ -233,8 +239,8 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	// Get patched descriptor and add annotations
-	return createPatchResult(imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
+	// Get patched descriptor and add annotations, including preserved states
+	return createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -358,9 +364,9 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 	return pipeR.Close()
 }
 
-// createPatchResult creates the final patch result with descriptor and annotations.
-func createPatchResult(imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, image, loaderType string,
+// createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
+func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
+	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -411,11 +417,19 @@ func createPatchResult(imageName reference.Named, patchedImageName string,
 		return nil, fmt.Errorf("failed to parse patched image name %s: %w", patchedImageName, err)
 	}
 
-	return &types.PatchResult{
+	result := &types.PatchResult{
 		OriginalRef: imageName,
 		PatchedRef:  patchedRef,
 		PatchedDesc: patchedDesc,
-	}, nil
+	}
+
+	// Include preserved BuildKit states if available
+	if patchResult != nil {
+		result.PatchedState = patchResult.PatchedState
+		result.ConfigData = patchResult.ConfigData
+	}
+
+	return result, nil
 }
 
 // executePatchBuild executes the actual patch build process.
@@ -431,9 +445,11 @@ func executePatchBuild(
 	ignoreError bool,
 	reportFile, _, format, output, patchedImageName string,
 	buildChannel chan *client.SolveStatus,
-) error {
+) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
+	var patchResult *Result // Store the patch result with preserved states
+
 	if updates != nil {
 		// create a new manifest with the successfully patched packages
 		validatedManifest = &unversioned.UpdateManifest{
@@ -459,13 +475,13 @@ func executePatchBuild(
 		}
 
 		patchOpts := &Options{
-			ImageName:        imageName.String(),
-			TargetPlatform:   targetPlatform,
-			Updates:          updates,
-			ValidatedUpdates: validatedManifest,
-			WorkingFolder:    workingFolder,
-			IgnoreError:      ignoreError,
-			ErrorChannel:     ch,
+			ImageName:      imageName.String(),
+			TargetPlatform: targetPlatform,
+			Updates:        updates,
+			WorkingFolder:  workingFolder,
+			IgnoreError:    ignoreError,
+			ErrorChannel:   ch,
+			ReturnState:    false, // Always solve for Docker export
 		}
 
 		// Execute the core patching logic
@@ -474,7 +490,10 @@ func executePatchBuild(
 			return nil, err
 		}
 
-		// Pass pkgType to the outside scope
+		// Store the result with preserved states for later use
+		patchResult = result
+
+		// Update validation data for VEX document generation
 		pkgType = result.PackageType
 
 		// Update validation data for VEX document generation
@@ -498,12 +517,12 @@ func executePatchBuild(
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
 				ch <- err
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return err
+	return patchResult, err
 }
 
 // shouldIncludeOSUpdates returns true if OS updates should be included based on package types.
