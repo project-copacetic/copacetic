@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -12,9 +13,7 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 
-	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
-	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -23,33 +22,17 @@ import (
 // BuildPatchedImage builds a patched image using the Copa patching logic.
 // This reuses the same components as the CLI to ensure consistency.
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
-	// Create progress group for the overall patching process
-	patchGroup := llb.ProgressGroup("copa-patch", "Installing security updates", false)
-	
-	// Initialize buildkit configuration with the frontend client
-	var imageState llb.State
-	if platform != nil {
-		// Platform-specific image
-		imageState = llb.Image(opts.Image, llb.Platform(*platform), llb.WithCustomName("Loading base image"), patchGroup)
-	} else {
-		// Default platform
-		imageState = llb.Image(opts.Image, llb.WithCustomName("Loading base image"), patchGroup)
-	}
-
-	bkConfig := &buildkit.Config{
-		Client:     f.client,
-		ImageState: imageState,
-	}
+	// Create package manager instance
+	config, pm, err := common.SetupBuildkitConfigAndManager(ctx, f.client, opts.Image, platform, "", nil)
 
 	// Parse the vulnerability report if provided
-	var vr *unversioned.UpdateManifest
-	if opts.Report != "" {
-		reportPath := opts.Report
-		bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Info("About to parse vulnerability report")
-
-		// If report is a directory and we have a platform, look for platform-specific report
+	var um *unversioned.UpdateManifest
+	reportPath := opts.Report
+	if reportPath != "" {
+		// For platform-specific builds, adjust the report path
 		if platform != nil {
-			if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
+			// Check if the report path is a directory with platform-specific files
+			if fi, err := os.Stat(reportPath); err == nil && fi.IsDir() {
 				// Build platform-specific filename
 				platformFile := fmt.Sprintf("%s-%s", platform.OS, platform.Architecture)
 				if platform.Variant != "" {
@@ -57,48 +40,42 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 				}
 				platformFile += ".json"
 
-				reportPath = filepath.Join(opts.Report, platformFile)
-
+				specificReportPath := filepath.Join(reportPath, platformFile)
 				// Check if platform-specific report exists
-				if _, err := os.Stat(reportPath); os.IsNotExist(err) {
-					bklog.G(ctx).WithField("component", "copa-frontend").WithField("platform", platformFile).Warn("No report found for platform")
-					// Return original image if no report for this platform
-					return bkConfig.ImageState, nil
+				if _, err := os.Stat(specificReportPath); err == nil {
+					reportPath = specificReportPath
+				} else {
+					bklog.G(ctx).WithField("component", "copa-frontend").
+						WithField("platform", platformFile).
+						Warn("No report found for platform, skipping patch")
+					return config.ImageState, nil
 				}
 			}
 		}
 
+		bklog.G(ctx).WithField("component", "copa-frontend").
+			WithField("reportPath", reportPath).
+			Info("About to parse vulnerability report")
+
 		var err error
-		vr, err = report.TryParseScanReport(reportPath, opts.Scanner)
+		um, err = report.TryParseScanReport(reportPath, opts.Scanner)
 		if err != nil {
 			return llb.State{}, errors.Wrapf(err, "failed to parse vulnerability report from path: %s", reportPath)
 		}
 	}
 
-	// Detect OS from the image
-	osType, osVersion, err := f.detectOSFromImage(ctx, &bkConfig.ImageState, patchGroup)
-	if err != nil {
-		return llb.State{}, errors.Wrap(err, "failed to detect OS from image")
-	}
-
-	// Create package manager instance
-	pm, err := pkgmgr.GetPackageManager(osType, osVersion, bkConfig, "/tmp/copa-work")
-	if err != nil {
-		return llb.State{}, errors.Wrap(err, "failed to create package manager")
-	}
-
 	// Check if there are packages to update
-	if vr != nil && len(vr.Updates) == 0 {
+	if um != nil && len(um.Updates) == 0 {
 		bklog.G(ctx).WithField("component", "copa-frontend").Info("No packages to update, returning original image")
-		return bkConfig.ImageState, nil
+		return config.ImageState, nil
 	}
 
 	// Apply package updates using the same logic as CLI
-	patchedState, _, err := pm.InstallUpdates(ctx, vr, opts.IgnoreError)
+	patchedState, _, err := pm.InstallUpdates(ctx, um, opts.IgnoreError)
 	if err != nil {
 		if opts.IgnoreError {
 			bklog.G(ctx).WithError(err).WithField("component", "copa-frontend").Warn("Failed to install updates (ignored)")
-			return bkConfig.ImageState, nil
+			return config.ImageState, nil
 		}
 		return llb.State{}, errors.Wrap(err, "failed to install package updates")
 	}
@@ -106,50 +83,109 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	return *patchedState, nil
 }
 
-// detectOSFromImage detects the OS type and version from an image state.
-func (f *Frontend) detectOSFromImage(ctx context.Context, imageState *llb.State, patchGroup llb.ConstraintsOpt) (string, string, error) {
-	if imageState == nil {
-		return "", "", errors.New("image state is nil")
+// extractReportFromContext extracts a report file or directory from the BuildKit context.
+// It automatically detects whether the report path is a file or directory and extracts accordingly.
+// Returns the path to the extracted temp file/directory.
+func extractReportFromContext(ctx context.Context, client gwclient.Client, reportPath string) (string, error) {
+	if reportPath == "" {
+		return "", nil
 	}
-	// Create a temporary state to read os-release
-	osReleaseState := imageState.File(
-		llb.Copy(imageState, "/etc/os-release", "/tmp/os-release", &llb.CopyInfo{
-			CreateDestPath: true,
-		}),
-		llb.WithCustomName("Detecting OS and packages"), patchGroup,
+
+	bklog.G(ctx).WithField("component", "copa-frontend").
+		WithField("reportPath", reportPath).
+		Info("Extracting report from context")
+
+	// Create the local state to access the report context
+	localState := llb.Local("report",
+		llb.SharedKeyHint("local"),
+		llb.WithCustomName("Loading vulnerability report"),
+		llb.FollowPaths([]string{"."}),
 	)
 
-	// Marshal and solve to read the file
-	def, err := osReleaseState.Marshal(ctx)
+	def, err := localState.Marshal(ctx)
 	if err != nil {
-		return "", "", err
+		return "", errors.Wrap(err, "failed to marshal local state")
 	}
 
-	res, err := f.client.Solve(ctx, gwclient.SolveRequest{
-		Definition: def.ToPB(),
-	})
+	res, err := client.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB()})
 	if err != nil {
-		// If os-release doesn't exist, default to linux
-		return "linux", "", nil
+		return "", errors.Wrap(err, "failed to solve local state")
 	}
 
 	ref, err := res.SingleRef()
 	if err != nil {
-		return "", "", err
+		return "", errors.Wrap(err, "failed to get single ref for local state")
 	}
 
-	osReleaseData, err := ref.ReadFile(ctx, gwclient.ReadRequest{
-		Filename: "/tmp/os-release",
+	// First, try to read as a single file
+	data, fileErr := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: reportPath})
+	if fileErr == nil && len(data) > 0 {
+		// It's a file - write to temp file
+		tmpDir, err := os.MkdirTemp("/", "copa-frontend-report-")
+		if err != nil {
+			return "", errors.Wrap(err, "failed to create temp dir for report file")
+		}
+
+		// Preserve the original filename for proper parsing
+		filename := filepath.Base(reportPath)
+		if filename == "" || filename == "." || filename == "/" {
+			filename = "report.json"
+		}
+		tmpFile := filepath.Join(tmpDir, filename)
+
+		if err := os.WriteFile(tmpFile, data, 0o600); err != nil {
+			return "", errors.Wrap(err, "failed to write report to temp file")
+		}
+
+		bklog.G(ctx).WithField("component", "copa-frontend").
+			WithField("tempFile", tmpFile).
+			Debug("Extracted report file from context")
+
+		return tmpFile, nil
+	}
+
+	// If reading as file failed, try as directory
+	entries, dirErr := ref.ReadDir(ctx, gwclient.ReadDirRequest{
+		Path:           reportPath,
+		IncludePattern: "*.json",
 	})
-	if err != nil {
-		return "linux", "", nil
+
+	if dirErr == nil && len(entries) > 0 {
+		// It's a directory - extract all JSON files
+		tmpDir, err := os.MkdirTemp("/", "copa-frontend-reports-")
+		if err != nil {
+			return "", errors.Wrap(err, "failed to create temp dir for report directory")
+		}
+
+		// Extract each JSON file
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.GetPath(), ".json") {
+				filePath := filepath.Join(reportPath, filepath.Base(entry.GetPath()))
+				fileData, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: filePath})
+				if err != nil {
+					bklog.G(ctx).WithError(err).WithField("file", filePath).Warn("Failed to read report file from directory")
+					continue
+				}
+
+				tmpFile := filepath.Join(tmpDir, filepath.Base(entry.GetPath()))
+				if err := os.WriteFile(tmpFile, fileData, 0o600); err != nil {
+					bklog.G(ctx).WithError(err).WithField("file", tmpFile).Warn("Failed to write report file")
+					continue
+				}
+			}
+		}
+
+		bklog.G(ctx).WithField("component", "copa-frontend").
+			WithField("tempDir", tmpDir).
+			WithField("fileCount", len(entries)).
+			Debug("Extracted report directory from context")
+
+		return tmpDir, nil
 	}
 
-	// Use the common OS detection logic
-	osInfo, err := common.GetOSInfo(ctx, osReleaseData)
-	if err != nil {
-		return "", "", errors.Wrap(err, "failed to parse OS info")
+	// If both failed, return the more informative error
+	if fileErr != nil {
+		return "", errors.Wrapf(fileErr, "failed to read report from context: %s", reportPath)
 	}
-
-	return osInfo.Type, osInfo.Version, nil
+	return "", errors.Wrapf(dirErr, "failed to read report directory from context: %s", reportPath)
 }

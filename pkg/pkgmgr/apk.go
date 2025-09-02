@@ -163,12 +163,18 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		imageStateCurrent = am.config.PatchedImageState
 	}
 
-	apkUpdated := imageStateCurrent.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
+	apkUpdated := imageStateCurrent.Run(
+		llb.Shlex("apk update"), 
+		llb.WithProxy(utils.GetProxy()), 
+		llb.IgnoreCache,
+		llb.WithCustomName("Updating package database")).Root()
 
 	// If updating all packages, check for upgrades before proceeding with patch
 	if updates == nil {
 		checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" || exit 1"`
-		apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+		apkUpdated = apkUpdated.Run(
+			llb.Shlex(checkUpgradable),
+			llb.WithCustomName("Checking for available updates")).Root()
 	}
 
 	var apkInstalled llb.State
@@ -183,7 +189,10 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 		addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
-		apkAdded := apkUpdated.Run(llb.Shlex(addCmd), llb.WithProxy(utils.GetProxy())).Root()
+		apkAdded := apkUpdated.Run(
+			llb.Shlex(addCmd), 
+			llb.WithProxy(utils.GetProxy()),
+			llb.WithCustomName(fmt.Sprintf("Installing %d security updates", len(pkgStrings)))).Root()
 
 		// Install all requested update packages without specifying the version. This works around:
 		//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -191,7 +200,10 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		// Note that this keeps the log files from the operation, which we can consider removing as a size optimization in the future.
 		const apkInstallTemplate = `apk upgrade --no-cache %s`
 		installCmd := fmt.Sprintf(apkInstallTemplate, strings.Join(pkgStrings, " "))
-		apkInstalled = apkAdded.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+		apkInstalled = apkAdded.Run(
+			llb.Shlex(installCmd), 
+			llb.WithProxy(utils.GetProxy()),
+			llb.WithCustomName(fmt.Sprintf("Upgrading %d security updates", len(pkgStrings)))).Root()
 
 		// Write updates-manifest to host for post-patch validation
 		const outputResultsTemplate = `sh -c 'apk info --installed -v %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: apk info --installed returned $?"; fi'`
@@ -207,11 +219,16 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 	} else {
 		// if updates is not specified, update all packages
 		installCmd := `output=$(apk upgrade --no-cache 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi`
-		apkInstalled = apkUpdated.Run(buildkit.Sh(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+		apkInstalled = apkUpdated.Run(
+			buildkit.Sh(installCmd), 
+			llb.WithProxy(utils.GetProxy()),
+			llb.WithCustomName("Upgrading all packages")).Root()
 
 		// Validate no errors were encountered if updating all
 		if !ignoreErrors {
-			apkInstalled = apkInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+			apkInstalled = apkInstalled.Run(
+				buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"),
+				llb.WithCustomName("Validating package updates")).Root()
 		}
 	}
 

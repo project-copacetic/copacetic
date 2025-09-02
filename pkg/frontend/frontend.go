@@ -12,6 +12,7 @@ import (
 	"github.com/moby/buildkit/util/bklog"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
@@ -52,19 +53,32 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 
 	bklog.G(ctx).WithField("component", "copa-frontend").Debug("Configuration parsed successfully")
 
-	// Clean up temporary report file if created
+	// Check if report is a directory by examining the extracted temp path
+	// The extractReportFromContext function creates different temp paths:
+	// - copa-frontend-report-* for single files
+	// - copa-frontend-reports-* for directories
 	if opts.Report != "" {
-		defer func() {
-			// Attempt cleanup, but don't fail the build if cleanup fails
-			_ = cleanupTempFile(opts.Report)
-		}()
-	}
-
-	// Check if report is a directory - if so, handle as multiplatform
-	if opts.Report != "" {
+		// Check if it's a directory by looking for platform-specific JSON files
 		if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
-			bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportDir", opts.Report).Info("Detected report directory, using multiplatform patching")
-			return f.buildMultiarch(ctx, opts)
+			// Try to discover platforms from the extracted directory
+			entries, err := os.ReadDir(opts.Report)
+			if err == nil {
+				hasPlatformFiles := false
+				for _, entry := range entries {
+					if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
+						// Check if filename matches platform pattern (e.g., linux-amd64.json)
+						name := strings.TrimSuffix(entry.Name(), ".json")
+						if strings.Contains(name, "-") {
+							hasPlatformFiles = true
+							break
+						}
+					}
+				}
+				if hasPlatformFiles {
+					bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportDir", opts.Report).Info("Detected report directory with platform files, using multiplatform patching")
+					return f.buildMultiarch(ctx, opts)
+				}
+			}
 		}
 	}
 
@@ -108,11 +122,16 @@ func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gw
 	// If report is a directory, discover platforms from report files
 	if opts.Report != "" {
 		if fi, err := os.Stat(opts.Report); err == nil && fi.IsDir() {
-			discoveredPlatforms, err := discoverPlatformsFromReportDirectory(opts.Report)
+			patchPlatforms, err := buildkit.DiscoverPlatformsFromReport(opts.Report, opts.Scanner)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to discover platforms from report directory")
 			}
-			targetPlatforms = discoveredPlatforms
+			
+			// Convert PatchPlatform to ocispecs.Platform
+			for _, pp := range patchPlatforms {
+				targetPlatforms = append(targetPlatforms, pp.Platform)
+			}
+			
 			bklog.G(ctx).WithField("component", "copa-frontend").WithField("platforms", targetPlatforms).Info("Discovered platforms from report directory")
 		}
 	}
@@ -176,59 +195,4 @@ func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gw
 	res.AddMeta(exptypes.ExporterPlatformsKey, dt)
 
 	return res, nil
-}
-
-// cleanupTempFile removes a temporary file or directory if it was created by the frontend.
-func cleanupTempFile(filePath string) error {
-	// Clean up temp files
-	if strings.Contains(filePath, "copa-report-") && strings.HasSuffix(filePath, ".json") {
-		return os.Remove(filePath)
-	}
-	// Clean up temp directories
-	if strings.Contains(filePath, "copa-reports-") {
-		return os.RemoveAll(filePath)
-	}
-	return nil // Don't remove files/directories we didn't create
-}
-
-// discoverPlatformsFromReportDirectory discovers platforms from report files in a directory.
-func discoverPlatformsFromReportDirectory(reportDir string) ([]ocispecs.Platform, error) {
-	var platforms []ocispecs.Platform
-
-	entries, err := os.ReadDir(reportDir)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to read report directory: %s", reportDir)
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-
-		// Extract platform from filename
-		// Expected format: <os>-<arch>[-<variant>].json
-		filename := strings.TrimSuffix(entry.Name(), ".json")
-		parts := strings.Split(filename, "-")
-
-		if len(parts) < 2 {
-			continue // Skip files that don't match expected format
-		}
-
-		platform := ocispecs.Platform{
-			OS:           parts[0],
-			Architecture: parts[1],
-		}
-
-		if len(parts) > 2 {
-			platform.Variant = strings.Join(parts[2:], "-")
-		}
-
-		platforms = append(platforms, platform)
-	}
-
-	if len(platforms) == 0 {
-		return nil, errors.Errorf("no valid platform report files found in directory: %s", reportDir)
-	}
-
-	return platforms, nil
 }
