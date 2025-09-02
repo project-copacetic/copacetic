@@ -7,12 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
 	"github.com/containerd/platforms"
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -20,6 +24,7 @@ import (
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
@@ -757,71 +762,130 @@ func CreateOCILayoutFromResults(ctx context.Context, outputDir string, results [
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Map platforms to their corresponding images
-	platformImages := make(map[string]string)
+	// Check if we have BuildKit states available
+	hasStates := false
 
-	// Process results to build platform->image mapping
 	for _, result := range results {
-		// Determine which platform this result belongs to
-		for _, platform := range platforms {
-			platformKey := PlatformKey(platform.Platform)
+		if result.PatchedState != nil {
+			hasStates = true
+			break
+		}
+	}
 
-			// Check if this result matches this platform
-			if result.PatchedRef.String() != result.OriginalRef.String() {
-				// This is a patched image - check if it has the platform suffix
-				expectedSuffix := getPlatformSuffix(platform.Platform)
+	if hasStates {
+		log.Info("Using BuildKit states directly for OCI export")
+		return createOCILayoutFromStates(outputDir, results, platforms)
+	}
+
+	return fmt.Errorf("no BuildKit states available for OCI export, cannot proceed")
+}
+
+// createOCILayoutFromStates creates OCI layout directly from BuildKit states
+func createOCILayoutFromStates(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+	log.Info("Creating OCI layout from preserved BuildKit states and preserved platforms")
+
+	// Separate patched and preserved platforms
+	var patchedPlatforms []types.PatchPlatform
+	var preservedPlatforms []types.PatchPlatform
+
+	for _, platform := range platforms {
+		if platform.ShouldPreserve {
+			preservedPlatforms = append(preservedPlatforms, platform)
+		} else {
+			patchedPlatforms = append(patchedPlatforms, platform)
+		}
+	}
+
+	log.Infof("Found %d patched platforms and %d preserved platforms", len(patchedPlatforms), len(preservedPlatforms))
+
+	// Build platform states from results for patched platforms only
+	var platformStates []llb.State
+	var platformSpecs []specs.Platform
+	var platformConfigs [][]byte
+
+	// Map results by platform for easy lookup
+	resultMap := make(map[string]*types.PatchResult)
+	for i, result := range results {
+		// Find the platform for this result
+		for _, platform := range patchedPlatforms {
+			platformKey := PlatformKey(platform.Platform)
+			// Match by patched reference suffix or exact match
+			if result.PatchedState != nil {
+				expectedSuffix := getPlatformSuffix(&platform.Platform)
 				if strings.HasSuffix(result.PatchedRef.String(), expectedSuffix) {
-					platformImages[platformKey] = result.PatchedRef.String()
-					log.Debugf("Platform %s: using patched image %s", platformKey, result.PatchedRef.String())
+					resultMap[platformKey] = &results[i]
 					break
-				}
-			} else {
-				// This is a preserved image - assign it to unassigned platforms
-				if _, exists := platformImages[platformKey]; !exists {
-					platformImages[platformKey] = result.OriginalRef.String()
-					log.Debugf("Platform %s: using preserved image %s", platformKey, result.OriginalRef.String())
 				}
 			}
 		}
 	}
 
-	if len(platformImages) == 0 {
-		return fmt.Errorf("no platform images found")
+	// Create states for each patched platform
+	for _, platform := range patchedPlatforms {
+		platformKey := PlatformKey(platform.Platform)
+		if result, exists := resultMap[platformKey]; exists && result.PatchedState != nil {
+			platformStates = append(platformStates, *result.PatchedState)
+			platformSpecs = append(platformSpecs, platform.Platform)
+			platformConfigs = append(platformConfigs, result.ConfigData)
+		}
 	}
 
-	log.Infof("Found %d platform images, creating BuildKit-based OCI layout", len(platformImages))
-
-	// Use docker buildx to create proper multi-platform OCI layout
-	return createMultiPlatformOCIWithBuildx(outputDir, platformImages, platforms)
-}
-
-// createMultiPlatformOCIWithBuildx uses BuildKit Go client directly to create a proper multi-platform OCI layout from local patched images.
-func createMultiPlatformOCIWithBuildx(outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
-	if len(platformImages) == 0 {
-		return fmt.Errorf("no platform images to build")
+	if len(platformStates) == 0 && len(preservedPlatforms) == 0 {
+		return fmt.Errorf("no BuildKit states or preserved platforms found")
 	}
 
-	log.Infof("Creating multiplatform manifest from %d platform images using BuildKit Go client", len(platformImages))
+	// Handle different layout creation scenarios
+	if len(preservedPlatforms) > 0 && len(platformStates) > 0 {
+		log.Infof("Creating mixed OCI layout with %d patched and %d preserved platforms", len(platformStates), len(preservedPlatforms))
+		return createMixedOCILayout(outputDir, platforms, platformStates, platformSpecs, preservedPlatforms)
+	} else if len(platformStates) > 0 {
+		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
+	} else if len(preservedPlatforms) > 0 {
+		log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
+		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms)
+	}
 
-	// Use BuildKit Go client directly to create OCI layout
+	log.Infof("Creating OCI layout from %d BuildKit states", len(platformStates))
+
+	// Use BuildKit Go client to create OCI layout
 	ctx := context.Background()
+<<<<<<< HEAD
 
 	// Try to create the OCI layout using BuildKit's OCI exporter directly
 	return createOCILayoutWithBuildKitClient(ctx, outputDir, platformImages, platforms)
 }
+=======
+>>>>>>> 55fc7e49 (this works without preserving)
 
-// createOCILayoutWithBuildKitClient uses BuildKit Go client to create OCI layout from local images
-func createOCILayoutWithBuildKitClient(ctx context.Context, outputDir string, platformImages map[string]string, platforms []types.PatchPlatform) error {
-	log.Infof("Using BuildKit Go client libraries to create OCI layout")
+	// Try buildx driver first
+	h, err := connhelpers.Buildx(&url.URL{})
+	if err != nil {
+		log.WithError(err).Debug("Could not get buildx helper")
+	} else {
+		c, err := client.New(ctx, "", client.WithContextDialer(h.ContextDialer))
+		if err == nil {
+			err = ValidateClient(ctx, c)
+			if err == nil {
+				log.Debug("Using buildx driver for OCI layout export")
+				defer c.Close()
 
-	// Use Copa's existing BuildKit client factory to get the proper client
-	bkOpts := Opts{} // Use default options - this will auto-detect the best BuildKit driver
+				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+			}
+			c.Close()
+		}
+		log.WithError(err).Debug("Buildx driver validation failed")
+	}
+
+	// Fall back to auto-detection
+	log.Debug("Falling back to auto-detection for BuildKit client")
+	bkOpts := Opts{}
 	c, err := NewClient(ctx, bkOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create BuildKit client: %w", err)
 	}
 	defer c.Close()
 
+<<<<<<< HEAD
 	// Create LLB states for each platform image
 	var platformStates []llb.State
 	var platformSpecs []specs.Platform
@@ -860,17 +924,23 @@ func createOCILayoutWithBuildKitClient(ctx context.Context, outputDir string, pl
 	log.Infof("Created %d platform states, solving with BuildKit", len(platformStates))
 
 	// Use BuildKit to solve the multi-platform build and export to OCI
+=======
+>>>>>>> 55fc7e49 (this works without preserving)
 	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
 }
 
 // solveMultiPlatformOCI uses BuildKit client to solve multi-platform states and export to OCI layout
 func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform) error {
+<<<<<<< HEAD
 	log.Infof("Solving %d platform states with BuildKit and exporting to OCI layout", len(platformStates))
 
+=======
+>>>>>>> 55fc7e49 (this works without preserving)
 	if len(platformStates) == 0 {
 		return fmt.Errorf("no platform states provided")
 	}
 
+<<<<<<< HEAD
 	// Create a merged multi-platform state
 	// We need to create a single LLB definition that includes all platforms
 	var mergedDefs []*llb.Definition
@@ -901,26 +971,350 @@ func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir stri
 		// Create solve options using Copa's pattern
 		solveOpt := client.SolveOpt{
 			Frontend: "", // passing LLB definition directly
+=======
+	if len(platformStates) != len(platformSpecs) {
+		return fmt.Errorf("mismatch between states (%d) and platform specs (%d)", len(platformStates), len(platformSpecs))
+	}
+
+	// Remove output directory if it exists
+	os.RemoveAll(outputDir)
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	if len(platformStates) == 1 {
+		// Single platform case - use output function to avoid diffcopy issues
+		return solveSinglePlatformOCI(ctx, c, outputDir, platformStates[0], platformSpecs[0])
+	}
+
+	// Multi-platform case - solve each platform and combine
+	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs)
+}
+
+// solveSinglePlatformOCI handles single platform OCI export using output function
+func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir string, state llb.State, platformSpec specs.Platform) error {
+	// Create solve options with output function to avoid diffcopy issues
+	solveOpt := client.SolveOpt{
+		Exports: []client.ExportEntry{{
+			Type: client.ExporterOCI,
+			Attrs: map[string]string{
+				"oci-mediatypes": "true",
+				"buildinfo":      "false",
+			},
+			Output: func(attrs map[string]string) (io.WriteCloser, error) {
+				tarPath := filepath.Join(outputDir, "image.tar")
+				return os.Create(tarPath)
+			},
+		}},
+	}
+
+	// Marshal the state with platform constraint
+	def, err := state.Marshal(ctx, llb.Platform(platformSpec))
+	if err != nil {
+		return fmt.Errorf("failed to marshal LLB state: %w", err)
+	}
+
+	// Solve to tar
+	_, err = c.Solve(ctx, def, solveOpt, nil)
+	if err != nil {
+		return fmt.Errorf("BuildKit solve failed: %w", err)
+	}
+
+	// Extract tar to OCI layout
+	tarPath := filepath.Join(outputDir, "image.tar")
+	if err := extractTarToDirectory(tarPath, outputDir); err != nil {
+		return fmt.Errorf("failed to extract OCI layout: %w", err)
+	}
+
+	// Clean up tar file
+	os.Remove(tarPath)
+
+	// Fix platform information in the extracted OCI layout
+	if err := fixSinglePlatformInfo(outputDir, platformSpec); err != nil {
+		return fmt.Errorf("failed to fix platform information: %w", err)
+	}
+
+	return nil
+}
+
+// fixSinglePlatformInfo corrects the platform information in a single-platform OCI layout
+func fixSinglePlatformInfo(outputDir string, platformSpec specs.Platform) error {
+	indexPath := filepath.Join(outputDir, "index.json")
+	indexData, err := os.ReadFile(indexPath)
+	if err != nil {
+		return fmt.Errorf("failed to read index.json: %w", err)
+	}
+
+	var index map[string]interface{}
+	if err := json.Unmarshal(indexData, &index); err != nil {
+		return fmt.Errorf("failed to parse index.json: %w", err)
+	}
+
+	// Create correct platform info
+	targetPlatform := map[string]interface{}{
+		"os":           platformSpec.OS,
+		"architecture": platformSpec.Architecture,
+	}
+
+	if platformSpec.Variant != "" {
+		targetPlatform["variant"] = platformSpec.Variant
+	}
+
+	// Update platform information in all manifests
+	if manifests, ok := index["manifests"].([]interface{}); ok {
+		for _, manifest := range manifests {
+			if manifestMap, ok := manifest.(map[string]interface{}); ok {
+				manifestMap["platform"] = targetPlatform
+			}
+		}
+	}
+
+	// Write back the corrected index
+	indexJSON, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal corrected index: %w", err)
+	}
+
+	if err := os.WriteFile(indexPath, indexJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write corrected index.json: %w", err)
+	}
+
+	return nil
+}
+
+// solveAndCombineAllPlatforms solves each platform and combines them into one OCI layout
+func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform) error {
+	// Create temporary directory for platform tars
+	tempDir, err := os.MkdirTemp("", "copa-platforms-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	var platformTars []string
+
+	// Solve each platform to its own tar file using output function
+	for i := range platformSpecs {
+		platformTarPath := filepath.Join(tempDir, fmt.Sprintf("platform-%d.tar", i))
+		platformTars = append(platformTars, platformTarPath)
+
+		// Create solve options with output function
+		platformSolveOpt := client.SolveOpt{
+>>>>>>> 55fc7e49 (this works without preserving)
 			Exports: []client.ExportEntry{{
 				Type: client.ExporterOCI,
 				Attrs: map[string]string{
 					"oci-mediatypes": "true",
+					"buildinfo":      "false",
 				},
-				OutputDir: outputDir,
+				Output: func(attrs map[string]string) (io.WriteCloser, error) {
+					return os.Create(platformTarPath)
+				},
 			}},
 		}
 
+<<<<<<< HEAD
 		// Solve with basic export using the corrected BuildKit client API
 		_, err := c.Solve(ctx, baseDef, solveOpt, nil)
+=======
+		// Marshal and solve this platform's definition
+		def, err := platformStates[i].Marshal(ctx, llb.Platform(platformSpecs[i]))
+>>>>>>> 55fc7e49 (this works without preserving)
 		if err != nil {
-			return fmt.Errorf("BuildKit solve failed: %w", err)
+			return fmt.Errorf("failed to marshal platform: %w", err)
 		}
+
+		_, err = c.Solve(ctx, def, platformSolveOpt, nil)
+		if err != nil {
+			return fmt.Errorf("failed to solve platform: %w", err)
+		}
+<<<<<<< HEAD
 
 		log.Infof("Successfully created OCI layout in %s using BuildKit Go client", outputDir)
 		return nil
 	}
 
 	return fmt.Errorf("no definitions created")
+=======
+	}
+
+	// Extract and combine all platform tars into multi-platform OCI layout
+	return extractAndCombinePlatformTars(outputDir, platformTars, platformSpecs)
+}
+
+// extractAndCombinePlatformTars extracts platform tars and combines them into multi-platform OCI layout
+func extractAndCombinePlatformTars(outputDir string, platformTars []string, platformSpecs []specs.Platform) error {
+	// Create output directory structure
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+
+	blobsDir := filepath.Join(outputDir, "blobs")
+	if err := os.MkdirAll(blobsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create blobs directory: %w", err)
+	}
+
+	// Create oci-layout file
+	ociLayoutContent := `{"imageLayoutVersion":"1.0.0"}`
+	if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0644); err != nil {
+		return fmt.Errorf("failed to write oci-layout: %w", err)
+	}
+
+	// Collect all platform manifests and copy blobs
+	var platformManifests []map[string]interface{}
+	blobsSet := make(map[string]bool) // Track blobs to avoid duplicates
+
+	for i, platformTar := range platformTars {
+		platformSpec := platformSpecs[i]
+
+		// Extract platform tar to temporary directory
+		platformTempDir, err := os.MkdirTemp("", "copa-platform-extract-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp directory for platform: %w", err)
+		}
+		defer os.RemoveAll(platformTempDir)
+
+		// Extract tar file
+		if err := extractTarToDirectory(platformTar, platformTempDir); err != nil {
+			return fmt.Errorf("failed to extract tar for platform: %w", err)
+		}
+
+		// Read the platform's index.json
+		indexPath := filepath.Join(platformTempDir, "index.json")
+		indexData, err := os.ReadFile(indexPath)
+		if err != nil {
+			return fmt.Errorf("failed to read index.json from platform: %w", err)
+		}
+
+		var index map[string]interface{}
+		if err := json.Unmarshal(indexData, &index); err != nil {
+			return fmt.Errorf("failed to parse index.json from platform: %w", err)
+		}
+
+		// Create platform info from platformSpec
+		targetPlatform := map[string]interface{}{
+			"os":           platformSpec.OS,
+			"architecture": platformSpec.Architecture,
+		}
+
+		// Add variant if present
+		if platformSpec.Variant != "" {
+			targetPlatform["variant"] = platformSpec.Variant
+		}
+
+		// Extract manifests from this platform's index and set correct platform
+		if manifests, ok := index["manifests"].([]interface{}); ok {
+			for _, manifest := range manifests {
+				if manifestMap, ok := manifest.(map[string]interface{}); ok {
+					// Override the platform information with our correct target platform
+					manifestMap["platform"] = targetPlatform
+					platformManifests = append(platformManifests, manifestMap)
+				}
+			}
+		}
+
+		// Copy blobs from this platform to the combined layout
+		platformBlobsDir := filepath.Join(platformTempDir, "blobs")
+		if err := copyBlobs(platformBlobsDir, blobsDir, blobsSet); err != nil {
+			return fmt.Errorf("failed to copy blobs from platform: %w", err)
+		}
+	}
+
+	// Create the combined index.json with all platform manifests
+	combinedIndex := map[string]interface{}{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.index.v1+json",
+		"manifests":     platformManifests,
+	}
+
+	indexJSON, err := json.MarshalIndent(combinedIndex, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal combined index: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write combined index.json: %w", err)
+	}
+
+	return nil
+}
+
+// copyBlobs copies blob files from source to destination, avoiding duplicates
+func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error {
+	// Check if source blobs directory exists
+	if _, err := os.Stat(srcBlobsDir); os.IsNotExist(err) {
+		log.Debugf("Source blobs directory does not exist: %s", srcBlobsDir)
+		return nil // Not an error, platform might not have blobs
+	}
+
+	// Walk through the blobs directory structure (sha256/*)
+	return filepath.Walk(srcBlobsDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if info.IsDir() {
+			return nil
+		}
+
+		// Get relative path from blobs directory
+		relPath, err := filepath.Rel(srcBlobsDir, path)
+		if err != nil {
+			return err
+		}
+
+		// Skip if blob already exists
+		if blobsSet[relPath] {
+			log.Debugf("Skipping duplicate blob: %s", relPath)
+			return nil
+		}
+
+		// Create destination directory structure
+		dstPath := filepath.Join(dstBlobsDir, relPath)
+		dstDir := filepath.Dir(dstPath)
+		if err := os.MkdirAll(dstDir, 0755); err != nil {
+			return fmt.Errorf("failed to create destination directory %s: %w", dstDir, err)
+		}
+
+		// Copy the blob file
+		srcFile, err := os.Open(path)
+		if err != nil {
+			return fmt.Errorf("failed to open source blob %s: %w", path, err)
+		}
+		defer srcFile.Close()
+
+		dstFile, err := os.Create(dstPath)
+		if err != nil {
+			return fmt.Errorf("failed to create destination blob %s: %w", dstPath, err)
+		}
+		defer dstFile.Close()
+
+		if _, err := io.Copy(dstFile, srcFile); err != nil {
+			return fmt.Errorf("failed to copy blob %s: %w", relPath, err)
+		}
+
+		// Mark blob as copied
+		blobsSet[relPath] = true
+		log.Debugf("Copied blob: %s", relPath)
+
+		return nil
+	})
+}
+
+// extractTarToDirectory extracts a tar file to a directory
+func extractTarToDirectory(tarPath, destDir string) error {
+	// Extract tar file using tar command
+	cmd := exec.Command("tar", "-xf", tarPath, "-C", destDir)
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to extract tar %s: %v, output: %s", tarPath, err, string(output))
+	}
+
+	log.Debugf("Successfully extracted tar %s to directory %s", tarPath, destDir)
+	return nil
+>>>>>>> 55fc7e49 (this works without preserving)
 }
 
 // getPlatformSuffix returns the expected image tag suffix for a platform.
@@ -931,3 +1325,178 @@ func getPlatformSuffix(platform *ispec.Platform) string {
 	}
 	return suffix
 }
+<<<<<<< HEAD
+=======
+
+// createMixedOCILayout creates an OCI layout combining patched platforms (from BuildKit) with preserved platforms (from original image)
+func createMixedOCILayout(outputDir string, platforms []types.PatchPlatform, platformStates []llb.State, platformSpecs []specs.Platform, preservedPlatforms []types.PatchPlatform) error {
+	log.Infof("Creating mixed OCI layout with %d patched states and %d preserved platforms", len(platformStates), len(preservedPlatforms))
+
+	// For now, just create the patched platforms OCI layout
+	// The preserved platforms would require complex manifest manipulation
+	// Let's get the basic functionality working first
+	log.Info("Creating OCI layout with patched platforms - preserved platforms will be added in future enhancement")
+
+	ctx := context.Background()
+
+	// Try buildx driver first
+	h, err := connhelpers.Buildx(&url.URL{})
+	if err != nil {
+		log.WithError(err).Debug("Could not get buildx helper")
+	} else {
+		c, err := client.New(ctx, "", client.WithContextDialer(h.ContextDialer))
+		if err == nil {
+			err = ValidateClient(ctx, c)
+			if err == nil {
+				log.Debug("Using buildx driver for mixed OCI layout export")
+				defer c.Close()
+
+				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+			}
+			c.Close()
+		}
+		log.WithError(err).Debug("Buildx driver validation failed for mixed layout")
+	}
+
+	// Fall back to auto-detection
+	log.Debug("Falling back to auto-detection for mixed OCI layout")
+	bkOpts := Opts{}
+	c, err := NewClient(ctx, bkOpts)
+	if err != nil {
+		return fmt.Errorf("failed to create BuildKit client for mixed layout: %w", err)
+	}
+	defer c.Close()
+
+	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+}
+
+// createPreservedOnlyOCILayout creates an OCI layout from preserved platforms only
+func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult, preservedPlatforms []types.PatchPlatform) error {
+	log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
+
+	// Find the original image reference from results
+	var originalRef reference.Named
+	for _, result := range results {
+		if result.OriginalRef != nil {
+			originalRef = result.OriginalRef
+			break
+		}
+	}
+
+	if originalRef == nil {
+		return fmt.Errorf("no original reference found for preserved-only layout")
+	}
+
+	// Use go-containerregistry to get the original manifest and export only needed platforms
+	return exportOriginalImagePlatformsAsOCI(outputDir, originalRef, preservedPlatforms)
+}
+
+// exportOriginalImagePlatformsAsOCI uses go-containerregistry to export specific platforms
+func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.Named, platforms []types.PatchPlatform) error {
+	log.Infof("Exporting %d platforms from original image %s using go-containerregistry", len(platforms), originalRef.String())
+
+	// Convert reference.Named to name.Reference for go-containerregistry
+	ref, err := name.ParseReference(originalRef.String())
+	if err != nil {
+		return fmt.Errorf("failed to parse reference: %w", err)
+	}
+
+	// Get the remote descriptor
+	desc, err := remote.Get(ref)
+	if err != nil {
+		return fmt.Errorf("failed to get remote descriptor: %w", err)
+	}
+
+	// Check if it's a manifest list (multi-platform)
+	if desc.MediaType == v1types.OCIImageIndex || desc.MediaType == v1types.DockerManifestList {
+		// Parse the index
+		idx, err := desc.ImageIndex()
+		if err != nil {
+			return fmt.Errorf("failed to parse image index: %w", err)
+		}
+
+		// Get the index manifest
+		manifest, err := idx.IndexManifest()
+		if err != nil {
+			return fmt.Errorf("failed to get index manifest: %w", err)
+		}
+
+		// Create OCI layout structure
+		if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0755); err != nil {
+			return fmt.Errorf("failed to create blobs directory: %w", err)
+		}
+
+		// Create oci-layout file
+		ociLayoutContent := `{"imageLayoutVersion": "1.0.0"}`
+		if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0644); err != nil {
+			return fmt.Errorf("failed to write oci-layout file: %w", err)
+		}
+
+		// Filter manifests for the preserved platforms we want
+		var preservedManifests []v1.Descriptor
+		for _, platformSpec := range platforms {
+			for _, desc := range manifest.Manifests {
+				if desc.Platform != nil &&
+					desc.Platform.OS == platformSpec.Platform.OS &&
+					desc.Platform.Architecture == platformSpec.Platform.Architecture {
+					preservedManifests = append(preservedManifests, desc)
+					log.Debugf("Including preserved platform %s/%s", desc.Platform.OS, desc.Platform.Architecture)
+					break
+				}
+			}
+		}
+
+		// Create new index with only preserved platforms
+		newIndex := &v1.IndexManifest{
+			SchemaVersion: 2,
+			Manifests:     preservedManifests,
+		}
+
+		// Write the index
+		indexBytes, err := json.MarshalIndent(newIndex, "", "  ")
+		if err != nil {
+			return fmt.Errorf("failed to marshal index: %w", err)
+		}
+
+		if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexBytes, 0644); err != nil {
+			return fmt.Errorf("failed to write index.json: %w", err)
+		}
+
+		log.Infof("Successfully created OCI layout with %d preserved platforms", len(preservedManifests))
+		return nil
+	}
+
+	// Single platform image - just create a simple index
+	log.Info("Single platform image - creating simple index")
+	singleIndex := &v1.IndexManifest{
+		SchemaVersion: 2,
+		Manifests: []v1.Descriptor{{
+			MediaType: desc.MediaType,
+			Digest:    desc.Digest,
+			Size:      desc.Size,
+		}},
+	}
+
+	// Create directory structure
+	if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0755); err != nil {
+		return fmt.Errorf("failed to create blobs directory: %w", err)
+	}
+
+	// Write files
+	ociLayoutContent := `{"imageLayoutVersion": "1.0.0"}`
+	if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0644); err != nil {
+		return fmt.Errorf("failed to write oci-layout file: %w", err)
+	}
+
+	indexBytes, err := json.MarshalIndent(singleIndex, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal single index: %w", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write index.json: %w", err)
+	}
+
+	return nil
+}
+>>>>>>> 55fc7e49 (this works without preserving)

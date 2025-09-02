@@ -33,17 +33,24 @@ type Options struct {
 
 	// Optional error channel for patch command integration
 	ErrorChannel chan error
+
+	// If true, return the BuildKit state instead of solving it
+	ReturnState bool
 }
 
 // Result contains the result of the core patching operation.
 type Result struct {
-	// BuildKit gateway result
+	// BuildKit gateway result (nil if ReturnState is true)
 	Result *gwclient.Result
 
 	// Package manager information
 	PackageType      string
 	ErroredPackages  []string
 	ValidatedUpdates []unversioned.UpdatePackage
+
+	// BuildKit state and config (only set if ReturnState is true)
+	PatchedState *llb.State
+	ConfigData   []byte
 }
 
 // Context wraps the context and gateway client for core operations.
@@ -85,6 +92,24 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
+	// Preserve the state and config for potential OCI export use
+	// This allows both Docker export AND OCI layout creation from the same patching operation
+	preservedState := patchedImageState
+	preservedConfig := config.ConfigData
+
+	// If ReturnState is true, return the state without solving
+	if opts.ReturnState {
+		return &Result{
+			Result:           nil, // No result when returning state
+			PackageType:      manager.GetPackageType(),
+			ErroredPackages:  errPkgs,
+			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
+			PatchedState:     preservedState,
+			ConfigData:       preservedConfig,
+		}, nil
+	}
+
+	// For normal Docker export, continue with solving but preserve states
 	// Marshal the state for the target platform
 	def, err := patchedImageState.Marshal(ctx, llb.Platform(opts.TargetPlatform.Platform))
 	if err != nil {
@@ -116,22 +141,29 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
 
-	// Prepare the validated updates (excluding errored packages)
+	// Return result with BOTH the solved result AND preserved states
+	// This enables Docker export (from result) AND OCI layout (from states)
+	return &Result{
+		Result:           res,
+		PackageType:      manager.GetPackageType(),
+		ErroredPackages:  errPkgs,
+		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
+		PatchedState:     preservedState,  // Always preserve for OCI export
+		ConfigData:       preservedConfig, // Always preserve for OCI export
+	}, nil
+}
+
+// getValidatedUpdates extracts validated updates (excluding errored packages)
+func getValidatedUpdates(updates *unversioned.UpdateManifest, errPkgs []string) []unversioned.UpdatePackage {
 	var validatedUpdates []unversioned.UpdatePackage
-	if opts.Updates != nil {
-		for _, update := range opts.Updates.Updates {
+	if updates != nil {
+		for _, update := range updates.Updates {
 			if !slices.Contains(errPkgs, update.Name) {
 				validatedUpdates = append(validatedUpdates, update)
 			}
 		}
 	}
-
-	return &Result{
-		Result:           res,
-		PackageType:      manager.GetPackageType(),
-		ErroredPackages:  errPkgs,
-		ValidatedUpdates: validatedUpdates,
-	}, nil
+	return validatedUpdates
 }
 
 // setupPackageManager creates and configures the appropriate package manager
