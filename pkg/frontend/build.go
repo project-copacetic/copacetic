@@ -24,6 +24,9 @@ import (
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
 	// Create package manager instance
 	config, pm, err := common.SetupBuildkitConfigAndManager(ctx, f.client, opts.Image, platform, "", nil)
+	if err != nil {
+		return llb.State{}, errors.Wrap(err, "failed to set up buildkit config and package manager")
+	}
 
 	// Parse the vulnerability report if provided
 	var um *unversioned.UpdateManifest

@@ -63,7 +63,7 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	// Parse vulnerability report
 	if reportPath, ok := getOpt(keyReport); ok {
 		bklog.G(ctx).WithField("component", "copa-frontend").WithField("reportPath", reportPath).Info("Vulnerability report provided, using report mode")
-		
+
 		// Extract the report from the BuildKit context
 		extractedPath, err := extractReportFromContext(ctx, client, reportPath)
 		if err != nil {
