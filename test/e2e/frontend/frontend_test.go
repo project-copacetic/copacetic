@@ -181,7 +181,7 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 		"--opt", "scanner=trivy",
 		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
 		"--opt", "context:report=local:report", // Map the context
-		"--output", "type=docker,dest=" + outputTar,
+		"--output", "type=oci,dest=" + outputTar,
 		"--opt", "platform=linux/amd64",
 	}
 
@@ -335,7 +335,7 @@ func runFrontendMultiplatformTest(t *testing.T) {
 	// Use nginx as a multiarch image
 	baseImage := "docker.io/library/nginx:1.21.6"
 	localImage := "localhost:5000/nginx-multiarch:1.21.6"
-	
+
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)
 	copyCmd := exec.Command("oras", "cp", baseImage, localImage)
@@ -349,7 +349,7 @@ func runFrontendMultiplatformTest(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	// Create reports directory for multiplatform reports
-	reportsDir := filepath.Join(tempDir, "reports") 
+	reportsDir := filepath.Join(tempDir, "reports")
 	err = os.MkdirAll(reportsDir, 0o755)
 	require.NoError(t, err, "failed to create reports directory")
 
@@ -372,7 +372,7 @@ func runFrontendMultiplatformTest(t *testing.T) {
 			"--output", reportFile,
 			"--platform", p.platform,
 			"--quiet",
-			"--no-progress", 
+			"--no-progress",
 			"--insecure",
 			localImage)
 
@@ -404,7 +404,7 @@ func runFrontendMultiplatformTest(t *testing.T) {
 		"--frontend=gateway.v0",
 		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
 		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", "report=.", // Point to reports directory root  
+		"--opt", "report=.", // Point to reports directory root
 		"--opt", "scanner=trivy",
 		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
 		"--opt", "context:report=local:report", // Map the context
