@@ -296,9 +296,10 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
 
 	toolsInstalled := toolingBase.Run(
-		llb.Shlex(installToolsCmd), 
+		llb.Shlex(installToolsCmd),
 		llb.WithProxy(utils.GetProxy()),
-		llb.WithCustomName("Installing package management tools")).Root()
+		llb.WithCustomName("Installing package management tools"),
+	).Root()
 	toolsApplied := imageStateCurrent.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
@@ -526,9 +527,9 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	if updates != nil {
 		customName = fmt.Sprintf("Upgrading %d packages", len(updates))
 	}
-	
+
 	installed := imageStateCurrent.Run(
-		llb.Shlex(installCmd), 
+		llb.Shlex(installCmd),
 		llb.WithProxy(utils.GetProxy()),
 		llb.WithCustomName(customName)).Root()
 

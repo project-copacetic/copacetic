@@ -126,12 +126,12 @@ func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gw
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to discover platforms from report directory")
 			}
-			
+
 			// Convert PatchPlatform to ocispecs.Platform
 			for _, pp := range patchPlatforms {
 				targetPlatforms = append(targetPlatforms, pp.Platform)
 			}
-			
+
 			bklog.G(ctx).WithField("component", "copa-frontend").WithField("platforms", targetPlatforms).Info("Discovered platforms from report directory")
 		}
 	}

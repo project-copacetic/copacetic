@@ -164,8 +164,8 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 	}
 
 	apkUpdated := imageStateCurrent.Run(
-		llb.Shlex("apk update"), 
-		llb.WithProxy(utils.GetProxy()), 
+		llb.Shlex("apk update"),
+		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 		llb.WithCustomName("Updating package database")).Root()
 
@@ -190,7 +190,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		}
 		addCmd := fmt.Sprintf(apkAddTemplate, strings.Join(pkgStrings, " "))
 		apkAdded := apkUpdated.Run(
-			llb.Shlex(addCmd), 
+			llb.Shlex(addCmd),
 			llb.WithProxy(utils.GetProxy()),
 			llb.WithCustomName(fmt.Sprintf("Installing %d security updates", len(pkgStrings)))).Root()
 
@@ -201,7 +201,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		const apkInstallTemplate = `apk upgrade --no-cache %s`
 		installCmd := fmt.Sprintf(apkInstallTemplate, strings.Join(pkgStrings, " "))
 		apkInstalled = apkAdded.Run(
-			llb.Shlex(installCmd), 
+			llb.Shlex(installCmd),
 			llb.WithProxy(utils.GetProxy()),
 			llb.WithCustomName(fmt.Sprintf("Upgrading %d security updates", len(pkgStrings)))).Root()
 
@@ -220,7 +220,7 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		// if updates is not specified, update all packages
 		installCmd := `output=$(apk upgrade --no-cache 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi`
 		apkInstalled = apkUpdated.Run(
-			buildkit.Sh(installCmd), 
+			buildkit.Sh(installCmd),
 			llb.WithProxy(utils.GetProxy()),
 			llb.WithCustomName("Upgrading all packages")).Root()
 

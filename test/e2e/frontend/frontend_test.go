@@ -108,6 +108,11 @@ func TestFrontendPatch(t *testing.T) {
 			runFrontendTest(t, tc.baseImage, tc.localImage)
 		})
 	}
+
+	// Test multiplatform with directory-based reports
+	t.Run("multiplatform-directory", func(t *testing.T) {
+		runFrontendMultiplatformTest(t)
+	})
 }
 
 func runFrontendTest(t *testing.T, baseImage, localImage string) {
@@ -148,22 +153,22 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 
 	t.Logf("Trivy report generated at: %s", reportFile)
 
-	// Create a dummy Dockerfile for context compatibility
-	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
-	err = os.WriteFile(dockerfilePath, []byte("FROM scratch\n"), 0o600)
-	require.NoError(t, err, "failed to create dummy Dockerfile")
+	// Create a reports directory for the --local context
+	reportsDir := filepath.Join(tempDir, "reports")
+	err = os.MkdirAll(reportsDir, 0o755)
+	require.NoError(t, err, "failed to create reports directory")
 
-	// Copy report file to the build context directory
+	// Copy report file to the reports directory
 	reportBaseName := filepath.Base(reportFile)
-	contextReportPath := filepath.Join(tempDir, reportBaseName)
+	contextReportPath := filepath.Join(reportsDir, reportBaseName)
 	reportData, err := os.ReadFile(reportFile)
 	require.NoError(t, err, "failed to read report file")
-	err = os.WriteFile(contextReportPath, reportData, 0o644)
-	require.NoError(t, err, "failed to copy report to build context")
+	err = os.WriteFile(contextReportPath, reportData, 0o600)
+	require.NoError(t, err, "failed to copy report to reports context")
 
 	outputTar := filepath.Join(tempDir, "patched.tar")
 
-	// Build the buildctl command for frontend patching
+	// Build the buildctl command for frontend patching with the new --local approach
 	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", "172.17.0.1:5000", 1) // Use bridge gateway IP
 	localImageRef := strings.Replace(localImage, "localhost:5000", "172.17.0.1:5000", 1)       // Use bridge gateway IP
 
@@ -172,10 +177,10 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 		"--frontend=gateway.v0",
 		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
 		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", fmt.Sprintf("report=%s", reportBaseName), // Pass relative path within build context
+		"--opt", fmt.Sprintf("report=%s", reportBaseName), // Report file name within the context
 		"--opt", "scanner=trivy",
-		"--opt", "security-mode=sandbox",
-		"--opt", "cache-mode=local",
+		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
+		"--opt", "context:report=local:report", // Map the context
 		"--output", "type=docker,dest=" + outputTar,
 		"--opt", "platform=linux/amd64",
 	}
@@ -192,9 +197,6 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 
 	// Allow insecure registry access
 	args = append(args, "--allow", "security.insecure")
-
-	// Add the build context directory
-	args = append(args, tempDir)
 
 	t.Logf("Running buildctl with frontend using report file: %s", reportBaseName)
 	t.Logf("BuildKit command: %v", args)
@@ -327,6 +329,111 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 	// Update the frontendImage variable to use the bridge gateway IP for BuildKit access
 	frontendImage = buildkitAccessImage
 	t.Logf("Frontend image pushed to local registry and accessible via: %s", frontendImage)
+}
+
+func runFrontendMultiplatformTest(t *testing.T) {
+	// Use nginx as a multiarch image
+	baseImage := "docker.io/library/nginx:1.21.6"
+	localImage := "localhost:5000/nginx-multiarch:1.21.6"
+	
+	// Copy image to local registry
+	t.Logf("Copying %s to %s", baseImage, localImage)
+	copyCmd := exec.Command("oras", "cp", baseImage, localImage)
+	output, err := copyCmd.CombinedOutput()
+	require.NoErrorf(t, err, "oras cp failed:\n%s", string(output))
+	defer removeLocalImage(t, localImage)
+
+	// Create temp directory and platform reports
+	tempDir, err := os.MkdirTemp("", "copa-frontend-multiarch-*")
+	require.NoError(t, err, "failed to create temp directory")
+	defer os.RemoveAll(tempDir)
+
+	// Create reports directory for multiplatform reports
+	reportsDir := filepath.Join(tempDir, "reports") 
+	err = os.MkdirAll(reportsDir, 0o755)
+	require.NoError(t, err, "failed to create reports directory")
+
+	// Generate reports for different platforms
+	platforms := []struct {
+		name     string
+		platform string
+		filename string
+	}{
+		{"amd64", "linux/amd64", "linux-amd64.json"},
+		{"arm64", "linux/arm64", "linux-arm64.json"},
+	}
+
+	for _, p := range platforms {
+		reportFile := filepath.Join(reportsDir, p.filename)
+		t.Logf("Generating %s report for platform %s", p.name, p.platform)
+
+		trivyCmd := exec.Command("trivy", "image",
+			"--format", "json",
+			"--output", reportFile,
+			"--platform", p.platform,
+			"--quiet",
+			"--no-progress", 
+			"--insecure",
+			localImage)
+
+		trivyOutput, err := trivyCmd.CombinedOutput()
+		if err != nil {
+			t.Logf("Trivy scan output for %s: %s", p.name, string(trivyOutput))
+			// Skip this platform if scan fails rather than failing the whole test
+			t.Logf("Skipping platform %s due to scan failure", p.name)
+			continue
+		}
+
+		// Verify the report file was created
+		if _, err := os.Stat(reportFile); err != nil {
+			t.Logf("Report file was not created for platform %s: %v", p.name, err)
+			continue
+		}
+
+		t.Logf("Report generated for %s at: %s", p.name, reportFile)
+	}
+
+	outputTar := filepath.Join(tempDir, "multiarch-patched.tar")
+
+	// Build the buildctl command for multiplatform frontend patching
+	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", "172.17.0.1:5000", 1)
+	localImageRef := strings.Replace(localImage, "localhost:5000", "172.17.0.1:5000", 1)
+
+	args := []string{
+		"build",
+		"--frontend=gateway.v0",
+		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
+		"--opt", fmt.Sprintf("image=%s", localImageRef),
+		"--opt", "report=.", // Point to reports directory root  
+		"--opt", "scanner=trivy",
+		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
+		"--opt", "context:report=local:report", // Map the context
+		"--output", "type=docker,dest=" + outputTar,
+		"--opt", "platform=linux/amd64,linux/arm64", // Multiplatform build
+	}
+
+	// Handle buildx:// address
+	actualAddr := buildkitAddr
+	if buildkitAddr == "buildx://" {
+		actualAddr = ensureBuildxBuilder(t)
+		t.Logf("buildx:// not supported by this buildctl version, using %s", actualAddr)
+	}
+
+	args = append([]string{"--addr", actualAddr}, args...)
+	args = append(args, "--allow", "security.insecure")
+
+	t.Logf("Running buildctl with multiplatform frontend")
+	t.Logf("BuildKit command: %v", args)
+	cmd := exec.Command("buildctl", args...)
+	output, err = cmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("buildctl multiplatform failed: %s", string(output)))
+
+	// Verify the output tar was created
+	if _, err := os.Stat(outputTar); err != nil {
+		t.Fatalf("Output tar was not created: %v", err)
+	}
+
+	t.Logf("Successfully built multiplatform patched image")
 }
 
 func removeLocalImage(_ *testing.T, image string) {
