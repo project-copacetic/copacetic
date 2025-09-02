@@ -638,7 +638,7 @@ jobs:
           docker pull "${PLATFORM_ARM64_IMAGE}"
           
           # Create local manifest list using --insecure for local registry
-          docker manifest create "${LOCAL_MANIFEST}" "${PLATFORM_AMD64_IMAGE}" "${PLATFORM_ARM64_IMAGE}"
+          docker manifest create --insecure "${LOCAL_MANIFEST}" "${PLATFORM_AMD64_IMAGE}" "${PLATFORM_ARM64_IMAGE}"
           docker manifest push --insecure "${LOCAL_MANIFEST}"
           
           echo "Verifying local multiplatform manifest was created..."
