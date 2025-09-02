@@ -408,7 +408,7 @@ func runFrontendMultiplatformTest(t *testing.T) {
 		"--opt", "scanner=trivy",
 		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
 		"--opt", "context:report=local:report", // Map the context
-		"--output", "type=docker,dest=" + outputTar,
+		"--output", "type=oci,dest=" + outputTar,
 		"--opt", "platform=linux/amd64,linux/arm64", // Multiplatform build
 	}
 
