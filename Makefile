@@ -25,7 +25,7 @@ GOARCH            := $(shell go env GOARCH)
 GOOS              := $(shell go env GOOS)
 
 # Frontend build variables
-FRONTEND_IMAGE_NAME ?= ghcr.io/robert-cronin/copacetic-frontend
+FRONTEND_IMAGE_NAME ?= ghcr.io/project-copacetic/copacetic-frontend
 FRONTEND_VER        ?= latest
 
 
