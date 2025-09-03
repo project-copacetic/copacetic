@@ -338,7 +338,10 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 			},
 		})
 		if err != nil {
-			return nil, nil, "", err
+			log.Warnf("Failed to resolve BaseImage %s: %v. Falling back to using current image %s as base", baseImage, err, image)
+			// Fallback: Use the current image as the base image instead of the missing BaseImage
+			configData = userImageConfig
+			return configData, nil, image, nil
 		}
 
 		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)
