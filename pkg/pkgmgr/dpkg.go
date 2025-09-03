@@ -431,7 +431,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
-	
+
 	// First try with the specified platform, fallback to host platform if it fails
 	toolingBase, err := tryImage(ctx, toolImage, dm.config.Client, imagePlatform)
 	if err != nil {

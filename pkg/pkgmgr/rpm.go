@@ -581,7 +581,7 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
-	
+
 	// First try with the specified platform, fallback to host platform if it fails
 	toolingBase, err := tryImage(ctx, toolImage, rm.config.Client, platform)
 	if err != nil {
