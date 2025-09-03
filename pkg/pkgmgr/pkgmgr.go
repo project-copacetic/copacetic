@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
@@ -93,6 +94,9 @@ func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionCompa
 	for k, v := range dict {
 		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 

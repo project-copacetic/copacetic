@@ -9,9 +9,7 @@
     "push": true,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5",
       "linux/386",
-      "linux/mips64le",
       "linux/s390x",
       "linux/arm64"
     ]
@@ -26,7 +24,7 @@
     "push": false,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5"
+      "linux/arm64"
     ]
   },
   {
