@@ -2,7 +2,6 @@ package patch
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -97,6 +96,10 @@ func patchMultiPlatformImage(
 
 	summaryMap := make(map[string]*types.MultiPlatformSummary)
 
+	// Track if any platforms were successfully patched and if there were errors
+	var hasErrors bool
+	var successCount int
+
 	for _, p := range platforms {
 		// rebind
 		p := p //nolint
@@ -123,23 +126,16 @@ func patchMultiPlatformImage(
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
 					}
+					hasErrors = true
 					mu.Unlock()
-					return err
+					// Continue processing other platforms
+					return nil
 				}
 
 				// Handle Windows platform without push enabled
 				if !opts.Push && p.OS == "windows" {
 					mu.Lock()
 					defer mu.Unlock()
-					if !ignoreError {
-						summaryMap[platformKey] = &types.MultiPlatformSummary{
-							Platform: platformKey,
-							Status:   "Error",
-							Ref:      originalRef.String() + " (original reference)",
-							Message:  "Windows images are not patched",
-						}
-						return errors.New("cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry or run with --ignore-errors")
-					}
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Ignored",
@@ -160,8 +156,10 @@ func patchMultiPlatformImage(
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
 					}
+					hasErrors = true
 					mu.Unlock()
-					return err
+					// Continue processing other platforms
+					return nil
 				}
 
 				// For platforms without reports, use the original image digest/reference
@@ -180,6 +178,7 @@ func patchMultiPlatformImage(
 					Ref:      originalRef.String() + " (original reference)",
 					Message:  "Preserved original image (No Scan Report provided for platform)",
 				}
+				successCount++
 				mu.Unlock()
 				return nil
 			}
@@ -196,19 +195,14 @@ func patchMultiPlatformImage(
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
-				status := "Error"
-				if ignoreError {
-					status = "Ignored"
-				}
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
-					Status:   status,
+					Status:   "Error",
 					Ref:      "",
 					Message:  err.Error(),
 				}
-				if !ignoreError {
-					return err
-				}
+				hasErrors = true
+				// Continue processing other platforms
 				return nil
 			} else if res == nil {
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -217,6 +211,7 @@ func patchMultiPlatformImage(
 					Ref:      "",
 					Message:  "patchSingleArchImage returned nil result",
 				}
+				hasErrors = true
 				return nil
 			}
 
@@ -227,12 +222,22 @@ func patchMultiPlatformImage(
 				Ref:      res.PatchedRef.String(),
 				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
 			}
+			successCount++
 			return nil
 		})
 	}
 
-	if err := g.Wait(); err != nil {
+	// Wait for all goroutines to complete (don't fail early on errors if ignoring errors)
+	if err := g.Wait(); err != nil && !ignoreError {
+		// g.Wait() will return the first non-nil error from any goroutine
+		// But since we're now returning nil from all goroutines, this should only
+		// happen if context is canceled
 		return err
+	}
+
+	// Check if we should fail based on the results
+	if hasErrors && successCount == 0 {
+		return fmt.Errorf("all platform patches failed, see summary for details")
 	}
 
 	// resolve image ref
