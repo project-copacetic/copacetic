@@ -581,10 +581,18 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
-	toolingBase := llb.Image(toolImage,
-		llb.Platform(*platform),
-		llb.ResolveModeDefault,
-	)
+	
+	// First try with the specified platform, fallback to host platform if it fails
+	toolingBase, err := tryImage(ctx, toolImage, rm.config.Client, platform)
+	if err != nil {
+		log.Debugf("Failed to resolve tooling image %s with platform %v, falling back to host platform: %v", toolImage, platform, err)
+		// Try again without platform specification (uses host platform)
+		toolingBase, err = tryImage(ctx, toolImage, rm.config.Client, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve tooling image %s even with host platform fallback: %w", toolImage, err)
+		}
+		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
+	}
 
 	// List all packages installed in the tooling image
 	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
