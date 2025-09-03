@@ -339,9 +339,17 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 		})
 		if err != nil {
 			log.Warnf("Failed to resolve BaseImage %s: %v. Falling back to using current image %s as base", baseImage, err, image)
-			// Fallback: Use the current image as the base image instead of the missing BaseImage
-			configData = userImageConfig
-			return configData, nil, image, nil
+			// Fallback: Create a new config with the BaseImage label set to current image
+			imageConfig := make(map[string]interface{})
+			json.Unmarshal(configData, &imageConfig)
+			configMap := imageConfig["config"].(map[string]interface{})
+			if configMap["labels"] == nil {
+				configMap["labels"] = make(map[string]interface{})
+			}
+			labelsMap := configMap["labels"].(map[string]interface{})
+			labelsMap["BaseImage"] = image
+			updatedConfigData, _ := json.Marshal(imageConfig)
+			return updatedConfigData, nil, image, nil
 		}
 
 		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)
