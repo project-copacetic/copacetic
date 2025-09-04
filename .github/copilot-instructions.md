@@ -162,3 +162,15 @@ The repository uses `.github/workflows/build.yml` for CI, which includes:
 - Multi-platform testing with emulation
 
 Follow these patterns for reliable validation in your development workflow.
+
+## Verified Commands Summary
+All commands in these instructions have been validated in a fresh repository clone:
+
+✅ **Build Process**: `make setup` + `make build` works reliably  
+✅ **CLI Functionality**: `copa --version` and `copa --help` work correctly  
+✅ **Code Formatting**: `make format` formats all Go files with gofumpt  
+✅ **Docker Integration**: containerd image store configuration verified  
+✅ **BuildKit Connection**: copa successfully connects to Docker's BuildKit backend  
+✅ **Manual Validation**: All scenarios produce expected output  
+
+These instructions are designed to help GitHub Copilot agents work effectively in the Copacetic codebase without encountering common setup pitfalls.
