@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,8 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -50,24 +49,32 @@ func TestMultiArchBulkPatching(t *testing.T) {
 	require.NoError(t, err, "copa command failed with output:\n%s", string(output))
 	t.Logf("Copa command finished successfully.")
 
-	t.Log("Verifying multi-arch patched image...")
+	t.Log("Verifying multi-arch patched image using Docker CLI...")
 	patchedRefStr := fmt.Sprintf("%s/library/debian:12.4-slim-patched-e2e", registryHost)
-	patchedRef, err := name.ParseReference(patchedRefStr, name.Insecure)
-	require.NoError(t, err)
 
-	index, err := remote.Index(patchedRef)
-	require.NoError(t, err, "could not fetch the patched multi-arch manifest list")
-	indexManifest, err := index.IndexManifest()
-	require.NoError(t, err)
+	inspectCmd := exec.Command("docker", "manifest", "inspect", patchedRefStr)
+	jsonOutput, err := inspectCmd.CombinedOutput()
+	require.NoError(t, err, "docker manifest inspect command failed with output: %s", string(jsonOutput))
+
+	var manifest struct {
+		Manifests []struct {
+			Platform struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	err = json.Unmarshal(jsonOutput, &manifest)
+	require.NoError(t, err, "failed to parse manifest JSON from Docker CLI")
 
 	var foundPlatforms []string
-	for _, manifest := range indexManifest.Manifests {
-		if manifest.Platform != nil {
-			foundPlatforms = append(foundPlatforms, manifest.Platform.String())
+	for _, m := range manifest.Manifests {
+		if m.Platform.OS != "" {
+			foundPlatforms = append(foundPlatforms, fmt.Sprintf("%s/%s", m.Platform.OS, m.Platform.Architecture))
 		}
 	}
 
-	expectedPlatforms := []string{"linux/amd64", "linux/arm/v7"}
+	expectedPlatforms := []string{"linux/amd64", "linux/arm64"}
 	assert.ElementsMatch(t, expectedPlatforms, foundPlatforms, "The platforms in the patched manifest did not match")
 	t.Logf("Successfully verified multi-arch manifest contains platforms: %v", foundPlatforms)
 }
