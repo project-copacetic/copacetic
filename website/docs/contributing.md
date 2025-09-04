@@ -57,10 +57,26 @@ Copacetic requires Docker for patching images. To install Docker, follow the [Do
 Once you can successfully `make` the project, any code contributions should also successfully:
 
 - Pass unit tests via `make test`.
+- Pass fuzz tests via `make fuzz-short` (optional, but recommended for security-sensitive code).
 - Lint cleanly via `make lint`.
 - Be formatted with `gofumpt`.
 
 Pull requests will also be expected to pass the PR functional tests specified by `.github/workflows/build.yml`.
+
+#### Fuzzing
+
+Copacetic includes fuzz tests to improve the robustness and security of the code, particularly for parsing external data from vulnerability scanners and package managers. Fuzz tests use Go's built-in fuzzing support to test functions with randomly generated inputs.
+
+To run fuzz tests:
+- `make fuzz-short` - Run short fuzz tests (5 seconds each)
+- `make fuzz` - Run extended fuzz tests (30 seconds each)
+
+Fuzz tests are located in `*_fuzz_test.go` files and cover:
+- Vulnerability report parsing (`pkg/report`)
+- Package version comparison (`pkg/pkgmgr`)
+- JSON parsing utilities (`pkg/utils`)
+
+If you're working on code that parses external data, consider adding fuzz tests to improve security and robustness.
 
 ### Pull Requests
 

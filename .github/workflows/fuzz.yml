@@ -1,0 +1,43 @@
+name: Fuzzing
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    # Run fuzzing daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  GO_VERSION: '1.24.4'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run short fuzz tests
+      if: github.event_name == 'pull_request' || github.event_name == 'push'
+      run: make fuzz-short
+
+    - name: Run extended fuzz tests
+      if: github.event_name == 'schedule'
+      run: make fuzz
+
+    - name: Upload fuzz artifacts
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzz-failures
+        path: |
+          **/testdata/fuzz/
+        retention-days: 30
