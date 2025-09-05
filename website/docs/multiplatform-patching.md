@@ -46,7 +46,7 @@ for platform in $PLATFORMS; do
   arch=$(echo $platform | cut -d'/' -f2 | sed 's/\//-/g')
   echo "Scanning $platform..."
   trivy image --vuln-type os --scanners vuln --ignore-unfixed \
-    -f json -o reports/${arch}.json --platform $platform $IMAGE || \
+    -f json -o reports/${arch}.json --image-src remote --platform $platform $IMAGE || \
     echo "Warning: Failed to scan $platform"
 done
 
