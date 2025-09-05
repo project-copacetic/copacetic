@@ -1,0 +1,44 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "test:latest",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "OS": {
+      "Family": "ubuntu",
+      "Name": "20.04"
+    },
+    "ImageConfig": {
+      "architecture": "amd64"
+    }
+  },
+  "Results": [
+    {
+      "Target": "ubuntu:20.04 (ubuntu 20.04)",
+      "Class": "os-pkgs",
+      "Type": "ubuntu",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2023-1234",
+          "PkgID": "libc6@2.31-0ubuntu9.12",
+          "PkgName": "libc6",
+          "InstalledVersion": "2.31-0ubuntu9.12",
+          "FixedVersion": "2.31-0ubuntu9.13"
+        }
+      ]
+    },
+    {
+      "Target": "requirements.txt",
+      "Class": "lang-pkgs",
+      "Type": "python-pkg",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2023-5678",
+          "PkgID": "requests@2.25.1",
+          "PkgName": "requests",
+          "InstalledVersion": "2.25.1",
+          "FixedVersion": "2.31.0"
+        }
+      ]
+    }
+  ]
+}

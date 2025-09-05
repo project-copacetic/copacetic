@@ -34,7 +34,7 @@ func TestOptions_Initialization(t *testing.T) {
 // Test Options with Updates.
 func TestOptions_WithUpdates(t *testing.T) {
 	updates := &unversioned.UpdateManifest{
-		Updates: []unversioned.UpdatePackage{
+		OSUpdates: []unversioned.UpdatePackage{
 			{
 				Name:             "test-package",
 				InstalledVersion: "1.0.0",
@@ -56,8 +56,8 @@ func TestOptions_WithUpdates(t *testing.T) {
 
 	assert.Equal(t, "test:latest", opts.ImageName)
 	assert.NotNil(t, opts.Updates)
-	assert.Len(t, opts.Updates.Updates, 1)
-	assert.Equal(t, "test-package", opts.Updates.Updates[0].Name)
+	assert.Len(t, opts.Updates.OSUpdates, 1)
+	assert.Equal(t, "test-package", opts.Updates.OSUpdates[0].Name)
 	assert.Equal(t, "debian", opts.Updates.Metadata.OS.Type)
 }
 
@@ -78,17 +78,16 @@ func TestOptions_WithErrorChannel(t *testing.T) {
 // Test Result struct initialization and validation.
 func TestResult_Initialization(t *testing.T) {
 	result := &Result{
-		PackageType:     "deb",
-		ErroredPackages: []string{"pkg1", "pkg2"},
-		ValidatedUpdates: []unversioned.UpdatePackage{
-			{Name: "pkg3", FixedVersion: "1.0.1"},
-		},
+		PackageType:       "deb",
+		ErroredPackages:   []string{"pkg1", "pkg2"},
+		ValidatedManifest: &unversioned.UpdateManifest{OSUpdates: []unversioned.UpdatePackage{{Name: "pkg3", FixedVersion: "1.0.1"}}},
 	}
 
 	assert.Equal(t, "deb", result.PackageType)
 	assert.Equal(t, []string{"pkg1", "pkg2"}, result.ErroredPackages)
-	assert.Len(t, result.ValidatedUpdates, 1)
-	assert.Equal(t, "pkg3", result.ValidatedUpdates[0].Name)
+	assert.NotNil(t, result.ValidatedManifest)
+	assert.Len(t, result.ValidatedManifest.OSUpdates, 1)
+	assert.Equal(t, "pkg3", result.ValidatedManifest.OSUpdates[0].Name)
 }
 
 // Test Result with empty fields.
@@ -97,7 +96,7 @@ func TestResult_Empty(t *testing.T) {
 
 	assert.Empty(t, result.PackageType)
 	assert.Nil(t, result.ErroredPackages)
-	assert.Nil(t, result.ValidatedUpdates)
+	assert.Nil(t, result.ValidatedManifest)
 	assert.Nil(t, result.Result)
 }
 
@@ -105,18 +104,19 @@ func TestResult_Empty(t *testing.T) {
 func TestResult_MultipleValidatedUpdates(t *testing.T) {
 	result := &Result{
 		PackageType: "rpm",
-		ValidatedUpdates: []unversioned.UpdatePackage{
+		ValidatedManifest: &unversioned.UpdateManifest{OSUpdates: []unversioned.UpdatePackage{
 			{Name: "pkg1", FixedVersion: "1.0.1"},
 			{Name: "pkg2", FixedVersion: "2.0.1"},
 			{Name: "pkg3", FixedVersion: "3.0.1"},
-		},
+		}},
 	}
 
 	assert.Equal(t, "rpm", result.PackageType)
-	assert.Len(t, result.ValidatedUpdates, 3)
-	assert.Equal(t, "pkg1", result.ValidatedUpdates[0].Name)
-	assert.Equal(t, "pkg2", result.ValidatedUpdates[1].Name)
-	assert.Equal(t, "pkg3", result.ValidatedUpdates[2].Name)
+	assert.NotNil(t, result.ValidatedManifest)
+	assert.Len(t, result.ValidatedManifest.OSUpdates, 3)
+	assert.Equal(t, "pkg1", result.ValidatedManifest.OSUpdates[0].Name)
+	assert.Equal(t, "pkg2", result.ValidatedManifest.OSUpdates[1].Name)
+	assert.Equal(t, "pkg3", result.ValidatedManifest.OSUpdates[2].Name)
 }
 
 // Test Context struct initialization.

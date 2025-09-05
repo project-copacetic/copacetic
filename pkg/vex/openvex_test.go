@@ -42,7 +42,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			args: args{
 				patchedImageName: patchedImageName,
 				updates: &unversioned.UpdateManifest{
-					Updates: []unversioned.UpdatePackage{
+					OSUpdates: []unversioned.UpdatePackage{
 						{
 							Name:             "test1",
 							InstalledVersion: "1.0",
@@ -96,7 +96,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
 			args: args{
 				patchedImageName: patchedImageName,
 				updates: &unversioned.UpdateManifest{
-					Updates: []unversioned.UpdatePackage{
+					OSUpdates: []unversioned.UpdatePackage{
 						{
 							Name:             "test2",
 							InstalledVersion: "1.0",

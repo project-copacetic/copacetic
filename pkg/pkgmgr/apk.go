@@ -130,7 +130,7 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 
 	// Resolve set of unique packages to update
 	apkComparer := VersionComparer{isValidAPKVersion, isLessThanAPKVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, apkComparer, ignoreErrors)
+	updates, err := GetUniqueLatestUpdates(manifest.OSUpdates, apkComparer, ignoreErrors)
 	if err != nil {
 		return nil, nil, err
 	}
