@@ -3,7 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.24.4
 
 require (
-	github.com/Masterminds/semver/v3 v3.3.0
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/aquasecurity/trivy v0.65.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
