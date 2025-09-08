@@ -17,7 +17,7 @@ require (
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.23.2
+	github.com/moby/buildkit v0.24.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.5
@@ -56,7 +56,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.2 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.9.0 // indirect
-	github.com/containerd/containerd/v2 v2.1.3 // indirect
+	github.com/containerd/containerd/v2 v2.1.4 // indirect
 	github.com/containerd/continuity v0.4.5 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
@@ -129,10 +129,10 @@ require (
 	github.com/zclconf/go-cty v1.16.3 // indirect
 	go.opentelemetry.io/auto/sdk v1.1.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.60.0 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.56.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/httptrace/otelhttptrace v0.60.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
 	go.opentelemetry.io/otel v1.37.0 // indirect
-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.32.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.35.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.36.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.36.0 // indirect
 	go.opentelemetry.io/otel/metric v1.37.0 // indirect
