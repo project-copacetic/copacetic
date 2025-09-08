@@ -1,11 +1,15 @@
-package patch
+package cmd
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/bulk"
+	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	// Register connection helpers for buildkit.
@@ -33,14 +37,16 @@ type patchArgs struct {
 	platform      []string
 	loader        string
 	progress      string
+	configFile    string
 }
 
 func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
-		Use:     "patch",
-		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
-		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
+		Use:   "patch",
+		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
+		Example: ` copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
+  copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			opts := &types.Options{
 				Image:         ua.appImage,
@@ -61,11 +67,32 @@ func NewPatchCmd() *cobra.Command {
 				Platforms:     ua.platform,
 				Progress:      progressui.DisplayMode(ua.progress),
 				Loader:        ua.loader,
+				ConfigFile:    ua.configFile,
 			}
-			return Patch(context.Background(), opts)
+
+			if ua.configFile == "" && ua.appImage == "" {
+				return errors.New("either --config or --image must be provided")
+			}
+
+			// bulk patch
+			if ua.configFile != "" {
+				if ua.appImage != "" || ua.report != "" || ua.patchedTag != "" {
+					return errors.New("--config cannot be used with --image, --report, or --tag")
+				}
+
+				log.Info("Starting in bulk image patching mode...")
+
+				return bulk.PatchFromConfig(context.Background(), ua.configFile, opts)
+			}
+			if ua.appImage == "" {
+				return errors.New("--image is required when not using --config")
+			}
+			log.Info("Starting in single image patching mode...")
+			return patch.Patch(context.Background(), opts)
 		},
 	}
 	flags := patchCmd.Flags()
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). If used, --image and --report are ignored.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
@@ -87,10 +114,6 @@ func NewPatchCmd() *cobra.Command {
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
-
-	if err := patchCmd.MarkFlagRequired("image"); err != nil {
-		panic(err)
-	}
 
 	return patchCmd
 }
