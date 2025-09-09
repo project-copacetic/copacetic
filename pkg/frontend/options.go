@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/moby/buildkit/frontend/dockerui"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/util/bklog"
 	"github.com/pkg/errors"
@@ -17,7 +18,14 @@ const (
 
 // ParseOptions parses the frontend options from the build context.
 func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, error) {
-	opts := client.BuildOpts()
+	// Wrap the client with dockerui for better Docker CLI compatibility
+	// This provides automatic dockerignore handling and named context support
+	c, err := dockerui.NewClient(client)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create dockerui client")
+	}
+
+	opts := c.BuildOpts()
 
 	options := &types.Options{
 		Scanner: "trivy", // default scanner

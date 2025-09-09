@@ -2,6 +2,7 @@ package frontend
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"testing"
 )
@@ -19,11 +20,13 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	if copaPath == "" {
-		panic("missing --copa")
+		fmt.Fprintf(os.Stderr, "Error: missing --copa flag\n")
+		os.Exit(1)
 	}
 
 	if frontendImage == "" {
-		panic("missing --frontend-image")
+		fmt.Fprintf(os.Stderr, "Error: missing --frontend-image flag\n")
+		os.Exit(1)
 	}
 
 	ec := m.Run()

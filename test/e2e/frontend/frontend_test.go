@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,11 @@ import (
 	container_types "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	// defaultBridgeGateway is the default Docker bridge gateway IP.
+	defaultBridgeGateway = "172.17.0.1"
 )
 
 // ensureBuildxBuilder creates a BuildKit builder with insecure registry support for testing.
@@ -169,8 +175,13 @@ func runFrontendTest(t *testing.T, baseImage, localImage string) {
 	outputTar := filepath.Join(tempDir, "patched.tar")
 
 	// Build the buildctl command for frontend patching with the new --local approach
-	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", "172.17.0.1:5000", 1) // Use bridge gateway IP
-	localImageRef := strings.Replace(localImage, "localhost:5000", "172.17.0.1:5000", 1)       // Use bridge gateway IP
+	// Get bridge gateway IP from environment or use default
+	bridgeGateway := os.Getenv("DOCKER_BRIDGE_GATEWAY")
+	if bridgeGateway == "" {
+		bridgeGateway = defaultBridgeGateway
+	}
+	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
+	localImageRef := strings.Replace(localImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
 
 	args := []string{
 		"build",
@@ -238,13 +249,11 @@ func setupLocalRegistry(ctx context.Context, t *testing.T) {
 
 	for i := range containers {
 		container := &containers[i]
-		for _, name := range container.Names {
-			if name == "/registry-frontend-test" {
-				// Remove existing registry
-				err := dockerCli.ContainerRemove(ctx, container.ID, container_types.RemoveOptions{Force: true})
-				require.NoError(t, err, "failed to remove existing registry container")
-				break
-			}
+		if slices.Contains(container.Names, "/registry-frontend-test") {
+			// Remove existing registry
+			err := dockerCli.ContainerRemove(ctx, container.ID, container_types.RemoveOptions{Force: true})
+			require.NoError(t, err, "failed to remove existing registry container")
+			break
 		}
 	}
 
@@ -316,7 +325,13 @@ ENTRYPOINT ["/usr/bin/copa-frontend"]`
 	// Push the frontend image to the local registry so BuildKit can access it
 	// Use localhost for pushing (from host) but bridge gateway for BuildKit access
 	localPushImage := "localhost:5000/copa-frontend:test"
-	buildkitAccessImage := "172.17.0.1:5000/copa-frontend:test"
+
+	// Allow Docker bridge gateway to be configurable via environment variable
+	bridgeGateway := os.Getenv("DOCKER_BRIDGE_GATEWAY")
+	if bridgeGateway == "" {
+		bridgeGateway = defaultBridgeGateway
+	}
+	buildkitAccessImage := fmt.Sprintf("%s:5000/copa-frontend:test", bridgeGateway)
 
 	tagCmd := exec.Command("docker", "tag", frontendImage, localPushImage)
 	err = tagCmd.Run()
@@ -396,8 +411,13 @@ func runFrontendMultiplatformTest(t *testing.T) {
 	outputTar := filepath.Join(tempDir, "multiarch-patched.tar")
 
 	// Build the buildctl command for multiplatform frontend patching
-	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", "172.17.0.1:5000", 1)
-	localImageRef := strings.Replace(localImage, "localhost:5000", "172.17.0.1:5000", 1)
+	// Get bridge gateway IP from environment or use default
+	bridgeGateway := os.Getenv("DOCKER_BRIDGE_GATEWAY")
+	if bridgeGateway == "" {
+		bridgeGateway = defaultBridgeGateway
+	}
+	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
+	localImageRef := strings.Replace(localImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
 
 	args := []string{
 		"build",
