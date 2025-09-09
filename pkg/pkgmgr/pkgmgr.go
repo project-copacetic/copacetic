@@ -26,9 +26,12 @@ const (
 	imageCachePrefix = "ghcr.io/project-copacetic/copacetic"
 )
 
+// PackageManager defines the interface for interacting with different OS package managers.
 type PackageManager interface {
 	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
 	GetPackageType() string
+
+	GetCheckUpgradableCommand() (string, error)
 }
 
 func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {

@@ -244,3 +244,8 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 func (am *apkManager) GetPackageType() string {
 	return "apk"
 }
+
+// GetCheckUpgradableCommand returns the command to check for upgradable packages with apk.
+func (am *apkManager) GetCheckUpgradableCommand() (string, error) {
+	return `sh -c "apk list --upgradable 2>/dev/null | grep -q 'upgradable' || exit 1"`, nil
+}
