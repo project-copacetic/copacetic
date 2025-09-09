@@ -123,8 +123,12 @@ func extractReportFromContext(ctx context.Context, client gwclient.Client, repor
 	// First, try to read as a single file
 	data, fileErr := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: reportPath})
 	if fileErr == nil && len(data) > 0 {
+		// Ensure /tmp directory exists
+		if err := os.MkdirAll("/tmp", 0o1777); err != nil {
+			return "", errors.Wrap(err, "failed to create /tmp directory")
+		}
 		// It's a file - write to temp file
-		tmpDir, err := os.MkdirTemp("", "copa-frontend-report-")
+		tmpDir, err := os.MkdirTemp("/", "copa-frontend-report-")
 		if err != nil {
 			return "", errors.Wrap(err, "failed to create temp dir for report file")
 		}
