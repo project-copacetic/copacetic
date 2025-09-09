@@ -124,7 +124,7 @@ func extractReportFromContext(ctx context.Context, client gwclient.Client, repor
 	data, fileErr := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: reportPath})
 	if fileErr == nil && len(data) > 0 {
 		// It's a file - write to temp file
-		tmpDir, err := os.MkdirTemp("/", "copa-frontend-report-")
+		tmpDir, err := os.MkdirTemp("", "copa-frontend-report-")
 		if err != nil {
 			return "", errors.Wrap(err, "failed to create temp dir for report file")
 		}
@@ -155,7 +155,7 @@ func extractReportFromContext(ctx context.Context, client gwclient.Client, repor
 
 	if dirErr == nil && len(entries) > 0 {
 		// It's a directory - extract all JSON files
-		tmpDir, err := os.MkdirTemp("/", "copa-frontend-reports-")
+		tmpDir, err := os.MkdirTemp("", "copa-frontend-reports-")
 		if err != nil {
 			return "", errors.Wrap(err, "failed to create temp dir for report directory")
 		}
