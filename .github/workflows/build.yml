@@ -42,7 +42,7 @@ jobs:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -56,7 +56,7 @@ jobs:
           CODECOV_OPTS: "-coverprofile=coverage.txt -covermode=atomic"
         run: make test
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fdcc8476540edceab3de004e990f80d881c6cc00 # v5.5.0
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7 # v5.5.1
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
@@ -75,7 +75,7 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -118,7 +118,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -164,7 +164,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -283,7 +283,7 @@ jobs:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -326,7 +326,7 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -339,7 +339,7 @@ jobs:
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@8d34698a59f5ffe24821f0b48ab62a3de8b64b20 # v1.2.3
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
@@ -385,7 +385,7 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm/v5,linux/arm64,linux/386,linux/mips64le
       - name: Install oras CLI
-        uses: oras-project/setup-oras@8d34698a59f5ffe24821f0b48ab62a3de8b64b20 # v1.2.3
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -409,7 +409,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
@@ -466,7 +466,7 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm64
       - name: Install oras CLI
-        uses: oras-project/setup-oras@8d34698a59f5ffe24821f0b48ab62a3de8b64b20 # v1.2.3
+        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -485,7 +485,7 @@ jobs:
           docker push localhost:5000/nginx:latest
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
           go-version: "1.24"
           check-latest: true
