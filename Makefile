@@ -115,6 +115,27 @@ test:
 	go test ./pkg/... $(CODECOV_OPTS)
 
 ################################################################################
+# Target: fuzz - fuzzing tests                                                 #
+################################################################################
+.PHONY: fuzz
+fuzz:
+	$(info $(INFOMARK) Running fuzz tests on pkg libraries ...)
+	go test -fuzz=FuzzTrivyParser -fuzztime=30s ./pkg/report -run=Fuzz || echo "Fuzz test found issues in report package"
+	go test -fuzz=FuzzDebianVersionValidation -fuzztime=30s ./pkg/pkgmgr -run=Fuzz
+	go test -fuzz=FuzzRPMVersionComparison -fuzztime=30s ./pkg/pkgmgr -run=Fuzz
+	go test -fuzz=FuzzAPKVersionValidation -fuzztime=30s ./pkg/pkgmgr -run=Fuzz
+	go test -fuzz=FuzzEOLAPIResponseParsing -fuzztime=30s ./pkg/utils -run=Fuzz
+
+.PHONY: fuzz-short
+fuzz-short:
+	$(info $(INFOMARK) Running short fuzz tests on pkg libraries ...)
+	go test -fuzz=FuzzTrivyParser -fuzztime=5s ./pkg/report -run=Fuzz || echo "Fuzz test found issues in report package"
+	go test -fuzz=FuzzDebianVersionValidation -fuzztime=5s ./pkg/pkgmgr -run=Fuzz
+	go test -fuzz=FuzzRPMVersionComparison -fuzztime=5s ./pkg/pkgmgr -run=Fuzz
+	go test -fuzz=FuzzAPKVersionValidation -fuzztime=5s ./pkg/pkgmgr -run=Fuzz
+	go test -fuzz=FuzzEOLAPIResponseParsing -fuzztime=5s ./pkg/utils -run=Fuzz
+
+################################################################################
 # Target: clean                                                                #
 ################################################################################
 .PHONY: clean
