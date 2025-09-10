@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 
+	dockerclient "github.com/docker/docker/client"
 	"github.com/moby/buildkit/client"
 	gateway "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
@@ -77,6 +78,15 @@ func ValidateClient(ctx context.Context, c *client.Client) error {
 }
 
 func autoClient(ctx context.Context, opts ...client.ClientOpt) (*client.Client, error) {
+	dockerCli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, err
+	}
+	defer dockerCli.Close()
+	if _, err := dockerCli.Ping(ctx); err != nil {
+		return nil, err
+	}
+
 	var retErr error
 
 	newClient := func(ctx context.Context, dialer func(context.Context, string) (net.Conn, error)) (*client.Client, error) {

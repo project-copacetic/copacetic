@@ -678,3 +678,8 @@ func getJSONStatusdFileMap(statusdFileMap map[string]string) ([]byte, error) {
 	}
 	return jsonBytes, nil
 }
+
+// GetCheckUpgradableCommand returns the command to check for upgradable packages with apt.
+func (dm *dpkgManager) GetCheckUpgradableCommand() (string, error) {
+	return `sh -c "apt-get update > /dev/null && apt-get -s upgrade 2>/dev/null | grep -q '^Inst' || exit 1"`, nil
+}
