@@ -52,6 +52,13 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			osType:        osType,
 			osVersion:     osVersion,
 		}, nil
+	case "sles", "opensuse-leap", "opensuse-tumbleweed":
+		return &rpmZypperManager{
+			config:        config,
+			workingFolder: workingFolder,
+			osType:        osType,
+			osVersion:     osVersion,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported osType %s specified", osType)
 	}
