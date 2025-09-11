@@ -16,6 +16,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -383,7 +384,7 @@ func Test_rpmManager_GetPackageType(t *testing.T) {
 			name: "rpm manager",
 			fields: fields{
 				config:        &buildkit.Config{},
-				workingFolder: "/tmp",
+				workingFolder: utils.DefaultTempWorkingFolder,
 				rpmTools:      rpmToolPaths{},
 				isDistroless:  false,
 			},

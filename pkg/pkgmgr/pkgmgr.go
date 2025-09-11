@@ -13,6 +13,7 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -33,19 +34,19 @@ type PackageManager interface {
 
 func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
 	switch osType {
-	case "alpine":
+	case utils.OSTypeAlpine:
 		return &apkManager{
 			config:        config,
 			workingFolder: workingFolder,
 		}, nil
-	case "debian", "ubuntu":
+	case utils.OSTypeDebian, utils.OSTypeUbuntu:
 		return &dpkgManager{
 			config:        config,
 			workingFolder: workingFolder,
 			osVersion:     osVersion,
 			osType:        osType,
 		}, nil
-	case "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma", "almalinux":
+	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
 		return &rpmManager{
 			config:        config,
 			workingFolder: workingFolder,
