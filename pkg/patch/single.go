@@ -185,7 +185,7 @@ func patchSingleArchImage(
 	}
 
 	// Get patched descriptor and add annotations
-	return createPatchResult(ctx, imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
+	return createPatchResult(imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -310,7 +310,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 }
 
 // createPatchResult creates the final patch result with descriptor and annotations.
-func createPatchResult(ctx context.Context, imageName reference.Named, patchedImageName string,
+func createPatchResult(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, image, loaderType string,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
@@ -319,7 +319,10 @@ func createPatchResult(ctx context.Context, imageName reference.Named, patchedIm
 		runtime = imageloader.Podman
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
+	// Use a fresh context for descriptor lookup to avoid cancellation issues
+	// The original context might be canceled after the patching operation completes
+	descriptorCtx := context.Background()
+	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
 	if err != nil {
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
@@ -327,7 +330,7 @@ func createPatchResult(ctx context.Context, imageName reference.Named, patchedIm
 
 	// Add original manifest annotations if we have a patched descriptor
 	if patchedDesc != nil {
-		originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+		originalAnnotations, err := utils.GetPlatformManifestAnnotations(descriptorCtx, image, &ispec.Platform{
 			OS:           targetPlatform.OS,
 			Architecture: targetPlatform.Architecture,
 			Variant:      targetPlatform.Variant,
