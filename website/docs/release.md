@@ -69,7 +69,7 @@ For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):
 
 ### Patch Release Process
 
-For patch releases (e.g., v<MAJOR>.<MINOR>.<PATCH>) that contain bug fixes or security patches:
+For patch releases (e.g., `v<MAJOR>.<MINOR>.<PATCH>`) that contain bug fixes or security patches:
 
 1. **Create Release Branch (if it doesn't exist)**
 
