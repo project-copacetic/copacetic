@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.2e1a0662.css">
-<script src="/copacetic/website/assets/js/runtime~main.26871c56.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.5c83ac66.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.dcdb6760.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -44,23 +44,75 @@
 <li>Pre-releases (alpha, beta, rc) are not currently in use, but should follow the pattern <code>vX.Y.Z-rc.N</code>, etc., if introduced.</li>
 </ul>
 <h2 class="anchor anchorWithStickyNavbar_LWe7" id="release-process">Release Process<a href="#release-process" class="hash-link" aria-label="Direct link to Release Process" title="Direct link to Release Process">​</a></h2>
-<p>Copacetic uses <a href="https://goreleaser.com/" target="_blank" rel="noopener noreferrer">GoReleaser</a> for automating releases.</p>
-<h3 class="anchor anchorWithStickyNavbar_LWe7" id="steps-to-cut-a-release">Steps to Cut a Release<a href="#steps-to-cut-a-release" class="hash-link" aria-label="Direct link to Steps to Cut a Release" title="Direct link to Steps to Cut a Release">​</a></h3>
+<p>Copacetic uses <a href="https://goreleaser.com/" target="_blank" rel="noopener noreferrer">GoReleaser</a> for automating releases. The release process differs depending on whether you&#x27;re cutting a major/minor release or a patch release.</p>
+<h3 class="anchor anchorWithStickyNavbar_LWe7" id="majorminor-release-process">Major/Minor Release Process<a href="#majorminor-release-process" class="hash-link" aria-label="Direct link to Major/Minor Release Process" title="Direct link to Major/Minor Release Process">​</a></h3>
+<p>For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):</p>
 <ol>
 <li>
 <p><strong>Prepare the Release Branch</strong></p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout &lt;BRANCH NAME&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull origin &lt;BRANCH NAME&gt;</span><br></span></code></pre></div></div>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout main</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream main</span><br></span></code></pre></div></div>
+</li>
+<li>
+<p><strong>Create Release Branch</strong></p>
+<p>Create the release branch:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout -b release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span></code></pre></div></div>
 </li>
 <li>
 <p><strong>Create and Push the Tag</strong></p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a &lt;NEW VERSION&gt; -m &#x27;&lt;NEW VERSION&gt;&#x27;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push origin &lt;NEW VERSION&gt;</span><br></span></code></pre></div></div>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a &lt;NEW VERSION&gt; -m &#x27;&lt;NEW VERSION&gt;&#x27;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream &lt;NEW VERSION&gt;</span><br></span></code></pre></div></div>
 </li>
 <li>
 <p><strong>Publishing</strong></p>
 <ul>
-<li>GoReleaser will automatically create a new release.</li>
+<li>GoReleaser will automatically create a new release</li>
 <li>Review and edit the release at: <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a></li>
-<li>Review the respective copa-action image at: <a href="https://github.com/orgs/project-copacetic/packages/container/package/copa-action" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
+<li>Review the respective copa-action image at: <a href="https://github.com/project-copacetic/copacetic/pkgs/container/copa-action" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
+<li>Review the respective copa-extension image at: <a href="https://github.com/project-copacetic/copacetic/pkgs/container/copa-extension" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
+</ul>
+</li>
+</ol>
+<h3 class="anchor anchorWithStickyNavbar_LWe7" id="patch-release-process">Patch Release Process<a href="#patch-release-process" class="hash-link" aria-label="Direct link to Patch Release Process" title="Direct link to Patch Release Process">​</a></h3>
+<p>For patch releases (e.g., <code>v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;</code>) that contain bug fixes or security patches:</p>
+<ol>
+<li>
+<p><strong>Create Release Branch (if it doesn&#x27;t exist)</strong></p>
+<p>Create the release branch from the tag:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout -b release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x v&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span></code></pre></div></div>
+<p>If the release branch already exists:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span></code></pre></div></div>
+</li>
+<li>
+<p><strong>Cherry-pick the Fix</strong></p>
+<p>Cherry-pick the commit(s) that contain the fix from the main branch:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git cherry-pick &lt;COMMIT_HASH&gt;</span><br></span></code></pre></div></div>
+<p>For multiple commits:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git cherry-pick &lt;COMMIT_HASH_1&gt; &lt;COMMIT_HASH_2&gt;</span><br></span></code></pre></div></div>
+</li>
+<li>
+<p><strong>Open a Pull Request</strong></p>
+<p>Create a PR to the release branch:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">gh pr create --base release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x --title &quot;Cherry-pick fix for v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot; --body &quot;Cherry-picking fix from main branch for patch release v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot;</span><br></span></code></pre></div></div>
+</li>
+<li>
+<p><strong>Review and Merge</strong></p>
+<ul>
+<li>Get the PR reviewed by maintainers</li>
+<li>Ensure all CI checks pass</li>
+<li>Merge the PR to the release branch</li>
+</ul>
+</li>
+<li>
+<p><strong>Tag the Release</strong></p>
+<p>After the PR is merged, tag the release from the release branch:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt; -m &quot;Release v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;</span><br></span></code></pre></div></div>
+</li>
+<li>
+<p><strong>Publishing</strong></p>
+<ul>
+<li>GoReleaser will automatically create a new release</li>
+<li>Review and edit the release at: <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a></li>
+<li>Review the respective copa-action image at: <a href="https://github.com/project-copacetic/copacetic/pkgs/container/copa-action" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
+<li>Review the respective copa-extension image at: <a href="https://github.com/project-copacetic/copacetic/pkgs/container/copa-extension" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
 </ul>
 </li>
 </ol>
@@ -74,6 +126,6 @@
 <h2 class="anchor anchorWithStickyNavbar_LWe7" id="acknowledgement">Acknowledgement<a href="#acknowledgement" class="hash-link" aria-label="Direct link to Acknowledgement" title="Direct link to Acknowledgement">​</a></h2>
 <p>This document builds upon the release processes and practices of open-source projects such as Kubernetes, Helm, and Gatekeeper.</p>
 <hr>
-<p>For full release details and the latest updates, visit the <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer">Copacetic Releases page</a>.</p></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/next/maintainer-guidelines"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Maintainer Guidelines</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/next/adopters"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Adopters</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#overview" class="table-of-contents__link toc-highlight">Overview</a></li><li><a href="#frequently-asked-questions" class="table-of-contents__link toc-highlight">Frequently Asked Questions</a></li><li><a href="#release-versioning" class="table-of-contents__link toc-highlight">Release Versioning</a><ul><li><a href="#tagging-strategy" class="table-of-contents__link toc-highlight">Tagging Strategy</a></li></ul></li><li><a href="#release-process" class="table-of-contents__link toc-highlight">Release Process</a><ul><li><a href="#steps-to-cut-a-release" class="table-of-contents__link toc-highlight">Steps to Cut a Release</a></li></ul></li><li><a href="#supported-releases" class="table-of-contents__link toc-highlight">Supported Releases</a></li><li><a href="#supported-platforms" class="table-of-contents__link toc-highlight">Supported Platforms</a></li><li><a href="#acknowledgement" class="table-of-contents__link toc-highlight">Acknowledgement</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
+<p>For full release details and the latest updates, visit the <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer">Copacetic Releases page</a>.</p></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/next/maintainer-guidelines"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Maintainer Guidelines</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/next/adopters"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Adopters</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#overview" class="table-of-contents__link toc-highlight">Overview</a></li><li><a href="#frequently-asked-questions" class="table-of-contents__link toc-highlight">Frequently Asked Questions</a></li><li><a href="#release-versioning" class="table-of-contents__link toc-highlight">Release Versioning</a><ul><li><a href="#tagging-strategy" class="table-of-contents__link toc-highlight">Tagging Strategy</a></li></ul></li><li><a href="#release-process" class="table-of-contents__link toc-highlight">Release Process</a><ul><li><a href="#majorminor-release-process" class="table-of-contents__link toc-highlight">Major/Minor Release Process</a></li><li><a href="#patch-release-process" class="table-of-contents__link toc-highlight">Patch Release Process</a></li></ul></li><li><a href="#supported-releases" class="table-of-contents__link toc-highlight">Supported Releases</a></li><li><a href="#supported-platforms" class="table-of-contents__link toc-highlight">Supported Platforms</a></li><li><a href="#acknowledgement" class="table-of-contents__link toc-highlight">Acknowledgement</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
 </body>
 </html>
