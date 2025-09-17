@@ -338,7 +338,33 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 			},
 		})
 		if err != nil {
-			return nil, nil, "", err
+			log.Warnf("Failed to resolve BaseImage %s: %v. Falling back to using current image %s as base", baseImage, err, image)
+			// Fallback: Create a new config with the BaseImage label set to current image
+			imageConfig := make(map[string]interface{})
+			if err := json.Unmarshal(configData, &imageConfig); err != nil {
+				log.Warnf("Failed to unmarshal image config: %v", err)
+				return configData, nil, image, nil
+			}
+			configMap, ok := imageConfig["config"].(map[string]interface{})
+			if !ok {
+				log.Warnf("Invalid config structure in image config")
+				return configData, nil, image, nil
+			}
+			if configMap["labels"] == nil {
+				configMap["labels"] = make(map[string]interface{})
+			}
+			labelsMap, ok := configMap["labels"].(map[string]interface{})
+			if !ok {
+				log.Warnf("Invalid labels structure in image config")
+				return configData, nil, image, nil
+			}
+			labelsMap["BaseImage"] = image
+			updatedConfigData, err := json.Marshal(imageConfig)
+			if err != nil {
+				log.Warnf("Failed to marshal updated image config: %v", err)
+				return configData, nil, image, nil
+			}
+			return updatedConfigData, nil, image, nil
 		}
 
 		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)
