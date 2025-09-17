@@ -4,14 +4,12 @@
     "localImage": "localhost:5000/nginx",
     "tag": "1.27.0",
     "distro": "debian",
-    "description": "Multi-arch nginx 1.27.0, with push",
+    "description": "Multi-platform nginx 1.27.0, with push",
     "ignoreErrors": false,
     "push": true,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5",
       "linux/386",
-      "linux/mips64le",
       "linux/s390x",
       "linux/arm64"
     ]
@@ -21,12 +19,25 @@
     "localImage": "localhost:5000/nginx",
     "tag": "1.27.0",
     "distro": "debian",
-    "description": "Multi-arch nginx 1.27.0, no push",
+    "description": "Multi-platform nginx 1.27.0, no push",
     "ignoreErrors": false,
     "push": false,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5"
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "mcr.microsoft.com/dotnet/runtime",
+    "localImage": "localhost:5000/dotnet-runtime",
+    "tag": "6.0",
+    "description": "Multi-platform .NET 6.0 runtime, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "skipAnnotations": true,
+    "platforms": [
+      "linux/arm/v7",
+      "linux/arm64"
     ]
   },
   {

@@ -9,6 +9,13 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/types/v1alpha1"
+	"github.com/project-copacetic/copacetic/pkg/types/v1alpha2"
+	"github.com/project-copacetic/copacetic/pkg/utils"
+)
+
+const (
+	v1alpha1APIVersion = "v1alpha1"
+	v1alpha2APIVersion = "v1alpha2"
 )
 
 type ErrorUnsupported struct {
@@ -22,9 +29,9 @@ type ScanReportParser interface {
 	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
-func TryParseScanReport(file, scanner, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
+func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
-		return defaultParseScanReport(file, libraryPatchLevel, pkgTypes)
+		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
 	}
 	return customParseScanReport(file, scanner)
 }
@@ -64,7 +71,7 @@ func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, e
 	return updateManifest, nil
 }
 
-func defaultParseScanReport(file, libraryPatchLevel, pkgTypes string) (*unversioned.UpdateManifest, error) {
+func defaultParseScanReport(file, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	allParsers := []ScanReportParser{
 		&TrivyParser{},
 	}
@@ -74,11 +81,11 @@ func defaultParseScanReport(file, libraryPatchLevel, pkgTypes string) (*unversio
 			// Filter updates based on pkg-types early
 			if manifest != nil {
 				// Only process library updates if "library" is in pkg-types
-				if !strings.Contains(pkgTypes, "library") {
+				if !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
 					manifest.LangUpdates = []unversioned.UpdatePackage{}
 				}
 				// Only process OS updates if "os" is in pkg-types
-				if !strings.Contains(pkgTypes, "os") {
+				if !strings.Contains(pkgTypes, utils.PkgTypeOS) {
 					manifest.OSUpdates = []unversioned.UpdatePackage{}
 				}
 			}
@@ -94,8 +101,12 @@ func defaultParseScanReport(file, libraryPatchLevel, pkgTypes string) (*unversio
 func convertToUnversionedAPI(scannerOutput []byte, m map[string]interface{}) (*unversioned.UpdateManifest, error) {
 	switch v := m["apiVersion"].(type) {
 	case string:
-		if v == "v1alpha1" {
+		if v == v1alpha1APIVersion {
 			um, err := v1alpha1.ConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(scannerOutput)
+			return um, err
+		}
+		if v == v1alpha2APIVersion {
+			um, err := v1alpha2.ConvertV1alpha2UpdateManifestToUnversionedUpdateManifest(scannerOutput)
 			return um, err
 		}
 		return nil, &ErrorUnsupported{fmt.Errorf("unsupported apiVersion: %s", v)}

@@ -7,11 +7,14 @@ import (
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
 const (
 	majorPatchLevel = "major"
+	minorPatchLevel = "minor"
+	patchPatchLevel = "patch"
 )
 
 // TestParseTrivyReport tests the parseTrivyReport function.
@@ -149,7 +152,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_only_patch_versions",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.17", "1.26.19"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "1.26.19",
 			description:      "Should pick highest patch version when patch level is specified",
 		},
@@ -157,7 +160,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_with_mixed_versions_no_fallback",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "2.0.6"}, // only minor and major available
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "",
 			description:      "Should not fall back to minor/major when patch level is specified",
 		},
@@ -165,7 +168,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_comma_separated_mixed",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.18, 1.27.1, 2.0.6"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "1.26.18",
 			description:      "Should keep to patch level only with comma-separated values",
 		},
@@ -175,7 +178,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "minor_level_prefers_patch",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			expected:         "1.26.19",
 			description:      "Should prefer patch over minor when minor level is specified",
 		},
@@ -183,7 +186,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "minor_level_uses_minor_when_no_patch",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "2.0.6"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			expected:         "1.27.1",
 			description:      "Should use minor when no patch available and minor level is specified",
 		},
@@ -191,19 +194,19 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "minor_level_no_major_fallback",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"2.0.6", "2.1.0"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			expected:         "",
 			description:      "Should not fall back to major when minor level is specified",
 		},
 
 		// Major level tests
 		{
-			name:             "major_level_prefers_patch_over_major",
+			name:             "major_level_picks_highest_when_no_comma_separated",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
 			patchLevel:       majorPatchLevel,
-			expected:         "1.26.19",
-			description:      "Should prefer patch version over major when major level is specified",
+			expected:         "2.0.6",
+			description:      "Should pick highest version when no comma-separated versions and major level is specified",
 		},
 		{
 			name:             "major_level_use_major_when_only_option",
@@ -222,12 +225,12 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			description:      "Should prefer patch version from comma-separated values when major level is specified",
 		},
 		{
-			name:             "major_level_only_minor_available",
+			name:             "major_level_picks_highest_minor_when_no_comma_separated",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.27.1", "1.28.0"},
 			patchLevel:       majorPatchLevel,
 			expected:         "1.28.0",
-			description:      "Should use minor when multiple minor options and major level is specified",
+			description:      "Should pick highest version when no comma-separated versions and major level is specified",
 		},
 
 		// Edge cases
@@ -235,7 +238,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 			name:             "patch_level_empty_when_no_valid_versions",
 			installedVersion: "1.26.16",
 			fixedVersions:    []string{"1.26.15", "1.25.0"}, // older versions
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "",
 			description:      "Should return empty when no valid patch versions available",
 		},
@@ -267,7 +270,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "certifi_patch_level_gets_major",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			packageName:      "certifi",
 			expected:         "2024.2.2",
 			description:      "certifi should get latest version even with patch level",
@@ -276,7 +279,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "certifi_minor_level_gets_major",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			packageName:      "certifi",
 			expected:         "2024.2.2",
 			description:      "certifi should get latest version even with minor level",
@@ -294,7 +297,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "other_package_respects_patch_level",
 			installedVersion: "2.25.1",
 			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			packageName:      "requests",
 			expected:         "2.25.2",
 			description:      "non-certifi packages should respect patch level restrictions",
@@ -303,7 +306,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "other_package_respects_minor_level",
 			installedVersion: "2.25.1",
 			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			packageName:      "requests",
 			expected:         "2.25.2",
 			description:      "non-certifi packages should prefer patch over minor with minor level",
@@ -312,7 +315,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 			name:             "other_package_uses_minor_when_no_patch",
 			installedVersion: "2.25.1",
 			fixedVersions:    []string{"2.26.0", "2.27.0", "3.0.0"},
-			patchLevel:       "minor",
+			patchLevel:       minorPatchLevel,
 			packageName:      "requests",
 			expected:         "2.27.0",
 			description:      "non-certifi packages should use highest minor when no patch available",
@@ -468,7 +471,7 @@ func TestPkgTypesFiltering(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			manifest, err := TryParseScanReport(testFile, "trivy", "major", tc.pkgTypes)
+			manifest, err := TryParseScanReport(testFile, "trivy", tc.pkgTypes, utils.PatchTypeMajor)
 			if err != nil {
 				t.Fatalf("TryParseScanReport failed: %v", err)
 			}
@@ -492,6 +495,8 @@ func TestPkgTypesFiltering(t *testing.T) {
 
 // TestPatchLevelVersionSelection tests the FindOptimalFixedVersionWithPatchLevel function
 // with comprehensive test cases covering patch level restrictions and various scenarios.
+// The test cases include CVE tracking to verify that patch level settings correctly
+// balance security fixes with version stability requirements.
 func TestPatchLevelVersionSelection(t *testing.T) {
 	testCases := []struct {
 		name             string
@@ -500,89 +505,155 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 		patchLevel       string
 		expected         string
 		description      string
+		cves             []string // CVEs that would be fixed by the selected version (for documentation/testing)
 	}{
-		// Basic patch level restriction tests
+		// Major patch level tests - picks highest version when no comma-separated versions
+		{
+			name:             "major_patch_level_picks_highest_version",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.7", "42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should pick highest version to fix all CVEs when no comma-separated versions
+			description:      "should upgrade to highest version to fix all CVEs with major patch level when no comma-separated versions",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "major_patch_level_no_patch_available",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should pick highest major version when no patch versions available
+			description:      "should upgrade to highest major version when no patch versions available with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+
+		// Patch level restriction tests
+		{
+			name:             "patch_level_restriction_no_upgrade",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       patchPatchLevel,
+			expected:         "", // Should not upgrade when only major versions available
+			description:      "should NOT upgrade with patch level when only major versions available",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "patch_level_picks_highest_patch",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.7", "41.0.8", "42.0.0", "43.0.1"},
+			patchLevel:       patchPatchLevel,
+			expected:         "41.0.8", // Should pick highest patch version
+			description:      "should upgrade to highest patch version when patch versions are available",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130"},
+		},
 		{
 			name:             "patch_level_no_major_jump",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"3.4.0"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "",
-			description:      "package should NOT upgrade from 2.6.0 to 3.4.0 with patch level",
+			description:      "should NOT upgrade to major version with patch level",
 		},
 		{
 			name:             "patch_level_with_patch_available",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"2.6.1", "3.4.0"},
-			patchLevel:       "patch",
+			patchLevel:       patchPatchLevel,
 			expected:         "2.6.1",
-			description:      "package should upgrade from 2.6.0 to 2.6.1 with patch level",
+			description:      "should upgrade to patch version with patch level",
+		},
+
+		// Minor level restriction tests
+		{
+			name:             "minor_level_restriction_no_major",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0", "42.0.4", "42.0.2", "43.0.1"},
+			patchLevel:       minorPatchLevel,
+			expected:         "", // Should not upgrade to major versions even with minor level
+			description:      "should NOT upgrade to major versions with minor patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
 		},
 		{
-			name:             "patch_level_minor_prevents_major",
-			installedVersion: "2.6.0",
-			fixedVersions:    []string{"3.4.0"},
-			patchLevel:       "minor",
-			expected:         "",
-			description:      "package should NOT upgrade to major version even with minor level",
+			name:             "minor_level_prefers_patch",
+			installedVersion: "1.26.5",
+			fixedVersions:    []string{"1.26.6", "1.27.0", "2.0.0"},
+			patchLevel:       minorPatchLevel,
+			expected:         "1.26.6",
+			description:      "should prefer patch over minor with minor level",
 		},
 		{
-			name:             "patch_level_major_allows_major",
+			name:             "minor_level_uses_minor_when_no_patch",
+			installedVersion: "1.26.5",
+			fixedVersions:    []string{"1.27.0", "1.28.0", "2.0.0"},
+			patchLevel:       minorPatchLevel,
+			expected:         "1.28.0",
+			description:      "should use highest minor when no patch available with minor level",
+		},
+
+		// Major level allows major upgrades
+		{
+			name:             "major_level_allows_major_upgrade",
 			installedVersion: "2.6.0",
 			fixedVersions:    []string{"3.4.0"},
 			patchLevel:       majorPatchLevel,
 			expected:         "3.4.0",
-			description:      "package should upgrade to major version with major level",
+			description:      "should upgrade to major version with major level",
 		},
 
-		// Python-specific library test cases
+		// Comma-separated version handling
 		{
-			name:             "paramiko_patch_level_restriction",
-			installedVersion: "2.6.0",
-			fixedVersions:    []string{"2.6.1", "2.6.2", "2.7.0", "3.4.0"},
-			patchLevel:       "patch",
-			expected:         "2.6.2",
-			description:      "paramiko should only upgrade to highest patch version with patch level",
+			name:             "comma_separated_prefers_patch_over_major",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.6, 1.26.17"},
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.17", // Should prefer patch version from comma-separated list
+			description:      "should prefer patch version from comma-separated list with major patch level",
+			cves:             []string{"CVE-2023-43804"},
 		},
 		{
-			name:             "paramiko_no_patch_available",
-			installedVersion: "2.6.0",
-			fixedVersions:    []string{"2.7.0", "3.4.0"},
-			patchLevel:       "patch",
+			name:             "comma_separated_with_patch_preference",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"41.0.8, 42.0.4", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "41.0.8", // Should prefer patch version from comma-separated list
+			description:      "should prefer patch version from comma-separated list even with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+		{
+			name:             "comma_separated_multiple_entries",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"2.0.7, 1.26.18", "1.26.19, 2.2.2"}, // Multiple comma-separated entries
+			patchLevel:       majorPatchLevel,
+			expected:         "1.26.19", // Should pick highest patch version across all comma-separated lists
+			description:      "should prefer highest patch version across multiple comma-separated lists",
+			cves:             []string{"CVE-2023-45803", "CVE-2024-37891"},
+		},
+		{
+			name:             "comma_separated_no_patch_available",
+			installedVersion: "41.0.6",
+			fixedVersions:    []string{"42.0.0, 42.0.4", "43.0.1"},
+			patchLevel:       majorPatchLevel,
+			expected:         "43.0.1", // Should handle comma-separated and pick highest when comma-separated versions don't contain patches
+			description:      "should handle comma-separated versions and pick highest with major patch level",
+			cves:             []string{"CVE-2023-50782", "CVE-2024-26130", "CVE-2024-0727", "GHSA-h4gh-qq45-vh27"},
+		},
+
+		// Edge cases
+		{
+			name:             "no_valid_versions_available",
+			installedVersion: "1.26.16",
+			fixedVersions:    []string{"1.26.15", "1.25.0"}, // older versions
+			patchLevel:       patchPatchLevel,
 			expected:         "",
-			description:      "paramiko should not upgrade when no patch versions available with patch level",
-		},
-		{
-			name:             "requests_patch_level_restriction",
-			installedVersion: "2.25.1",
-			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
-			patchLevel:       "patch",
-			expected:         "2.25.2",
-			description:      "requests should only upgrade to patch version with patch level",
-		},
-		{
-			name:             "urllib3_minor_level_prefers_patch",
-			installedVersion: "1.26.5",
-			fixedVersions:    []string{"1.26.6", "1.27.0", "2.0.0"},
-			patchLevel:       "minor",
-			expected:         "1.26.6",
-			description:      "urllib3 should prefer patch over minor with minor level",
-		},
-		{
-			name:             "urllib3_minor_level_uses_minor_when_needed",
-			installedVersion: "1.26.5",
-			fixedVersions:    []string{"1.27.0", "1.28.0", "2.0.0"},
-			patchLevel:       "minor",
-			expected:         "1.28.0",
-			description:      "urllib3 should use highest minor when no patch available with minor level",
+			description:      "should return empty when no valid patch versions available",
 		},
 		{
 			name:             "certifi_special_handling_simulation",
 			installedVersion: "2021.10.8",
 			fixedVersions:    []string{"2022.12.7", "2023.5.7", "2024.2.2"},
-			patchLevel:       majorPatchLevel, // Simulates overriding patch level to major for certifi
+			patchLevel:       majorPatchLevel,
 			expected:         "2024.2.2",
-			description:      "certifi should get latest version when patch level is overridden to major",
+			description:      "should get latest version with major level for date-based versioning",
 		},
 	}
 
@@ -592,8 +663,71 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 
 			assert.Equal(t, tc.expected, result, tc.description)
 
-			t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s",
-				tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result)
+			// Log test results with CVE information if present
+			if len(tc.cves) > 0 {
+				t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s, CVEs=%v",
+					tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result, tc.cves)
+
+				// Verify that when major patch level is used, we can fix CVEs
+				if tc.patchLevel == majorPatchLevel && result != "" {
+					t.Logf("✓ Major patch level successfully selected version %s to fix CVEs: %v", result, tc.cves)
+					t.Logf("  (behavior: highest version for non-comma-separated, prefer patch for comma-separated)")
+				} else if tc.patchLevel != majorPatchLevel && result == "" {
+					t.Logf("✓ Patch level '%s' correctly restricted upgrade, CVEs remain unfixed: %v", tc.patchLevel, tc.cves)
+				}
+			} else {
+				t.Logf("%s: installedVersion=%s, fixedVersions=%v, patchLevel=%s, result=%s",
+					tc.description, tc.installedVersion, tc.fixedVersions, tc.patchLevel, result)
+			}
+		})
+	}
+}
+
+// TestNewTrivyParser tests the NewTrivyParser constructor function.
+func TestNewTrivyParser(t *testing.T) {
+	parser := NewTrivyParser()
+	assert.NotNil(t, parser)
+	assert.IsType(t, &TrivyParser{}, parser)
+}
+
+// TestTrivyParserParseEdgeCases tests edge cases for TrivyParser.Parse.
+func TestTrivyParserParseEdgeCases(t *testing.T) {
+	testCases := []struct {
+		name        string
+		file        string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "non-existent file",
+			file:        "non-existent-file.json",
+			wantErr:     true,
+			errContains: "no such file or directory",
+		},
+		{
+			name:        "invalid JSON file",
+			file:        "testdata/invalid.json",
+			wantErr:     true,
+			errContains: "",
+		},
+	}
+
+	parser := NewTrivyParser()
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := parser.Parse(tc.file)
+
+			if tc.wantErr {
+				assert.Error(t, err)
+				if tc.errContains != "" {
+					assert.Contains(t, err.Error(), tc.errContains)
+				}
+				assert.Nil(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+			}
 		})
 	}
 }

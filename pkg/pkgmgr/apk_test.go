@@ -16,6 +16,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 // TestApkReadResultsManifest tests the apkReadResultsManifest function.
@@ -201,7 +202,7 @@ func Test_apkManager_GetPackageType(t *testing.T) {
 			name: "alpine",
 			fields: fields{
 				config:        &buildkit.Config{},
-				workingFolder: "/tmp",
+				workingFolder: utils.DefaultTempWorkingFolder,
 			},
 			want: "apk",
 		},
@@ -291,7 +292,7 @@ func Test_InstallUpdates_APK(t *testing.T) {
 					Client:     mockGWClient,
 					ImageState: llb.Scratch(),
 				},
-				workingFolder: "/tmp",
+				workingFolder: utils.DefaultTempWorkingFolder,
 			}
 
 			state, pkgs, err := am.InstallUpdates(context.TODO(), tt.manifest, tt.ignoreErrors)

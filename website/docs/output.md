@@ -1,5 +1,5 @@
 ---
-title: Output
+title: VEX Output
 ---
 
 :::caution
@@ -27,7 +27,7 @@ OpenVEX is an implementation of Vulnerability Exploitability eXchange (VEX) form
 To generate a VEX document using OpenVEX, use `--format="openvex"` flag, and use `--output` to specify a file path. For example:
 
 ```bash
-copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --format="openvex" --output "nginx.1.21.6-vex.json"
+copa patch -i mcr.microsoft.com/azure-cli:2.50.0 -r report.json -t 2.50.0-patched --format="openvex" --output "vex.json"
 ```
 
 This will generate a VEX Document that looks like:
@@ -35,31 +35,40 @@ This will generate a VEX Document that looks like:
 ```json
 {
   "@context": "https://openvex.dev/ns",
-  "@id": "https://openvex.dev/docs/public/vex-a6c44ec1d79e9dd4190dc01b4ecf7527ebb26bd37c01e32e6efcd203ae00d2a5",
+  "@id": "https://openvex.dev/docs/public/vex-e635674468f708838b7bd1b61b1c39bcf98639318eebfb510db519d947a5c204",
   "author": "Project Copacetic",
-  "timestamp": "2023-10-11T00:15:00.114768055Z",
+  "timestamp": "2025-09-10T16:52:53.988017858Z",
   "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
     {
       "vulnerability": {
-        "@id": "CVE-2021-22945"
+        "@id": "CVE-2024-0727"
       },
       "products": [
         {
-          "@id": "pkg:oci/docker.io/library/nginx:1.21.6-patched",
+          "@id": "pkg:oci/azure-cli@sha256:b40133b2ab18d506f54e4d42083cb95f814d8397d7ef95abe28e897c18e3091d",
           "subcomponents": [
             {
-              "@id": "pkg:deb/debian/curl@7.74.0-1.3+deb11u2?arch=amd64"
+              "@id": "pkg:apk/alpine/libcrypto3@3.1.4-r5?arch=amd64"
             },
             {
-              "@id": "pkg:deb/debian/libcurl4@7.74.0-1.3+deb11u2?arch=amd64"
+              "@id": "pkg:apk/alpine/libssl3@3.1.4-r5?arch=amd64"
+            },
+            {
+              "@id": "pkg:apk/alpine/openssl@3.1.4-r5?arch=amd64"
+            },
+            {
+              "@id": "pkg:apk/alpine/openssl-dev@3.1.4-r5?arch=amd64"
+            },
+            {
+              "@id": "pkg:pypi/cryptography@41.0.6"
             }
           ]
         }
       ],
       "status": "fixed"
-    },
-    ...
+    }
+  ]
 }
 ```

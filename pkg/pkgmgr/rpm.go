@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	rpmVer "github.com/knqyf263/go-rpm-version"
 	"github.com/moby/buildkit/client/llb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -113,15 +114,19 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string, useCachePrefix bool) string {
 	var image, version string
 
-	if osType == "azurelinux" {
+	if osType == utils.OSTypeAzureLinux {
 		image = "azurelinux/base/core"
-		version = osVersion
+		if strings.Contains(osVersion, "3.0") {
+			version = "3.0"
+		} else {
+			version = osVersion
+		}
 	} else {
 		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
 		image = "cbl-mariner/base/core"
 		version = "2.0"
 
-		if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
+		if manifest != nil && manifest.Metadata.OS.Type == utils.OSTypeCBLMariner {
 			vers := strings.Split(manifest.Metadata.OS.Version, ".")
 			if len(vers) < 2 {
 				vers = append(vers, "0")
@@ -207,7 +212,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var err error
 
 	if manifest != nil {
-		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
+		if manifest.Metadata.OS.Type == utils.OSTypeOracle && !ignoreErrors {
 			err = errors.New("detected Oracle image passed in\n" +
 				"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
 			return &rm.config.ImageState, nil, err
@@ -225,13 +230,19 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		log.Debugf("latest unique RPMs: %v", updates)
 	}
 
+	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
+	if err != nil {
+		log.Error("unable to get image platform")
+		return nil, nil, err
+	}
+
 	toolImageName := getRPMImageName(manifest, rm.osType, rm.osVersion, true)
 	// check if we can resolve the tool image
-	if _, err := tryImage(ctx, toolImageName, rm.config.Client); err != nil {
+	if _, err := tryImage(ctx, toolImageName, rm.config.Client, imagePlatform); err != nil {
 		toolImageName = getRPMImageName(manifest, rm.osType, rm.osVersion, false)
 	}
 
-	if err := rm.probeRPMStatus(ctx, toolImageName); err != nil {
+	if err := rm.probeRPMStatus(ctx, toolImageName, imagePlatform); err != nil {
 		return nil, nil, err
 	}
 
@@ -261,21 +272,15 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	return updatedImageState, errPkgs, nil
 }
 
-func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string) error {
+func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, platform *ocispecs.Platform) error {
 	imageStateCurrent := rm.config.ImageState
 	if rm.config.PatchedConfigData != nil {
 		imageStateCurrent = rm.config.PatchedImageState
 	}
 
-	imagePlatform, err := rm.config.ImageState.GetPlatform(ctx)
-	if err != nil {
-		log.Error("unable to get image platform")
-		return err
-	}
-
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
 	toolingBase := llb.Image(toolImage,
-		llb.Platform(*imagePlatform),
+		llb.Platform(*platform),
 		llb.ResolveModeDefault,
 	)
 
@@ -645,8 +650,11 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
+								# Convert OS_VERSION from X.Y.Z to X.Y format
+								OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
 								tdnf makecache
-								tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
+								tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
 
 								ls /tmp/rootfs/var/lib/rpm
 						`,
@@ -671,7 +679,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			# Convert OS_VERSION from X.Y.Z to X.Y format
+			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
+			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
 			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
 				exit $?

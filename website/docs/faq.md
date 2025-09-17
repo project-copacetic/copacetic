@@ -4,14 +4,15 @@ title: FAQ
 
 ## What kind of vulnerabilities can Copa patch?
 
-Copa is capable of patching "OS level" vulnerabilities. This includes packages (like `openssl`) in the image that are managed by a package manager such as `apt-get` or `yum`. Copa is not currently capable of patching vulnerabilities at the "application level" such as Python packages or Go modules (see [below](#what-kind-of-vulnerabilities-can-copa-not-patch) for more details).
+Copa patches "OS level" vulnerabilities (e.g. `openssl`, `glibc`) managed by system package managers (`apt`, `yum/dnf`, `apk`, etc.).
 
+Additionally, Copa now supports (experimental) patching of Python packages installed via `pip` when they are present in the image filesystem. For more information, please see [application-level patching](app-level-patching).
 
 ## What kind of vulnerabilities can Copa not patch?
 
-Copa is not capable of patching vulnerabilities for compiled languages, like Go, at the "application level", for instance, Go modules. If your application uses a vulnerable version of the `golang.org/x/net` module, Copa will be unable to patch it. This is because Copa doesn't have access to the application's source code or the knowledge of how to build it, such as compiler flags, preventing it from patching vulnerabilities at the application level.
+Copa does not patch arbitrary application or source-level dependencies that require a project build context (e.g. Go modules, or compiled binaries built from source). If your application embeds a vulnerable Go module like `golang.org/x/net`, Copa cannot currently rebuild the application with a fixed dependency version.
 
-To patch vulnerabilities for applications, you can package these applications and consume them from package repositories, like `http://archive.ubuntu.com/ubuntu/` for Ubuntu, and ensure Trivy can scan and report vulnerabilities for these packages. This way, Copa can patch the applications as a whole, though it cannot patch specific modules within the applications.
+To patch such application vulnerabilities, package the application itself into a system package (e.g. a `.deb` or `.rpm`) or ensure the base image provides updated language runtime packages that scanners recognize. Copa can then patch the packaged artifact at the OS package layer.
 
 ## My disk space is being filled up after using Copa. How can I fix this?
 
@@ -24,9 +25,11 @@ All images being passed into Copa have their versioning data carefully extracted
 ### DPKG
 
 #### Debian
+
 All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `ghcr.io/project-copacetic/copacetic/debian:11-slim` is used as the tooling image.
 
 #### Ubuntu
+
 All Ubuntu-based images use the same versioning that was passed in. e.g. if `tomcat:10.1.17-jre17-temurin-jammy` is passed in, `ghcr.io/project-copacetic/copacetic/ubuntu:22.04` will be used for the tooling image.
 
 There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being patched without a Trivy scan, Copa is unable to parse a scan for versioning information. In these scenarios, Copa will fallback to `ghcr.io/project-copacetic/copacetic/debian:stable-slim` as the tooling image.
@@ -34,13 +37,26 @@ There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being p
 ### RPM
 
 #### Azure Linux 3.0+
+
 Azure Linux based images will use `ghcr.io/project-copacetic/copacetic/azurelinux/base/core` with the same version as the image being patched.
 
 #### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux
+
 These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`
 
 ### APK (Alpine)
+
 APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
+
+### Python
+
+When updating Python packages:
+
+1. If the target image already contains a working `pip` (`pip` or `pip3` on PATH), Copa installs upgrades directly inside the image layer without pulling a separate tooling image.
+2. If `pip` is absent, Copa will:
+    - Detect an existing `site-packages` path by scanning common locations.
+    - Infer the Python version from the path (e.g. `python3.12`) and choose a matching tooling image: `docker.io/library/python:<major.minor>-slim` (e.g. `python:3.12-slim`).
+    - Fallback to `docker.io/library/python:3-slim` if a version cannot be inferred.
 
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 
@@ -99,9 +115,11 @@ If you are continuing to see this and the package repositories and vulnerability
 - update all packages without any scanner reports. This can be done by not providing a scanner report to Copa, and Copa will update all packages to the latest version available in the package repositories.
 
 ## Can I use Dependabot with Copa patched images?
+
 Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
 
 ## Does Copa cause a buildup of patched layers on each patch?
+
 No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
 
 ## Why am I getting 404 errors when trying to patch an image?

@@ -1,0 +1,12 @@
+[
+  {
+    "originalImage": "docker.io/library/nginx",
+    "localImage": "localhost:5000/nginx",
+    "tag": "1.27.0",
+    "distro": "debian",
+    "description": "Multi-platform nginx 1.27.0 with scanner plugin, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }
+]

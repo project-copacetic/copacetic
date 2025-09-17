@@ -1,18 +1,27 @@
+// Package report contains parsers and helpers for vulnerability scan reports (e.g., Trivy).
 package report
 
 import (
 	"encoding/json"
 	"errors"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
-	log "github.com/sirupsen/logrus"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 type TrivyParser struct{}
+
+// getSpecialPackagePatchLevels returns a map of package names to their special patch level handling rules.
+func getSpecialPackagePatchLevels() map[string]string {
+	return map[string]string{
+		"certifi": "major", // Always use latest version for certificate handling
+	}
+}
 
 // parseVersion parses a semantic version string and returns major, minor, patch as integers.
 func parseVersion(version string) (major, minor, patch int, err error) {
@@ -94,10 +103,21 @@ func findOptimalFixedVersion(installedVersion string, fixedVersions []string) st
 // libraryPatchLevel can be "patch", "minor", or "major":
 // - "patch": only updates to patch versions (same major.minor), no fallback to minor/major
 // - "minor": only updates to patch or minor versions, never major versions
-// - "major": allows all version types and chooses the highest available version.
+// - "major": behavior depends on version format:
+//   - If comma-separated versions exist: prefers patch > minor > major for compatibility
+//   - If no comma-separated versions: chooses highest available version to fix all CVEs
 func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
 	if len(fixedVersions) == 0 {
 		return ""
+	}
+
+	// Detect if any version entries contain comma-separated values
+	hasCommaSeparatedVersions := false
+	for _, versionStr := range fixedVersions {
+		if strings.Contains(versionStr, ",") {
+			hasCommaSeparatedVersions = true
+			break
+		}
 	}
 
 	// Collect all possible fixed versions
@@ -182,15 +202,24 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 		return ""
 
 	case "major":
-		// Allow all version types, but prefer patch > minor > major
-		if len(patchVersions) > 0 {
-			return getHighestVersion(patchVersions)
-		}
-		if len(minorVersions) > 0 {
-			return getHighestVersion(minorVersions)
-		}
-		if len(majorVersions) > 0 {
-			return getHighestVersion(majorVersions)
+		// For major patch level, the behavior depends on whether we have comma-separated versions
+		if hasCommaSeparatedVersions {
+			// When comma-separated versions exist, prefer patch > minor > major for compatibility
+			if len(patchVersions) > 0 {
+				return getHighestVersion(patchVersions)
+			}
+			if len(minorVersions) > 0 {
+				return getHighestVersion(minorVersions)
+			}
+			if len(majorVersions) > 0 {
+				return getHighestVersion(majorVersions)
+			}
+		} else {
+			// When no comma-separated versions, pick the highest version to fix all CVEs.
+			// While this approach fixes the most vulnerabilities, it may introduce breaking changes
+			// or compatibility issues. Users should weigh the security benefits against the
+			// potential risks of upgrading to a higher version.
+			return getHighestVersion(validCandidates)
 		}
 		return ""
 
@@ -297,11 +326,13 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 	// Process Language packages - group by package name to find optimal fixed version
 	langPackageVulns := make(map[string][]trivyTypes.DetectedVulnerability)
 	langPackageInfo := make(map[string]unversioned.UpdatePackage)
+	// track all vulnerability IDs per lang package for VEX emission
+	langPackageVulnIDs := make(map[string]map[string]struct{})
 
 	for i := range report.Results {
 		r := &report.Results[i]
 
-		// Process OS packages using the original simple logic
+		// Process OS packages
 		if r.Class == "os-pkgs" {
 			for v := range r.Vulnerabilities {
 				vuln := &r.Vulnerabilities[v]
@@ -318,27 +349,10 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			}
 		}
 
-		// Process Language packages with optimal version selection
-		if r.Class == "lang-pkgs" {
-			// Check if this is a supported language package type
-			isSupportedLangPkg := r.Type == "python-pkg" ||
-				r.Type == "dotnet-core" // consider adding "nuget" type?
-
-			if isSupportedLangPkg {
-				// Filter out system-level .NET packages that cannot be updated via application package managers
-				if r.Type == "dotnet-core" {
-					// Skip system SDK/runtime paths that are not application-manageable
-					if strings.HasPrefix(r.Target, "usr/share/dotnet/") ||
-						strings.HasPrefix(r.Target, "/usr/share/dotnet/") ||
-						strings.HasPrefix(r.Target, "usr/share/powershell/") ||
-						strings.HasPrefix(r.Target, "/usr/share/powershell/") ||
-						strings.Contains(r.Target, "sdk/") ||
-						strings.Contains(r.Target, "shared/Microsoft.") {
-						log.Debugf("Skipping system-level .NET dependency: %s", r.Target)
-						continue
-					}
-				}
-				
+		// Process Language packages
+		if r.Class == utils.LangPackages {
+			// Check if this is a Python-related target
+			if r.Type == utils.PythonPackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
@@ -350,8 +364,12 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
 							}
+							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
 						}
 						langPackageVulns[vuln.PkgName] = append(langPackageVulns[vuln.PkgName], *vuln)
+						if vuln.VulnerabilityID != "" {
+							langPackageVulnIDs[vuln.PkgName][vuln.VulnerabilityID] = struct{}{}
+						}
 					}
 				}
 			}
@@ -380,17 +398,35 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 
 		if len(fixedVersions) > 0 {
-			info := langPackageInfo[pkgName]
+			info, ok := langPackageInfo[pkgName]
+			if !ok {
+				// Defensive: skip if info not recorded (shouldn't happen)
+				continue
+			}
 
-			// Special handling for certifi package - always use major patch level to get latest version
+			// Determine patch level to use, with special handling for certain packages
 			patchLevelToUse := libraryPatchLevel
-			if pkgName == "certifi" {
-				patchLevelToUse = "major"
+			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[pkgName]; exists {
+				patchLevelToUse = specialPatchLevel
 			}
 
 			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)
-			info.FixedVersion = optimalVersion
-			updates.LangUpdates = append(updates.LangUpdates, info)
+			if idsMap, ok2 := langPackageVulnIDs[pkgName]; ok2 {
+				var ids []string
+				for id := range idsMap {
+					ids = append(ids, id)
+				}
+				sort.Strings(ids)
+				for _, vid := range ids {
+					clone := info
+					clone.FixedVersion = optimalVersion
+					clone.VulnerabilityID = vid
+					updates.LangUpdates = append(updates.LangUpdates, clone)
+				}
+			} else {
+				info.FixedVersion = optimalVersion
+				updates.LangUpdates = append(updates.LangUpdates, info)
+			}
 		}
 	}
 

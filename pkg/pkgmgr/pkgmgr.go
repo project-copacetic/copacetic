@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -31,19 +34,19 @@ type PackageManager interface {
 
 func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
 	switch osType {
-	case "alpine":
+	case utils.OSTypeAlpine:
 		return &apkManager{
 			config:        config,
 			workingFolder: workingFolder,
 		}, nil
-	case "debian", "ubuntu":
+	case utils.OSTypeDebian, utils.OSTypeUbuntu:
 		return &dpkgManager{
 			config:        config,
 			workingFolder: workingFolder,
 			osVersion:     osVersion,
 			osType:        osType,
 		}, nil
-	case "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
+	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
 		return &rpmManager{
 			config:        config,
 			workingFolder: workingFolder,
@@ -64,25 +67,20 @@ type VersionComparer struct {
 
 func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.UpdatePackages, error) {
 	if len(updates) == 0 {
-		return unversioned.UpdatePackages{}, nil
+		return nil, fmt.Errorf("no patchable vulnerabilities found")
 	}
 
 	dict := make(map[string]string)
 	var allErrors *multierror.Error
 	for _, u := range updates {
-		switch {
-		case u.FixedVersion == "":
-			// No suitable version found due to patch level restrictions, skip this update
-			log.Debugf("Skipping package %s: no suitable version found according to patch level restrictions", u.Name)
-			continue
-		case cmp.IsValid(u.FixedVersion):
+		if cmp.IsValid(u.FixedVersion) {
 			ver, ok := dict[u.Name]
 			if !ok {
 				dict[u.Name] = u.FixedVersion
 			} else if cmp.LessThan(ver, u.FixedVersion) {
 				dict[u.Name] = u.FixedVersion
 			}
-		default:
+		} else {
 			err := fmt.Errorf("invalid version %s found for package %s", u.FixedVersion, u.Name)
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
@@ -97,6 +95,9 @@ func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionCompa
 	for k, v := range dict {
 		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
 	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
 	return out, nil
 }
 
@@ -170,8 +171,17 @@ func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionCompa
 
 // tryImage attempts to create an llb.Image reference and call c.Solve() on it
 // to confirm it exists. If it doesn't, it will return an error so we can fallback.
-func tryImage(ctx context.Context, imageRef string, c client.Client) (llb.State, error) {
-	st := llb.Image(imageRef)
+func tryImage(ctx context.Context, imageRef string, c client.Client, platform *ocispecs.Platform) (llb.State, error) {
+	imageOpts := []llb.ImageOption{
+		llb.ResolveModeDefault,
+	}
+	if platform != nil {
+		imageOpts = append(imageOpts, llb.Platform(*platform))
+	}
+	st := llb.Image(
+		imageRef,
+		imageOpts...,
+	)
 	def, err := st.Marshal(ctx)
 	if err != nil {
 		return llb.State{}, err

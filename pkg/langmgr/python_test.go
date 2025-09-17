@@ -205,7 +205,9 @@ func TestPythonManagerInstallUpdates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			state, errPkgs, err := pm.InstallUpdates(ctx, tt.manifest, tt.ignoreErrors)
+			// Create a mock current state (using the same imageState from pm.config)
+			currentState := &pm.config.ImageState
+			state, errPkgs, err := pm.InstallUpdates(ctx, currentState, tt.manifest, tt.ignoreErrors)
 
 			if tt.expectError {
 				// In test environment, we expect errors due to missing buildkit setup
@@ -364,9 +366,17 @@ func TestPythonManagerType(t *testing.T) {
 	// Test that pythonManager implements LangManager interface
 	var _ LangManager = pm
 
-	// Test that GetLanguageManagers returns both pythonManager and dotnetManager
-	managers := GetLanguageManagers(config, workingFolder)
-	require.Len(t, managers, 2)
+	// Test that GetLanguageManagers returns a pythonManager when there are Python packages
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name: "urllib3",
+				Type: "python-pkg",
+			},
+		},
+	}
+	managers := GetLanguageManagers(config, workingFolder, manifest)
+	require.Len(t, managers, 1)
 
 	pythonMgr, ok := managers[0].(*pythonManager)
 	assert.True(t, ok, "First manager should be a pythonManager")

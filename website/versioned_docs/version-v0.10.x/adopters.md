@@ -15,3 +15,4 @@ Check out some adopters of Copa in the community:
 ### Copa CLI Adopters
 - [Helmper](https://github.com/ChristofferNissen/helmper)
 - [Kubescape](https://github.com/kubescape/kubescape)
+- [Devtron](https://docs.devtron.ai/usage/plugins/plugin-list/copacetic) 
