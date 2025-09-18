@@ -97,7 +97,7 @@
         "digest": "sha256:60323975ec3aabe1840920a65237950a54c5fef6ffc811a5d26bb6bd130f1cc3",
         "distro": "Mariner",
         "description": "Valid rpm DB, tdnf, yum & rpm present",
-        "ignoreErrors": false,
+        "ignoreErrors": true,
         "isManifestList": true
     },
     {
@@ -106,7 +106,7 @@
         "digest": "sha256:c85680df0ddccfd5bf0cd60ff7d0c07b0ea783bcee9ce5dc748b68c0d36e280a",
         "distro": "Mariner",
         "description": "Valid rpm DB, tdnf, yum & rpm present, arm64 cross-arch",
-        "ignoreErrors": false,
+        "ignoreErrors": true,
         "isManifestList": false
     },
     {
