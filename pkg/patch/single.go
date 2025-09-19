@@ -2,11 +2,13 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/containerd/platforms"
@@ -21,6 +23,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -83,6 +86,8 @@ func patchSingleArchImage(
 		CertPath:   opts.BkCertPath,
 		KeyPath:    opts.BkKeyPath,
 	}
+
+	var upToDate atomic.Bool
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -161,8 +166,14 @@ func patchSingleArchImage(
 
 	// Start the main build process
 	eg.Go(func() error {
-		return executePatchBuild(ctx, ch, bkClient, buildConfig, imageName, &targetPlatform,
+		err := executePatchBuild(ctx, ch, bkClient, buildConfig, imageName, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel)
+		if errors.Is(err, pkgmgr.ErrNoUpdatesFound) {
+			upToDate.Store(true)
+			_ = pipeW.Close()
+			return nil
+		}
+		return err
 	})
 
 	// Display progress
@@ -171,7 +182,11 @@ func patchSingleArchImage(
 	// Handle image loading if not pushing
 	if !push {
 		eg.Go(func() error {
-			return loadImageToRuntime(ctx, pipeR, patchedImageName, finalLoaderType)
+			err := loadImageToRuntime(ctx, pipeR, patchedImageName, finalLoaderType)
+			if upToDate.Load() {
+				return nil
+			}
+			return err
 		})
 	} else {
 		go func() {
@@ -184,8 +199,27 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
+	if upToDate.Load() {
+		log.Infof("Image %s (%s/%s) is already up-to-date. No packages to upgrade.",
+			imageName.Name(), targetPlatform.OS, targetPlatform.Architecture)
+		return createOriginalImageResult(imageName, &targetPlatform, image)
+	}
+
 	// Get patched descriptor and add annotations
 	return createPatchResult(imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
+}
+
+func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
+	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+	if err != nil {
+		log.Warnf("Could not get original descriptor for platform %s/%s: %v", targetPlatform.OS, targetPlatform.Architecture, err)
+	}
+	return &types.PatchResult{
+		OriginalRef: imageName,
+		PatchedRef:  imageName,
+		PatchedDesc: originalDesc,
+		UpToDate:    true,
+	}, nil
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
