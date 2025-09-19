@@ -21,3 +21,12 @@ shadow_cves := {
 ignore {
     input.VulnerabilityID == shadow_cves[_]
 }
+
+# CBL Mariner CVEs to ignore
+cbl_mariner_cves := {
+    "CVE-2025-3576",
+}
+
+ignore {
+    input.VulnerabilityID == cbl_mariner_cves[_]
+}
