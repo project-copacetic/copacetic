@@ -5,7 +5,9 @@ import (
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/dryrun"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	// Register connection helpers for buildkit.
@@ -33,6 +35,7 @@ type patchArgs struct {
 	platform      []string
 	loader        string
 	progress      string
+	dryRun        bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -61,6 +64,12 @@ func NewPatchCmd() *cobra.Command {
 				Platforms:     ua.platform,
 				Progress:      progressui.DisplayMode(ua.progress),
 				Loader:        ua.loader,
+				DryRun:        ua.dryRun,
+			}
+
+			if opts.DryRun {
+				log.Info("Executing in dry-run mode...")
+				return dryrun.Execute(context.Background(), opts)
 			}
 			return Patch(context.Background(), opts)
 		},
@@ -87,6 +96,7 @@ func NewPatchCmd() *cobra.Command {
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
+	flags.BoolVar(&ua.dryRun, "dry-run", false, "Run in dry-run mode to check for upgradable packages without building a new image")
 
 	if err := patchCmd.MarkFlagRequired("image"); err != nil {
 		panic(err)

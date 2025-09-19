@@ -885,3 +885,19 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 
 	return errorPkgs, allErrors.ErrorOrNil()
 }
+
+// GetCheckUpgradableCommand returns the command to check for upgradable packages with dnf/yum.
+func (rm *rpmManager) GetCheckUpgradableCommand() (string, error) {
+	const checkUpdateTemplate = `sh -c '%s check-update > /dev/null; if [ $? -eq 100 ]; then exit 0; else exit 1; fi'`
+
+	switch {
+	case rm.rpmTools["tdnf"] != "":
+		return fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["tdnf"]), nil
+	case rm.rpmTools["dnf"] != "":
+		return fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["dnf"]), nil
+	case rm.rpmTools["yum"] != "":
+		return fmt.Sprintf(checkUpdateTemplate, rm.rpmTools["yum"]), nil
+	default:
+		return "", errors.New("no suitable RPM package manager (dnf, yum, tdnf) found to check for updates")
+	}
+}
