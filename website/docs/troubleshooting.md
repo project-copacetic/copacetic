@@ -2,6 +2,24 @@
 title: Troubleshooting
 ---
 
+## Getting `downloaded package ... version ... lower than required ... for update` error when trying to patch an image
+
+This error means that the package manager is trying to install a version of the package that is lower than the version that was required from the scanner report. This can happen for a few reasons:
+
+- Package repositories are not updated to the latest version of the package. For example, sometimes there is a lag between when a CVE is detected by Trivy using Red Hat vulnerability database and when it is available in the package repositories for CentOS.
+
+To diagonse this, look at the Trivy report and find the applicable vulnerbaility database (found under DataSource -> URL). Search for the corresponding pacakge receiving the error in the database to check if it is available.
+
+- Scanner reports are not up to date. Make sure to run the scanner with the latest vulnerability database. If you are using Trivy, it is recommended to pull the latest version of the Trivy DB, and not rely on cached or stale versions.
+
+To verify the package version discrepancies, you can compare the package version provided by the package repositories and the scanner reports. Follow the Trivy documentation on [how to find the security advisory data sources](https://aquasecurity.github.io/trivy/dev/community/contribute/discussion/#false-detection), and then compare the package version in the scanner report with the applicable security advisory, and applicable package repository.
+
+If you are continuing to see this and the package repositories and vulnerability databases are not updated, you can either:
+
+- use `--ignore-errors` flag or [filter the applicable vulnerability in the scanner](troubleshooting.md#filtering-vulnerabilities).
+
+- update all packages without any scanner reports. This can be done by not providing a scanner report to Copa, and Copa will update all packages to the latest version available in the package repositories.
+
 ## Copa and Trivy throw errors when Oracle Linux is passed in
 
 Copa supports patching Oracle Linux in two ways:
