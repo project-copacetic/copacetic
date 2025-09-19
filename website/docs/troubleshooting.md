@@ -8,7 +8,7 @@ This error means that the package manager is trying to install a version of the 
 
 - Package repositories are not updated to the latest version of the package. For example, sometimes there is a lag between when a CVE is detected by Trivy using Red Hat vulnerability database and when it is available in the package repositories for CentOS.
 
-To diagonse this, look at the Trivy report and find the applicable vulnerbaility database (found under DataSource -> URL). Search for the corresponding pacakge receiving the error in the database to check if it is available.
+To diagnose this, look at the Trivy report and find the applicable vulnerability database (found under DataSource -> URL). Search for the corresponding package receiving the error in the database to check if it is available.
 
 - Scanner reports are not up to date. Make sure to run the scanner with the latest vulnerability database. If you are using Trivy, it is recommended to pull the latest version of the Trivy DB, and not rely on cached or stale versions.
 
@@ -16,7 +16,7 @@ To verify the package version discrepancies, you can compare the package version
 
 If you are continuing to see this and the package repositories and vulnerability databases are not updated, you can either:
 
-- use `--ignore-errors` flag or [filter the applicable vulnerability in the scanner](troubleshooting.md#filtering-vulnerabilities).
+- use the `--ignore-errors` flag or [filter the applicable vulnerability in the scanner](troubleshooting.md#filtering-vulnerabilities).
 
 - update all packages without any scanner reports. This can be done by not providing a scanner report to Copa, and Copa will update all packages to the latest version available in the package repositories.
 
