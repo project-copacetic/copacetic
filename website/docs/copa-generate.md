@@ -212,13 +212,15 @@ tar -tf test.tar
 
 ### Empty Patch Layer
 
-If the image has no upgradable packages, the patch layer will be minimal:
+If the image has no upgradable packages, Copa will log a message and generate a minimal patch layer:
 
 ```bash
-# For up-to-date images, consider skipping patching
-if copa generate -i alpine:latest --output-context patch.tar 2>&1 | grep -q "No upgradable packages"; then
-  echo "Image is already up to date"
-fi
+# Copa will log when an image is already up-to-date
+copa generate -i alpine:latest --output-context patch.tar
+# Output: INFO[0005] Image is already up-to-date. No packages to upgrade.
+
+# The generated tar will contain a minimal Dockerfile with no actual patches
+# You can still use it with docker build, but no changes will be applied
 ```
 
 ### BuildKit Connection Issues

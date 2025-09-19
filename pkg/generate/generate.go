@@ -25,6 +25,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/patch"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -245,14 +246,6 @@ func extractPatchLayer(
 			// Execute core patching logic
 			result, err := patch.ExecutePatchCore(patchCtx, patchOpts)
 			if err != nil {
-				// Check if this is the "no upgradable packages" error and we have no vulnerability report
-				if updates == nil && (strings.Contains(err.Error(), "grep -q upgradable") || strings.Contains(err.Error(), "apk list")) && strings.Contains(err.Error(), "exit code: 1") {
-					log.Info("No upgradable packages found in patch core, creating empty result")
-					// Create a minimal empty result that represents no changes
-					// Return an empty result instead of an error
-					emptyResult := &gwclient.Result{}
-					return emptyResult, nil
-				}
 				ch <- err
 				return nil, err
 			}
@@ -306,21 +299,11 @@ func extractPatchLayer(
 
 		// Handle build errors, particularly for no upgradable packages
 		if buildErr != nil {
-			errStr := buildErr.Error()
-			log.Debugf("Build error: %s", errStr)
-			// Check if this is the "no upgradable packages" error - be more lenient with matching
-			if updates == nil && (strings.Contains(errStr, "grep -q upgradable") || strings.Contains(errStr, "apk list")) && strings.Contains(errStr, "exit code: 1") {
-				log.Info("No upgradable packages found, generating empty patch layer")
-				// Create an empty tar (just a placeholder empty file)
-				emptyTar := make([]byte, 0)
-				patchChannel <- emptyTar
-				return nil
-			}
 			return buildErr
 		}
 
 		// Generate VEX document if applicable
-		if buildErr == nil && reportFile != "" && validatedManifest != nil && output != "" {
+		if reportFile != "" && validatedManifest != nil && output != "" {
 			// For generate command, we don't have a digest yet since we're not creating an image
 			// Use the patched image name with tag
 			nameWithTag := patchedImageName
@@ -339,16 +322,14 @@ func extractPatchLayer(
 	common.DisplayProgress(ctx, eg, buildChannel, progress)
 
 	if err := eg.Wait(); err != nil {
-		// Check if this is the "no upgradable packages" error and we have no vulnerability report
-		if updates == nil && (strings.Contains(err.Error(), "grep -q upgradable") || strings.Contains(err.Error(), "apk list")) && strings.Contains(err.Error(), "exit code: 1") {
-			log.Info("No upgradable packages found, generating empty patch layer")
+		// Check if this is the "no upgradable packages" error
+		if errors.Is(err, pkgmgr.ErrNoUpdatesFound) {
+			log.Info("Image is already up-to-date. No packages to upgrade.")
 			// Create an empty tar for the patch layer
 			emptyTarData, err := createEmptyTar()
 			if err != nil {
-				log.Errorf("Failed to create empty tar: %v", err)
-				return nil, err
+				return nil, errors.Wrap(err, "failed to create empty patch layer")
 			}
-			// Return the empty patch layer data
 			return emptyTarData, nil
 		}
 		return nil, err

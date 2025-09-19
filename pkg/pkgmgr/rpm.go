@@ -513,10 +513,9 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
 	default:
-		err := errors.New("unexpected: no package manager tools were found for patching")
-		return nil, nil, err
 	}
-	installed := imageStateCurrent.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	installed := imageStateCurrent.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy()),
+		llb.WithCustomName("Installing security updates")).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
@@ -570,7 +569,8 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	}
 
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
-	stateWithCheck := imageStateCurrent.Run(llb.Shlex(checkUpdate)).Root()
+	stateWithCheck := imageStateCurrent.Run(llb.Shlex(checkUpdate),
+		llb.WithCustomName("Checking for available updates")).Root()
 
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
 	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
