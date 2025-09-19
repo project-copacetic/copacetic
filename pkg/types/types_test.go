@@ -17,17 +17,19 @@ func TestUpdatePackage(t *testing.T) {
 			InstalledVersion: "1.0.0",
 			FixedVersion:     "1.0.1",
 			VulnerabilityID:  "CVE-2023-1234",
+			Type:             "",
+			Class:            "",
 		}
 
 		data, err := json.Marshal(pkg)
 		require.NoError(t, err)
 
-		expected := `{"name":"test-package","installedVersion":"1.0.0","fixedVersion":"1.0.1","vulnerabilityID":"CVE-2023-1234"}`
+		expected := `{"name":"test-package","installedVersion":"1.0.0","fixedVersion":"1.0.1","vulnerabilityID":"CVE-2023-1234","type":"","class":""}`
 		assert.JSONEq(t, expected, string(data))
 	})
 
 	t.Run("JSON unmarshaling", func(t *testing.T) {
-		jsonData := `{"name":"test-package","installedVersion":"1.0.0","fixedVersion":"1.0.1","vulnerabilityID":"CVE-2023-1234"}`
+		jsonData := `{"name":"test-package","installedVersion":"1.0.0","fixedVersion":"1.0.1","vulnerabilityID":"CVE-2023-1234","type":"","class":""}`
 
 		var pkg UpdatePackage
 		err := json.Unmarshal([]byte(jsonData), &pkg)
@@ -44,7 +46,7 @@ func TestUpdatePackage(t *testing.T) {
 		data, err := json.Marshal(pkg)
 		require.NoError(t, err)
 
-		expected := `{"name":"","installedVersion":"","fixedVersion":"","vulnerabilityID":""}`
+		expected := `{"name":"","installedVersion":"","fixedVersion":"","vulnerabilityID":"","type":"","class":""}`
 		assert.JSONEq(t, expected, string(data))
 	})
 }
@@ -107,6 +109,8 @@ func TestUpdateManifest(t *testing.T) {
 					InstalledVersion: "1.1.1",
 					FixedVersion:     "1.1.2",
 					VulnerabilityID:  "CVE-2023-1234",
+					Type:             "",
+					Class:            "",
 				},
 			},
 		}
@@ -130,7 +134,7 @@ func TestUpdateManifest(t *testing.T) {
 		data, err := json.Marshal(manifest)
 		require.NoError(t, err)
 
-		expected := `{"osType":"","osVersion":"","arch":"","updates":null}`
+		expected := `{"osType":"","osVersion":"","arch":"","updates":null,"langupdates":null}`
 		assert.JSONEq(t, expected, string(data))
 	})
 }

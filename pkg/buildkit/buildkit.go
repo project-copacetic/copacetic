@@ -19,6 +19,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -135,7 +136,7 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 		if file.IsDir() {
 			continue
 		}
-		report, err := report.TryParseScanReport(filePath, scanner)
+		report, err := report.TryParseScanReport(filePath, scanner, utils.PkgTypeOS, utils.PatchTypePatch)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}
@@ -168,7 +169,18 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 
 func isSupportedOsType(osType string) bool {
 	switch osType {
-	case "alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
+	case utils.OSTypeAlpine,
+		utils.OSTypeDebian,
+		utils.OSTypeUbuntu,
+		utils.OSTypeCBLMariner,
+		utils.OSTypeAzureLinux,
+		utils.OSTypeCentOS,
+		utils.OSTypeOracle,
+		utils.OSTypeRedHat,
+		utils.OSTypeRocky,
+		utils.OSTypeAmazon,
+		utils.OSTypeAlma,
+		utils.OSTypeAlmaLinux:
 		return true
 	default:
 		return false

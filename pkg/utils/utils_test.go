@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
@@ -177,6 +178,80 @@ func TestGetProxy(t *testing.T) {
 	}
 }
 
+func TestDeduplicateStringSlice(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{
+			name:     "empty slice",
+			input:    []string{},
+			expected: []string{},
+		},
+		{
+			name:     "no duplicates",
+			input:    []string{"a", "b", "c"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "with duplicates",
+			input:    []string{"a", "b", "a", "c", "b"},
+			expected: []string{"a", "b", "c"},
+		},
+		{
+			name:     "all duplicates",
+			input:    []string{"a", "a", "a"},
+			expected: []string{"a"},
+		},
+		{
+			name:     "single item",
+			input:    []string{"a"},
+			expected: []string{"a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := DeduplicateStringSlice(tt.input)
+			if len(result) != len(tt.expected) {
+				t.Errorf("expected length %d, got %d", len(tt.expected), len(result))
+				return
+			}
+			for i, v := range result {
+				if v != tt.expected[i] {
+					t.Errorf("expected %v, got %v", tt.expected, result)
+					break
+				}
+			}
+		})
+	}
+}
+
+func TestCanonicalPkgManagerType(t *testing.T) {
+	tests := map[string]string{
+		"alpine":         "apk",
+		"AlPiNe":         "apk",
+		"debian":         "deb",
+		"ubuntu":         "deb",
+		"rpm":            "rpm",
+		"centos":         "rpm",
+		"rocky":          "rpm",
+		"alma":           "rpm",
+		"almalinux":      "rpm",
+		"amazon":         "rpm",
+		"oracle":         "rpm",
+		"cbl-mariner":    "rpm",
+		"azurelinux":     "rpm",
+		"unknown-distro": "unknown-distro", // passthrough
+	}
+	for raw, want := range tests {
+		if got := CanonicalPkgManagerType(raw); got != want {
+			t.Fatalf("CanonicalPkgManagerType(%q)=%q want %q", raw, got, want)
+		}
+	}
+}
+
 // TestLocalImageDescriptor tests the localImageDescriptor function with error scenarios.
 func TestLocalImageDescriptor(t *testing.T) {
 	ctx := context.Background()
@@ -212,10 +287,18 @@ func TestPodmanImageDescriptor(t *testing.T) {
 	t.Run("nonexistent_image", func(t *testing.T) {
 		desc, err := podmanImageDescriptor(ctx, "definitely/does/not:exist")
 
-		// Podman is available in CI, so we should get a podman inspect failed error
+		// If podman is not installed locally, expect a not found in PATH error.
+		// Otherwise, for a nonexistent image, expect podman inspect failure or not found.
 		assert.Error(t, err)
 		assert.Nil(t, desc)
-		assert.Contains(t, err.Error(), "podman inspect failed")
+		if strings.Contains(err.Error(), "not found in PATH") {
+			assert.Contains(t, err.Error(), "podman not found in PATH")
+		} else {
+			// Either a specific inspect failure or not found error wrapped
+			// We allow either to keep test portable across environments
+			cond := strings.Contains(err.Error(), "podman inspect failed") || strings.Contains(err.Error(), "not found")
+			assert.True(t, cond, "unexpected error: %v", err)
+		}
 	})
 
 	// Test with context cancellation
