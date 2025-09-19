@@ -1,4 +1,4 @@
-package v1alpha1
+package v1alpha2
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) {
+func TestConvertV1alpha2UpdateManifestToUnversionedUpdateManifest(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   []byte
@@ -16,24 +16,37 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 		wantErr bool
 	}{
 		{
-			name: "Valid input with updates",
+			name: "Valid input with both OS and language updates",
 			input: []byte(`{
-				"apiVersion": "v1alpha1",
+				"apiVersion": "v1alpha2",
 				"metadata": {
 					"os": {
 						"type": "linux",
 						"version": "4.19"
 					},
 					"config": {
-						"arch": "amd64"
+						"arch": "amd64",
+						"variant": "v1"
 					}
 				},
-				"updates": [
+				"osupdates": [
 					{
 						"name": "openssl",
 						"installedVersion": "1.1.1f-1ubuntu2.16",
 						"fixedVersion": "1.1.1f-1ubuntu2.17",
-						"vulnerabilityID": "CVE-2023-0286"
+						"vulnerabilityID": "CVE-2023-0286",
+						"type": "deb",
+						"class": "os-pkgs"
+					}
+				],
+				"langupdates": [
+					{
+						"name": "requests",
+						"installedVersion": "2.25.1",
+						"fixedVersion": "2.31.0",
+						"vulnerabilityID": "CVE-2023-32681",
+						"type": "python",
+						"class": "lang-pkgs"
 					}
 				]
 			}`),
@@ -45,7 +58,7 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 					},
 					Config: unversioned.Config{
 						Arch:    "amd64",
-						Variant: "",
+						Variant: "v1",
 					},
 				},
 				OSUpdates: unversioned.UpdatePackages{
@@ -54,18 +67,27 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 						InstalledVersion: "1.1.1f-1ubuntu2.16",
 						FixedVersion:     "1.1.1f-1ubuntu2.17",
 						VulnerabilityID:  "CVE-2023-0286",
-						Type:             "",
-						Class:            "",
+						Type:             "deb",
+						Class:            "os-pkgs",
 					},
 				},
-				LangUpdates: []unversioned.UpdatePackage{},
+				LangUpdates: []unversioned.UpdatePackage{
+					{
+						Name:             "requests",
+						InstalledVersion: "2.25.1",
+						FixedVersion:     "2.31.0",
+						VulnerabilityID:  "CVE-2023-32681",
+						Type:             "python",
+						Class:            "lang-pkgs",
+					},
+				},
 			},
 			wantErr: false,
 		},
 		{
 			name: "Valid input with only OS updates",
 			input: []byte(`{
-				"apiVersion": "v1alpha1",
+				"apiVersion": "v1alpha2",
 				"metadata": {
 					"os": {
 						"type": "debian",
@@ -75,14 +97,17 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 						"arch": "amd64"
 					}
 				},
-				"updates": [
+				"osupdates": [
 					{
 						"name": "libcurl4",
 						"installedVersion": "7.74.0-1.3+deb11u1",
 						"fixedVersion": "7.74.0-1.3+deb11u2",
-						"vulnerabilityID": "CVE-2021-22945"
+						"vulnerabilityID": "CVE-2021-22945",
+						"type": "deb",
+						"class": "os-pkgs"
 					}
-				]
+				],
+				"langupdates": []
 			}`),
 			want: &unversioned.UpdateManifest{
 				Metadata: unversioned.Metadata{
@@ -101,8 +126,8 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 						InstalledVersion: "7.74.0-1.3+deb11u1",
 						FixedVersion:     "7.74.0-1.3+deb11u2",
 						VulnerabilityID:  "CVE-2021-22945",
-						Type:             "",
-						Class:            "",
+						Type:             "deb",
+						Class:            "os-pkgs",
 					},
 				},
 				LangUpdates: []unversioned.UpdatePackage{},
@@ -125,7 +150,7 @@ func TestConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ConvertV1alpha1UpdateManifestToUnversionedUpdateManifest(tt.input)
+			got, err := ConvertV1alpha2UpdateManifestToUnversionedUpdateManifest(tt.input)
 			if tt.wantErr {
 				assert.Error(t, err)
 				return

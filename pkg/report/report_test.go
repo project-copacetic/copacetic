@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,14 +30,17 @@ func TestTryParseScanReport(t *testing.T) {
 						Arch: "amd64",
 					},
 				},
-				Updates: []unversioned.UpdatePackage{
+				OSUpdates: []unversioned.UpdatePackage{
 					{
 						Name:             "apk-tools",
 						VulnerabilityID:  "CVE-2021-36159",
 						FixedVersion:     "2.12.6-r0",
 						InstalledVersion: "2.12.5-r1",
+						Type:             "alpine",
+						Class:            "os-pkgs",
 					},
 				},
+				LangUpdates: []unversioned.UpdatePackage{},
 			},
 			err: nil,
 		},
@@ -50,7 +54,7 @@ func TestTryParseScanReport(t *testing.T) {
 	// Loop over test cases and run TryParseScanReport function with each input file
 	for _, tc := range testCases {
 		t.Run(tc.file, func(t *testing.T) {
-			manifest, err := TryParseScanReport(tc.file, "trivy")
+			manifest, err := TryParseScanReport(tc.file, "trivy", utils.PkgTypeOS, utils.PatchTypePatch)
 
 			// Use testify package to assert that the output manifest and error match the expected ones
 			assert.Equal(t, tc.manifest, manifest)
@@ -208,11 +212,11 @@ func TestTryParseScanReportWithNativeScanner(t *testing.T) {
 	}
 	defer os.Remove(tmpFile)
 
-	result, err := TryParseScanReport(tmpFile, "native")
+	result, err := TryParseScanReport(tmpFile, "native", utils.PkgTypeOS, utils.PatchTypePatch)
 	assert.NoError(t, err)
 	assert.NotNil(t, result)
-	assert.Equal(t, "alpine", result.Metadata.OS.Type)
+	assert.Equal(t, utils.OSTypeAlpine, result.Metadata.OS.Type)
 	assert.Equal(t, "3.14.0", result.Metadata.OS.Version)
-	assert.Len(t, result.Updates, 1)
-	assert.Equal(t, "test-pkg", result.Updates[0].Name)
+	assert.Len(t, result.OSUpdates, 1)
+	assert.Equal(t, "test-pkg", result.OSUpdates[0].Name)
 }

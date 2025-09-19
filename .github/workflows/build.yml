@@ -33,7 +33,7 @@ permissions:
 jobs:
   unit-test:
     name: Unit Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -61,14 +61,11 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 5
     permissions:
       packages: write
       contents: read
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.3.1
@@ -104,7 +101,7 @@ jobs:
   test-patch-trivy:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -150,7 +147,7 @@ jobs:
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -202,11 +199,11 @@ jobs:
             if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
             fi
-      
+
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-rpm-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/pki/tls/openssl.cnf "${tmp}"
-            
+
             if ! grep -q foo "${tmp}"; then
                 echo "Error: openssl.cnf content replaced" >&2
                 rm "${tmp}"
@@ -256,11 +253,11 @@ jobs:
                 export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
                 trap '_cleanup' EXIT
             fi
-      
+
             docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/ssl/openssl.cnf "${tmp}"
-            
+
             if ! grep -q foo "${tmp}"; then
                 echo "Error: openssl.cnf content replaced" >&2
                 rm "${tmp}"
@@ -274,7 +271,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -321,7 +318,7 @@ jobs:
   test-push:
     needs: build
     name: Test push
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 5
     steps:
       - name: Check out code
@@ -364,12 +361,12 @@ jobs:
         with:
           paths: "test-results.xml"
 
-          
+
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-latest-16-cores
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -434,7 +431,7 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          
+
           if [[ "${{ matrix.buildkit_mode }}" == "docker" ]]; then
             # For docker mode, use the default docker daemon
             export COPA_BUILDKIT_ADDR="docker://"
@@ -442,7 +439,7 @@ jobs:
             # For other modes, source the corresponding script in the same shell session
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
           fi
-          
+
           gotestsum --format testname --junitfile test-results.xml -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
       - name: Test Summary
         uses: test-summary/action@v2
@@ -452,8 +449,8 @@ jobs:
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-latest-16-cores
+    timeout-minutes: 50
     steps:
       - name: Change docker daemon config
         run: |

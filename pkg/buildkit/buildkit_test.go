@@ -19,6 +19,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 
 	"github.com/stretchr/testify/mock"
 
@@ -96,7 +97,7 @@ func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
 	var sockPath string
 	if runtime.GOOS == goosDarwin {
 		// On macOS, use /tmp directly for shorter paths to avoid socket path length limits
-		sockPath = filepath.Join("/tmp", fmt.Sprintf("bk-%d.sock", time.Now().UnixNano()))
+		sockPath = filepath.Join(utils.DefaultTempWorkingFolder, fmt.Sprintf("bk-%d.sock", time.Now().UnixNano()))
 	} else {
 		// On other platforms, use temp dir but with shorter name
 		tmp := t.TempDir()
@@ -445,7 +446,19 @@ func TestMapGoArch(t *testing.T) {
 }
 
 func TestIsSupportedOsType(t *testing.T) {
-	supported := []string{"alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma"}
+	supported := []string{
+		utils.OSTypeAlpine,
+		utils.OSTypeDebian,
+		utils.OSTypeUbuntu,
+		utils.OSTypeCBLMariner,
+		utils.OSTypeAzureLinux,
+		utils.OSTypeCentOS,
+		utils.OSTypeOracle,
+		utils.OSTypeRedHat,
+		utils.OSTypeRocky,
+		utils.OSTypeAmazon,
+		utils.OSTypeAlma,
+	}
 	for _, os := range supported {
 		if !isSupportedOsType(os) {
 			t.Errorf("expected %s to be supported", os)
