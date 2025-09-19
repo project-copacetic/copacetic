@@ -170,6 +170,8 @@ func isSupportedOsType(osType string) bool {
 	switch osType {
 	case "alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
 		return true
+	case "sles", "opensuse-leap", "opensuse-tumbleweed":
+		return true
 	default:
 		return false
 	}

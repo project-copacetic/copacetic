@@ -88,6 +88,42 @@ func TestGetPackageManager(t *testing.T) {
 		assert.IsType(t, &rpmManager{}, manager)
 	})
 
+	t.Run("should return an &rpmZypperManager for sles and bci)", func(t *testing.T) {
+		// Call the GetPackageManager function with "sles" as osType
+		manager, err := GetPackageManager("sles", "15.7", config, workingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmZypperManager
+		assert.IsType(t, &rpmZypperManager{}, manager)
+	})
+
+	t.Run("should return an &rpmZypperManager for opensuse leap)", func(t *testing.T) {
+		// Call the GetPackageManager function with "opensuse-leap" as osType
+		manager, err := GetPackageManager("opensuse-leap", "15.6", config, workingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmZypperManager
+		assert.IsType(t, &rpmZypperManager{}, manager)
+	})
+
+	t.Run("should return an &rpmZypperManager for opensuse tumbleweed)", func(t *testing.T) {
+		// Call the GetPackageManager function with "opensuse-tumbleweed" as osType
+		manager, err := GetPackageManager("opensuse-tumbleweed", "latest", config, workingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmZypperManager
+		assert.IsType(t, &rpmZypperManager{}, manager)
+	})
+
 	t.Run("should return an error for unsupported osType", func(t *testing.T) {
 		// Call the GetPackageManager function with "unsupported" as osType
 		manager, err := GetPackageManager("unsupported", "", config, workingFolder)
