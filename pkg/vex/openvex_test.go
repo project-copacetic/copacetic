@@ -69,7 +69,6 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
   "@context": "https://openvex.dev/ns",
   "@id": "https://openvex.dev/test",
   "author": "test author",
-  "timestamp": "2009-11-17T20:34:58.651387237Z",
   "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
@@ -87,9 +86,11 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           ]
         }
       ],
-      "status": "fixed"
+      "status": "fixed",
+      "timestamp": ""
     }
-  ]
+  ],
+  "timestamp": "2009-11-17T20:34:58Z"
 }
 `,
 			wantErr: false,
@@ -135,7 +136,6 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
   "@context": "https://openvex.dev/ns",
   "@id": "https://openvex.dev/test",
   "author": "test author",
-  "timestamp": "2009-11-17T20:34:58.651387237Z",
   "version": 1,
   "tooling": "Project Copacetic",
   "statements": [
@@ -156,7 +156,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           ]
         }
       ],
-      "status": "fixed"
+      "status": "fixed",
+      "timestamp": ""
     },
     {
       "vulnerability": {
@@ -172,9 +173,11 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           ]
         }
       ],
-      "status": "fixed"
+      "status": "fixed",
+      "timestamp": ""
     }
-  ]
+  ],
+  "timestamp": "2009-11-17T20:34:58Z"
 }
 `,
 			wantErr: false,

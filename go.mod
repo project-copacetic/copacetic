@@ -21,7 +21,7 @@ require (
 	github.com/moby/buildkit v0.24.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	github.com/openvex/go-vex v0.2.5
+	github.com/openvex/go-vex v0.2.6
 	github.com/quay/claircore v1.5.39
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.9.1
@@ -31,7 +31,7 @@ require (
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
 	golang.org/x/sync v0.17.0
 	google.golang.org/grpc v1.75.0
-	k8s.io/apimachinery v0.34.0
+	k8s.io/apimachinery v0.34.1
 )
 
 require (

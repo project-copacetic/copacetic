@@ -11,6 +11,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/stretchr/testify/mock"
 
@@ -703,7 +704,13 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 				},
 			}
 
-			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), tt.updates, tt.toolImage, tt.ignoreErrors)
+			// Create a test platform
+			testPlatform := &ocispecs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
+			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), tt.updates, tt.toolImage, testPlatform, tt.ignoreErrors)
 
 			// Assert
 			if tt.expectedError {
