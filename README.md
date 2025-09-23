@@ -60,3 +60,7 @@ There are several ways to get involved:
 * Join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf).
 
 The project welcomes contributions and suggestions that abide by the [CNCF Code of Conduct](./CODE_OF_CONDUCT.md).
+
+For developers interested in contributing:
+- See the [contributing guide](./website/docs/contributing.md) for development setup and guidelines
+- Review the [fuzzing documentation](./docs/fuzzing.md) for information about our security testing approach
