@@ -48,6 +48,7 @@
     "description": "Multi-arch Jupyter base-notebook 2025-01-27, with push",
     "ignoreErrors": false,
     "push": true,
+    "skipAnnotations": true,
     "platforms": [
       "linux/amd64",
       "linux/arm64"
@@ -74,6 +75,7 @@
     "description": "Multi-arch Azure CLI 2.50.0 for Python package testing, with push",
     "ignoreErrors": false,
     "push": true,
+    "skipAnnotations": true,
     "platforms": [
       "linux/amd64",
       "linux/arm64"
