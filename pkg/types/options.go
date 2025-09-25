@@ -40,4 +40,7 @@ type Options struct {
 
 	// Generate specific
 	OutputContext string
+
+	// Checks without build
+	DryRun bool
 }

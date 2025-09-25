@@ -49,3 +49,9 @@ type MultiPlatformSummary struct {
 	Ref      string
 	Message  string
 }
+
+type UpgradablePackage struct {
+	Name           string
+	CurrentVersion string
+	TargetVersion  string
+}
