@@ -114,7 +114,7 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string, useCachePrefix bool) string {
 	var image, version string
 
-	if osType == "azurelinux" {
+	if osType == utils.OSTypeAzureLinux {
 		image = "azurelinux/base/core"
 		if strings.Contains(osVersion, "3.0") {
 			version = "3.0"
@@ -126,7 +126,7 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 		image = "cbl-mariner/base/core"
 		version = "2.0"
 
-		if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
+		if manifest != nil && manifest.Metadata.OS.Type == utils.OSTypeCBLMariner {
 			vers := strings.Split(manifest.Metadata.OS.Version, ".")
 			if len(vers) < 2 {
 				vers = append(vers, "0")
@@ -212,14 +212,14 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var err error
 
 	if manifest != nil {
-		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
+		if manifest.Metadata.OS.Type == utils.OSTypeOracle && !ignoreErrors {
 			err = errors.New("detected Oracle image passed in\n" +
 				"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
 			return &rm.config.ImageState, nil, err
 		}
 
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
-		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
+		updates, err = GetUniqueLatestUpdates(manifest.OSUpdates, rpmComparer, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -743,7 +743,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' \
 		| tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
-		 
+
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm

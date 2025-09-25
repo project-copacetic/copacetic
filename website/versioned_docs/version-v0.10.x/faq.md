@@ -4,13 +4,17 @@ title: FAQ
 
 ## What kind of vulnerabilities can Copa patch?
 
-Copa is capable of patching "OS level" vulnerabilities. This includes packages (like `openssl`) in the image that are managed by a package manager such as `apt-get` or `yum`. Copa is not currently capable of patching vulnerabilities at the "application level" such as Python packages or Go modules (see [below](#what-kind-of-vulnerabilities-can-copa-not-patch) for more details).
+Copa patches "OS level" vulnerabilities (e.g. `openssl`, `glibc`) managed by system package managers (`apt`, `yum/dnf`, `apk`, etc.).
+
+Additionally, Copa now supports (experimental) patching of Python packages installed via `pip` when they are present in the image filesystem. These language-level updates are applied in-place and included in VEX output using PyPI Package URLs (`pkg:pypi/<name>@<version>`). Python support currently focuses on pinned version upgrades surfaced through scanner reports or comprehensive update mode.
+
+> Experimental: Python language package patching behavior and tooling selection may change in future minor releases.
 
 ## What kind of vulnerabilities can Copa not patch?
 
-Copa is not capable of patching vulnerabilities for compiled languages, like Go, at the "application level", for instance, Go modules. If your application uses a vulnerable version of the `golang.org/x/net` module, Copa will be unable to patch it. This is because Copa doesn't have access to the application's source code or the knowledge of how to build it, such as compiler flags, preventing it from patching vulnerabilities at the application level.
+Copa does not patch arbitrary application or source-level dependencies that require a project build context (e.g. Go modules, Node.js/npm packages, Java/Maven dependencies, compiled binaries built from source). If your application embeds a vulnerable Go module like `golang.org/x/net`, Copa cannot currently rebuild the application with a fixed dependency version.
 
-To patch vulnerabilities for applications, you can package these applications and consume them from package repositories, like `http://archive.ubuntu.com/ubuntu/` for Ubuntu, and ensure Trivy can scan and report vulnerabilities for these packages. This way, Copa can patch the applications as a whole, though it cannot patch specific modules within the applications.
+To patch such application vulnerabilities, package the application itself into a system package (e.g. a `.deb` or `.rpm`) or ensure the base image provides updated language runtime packages that scanners recognize. Copa can then patch the packaged artifact at the OS package layer. Python is presently the only language ecosystem with direct (experimental) in-image package replacement support.
 
 ## My disk space is being filled up after using Copa. How can I fix this?
 

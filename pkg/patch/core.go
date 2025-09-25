@@ -8,10 +8,10 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/langmgr"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -25,7 +25,8 @@ type Options struct {
 	TargetPlatform *types.PatchPlatform
 
 	// Update information
-	Updates *unversioned.UpdateManifest
+	Updates          *unversioned.UpdateManifest
+	ValidatedUpdates *unversioned.UpdateManifest
 
 	// Working environment
 	WorkingFolder string
@@ -41,9 +42,9 @@ type Result struct {
 	Result *gwclient.Result
 
 	// Package manager information
-	PackageType      string
-	ErroredPackages  []string
-	ValidatedUpdates []unversioned.UpdatePackage
+	PackageType       string
+	ErroredPackages   []string
+	ValidatedManifest *unversioned.UpdateManifest
 }
 
 // Context wraps the context and gateway client for core operations.
@@ -57,6 +58,10 @@ type Context struct {
 func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	ctx := patchCtx.Context
 	c := patchCtx.Client
+	workingFolder := opts.WorkingFolder
+	ignoreError := opts.IgnoreError
+	updates := opts.Updates
+	validatedUpdates := opts.ValidatedUpdates
 
 	// Configure buildctl/client for use by package manager
 	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
@@ -83,6 +88,65 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 			opts.ErrorChannel <- err
 		}
 		return nil, err
+	}
+
+	// Handle Language Specific Updates
+	if updates != nil && len(updates.LangUpdates) > 0 {
+		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates)
+		var langErrPkgsFromAllManagers []string
+		var combinedLangError error
+
+		currentProcessingState := patchedImageState // Start with the state after OS updates
+
+		for _, individualLangManager := range languageManagers {
+			log.Debugf("Applying language updates using manager: %T", individualLangManager)
+			var newState *llb.State
+			var tempErrPkgs []string
+			var tempErr error
+
+			// Call InstallUpdates on the individual language manager instance
+			newState, tempErrPkgs, tempErr = individualLangManager.InstallUpdates(ctx, currentProcessingState, updates, ignoreError)
+
+			currentProcessingState = newState // Update state for the next manager or final result
+
+			if tempErr != nil {
+				log.Errorf("Error applying updates with language manager %T: %v", individualLangManager, tempErr)
+				if combinedLangError == nil {
+					combinedLangError = tempErr
+				} else {
+					combinedLangError = fmt.Errorf("%w; %v", combinedLangError, tempErr)
+				}
+				if !ignoreError {
+					if opts.ErrorChannel != nil {
+						opts.ErrorChannel <- combinedLangError
+					}
+					return nil, combinedLangError
+				}
+			}
+			if len(tempErrPkgs) > 0 {
+				langErrPkgsFromAllManagers = append(langErrPkgsFromAllManagers, tempErrPkgs...)
+			}
+		}
+
+		// Update the main patchedImageState with the result of all language managers
+		patchedImageState = currentProcessingState
+
+		// Merge OS-level error packages with language-level error packages
+		if len(langErrPkgsFromAllManagers) > 0 {
+			errPkgs = append(errPkgs, langErrPkgsFromAllManagers...)
+		}
+
+		// Ensure uniqueness of all error packages after processing all language managers
+		errPkgs = utils.DeduplicateStringSlice(errPkgs)
+
+		if combinedLangError != nil && !ignoreError {
+			if opts.ErrorChannel != nil {
+				opts.ErrorChannel <- combinedLangError
+			}
+			return nil, combinedLangError
+		}
+	} else {
+		log.Debug("No language-specific updates found in the manifest.")
 	}
 
 	// Marshal the state for the target platform
@@ -116,21 +180,18 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
 
-	// Prepare the validated updates (excluding errored packages)
-	var validatedUpdates []unversioned.UpdatePackage
-	if opts.Updates != nil {
-		for _, update := range opts.Updates.Updates {
-			if !slices.Contains(errPkgs, update.Name) {
-				validatedUpdates = append(validatedUpdates, update)
-			}
-		}
+	// for the vex document, return all updates that were processed
+	// The VEX generation logic will handle filtering based on success/failure
+	if validatedUpdates != nil && updates != nil {
+		validatedUpdates.OSUpdates = updates.OSUpdates
+		validatedUpdates.LangUpdates = updates.LangUpdates
 	}
 
 	return &Result{
-		Result:           res,
-		PackageType:      manager.GetPackageType(),
-		ErroredPackages:  errPkgs,
-		ValidatedUpdates: validatedUpdates,
+		Result:            res,
+		PackageType:       manager.GetPackageType(),
+		ErroredPackages:   errPkgs,
+		ValidatedManifest: validatedUpdates,
 	}, nil
 }
 
@@ -170,5 +231,8 @@ func setupPackageManager(ctx context.Context, c gwclient.Client, config *buildki
 	}
 
 	// Use OS information from the vulnerability report
+	if opts.Updates.Metadata.OS.Type == "" || opts.Updates.Metadata.OS.Version == "" {
+		return nil, fmt.Errorf("vulnerability report metadata is incomplete: OS type=%q, version=%q", opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version)
+	}
 	return pkgmgr.GetPackageManager(opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version, config, opts.WorkingFolder)
 }
