@@ -33,6 +33,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'app-level-patching',
+        'copa-generate',
         'github-action',
         'docker-extension',
         'custom-address',
