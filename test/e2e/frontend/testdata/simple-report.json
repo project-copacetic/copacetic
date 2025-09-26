@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "os": {
+      "type": "ubuntu",
+      "version": "20.04"
+    },
+    "config": {
+      "arch": "amd64"
+    }
+  },
+  "updates": [
+    {
+      "name": "curl",
+      "installedVersion": "7.68.0-1ubuntu2.18",
+      "fixedVersion": "7.68.0-1ubuntu2.19",
+      "vulnerabilityID": "CVE-2023-28321"
+    }
+  ]
+}
