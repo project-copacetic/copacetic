@@ -342,10 +342,12 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
+		llb.WithCustomName("Updating package database"),
 	).Root()
 
 	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
-	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable),
+		llb.WithCustomName("Checking for available updates")).Root()
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
