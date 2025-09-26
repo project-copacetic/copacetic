@@ -46,16 +46,19 @@ const (
 //
 // Examples:
 //
-//	alpine      -> apk
-//	debian      -> deb
-//	ubuntu      -> deb
-//	centos      -> rpm
-//	almalinux   -> rpm
-//	rocky       -> rpm
-//	redhat      -> rpm
-//	amazon      -> rpm
-//	oracle      -> rpm
-//	cbl-mariner -> rpm
+//	alpine              -> apk
+//	debian              -> deb
+//	ubuntu              -> deb
+//	centos              -> rpm
+//	almalinux           -> rpm
+//	rocky               -> rpm
+//	redhat              -> rpm
+//	amazon              -> rpm
+//	oracle              -> rpm
+//	cbl-mariner         -> rpm
+//	sles                -> rpm
+//	opensuse-leap       -> rpm
+//	opensuse-tumbleweed -> rpm
 func CanonicalPkgManagerType(raw string) string {
 	// Normalize once for matching; we still return the original raw when already canonical
 	lowered := strings.ToLower(raw)
@@ -65,6 +68,8 @@ func CanonicalPkgManagerType(raw string) string {
 	case OSTypeDebian, OSTypeUbuntu:
 		return "deb"
 	case OSTypeCBLMariner, OSTypeAzureLinux, OSTypeCentOS, OSTypeOracle, OSTypeRedHat, OSTypeRocky, OSTypeAmazon, OSTypeAlma, OSTypeAlmaLinux:
+		return "rpm"
+	case OSTypeSLES, OSTypeOpenSUSELeap, OSTypeOpenSUSETW:
 		return "rpm"
 	default:
 		return raw
@@ -108,6 +113,14 @@ func IsNonEmptyFile(dir, file string) bool {
 		return false
 	}
 	return !info.IsDir() && info.Size() > 0
+}
+
+func IsSUSEImage(osType string) bool {
+	if osType == OSTypeSLES || osType == OSTypeOpenSUSELeap || osType == OSTypeOpenSUSETW {
+		return true
+	}
+
+	return false
 }
 
 func getEnvAny(names ...string) string {

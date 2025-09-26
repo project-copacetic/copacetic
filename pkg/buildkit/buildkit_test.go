@@ -458,6 +458,9 @@ func TestIsSupportedOsType(t *testing.T) {
 		utils.OSTypeRocky,
 		utils.OSTypeAmazon,
 		utils.OSTypeAlma,
+		utils.OSTypeSLES,
+		utils.OSTypeOpenSUSELeap,
+		utils.OSTypeOpenSUSETW,
 	}
 	for _, os := range supported {
 		if !isSupportedOsType(os) {
