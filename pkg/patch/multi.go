@@ -221,11 +221,20 @@ func patchMultiPlatformImage(
 			}
 
 			patchResults = append(patchResults, *res)
-			summaryMap[platformKey] = &types.MultiPlatformSummary{
-				Platform: platformKey,
-				Status:   "Patched",
-				Ref:      res.PatchedRef.String(),
-				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
+			if res.UpToDate {
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
+					Platform: platformKey,
+					Status:   "Up-to-date",
+					Ref:      res.OriginalRef.String() + " (original)",
+					Message:  "Image is already up-to-date",
+				}
+			} else {
+				summaryMap[platformKey] = &types.MultiPlatformSummary{
+					Platform: platformKey,
+					Status:   "Patched",
+					Ref:      res.PatchedRef.String(),
+					Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
+				}
 			}
 			return nil
 		})

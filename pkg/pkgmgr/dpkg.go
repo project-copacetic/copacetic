@@ -344,8 +344,16 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
-	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
-	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	if updates == nil {
+		checkUpgradableCmd := `sh -c 'if apt-get -s upgrade 2>/dev/null | grep -q "^Inst"; then touch /updates.txt; fi'`
+		checkedState := aptGetUpdated.Run(llb.Shlex(checkUpgradableCmd)).Root()
+
+		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &checkedState, "/updates.txt")
+		if err != nil {
+			return nil, nil, ErrNoUpdatesFound
+		}
+		aptGetUpdated = checkedState
+	}
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`

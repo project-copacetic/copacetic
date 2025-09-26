@@ -46,6 +46,7 @@ type PatchResult struct {
 	OriginalRef reference.Named
 	PatchedDesc *ispec.Descriptor
 	PatchedRef  reference.Named
+	UpToDate    bool
 }
 
 type MultiPlatformSummary struct {
