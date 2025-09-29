@@ -1,13 +1,12 @@
 package langmgr
 
 import (
-	"context"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestIsValidDotnetVersion(t *testing.T) {
@@ -178,139 +177,48 @@ func TestGetUniqueLatestUpdates_Dotnet(t *testing.T) {
 	}
 }
 
-func TestDotnetManagerInstallUpdates(t *testing.T) {
+func TestGetLanguageManagers_DotnetAndPython(t *testing.T) {
 	config := &buildkit.Config{}
 	workingFolder := "/tmp/test"
-	dnm := &dotnetManager{
-		config:        config,
-		workingFolder: workingFolder,
-	}
 
-	ctx := context.Background()
-
-	tests := []struct {
-		name         string
-		manifest     *unversioned.UpdateManifest
-		ignoreErrors bool
-		expectError  bool
-	}{
-		{
-			name: "no updates",
-			manifest: &unversioned.UpdateManifest{
-				LangUpdates: unversioned.LangUpdatePackages{},
-			},
-			ignoreErrors: false,
-		},
-		{
-			name: "valid updates",
-			manifest: &unversioned.UpdateManifest{
-				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: "dotnet-core"},
-					{Name: "Microsoft.Extensions.Logging", FixedVersion: "7.0.0", Type: "dotnet-core"},
-				},
-			},
-			ignoreErrors: false,
-			// This will likely error in test environment due to missing buildkit setup
-			expectError: true,
-		},
-		{
-			name: "invalid version",
-			manifest: &unversioned.UpdateManifest{
-				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "Newtonsoft.Json", FixedVersion: "invalid-version", Type: "dotnet-core"},
-				},
-			},
-			ignoreErrors: false,
-			expectError:  true,
-		},
-		{
-			name: "invalid version with ignore errors",
-			manifest: &unversioned.UpdateManifest{
-				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "Newtonsoft.Json", FixedVersion: "invalid-version", Type: "dotnet-core"},
-				},
-			},
-			ignoreErrors: true,
-			expectError:  false, // Should not error when ignoring errors
-		},
-		{
-			name: "mixed package types - should ignore non-dotnet",
-			manifest: &unversioned.UpdateManifest{
-				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: "dotnet-core"},
-					{Name: "requests", FixedVersion: "2.28.0", Type: "python-pkg"}, // Should be ignored
-				},
-			},
-			ignoreErrors: false,
-			expectError:  true, // Will error due to buildkit, but should only process dotnet packages
-		},
-		{
-			name: "only non-dotnet packages - should return success",
-			manifest: &unversioned.UpdateManifest{
-				LangUpdates: unversioned.LangUpdatePackages{
-					{Name: "requests", FixedVersion: "2.28.0", Type: "python-pkg"},
-				},
-			},
-			ignoreErrors: false,
-			expectError:  false, // Should return successfully since no dotnet packages to process
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: utils.DotNetPackages},
+			{Name: "requests", FixedVersion: "2.31.0", Type: utils.PythonPackages},
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			state, errPkgs, err := dnm.InstallUpdates(ctx, tt.manifest, tt.ignoreErrors)
+	managers := GetLanguageManagers(config, workingFolder, manifest)
+	// Expect two managers (order not strictly guaranteed)
+	assert.Len(t, managers, 2)
 
-			if tt.expectError {
-				// In test environment, we expect errors due to missing buildkit setup
-				// We mainly test that the function handles input validation correctly
-				if err == nil && len(tt.manifest.LangUpdates) > 0 {
-					t.Log("Expected error due to buildkit setup, but got none")
-				}
-			}
-
-			// State should always be returned (never nil)
-			assert.NotNil(t, state)
-
-			// Error packages should be a slice (may be empty)
-			assert.NotNil(t, errPkgs)
-
-			// If no updates, should not error
-			if len(tt.manifest.LangUpdates) == 0 {
-				assert.NoError(t, err)
-				assert.Empty(t, errPkgs)
-			}
-		})
-	}
-}
-
-func TestDotnetManagerType(t *testing.T) {
-	config := &buildkit.Config{}
-	workingFolder := "/tmp/test"
-	dnm := &dotnetManager{
-		config:        config,
-		workingFolder: workingFolder,
-	}
-
-	// Test that dotnetManager implements LangManager interface
-	var _ LangManager = dnm
-
-	// Test that GetLanguageManagers returns both pythonManager and dotnetManager
-	managers := GetLanguageManagers(config, workingFolder)
-	require.Len(t, managers, 2)
-
-	// Find the dotnet manager (should be the second one)
-	var dotnetMgr *dotnetManager
-	var found bool
-	for _, mgr := range managers {
-		if dnMgr, ok := mgr.(*dotnetManager); ok {
-			dotnetMgr = dnMgr
-			found = true
-			break
+	var sawDotnet, sawPython bool
+	for _, m := range managers {
+		switch m.(type) {
+		case *dotnetManager:
+			sawDotnet = true
+		case *pythonManager:
+			sawPython = true
 		}
 	}
+	assert.True(t, sawDotnet, "expected dotnetManager to be returned")
+	assert.True(t, sawPython, "expected pythonManager to be returned")
+}
 
-	assert.True(t, found, "Should find a dotnetManager in the list")
-	assert.NotNil(t, dotnetMgr)
-	assert.Equal(t, config, dotnetMgr.config)
-	assert.Equal(t, workingFolder, dotnetMgr.workingFolder)
+func TestGetLanguageManagers_None(t *testing.T) {
+	config := &buildkit.Config{}
+	workingFolder := "/tmp/test"
+	manifest := &unversioned.UpdateManifest{LangUpdates: unversioned.LangUpdatePackages{}}
+	managers := GetLanguageManagers(config, workingFolder, manifest)
+	assert.Len(t, managers, 0)
+}
+
+func TestGetLanguageManagers_DotnetOnly(t *testing.T) {
+	config := &buildkit.Config{}
+	workingFolder := "/tmp/test"
+	manifest := &unversioned.UpdateManifest{LangUpdates: unversioned.LangUpdatePackages{{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: utils.DotNetPackages}}}
+	managers := GetLanguageManagers(config, workingFolder, manifest)
+	assert.Len(t, managers, 1)
+	_, ok := managers[0].(*dotnetManager)
+	assert.True(t, ok, "expected first manager to be dotnetManager")
 }

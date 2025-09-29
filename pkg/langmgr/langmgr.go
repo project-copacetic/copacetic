@@ -43,13 +43,12 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 		switch packageType {
 		case utils.PythonPackages:
 			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
+		case utils.DotNetPackages:
+			managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
 		default:
 			log.Warnf("Unknown package type '%s' found in language updates", packageType)
 		}
 	}
-
-	// Add .NET manager
-	managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
 
 	return managers
 }

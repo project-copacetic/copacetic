@@ -45,6 +45,7 @@ func isLessThanDotnetVersion(v1, v2 string) bool {
 
 func (dnm *dotnetManager) InstallUpdates(
 	ctx context.Context,
+	imageState *llb.State,
 	manifest *unversioned.UpdateManifest,
 	ignoreErrors bool,
 ) (*llb.State, []string, error) {
@@ -60,7 +61,7 @@ func (dnm *dotnetManager) InstallUpdates(
 
 	if len(dotnetUpdates) == 0 {
 		log.Debug("No .NET packages found in language updates.")
-		return &dnm.config.ImageState, []string{}, nil
+		return imageState, []string{}, nil
 	}
 
 	log.Debugf("Found %d .NET packages to process: %v", len(dotnetUpdates), dotnetUpdates)
@@ -72,30 +73,30 @@ func (dnm *dotnetManager) InstallUpdates(
 		for _, u := range dotnetUpdates {
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
-		return &dnm.config.ImageState, errPkgsReported, fmt.Errorf("failed to determine unique latest .NET updates: %w", err)
+		return imageState, errPkgsReported, fmt.Errorf("failed to determine unique latest .NET updates: %w", err)
 	}
 
 	if len(updatesToAttempt) == 0 {
 		log.Warn("No .NET update packages were specified to apply.")
-		return &dnm.config.ImageState, []string{}, nil
+		return imageState, []string{}, nil
 	}
 	log.Debugf("Attempting to update latest unique .NET packages: %v", updatesToAttempt)
 
 	// Perform the upgrade.
-	updatedImageState, resultsBytes, upgradeErr := dnm.upgradePackages(ctx, updatesToAttempt, ignoreErrors)
+	updatedImageState, resultsBytes, upgradeErr := dnm.upgradePackages(ctx, imageState, updatesToAttempt, ignoreErrors)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade .NET packages: %v. Cannot proceed to validation.", upgradeErr)
 		if !ignoreErrors {
 			for _, u := range updatesToAttempt {
 				errPkgsReported = append(errPkgsReported, u.Name)
 			}
-			return &dnm.config.ImageState, errPkgsReported, fmt.Errorf(".NET package upgrade operation failed: %w", upgradeErr)
+			return imageState, errPkgsReported, fmt.Errorf(".NET package upgrade operation failed: %w", upgradeErr)
 		}
 		log.Warnf(".NET package upgrade operation failed but errors are ignored. Original image state will be used.")
 		for _, u := range updatesToAttempt {
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
-		return &dnm.config.ImageState, errPkgsReported, nil
+		return imageState, errPkgsReported, nil
 	}
 
 	// If upgradePackages succeeded, upgradeErr is nil. Now validate.
@@ -305,17 +306,18 @@ func (dnm *dotnetManager) validateDotnetPackageVersions(
 
 func (dnm *dotnetManager) upgradePackages(
 	ctx context.Context,
+	imageState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, []byte, error) {
 	if len(updates) == 0 {
 		log.Info("No .NET packages to install or upgrade.")
-		return &dnm.config.ImageState, []byte{}, nil
+		return imageState, []byte{}, nil
 	}
 
 	// Find project files in the image to determine working directory
 	// Search for .csproj, .fsproj, or .vbproj files
-	projectDiscoveryState := dnm.config.ImageState.Run(
+	projectDiscoveryState := imageState.Run(
 		llb.Shlex(`sh -c 'find / -name "*.csproj" -o -name "*.fsproj" -o -name "*.vbproj" 2>/dev/null | head -1 > /tmp/project_file || echo "No project file found"'`),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
@@ -457,7 +459,7 @@ fi'`
 	}
 
 	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(dnm.config.ImageState, publishedState)
-	patchMerge := llb.Merge([]llb.State{dnm.config.ImageState, patchDiff})
+	patchDiff := llb.Diff(*imageState, publishedState)
+	patchMerge := llb.Merge([]llb.State{*imageState, patchDiff})
 	return &patchMerge, resultsBytes, nil
 }
