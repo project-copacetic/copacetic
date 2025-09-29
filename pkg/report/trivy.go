@@ -427,6 +427,29 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 					}
 				}
 			}
+
+			// Check if this is a .NET-related target
+			if r.Type == utils.DotNetPackages {
+				for v := range r.Vulnerabilities {
+					vuln := &r.Vulnerabilities[v]
+					if vuln.FixedVersion != "" {
+						if _, exists := langPackageVulns[vuln.PkgName]; !exists {
+							langPackageVulns[vuln.PkgName] = []trivyTypes.DetectedVulnerability{}
+							langPackageInfo[vuln.PkgName] = unversioned.UpdatePackage{
+								Name:             vuln.PkgName,
+								Type:             string(r.Type),
+								Class:            string(r.Class),
+								InstalledVersion: vuln.InstalledVersion,
+							}
+							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
+						}
+						langPackageVulns[vuln.PkgName] = append(langPackageVulns[vuln.PkgName], *vuln)
+						if vuln.VulnerabilityID != "" {
+							langPackageVulnIDs[vuln.PkgName][vuln.VulnerabilityID] = struct{}{}
+						}
+					}
+				}
+			}
 		}
 	}
 
