@@ -221,7 +221,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 func getValidatedUpdates(updates *unversioned.UpdateManifest, errPkgs []string) []unversioned.UpdatePackage {
 	var validatedUpdates []unversioned.UpdatePackage
 	if updates != nil {
-		for _, update := range updates.Updates {
+		for _, update := range updates.OSUpdates {
 			if !slices.Contains(errPkgs, update.Name) {
 				validatedUpdates = append(validatedUpdates, update)
 			}

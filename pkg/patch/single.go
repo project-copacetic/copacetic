@@ -496,10 +496,22 @@ func executePatchBuild(
 		// Update validation data for VEX document generation
 		pkgType = result.PackageType
 
-		// Update validation data for VEX document generation
-		if validatedManifest != nil {
-			validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, result.ValidatedManifest.OSUpdates...)
-			validatedManifest.LangUpdates = append(validatedManifest.LangUpdates, result.ValidatedManifest.LangUpdates...)
+		// Build validated manifest (exclude errored packages) using original updates + result.ErroredPackages
+		if validatedManifest != nil && updates != nil {
+			errored := map[string]struct{}{}
+			for _, e := range result.ErroredPackages {
+				errored[e] = struct{}{}
+			}
+			for _, u := range updates.OSUpdates {
+				if _, bad := errored[u.Name]; !bad {
+					validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, u)
+				}
+			}
+			for _, u := range updates.LangUpdates {
+				if _, bad := errored[u.Name]; !bad {
+					validatedManifest.LangUpdates = append(validatedManifest.LangUpdates, u)
+				}
+			}
 		}
 
 		return result.Result, nil
