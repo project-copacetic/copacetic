@@ -240,7 +240,7 @@ func patchSingleArchImage(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	return createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -365,7 +365,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 }
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
-func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
+func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup

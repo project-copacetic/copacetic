@@ -197,8 +197,10 @@ func isSupportedOsType(osType string) bool {
 	}
 }
 
-// tryGetManifestFromLocal attempts to get manifest data from the local Docker daemon.
-func tryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
+// TryGetManifestFromLocal attempts to get manifest data from the local Docker daemon.
+// It returns a remote.Descriptor if successful, or an error if the manifest cannot be retrieved locally.
+// This is exported to support patching images that exist locally but not in a remote registry.
+func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 	imageName := ref.String()
 	log.Debugf("Trying: docker manifest inspect %s", imageName)
 
@@ -286,7 +288,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	}
 
 	// Try local daemon first, then fall back to remote
-	desc, err := tryGetManifestFromLocal(ref)
+	desc, err := TryGetManifestFromLocal(ref)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
 		desc, err = remote.Get(ref)
@@ -441,7 +443,7 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *ispec.Platfor
 	}
 
 	// Try to get the local manifest first
-	desc, err := tryGetManifestFromLocal(ref)
+	desc, err := TryGetManifestFromLocal(ref)
 	if err != nil {
 		// Not a local manifest, return original reference
 		return manifestRef, nil
@@ -1395,13 +1397,80 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 		return nil, fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	// Get the remote descriptor
-	desc, err := remote.Get(ref)
+	// Try local daemon first, then fall back to remote
+	desc, err := TryGetManifestFromLocal(ref)
+	isLocal := (err == nil)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get remote descriptor: %w", err)
+		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		desc, err = remote.Get(ref)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get remote descriptor: %w", err)
+		}
+		log.Debugf("Successfully fetched descriptor from remote registry for preserved platforms")
+	} else {
+		log.Debugf("Successfully fetched descriptor from local daemon for preserved platforms")
 	}
 
 	var manifests []map[string]interface{}
+
+	// Ensure blobs directory exists so we can materialize preserved platform content
+	blobsDir := filepath.Join(outputDir, "blobs", "sha256")
+	if err := os.MkdirAll(blobsDir, 0o755); err != nil {
+		return nil, fmt.Errorf("failed to create blobs directory for preserved platforms: %w", err)
+	}
+
+	// Helper to write a blob if we have not already written it (dedupe across platforms)
+	writeBlobIfAbsent := func(hash v1.Hash, data []byte) error {
+		relPath := filepath.Join("sha256", hash.Hex)
+		if blobsSet[relPath] { // already written
+			return nil
+		}
+		outPath := filepath.Join(outputDir, "blobs", relPath)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			return fmt.Errorf("failed to create blob dir: %w", err)
+		}
+		if err := os.WriteFile(outPath, data, 0o644); err != nil {
+			return fmt.Errorf("failed to write blob %s: %w", hash.String(), err)
+		}
+		blobsSet[relPath] = true
+		log.Debugf("Wrote preserved blob %s", hash.String())
+		return nil
+	}
+
+	// Helper to stream-copy a (potentially large) layer blob
+	writeLayerIfAbsent := func(layer v1.Layer) error {
+		ld, err := layer.Digest()
+		if err != nil {
+			return fmt.Errorf("failed to get layer digest: %w", err)
+		}
+		relPath := filepath.Join("sha256", ld.Hex)
+		if blobsSet[relPath] { // already written
+			return nil
+		}
+		rc, err := layer.Compressed()
+		if err != nil {
+			return fmt.Errorf("failed to read compressed layer %s: %w", ld.String(), err)
+		}
+		defer rc.Close()
+		outPath := filepath.Join(outputDir, "blobs", relPath)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			return fmt.Errorf("failed to create layer blob dir: %w", err)
+		}
+		f, err := os.Create(outPath)
+		if err != nil {
+			return fmt.Errorf("failed to create layer blob file %s: %w", outPath, err)
+		}
+		if _, err := io.Copy(f, rc); err != nil {
+			f.Close()
+			return fmt.Errorf("failed to copy layer blob %s: %w", ld.String(), err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("failed to close layer blob file %s: %w", outPath, err)
+		}
+		blobsSet[relPath] = true
+		log.Debugf("Wrote preserved layer %s", ld.String())
+		return nil
+	}
 
 	// Check if it's a manifest list (multi-platform)
 	if desc.MediaType == v1types.OCIImageIndex || desc.MediaType == v1types.DockerManifestList {
@@ -1417,28 +1486,93 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 			return nil, fmt.Errorf("failed to get index manifest: %w", err)
 		}
 
-		// Filter manifests for the preserved platforms we want
+		// Filter manifests for the preserved platforms we want and materialize their blobs
 		for _, platformSpec := range preservedPlatforms {
-			for _, desc := range manifest.Manifests {
-				if desc.Platform != nil &&
-					desc.Platform.OS == platformSpec.Platform.OS &&
-					desc.Platform.Architecture == platformSpec.Platform.Architecture {
+			for _, mdesc := range manifest.Manifests {
+				if mdesc.Platform != nil &&
+					mdesc.Platform.OS == platformSpec.Platform.OS &&
+					mdesc.Platform.Architecture == platformSpec.Platform.Architecture {
 
-					// Create manifest entry for this preserved platform
+					var img v1.Image
+
+					// For local images, we need to fetch by digest using the daemon
+					// For remote images, we can use idx.Image() which has proper remote context
+					if isLocal {
+						// Construct digest reference for this platform
+						digestRef := fmt.Sprintf("%s@%s", originalRef.Name(), mdesc.Digest.String())
+						platformRef, err := name.ParseReference(digestRef)
+						if err != nil {
+							return nil, fmt.Errorf("failed to parse platform digest reference: %w", err)
+						}
+
+						// Try to get from local daemon first
+						platformDesc, err := TryGetManifestFromLocal(platformRef)
+						if err != nil {
+							// Fall back to remote if local fails
+							img, err = remote.Image(platformRef)
+							if err != nil {
+								return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.Platform.OS, platformSpec.Platform.Architecture, err)
+							}
+						} else {
+							img, err = platformDesc.Image()
+							if err != nil {
+								return nil, fmt.Errorf("failed to get image from local descriptor for preserved platform %s/%s: %w", platformSpec.Platform.OS, platformSpec.Platform.Architecture, err)
+							}
+						}
+					} else {
+						// Remote image - can use idx.Image() directly
+						img, err = idx.Image(mdesc.Digest)
+						if err != nil {
+							return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.Platform.OS, platformSpec.Platform.Architecture, err)
+						}
+					}
+
+					// Write manifest blob (raw bytes) so index reference is resolvable offline
+					rawManifest, err := img.RawManifest()
+					if err != nil {
+						return nil, fmt.Errorf("failed to get raw manifest: %w", err)
+					}
+					if err := writeBlobIfAbsent(mdesc.Digest, rawManifest); err != nil {
+						return nil, err
+					}
+
+					// Write config blob
+					cfgHash, err := img.ConfigName()
+					if err != nil {
+						return nil, fmt.Errorf("failed to get config digest: %w", err)
+					}
+					rawConfig, err := img.RawConfigFile()
+					if err != nil {
+						return nil, fmt.Errorf("failed to get raw config: %w", err)
+					}
+					if err := writeBlobIfAbsent(cfgHash, rawConfig); err != nil {
+						return nil, err
+					}
+
+					// Write layer blobs
+					layers, err := img.Layers()
+					if err != nil {
+						return nil, fmt.Errorf("failed to get layers: %w", err)
+					}
+					for _, layer := range layers {
+						if err := writeLayerIfAbsent(layer); err != nil {
+							return nil, err
+						}
+					}
+
+					// Create manifest entry for this preserved platform (index level descriptor)
 					manifestEntry := map[string]interface{}{
-						"mediaType": string(desc.MediaType),
-						"digest":    desc.Digest.String(),
-						"size":      desc.Size,
+						"mediaType": string(mdesc.MediaType),
+						"digest":    mdesc.Digest.String(),
+						"size":      mdesc.Size,
 						"platform": map[string]interface{}{
-							"os":           desc.Platform.OS,
-							"architecture": desc.Platform.Architecture,
+							"os":           mdesc.Platform.OS,
+							"architecture": mdesc.Platform.Architecture,
 						},
 					}
-
-					if desc.Platform.Variant != "" {
-						manifestEntry["platform"].(map[string]interface{})["variant"] = desc.Platform.Variant
+					if mdesc.Platform.Variant != "" {
+						manifestEntry["platform"].(map[string]interface{})["variant"] = mdesc.Platform.Variant
 					}
-
 					manifests = append(manifests, manifestEntry)
 					break
 				}
@@ -1446,13 +1580,50 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 		}
 	} else {
 		// Single platform image
+		// Materialize single-platform image blobs
+		img, err := desc.Image()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get single-platform image: %w", err)
+		}
+
+		// Write manifest
+		rawManifest, err := img.RawManifest()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get raw manifest: %w", err)
+		}
+		if err := writeBlobIfAbsent(desc.Digest, rawManifest); err != nil {
+			return nil, err
+		}
+
+		// Write config
+		cfgHash, err := img.ConfigName()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get config digest: %w", err)
+		}
+		rawConfig, err := img.RawConfigFile()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get raw config: %w", err)
+		}
+		if err := writeBlobIfAbsent(cfgHash, rawConfig); err != nil {
+			return nil, err
+		}
+
+		// Write layers
+		layers, err := img.Layers()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get layers: %w", err)
+		}
+		for _, layer := range layers {
+			if err := writeLayerIfAbsent(layer); err != nil {
+				return nil, err
+			}
+		}
+
 		platformEntry := map[string]interface{}{
 			"mediaType": string(desc.MediaType),
 			"digest":    desc.Digest.String(),
 			"size":      desc.Size,
 		}
-
-		// Try to get platform info from image config
 		if len(preservedPlatforms) > 0 {
 			platform := preservedPlatforms[0].Platform
 			platformEntry["platform"] = map[string]interface{}{
@@ -1463,14 +1634,10 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 				platformEntry["platform"].(map[string]interface{})["variant"] = platform.Variant
 			}
 		}
-
 		manifests = append(manifests, platformEntry)
 	}
 
-	// Note: For preserved platforms, we're not downloading and copying the actual blobs
-	// since they would need to be pulled from the registry. This is a limitation of the current approach.
-	// A full implementation would need to download the platform-specific images and extract their blobs.
-	log.Warn("Preserved platform blobs are not downloaded - they exist only as manifest references")
+	log.Infof("Materialized %d preserved platform manifest(s) with blobs", len(manifests))
 
 	return manifests, nil
 }
