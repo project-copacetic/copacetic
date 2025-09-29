@@ -163,12 +163,14 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 		imageStateCurrent = am.config.PatchedImageState
 	}
 
-	apkUpdated := imageStateCurrent.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache).Root()
+	apkUpdated := imageStateCurrent.Run(llb.Shlex("apk update"), llb.WithProxy(utils.GetProxy()), llb.IgnoreCache,
+		llb.WithCustomName("Updating package database")).Root()
 
 	// If updating all packages, check for upgrades before proceeding with patch
 	if updates == nil {
 		checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" || exit 1"`
-		apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+		apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable),
+			llb.WithCustomName("Checking for available updates")).Root()
 	}
 
 	var apkInstalled llb.State
