@@ -55,7 +55,6 @@ const (
 	DPKGStatusMixed
 
 	DPKGStatusInvalid // must always be the last listed
-	Debian            = "debian"
 )
 
 func (st dpkgStatusType) String() string {
@@ -88,9 +87,9 @@ func isLessThanDebianVersion(v1, v2 string) bool {
 // Map the target image OSType & OSVersion to an appropriate tooling image.
 func getAPTImageName(manifest *unversioned.UpdateManifest, osVersion string, useCachePrefix bool) string {
 	version := osVersion
-	osType := Debian
+	osType := utils.OSTypeDebian
 
-	if manifest == nil || manifest.Metadata.OS.Type == Debian {
+	if manifest == nil || manifest.Metadata.OS.Type == utils.OSTypeDebian {
 		if version > "12" {
 			version = strings.Split("stable", ".")[0] + "-slim"
 		} else {
@@ -161,7 +160,7 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 	// Else update according to specified updates
 	// Validate and extract unique updates listed in input manifest
 	debComparer := VersionComparer{isValidDebianVersion, isLessThanDebianVersion}
-	updates, err := GetUniqueLatestUpdates(manifest.Updates, debComparer, ignoreErrors)
+	updates, err := GetUniqueLatestUpdates(manifest.OSUpdates, debComparer, ignoreErrors)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -431,10 +430,18 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
-	toolingBase := llb.Image(toolImage,
-		llb.Platform(*imagePlatform),
-		llb.ResolveModeDefault,
-	)
+
+	// First try with the specified platform, fallback to host platform if it fails
+	toolingBase, err := tryImage(ctx, toolImage, dm.config.Client, imagePlatform)
+	if err != nil {
+		log.Debugf("Failed to resolve tooling image %s with platform %v, falling back to host platform: %v", toolImage, imagePlatform, err)
+		// Try again without platform specification (uses host platform)
+		toolingBase, err = tryImage(ctx, toolImage, dm.config.Client, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve tooling image %s even with host platform fallback: %w", toolImage, err)
+		}
+		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
+	}
 
 	// Run apt-get update && apt-get download list of updates to target folder
 	updated := toolingBase.Run(

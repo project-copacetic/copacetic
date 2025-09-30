@@ -19,7 +19,7 @@ var (
 	bkNewClient = buildkit.NewClient
 )
 
-// Patch executes the patching workflow for a given set of options.
+// Patch command applies package updates to an OCI image given a vulnerability report for a given set of options.
 func Patch(ctx context.Context, opts *types.Options) error {
 	allowedProgressModes := map[string]struct{}{
 		"auto":    {},
@@ -65,10 +65,23 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
+	pkgTypes := opts.PkgTypes
 
 	// Validate configuration based on source policy if present
 	if err := validateBuildConfiguration(opts); err != nil {
 		return fmt.Errorf("build configuration validation failed: %w", err)
+	}
+
+	// Parse and validate package types early
+	pkgTypesList, err := parsePkgTypes(pkgTypes)
+	if err != nil {
+		return fmt.Errorf("invalid package types: %w", err)
+	}
+
+	// Validate that library package types require a scanner report
+	reportProvided := reportPath != ""
+	if err := validateLibraryPkgTypesRequireReport(pkgTypesList, reportProvided); err != nil {
+		return err
 	}
 
 	// Handle empty report path - check if image is manifest list or single platform
@@ -155,6 +168,9 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	defaultPlatform := common.GetDefaultLinuxPlatform()
 	patchPlatform := types.PatchPlatform{
 		Platform: defaultPlatform,
+	}
+	if patchPlatform.OS != LINUX {
+		patchPlatform.OS = LINUX
 	}
 	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
 	if err == nil && result != nil {

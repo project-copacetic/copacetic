@@ -16,6 +16,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -83,6 +84,8 @@ func patchSingleArchImage(
 		CertPath:   opts.BkCertPath,
 		KeyPath:    opts.BkKeyPath,
 	}
+	pkgTypes := opts.PkgTypes
+	libraryPatchLevel := opts.LibraryPatchLevel
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -123,10 +126,39 @@ func patchSingleArchImage(
 	// Parse report for update packages
 	var updates *unversioned.UpdateManifest
 	if reportFile != "" {
-		updates, err = report.TryParseScanReport(reportFile, scanner)
+		updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
 		if err != nil {
 			return nil, err
 		}
+
+		// Filter updates based on package types
+		pkgTypesList, err := parsePkgTypes(pkgTypes)
+		if err != nil {
+			return nil, fmt.Errorf("invalid package types: %w", err)
+		}
+
+		if updates != nil {
+			// Filter OS updates
+			if !shouldIncludeOSUpdates(pkgTypesList) {
+				log.Debugf("Filtering out OS updates based on pkg-types: %v", pkgTypesList)
+				updates.OSUpdates = []unversioned.UpdatePackage{}
+			}
+
+			// Filter library updates
+			if !shouldIncludeLibraryUpdates(pkgTypesList) {
+				log.Debugf("Filtering out library updates based on pkg-types: %v", pkgTypesList)
+				updates.LangUpdates = []unversioned.UpdatePackage{}
+			}
+
+			log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
+
+			// If after filtering there are zero OS and zero library updates, return an error
+			// only when user explicitly requested some package types (default is OS) but none are patchable.
+			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
+				return nil, fmt.Errorf("no patchable vulnerabilities found in provided report for selected pkg-types (%s)", pkgTypes)
+			}
+		}
+
 		log.Debugf("updates to apply: %v", updates)
 	}
 
@@ -185,7 +217,7 @@ func patchSingleArchImage(
 	}
 
 	// Get patched descriptor and add annotations
-	return createPatchResult(ctx, imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
+	return createPatchResult(imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -310,7 +342,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 }
 
 // createPatchResult creates the final patch result with descriptor and annotations.
-func createPatchResult(ctx context.Context, imageName reference.Named, patchedImageName string,
+func createPatchResult(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, image, loaderType string,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
@@ -319,7 +351,10 @@ func createPatchResult(ctx context.Context, imageName reference.Named, patchedIm
 		runtime = imageloader.Podman
 	}
 
-	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
+	// Use a fresh context for descriptor lookup to avoid cancellation issues
+	// The original context might be canceled after the patching operation completes
+	descriptorCtx := context.Background()
+	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
 	if err != nil {
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
@@ -327,7 +362,7 @@ func createPatchResult(ctx context.Context, imageName reference.Named, patchedIm
 
 	// Add original manifest annotations if we have a patched descriptor
 	if patchedDesc != nil {
-		originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+		originalAnnotations, err := utils.GetPlatformManifestAnnotations(descriptorCtx, image, &ispec.Platform{
 			OS:           targetPlatform.OS,
 			Architecture: targetPlatform.Architecture,
 			Variant:      targetPlatform.Variant,
@@ -394,7 +429,8 @@ func executePatchBuild(
 					Arch: updates.Metadata.Config.Arch,
 				},
 			},
-			Updates: []unversioned.UpdatePackage{},
+			OSUpdates:   []unversioned.UpdatePackage{},
+			LangUpdates: []unversioned.UpdatePackage{},
 		}
 	}
 
@@ -406,12 +442,13 @@ func executePatchBuild(
 		}
 
 		patchOpts := &Options{
-			ImageName:      imageName.String(),
-			TargetPlatform: targetPlatform,
-			Updates:        updates,
-			WorkingFolder:  workingFolder,
-			IgnoreError:    ignoreError,
-			ErrorChannel:   ch,
+			ImageName:        imageName.String(),
+			TargetPlatform:   targetPlatform,
+			Updates:          updates,
+			ValidatedUpdates: validatedManifest,
+			WorkingFolder:    workingFolder,
+			IgnoreError:      ignoreError,
+			ErrorChannel:     ch,
 		}
 
 		// Execute the core patching logic
@@ -420,10 +457,13 @@ func executePatchBuild(
 			return nil, err
 		}
 
-		// Update validation data for VEX document generation
+		// Pass pkgType to the outside scope
 		pkgType = result.PackageType
+
+		// Update validation data for VEX document generation
 		if validatedManifest != nil {
-			validatedManifest.Updates = result.ValidatedUpdates
+			validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, result.ValidatedManifest.OSUpdates...)
+			validatedManifest.LangUpdates = append(validatedManifest.LangUpdates, result.ValidatedManifest.LangUpdates...)
 		}
 
 		return result.Result, nil
@@ -438,7 +478,7 @@ func executePatchBuild(
 	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
 		nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
 		// vex document must contain at least one statement
-		if output != "" && len(validatedManifest.Updates) > 0 {
+		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
 				ch <- err
 				return err
@@ -447,4 +487,48 @@ func executePatchBuild(
 	}
 
 	return err
+}
+
+// shouldIncludeOSUpdates returns true if OS updates should be included based on package types.
+func shouldIncludeOSUpdates(pkgTypes []string) bool {
+	return slices.Contains(pkgTypes, utils.PkgTypeOS)
+}
+
+// shouldIncludeLibraryUpdates returns true if library updates should be included based on package types.
+func shouldIncludeLibraryUpdates(pkgTypes []string) bool {
+	return slices.Contains(pkgTypes, utils.PkgTypeLibrary)
+}
+
+// validateLibraryPkgTypesRequireReport validates that library package types require a scanner report.
+func validateLibraryPkgTypesRequireReport(pkgTypes []string, reportProvided bool) error {
+	if shouldIncludeLibraryUpdates(pkgTypes) && !reportProvided {
+		return fmt.Errorf("library package types require a scanner report file to be provided")
+	}
+	return nil
+}
+
+// Package types supported by copa
+// parsePkgTypes parses a comma-separated string of package types and validates them.
+func parsePkgTypes(pkgTypesStr string) ([]string, error) {
+	if pkgTypesStr == "" {
+		return []string{utils.PkgTypeOS}, nil // default to OS
+	}
+
+	types := strings.Split(pkgTypesStr, ",")
+	validTypes := []string{}
+
+	for _, t := range types {
+		t = strings.TrimSpace(t)
+		if t == utils.PkgTypeOS || t == utils.PkgTypeLibrary {
+			validTypes = append(validTypes, t)
+		} else {
+			return nil, fmt.Errorf("invalid package type '%s'. Valid types are: %s, %s", t, utils.PkgTypeOS, utils.PkgTypeLibrary)
+		}
+	}
+
+	if len(validTypes) == 0 {
+		return []string{utils.PkgTypeOS}, nil // default to OS
+	}
+
+	return validTypes, nil
 }
