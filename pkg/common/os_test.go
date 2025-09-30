@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,77 +24,77 @@ func TestGetOSInfo(t *testing.T) {
 			osRelease: `NAME="Ubuntu"
 VERSION_ID="22.04"
 VERSION="22.04.1 LTS (Jammy Jellyfish)"`,
-			wantType:    "ubuntu",
+			wantType:    utils.OSTypeUbuntu,
 			wantVersion: "22.04",
 		},
 		{
 			name: "Alpine",
 			osRelease: `NAME="Alpine Linux"
 VERSION_ID="3.18.0"`,
-			wantType:    "alpine",
+			wantType:    utils.OSTypeAlpine,
 			wantVersion: "3.18.0",
 		},
 		{
 			name: "Debian",
 			osRelease: `NAME="Debian GNU/Linux"
 VERSION_ID="11"`,
-			wantType:    "debian",
+			wantType:    utils.OSTypeDebian,
 			wantVersion: "11",
 		},
 		{
 			name: "Amazon Linux",
 			osRelease: `NAME="Amazon Linux"
 VERSION_ID="2"`,
-			wantType:    "amazon",
+			wantType:    utils.OSTypeAmazon,
 			wantVersion: "2",
 		},
 		{
 			name: "CentOS",
 			osRelease: `NAME="CentOS Linux"
 VERSION_ID="8"`,
-			wantType:    "centos",
+			wantType:    utils.OSTypeCentOS,
 			wantVersion: "8",
 		},
 		{
 			name: "CBL-Mariner",
 			osRelease: `NAME="CBL-Mariner/Linux"
 VERSION_ID="2.0"`,
-			wantType:    "cbl-mariner",
+			wantType:    utils.OSTypeCBLMariner,
 			wantVersion: "2.0",
 		},
 		{
 			name: "Azure Linux",
 			osRelease: `NAME="Microsoft Azure Linux"
 VERSION_ID="3.0"`,
-			wantType:    "azurelinux",
+			wantType:    utils.OSTypeAzureLinux,
 			wantVersion: "3.0",
 		},
 		{
 			name: "Red Hat",
 			osRelease: `NAME="Red Hat Enterprise Linux"
 VERSION_ID="8.5"`,
-			wantType:    "redhat",
+			wantType:    utils.OSTypeRedHat,
 			wantVersion: "8.5",
 		},
 		{
 			name: "Rocky Linux",
 			osRelease: `NAME="Rocky Linux"
 VERSION_ID="8.5"`,
-			wantType:    "rocky",
+			wantType:    utils.OSTypeRocky,
 			wantVersion: "8.5",
 		},
 		{
 			name: "Oracle Linux",
 			osRelease: `NAME="Oracle Linux Server"
 VERSION_ID="8.5"`,
-			wantType:    "oracle",
+			wantType:    utils.OSTypeOracle,
 			wantVersion: "8.5",
 		},
 		{
 			name: "AlmaLinux",
 			osRelease: `NAME="AlmaLinux"
 VERSION_ID="9.1"`,
-			wantType:    "alma",
+			wantType:    utils.OSTypeAlma,
 			wantVersion: "9.1",
 		},
 		{
@@ -107,7 +108,7 @@ ID=debian
 HOME_URL="https://www.debian.org/"
 SUPPORT_URL="https://www.debian.org/support"
 BUG_REPORT_URL="https://bugs.debian.org/"`,
-			wantType:    "debian",
+			wantType:    utils.OSTypeDebian,
 			wantVersion: "11",
 		},
 		{
@@ -118,7 +119,7 @@ VERSION_ID=3.7.3
 PRETTY_NAME="Alpine Linux v3.7"
 HOME_URL="http://alpinelinux.org"
 BUG_REPORT_URL="http://bugs.alpinelinux.org"`,
-			wantType:    "alpine",
+			wantType:    utils.OSTypeAlpine,
 			wantVersion: "3.7.3",
 		},
 		{
@@ -135,7 +136,7 @@ SUPPORT_URL="https://help.ubuntu.com/"
 BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
 PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
 UBUNTU_CODENAME=jammy`,
-			wantType:    "ubuntu",
+			wantType:    utils.OSTypeUbuntu,
 			wantVersion: "22.04",
 		},
 		{
@@ -156,7 +157,7 @@ BUG_REPORT_URL="https://github.com/amazonlinux/amazon-linux-2023"
 VENDOR_NAME="AWS"
 VENDOR_URL="https://aws.amazon.com/"
 SUPPORT_END="2028-03-15"`,
-			wantType:    "amazon",
+			wantType:    utils.OSTypeAmazon,
 			wantVersion: "2023",
 		},
 		{
@@ -174,7 +175,7 @@ HOME_URL="https://centos.org/"
 BUG_REPORT_URL="https://bugs.centos.org/"
 CENTOS_MANTISBT_PROJECT="CentOS-8"
 CENTOS_MANTISBT_PROJECT_VERSION="8"`,
-			wantType:    "centos",
+			wantType:    utils.OSTypeCentOS,
 			wantVersion: "8",
 		},
 		{
@@ -188,7 +189,7 @@ ANSI_COLOR="1;34"
 HOME_URL="https://aka.ms/cbl-mariner"
 BUG_REPORT_URL="https://aka.ms/cbl-mariner"
 SUPPORT_URL="https://aka.ms/cbl-mariner"`,
-			wantType:    "cbl-mariner",
+			wantType:    utils.OSTypeCBLMariner,
 			wantVersion: "2.0",
 		},
 		{
@@ -202,7 +203,7 @@ ANSI_COLOR="1;34"
 HOME_URL="https://aka.ms/azurelinux"
 BUG_REPORT_URL="https://aka.ms/azurelinux"
 SUPPORT_URL="https://aka.ms/azurelinux"`,
-			wantType:    "azurelinux",
+			wantType:    utils.OSTypeAzureLinux,
 			wantVersion: "3.0",
 		},
 		{
@@ -224,7 +225,7 @@ REDHAT_BUGZILLA_PRODUCT="Red Hat Enterprise Linux 8"
 REDHAT_BUGZILLA_PRODUCT_VERSION=8.9
 REDHAT_SUPPORT_PRODUCT="Red Hat Enterprise Linux"
 REDHAT_SUPPORT_PRODUCT_VERSION="8.9"`,
-			wantType:    "redhat",
+			wantType:    utils.OSTypeRedHat,
 			wantVersion: "8.9",
 		},
 		{
@@ -246,7 +247,7 @@ ROCKY_SUPPORT_PRODUCT="Rocky-Linux-9"
 ROCKY_SUPPORT_PRODUCT_VERSION="9.3"
 REDHAT_SUPPORT_PRODUCT="Rocky Linux"
 REDHAT_SUPPORT_PRODUCT_VERSION="9.3"`,
-			wantType:    "rocky",
+			wantType:    utils.OSTypeRocky,
 			wantVersion: "9.3",
 		},
 		{
@@ -268,7 +269,7 @@ ORACLE_BUGZILLA_PRODUCT="Oracle Linux 7"
 ORACLE_BUGZILLA_PRODUCT_VERSION=7.9
 ORACLE_SUPPORT_PRODUCT="Oracle Linux"
 ORACLE_SUPPORT_PRODUCT_VERSION=7.9`,
-			wantType:    "oracle",
+			wantType:    utils.OSTypeOracle,
 			wantVersion: "7.9",
 		},
 		{
@@ -291,7 +292,7 @@ ORACLE_BUGZILLA_PRODUCT="Oracle Linux 8"
 ORACLE_BUGZILLA_PRODUCT_VERSION=8.9
 ORACLE_SUPPORT_PRODUCT="Oracle Linux"
 ORACLE_SUPPORT_PRODUCT_VERSION=8.9`,
-			wantType:    "oracle",
+			wantType:    utils.OSTypeOracle,
 			wantVersion: "8.9",
 		},
 		{
@@ -314,7 +315,7 @@ ALMALINUX_MANTISBT_PROJECT="AlmaLinux-9"
 ALMALINUX_MANTISBT_PROJECT_VERSION="9.4"
 REDHAT_SUPPORT_PRODUCT="AlmaLinux"
 REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`,
-			wantType:    "alma",
+			wantType:    utils.OSTypeAlma,
 			wantVersion: "9.4",
 		},
 		// Minimal test cases
@@ -323,7 +324,7 @@ REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`,
 			osRelease: `PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
 NAME="Debian GNU/Linux"
 VERSION_ID="11"`,
-			wantType:    "debian",
+			wantType:    utils.OSTypeDebian,
 			wantVersion: "11",
 		},
 		{
@@ -331,7 +332,7 @@ VERSION_ID="11"`,
 			osRelease: `NAME="Alpine Linux"
 ID=alpine
 VERSION_ID=3.7.3`,
-			wantType:    "alpine",
+			wantType:    utils.OSTypeAlpine,
 			wantVersion: "3.7.3",
 		},
 		// Edge cases for OS detection matching old test behavior
@@ -339,7 +340,7 @@ VERSION_ID=3.7.3`,
 			name: "CBL-Mariner alternative name",
 			osRelease: `NAME="Common Base Linux Mariner"
 VERSION_ID="2.0"`,
-			wantType:    "cbl-mariner",
+			wantType:    utils.OSTypeCBLMariner,
 			wantVersion: "2.0",
 		},
 		// Error cases
@@ -377,7 +378,7 @@ VERSION_ID=1.0`,
 			osRelease: `PRETTY_NAME="Debian GNU/Linux"
 NAME="Debian GNU/Linux"
 ID=debian`,
-			wantType:    "debian",
+			wantType:    utils.OSTypeDebian,
 			wantVersion: "",
 		},
 	}

@@ -3,6 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.24.4
 
 require (
+	github.com/aquasecurity/go-pep440-version v0.0.1
 	github.com/aquasecurity/trivy v0.66.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
@@ -20,7 +21,7 @@ require (
 	github.com/moby/buildkit v0.24.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	github.com/openvex/go-vex v0.2.5
+	github.com/openvex/go-vex v0.2.6
 	github.com/quay/claircore v1.5.39
 	github.com/sirupsen/logrus v1.9.3
 	github.com/spf13/cobra v1.10.1
@@ -29,8 +30,8 @@ require (
 	github.com/tonistiigi/fsutil v0.0.0-20250605211040-586307ad452f
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
 	golang.org/x/sync v0.17.0
-	google.golang.org/grpc v1.75.0
-	k8s.io/apimachinery v0.34.0
+	google.golang.org/grpc v1.75.1
+	k8s.io/apimachinery v0.34.1
 )
 
 require (
@@ -38,6 +39,7 @@ require (
 	github.com/Masterminds/semver v1.5.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
+	github.com/aquasecurity/go-version v0.0.1 // indirect
 	github.com/aquasecurity/trivy-db v0.0.0-20250731052236-c7c831e2254d // indirect
 	github.com/aws/aws-sdk-go-v2 v1.38.3 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.31.6 // indirect

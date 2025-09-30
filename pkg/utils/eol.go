@@ -40,7 +40,7 @@ func normalizeOSIdentifier(osType, osVersion string) (apiProduct string, apiVers
 	apiVersion = strings.ToLower(osVersion)
 
 	switch apiProduct {
-	case "debian":
+	case OSTypeDebian:
 		if !isNumericPrefix(apiVersion) {
 			switch apiVersion {
 			case "buzz", "rex", "bo":
@@ -80,31 +80,31 @@ func normalizeOSIdentifier(osType, osVersion string) (apiProduct string, apiVers
 				apiVersion = parts[0]
 			}
 		}
-	case "ubuntu":
+	case OSTypeUbuntu:
 		apiVersion = strings.TrimSpace(strings.ToLower(strings.ReplaceAll(apiVersion, "lts", "")))
 		parts := strings.Split(apiVersion, ".")
 		if len(parts) >= 2 {
 			apiVersion = parts[0] + "." + parts[1]
 		}
-	case "alpine":
+	case OSTypeAlpine:
 		parts := strings.Split(apiVersion, ".")
 		if len(parts) >= 2 {
 			apiVersion = parts[0] + "." + parts[1]
 		}
-	case "centos", "rhel", "rocky", "alma":
+	case OSTypeCentOS, "rhel", OSTypeRocky, OSTypeAlma:
 		parts := strings.Split(apiVersion, ".")
 		if len(parts) > 0 {
 			apiVersion = parts[0]
 		}
-	case "amazon":
+	case OSTypeAmazon:
 		apiProduct = "amazon-linux"
-	case "mariner", "cbl-mariner":
+	case "mariner", OSTypeCBLMariner:
 		apiProduct = "cbl-mariner"
 		parts := strings.Split(apiVersion, ".")
 		if len(parts) > 0 {
 			apiVersion = parts[0]
 		}
-	case "azurelinux":
+	case OSTypeAzureLinux:
 		apiProduct = "azure-linux"
 		parts := strings.Split(apiVersion, ".")
 		if len(parts) > 0 {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/project-copacetic/copacetic/pkg/utils" // Assuming this is where the constants are defined
 	"github.com/quay/claircore/osrelease"
 	log "github.com/sirupsen/logrus"
 )
@@ -28,28 +29,28 @@ func GetOSInfo(ctx context.Context, osreleaseBytes []byte) (*OSInfo, error) {
 	osType := strings.ToLower(osData["NAME"])
 	var normalizedType string
 	switch {
-	case strings.Contains(osType, "alpine"):
-		normalizedType = "alpine"
-	case strings.Contains(osType, "debian"):
-		normalizedType = "debian"
-	case strings.Contains(osType, "ubuntu"):
-		normalizedType = "ubuntu"
-	case strings.Contains(osType, "amazon"):
-		normalizedType = "amazon"
-	case strings.Contains(osType, "centos"):
-		normalizedType = "centos"
+	case strings.Contains(osType, utils.OSTypeAlpine):
+		normalizedType = utils.OSTypeAlpine
+	case strings.Contains(osType, utils.OSTypeDebian):
+		normalizedType = utils.OSTypeDebian
+	case strings.Contains(osType, utils.OSTypeUbuntu):
+		normalizedType = utils.OSTypeUbuntu
+	case strings.Contains(osType, utils.OSTypeAmazon):
+		normalizedType = utils.OSTypeAmazon
+	case strings.Contains(osType, utils.OSTypeCentOS):
+		normalizedType = utils.OSTypeCentOS
 	case strings.Contains(osType, "mariner"):
-		normalizedType = "cbl-mariner"
+		normalizedType = utils.OSTypeCBLMariner
 	case strings.Contains(osType, "azure linux"):
-		normalizedType = "azurelinux"
+		normalizedType = utils.OSTypeAzureLinux
 	case strings.Contains(osType, "red hat"):
-		normalizedType = "redhat"
-	case strings.Contains(osType, "rocky"):
-		normalizedType = "rocky"
-	case strings.Contains(osType, "oracle"):
-		normalizedType = "oracle"
-	case strings.Contains(osType, "alma"):
-		normalizedType = "alma"
+		normalizedType = utils.OSTypeRedHat
+	case strings.Contains(osType, utils.OSTypeRocky):
+		normalizedType = utils.OSTypeRocky
+	case strings.Contains(osType, utils.OSTypeOracle):
+		normalizedType = utils.OSTypeOracle
+	case strings.Contains(osType, utils.OSTypeAlma):
+		normalizedType = utils.OSTypeAlma
 	default:
 		log.Error("unsupported osType ", osType)
 		return nil, errors.ErrUnsupported
