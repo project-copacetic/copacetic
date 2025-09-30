@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Test script for release branch creation logic
 # This can be run locally to validate the version extraction logic
@@ -8,8 +9,8 @@ test_version_extraction() {
     local expected="$2"
     
     # Same logic as in the workflow
-    VERSION=$(echo "$tag" | sed 's/refs\/tags\/v//' | sed 's/\.[0-9]*$//')
-    BRANCH_NAME="release-${VERSION}"
+    local VERSION=$(echo "$tag" | sed 's/refs\/tags\/v//' | sed 's/\.[0-9]*$//')
+    local BRANCH_NAME="release-${VERSION}"
     
     if [ "$VERSION" = "$expected" ]; then
         echo "✓ PASS: $tag -> $VERSION (branch: $BRANCH_NAME)"
