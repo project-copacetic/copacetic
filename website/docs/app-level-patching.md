@@ -13,6 +13,7 @@ Copa supports patching application-level dependencies, such as Python packages, 
 App-level patching works by scanning and updating application dependencies found in your container images. Unlike OS-level patching which updates system packages, app-level patching focuses on:
 
 - Python packages (`pip` is the supported package manager)
+- Node.js packages (`npm` is the supported package manager, for both user applications and globally-installed packages)
 
 Please note that app-level patching requires scanner results that identify vulnerabilities in application libraries.
 
@@ -174,3 +175,64 @@ Currently, only Python packages managed by `pip` are supported. We have not eval
 #### Replacing PyPI
 
 Copa does not support replacing the default [Python Package Index](https://pypi.org) (PyPI) with a custom index or mirror at this time. This means that all package updates are fetched from the official PyPI repository, which may not be suitable for all environments, especially those with strict network policies or private package registries.
+
+### Node.js
+
+Copa supports patching Node.js applications and globally-installed npm packages. When scanning an image for vulnerabilities, Copa will:
+
+1. **User Applications**: Detect and patch packages defined in `package.json` and `package-lock.json` files
+2. **Global Packages**: Detect and patch globally-installed npm packages (e.g., `eslint`, `pnpm`, `npm` itself)
+
+#### Usage Example
+
+```bash
+export COPA_EXPERIMENTAL=1
+export IMAGE=node:18
+
+# Scan for Node.js package vulnerabilities
+trivy image --vuln-type os,library --ignore-unfixed -f json -o nodejs-scan.json $IMAGE
+
+# Apply patch-level Node.js package updates
+copa patch \
+    -i $IMAGE \
+    -r nodejs-scan.json \
+    --pkg-types os,library \
+    --library-patch-level patch
+```
+
+#### Global Package Patching
+
+Copa automatically detects and patches globally-installed npm packages. This is particularly useful for images that have development tools or CLI utilities installed globally. For example:
+
+- Devcontainer images (e.g., `mcr.microsoft.com/devcontainers/javascript-node:*`)
+- Images with globally-installed tools like `eslint`, `pnpm`, `typescript`, etc.
+- Base Node.js images with system-level npm packages
+
+The global package patching works by:
+
+1. Using `npm root -g` to find the global node_modules directory
+2. Identifying all root-level packages with vulnerable dependencies
+3. Installing updated versions of vulnerable packages within each global package's dependency tree
+4. Using `--ignore-scripts` flag to skip native module builds (avoiding Python/node-gyp issues)
+
+#### Node.js Limitations
+
+##### Node.js Dependency Resolution
+
+Like Python, Copa does not perform full dependency resolution for Node.js packages. It applies updates based on scanner results without checking for compatibility conflicts between packages.
+
+##### Node.js Native Modules
+
+Copa uses the `--ignore-scripts` flag when installing Node.js packages to avoid issues with native module compilation (node-gyp). This means:
+
+- Packages with native dependencies may not build their native components
+- Most security patches work without native rebuilds
+- In rare cases, functionality relying on native modules might be affected
+
+##### Node.js Package Manager Support
+
+Currently, only `npm` is supported. Other Node.js package managers like `yarn` or `pnpm` are not supported at this time.
+
+##### Node.js Testing and Validation
+
+As with Python packages, it is *highly recommended* to thoroughly test your Node.js application after applying updates. Copa does not perform automated testing or validation of the patched application.
