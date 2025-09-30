@@ -351,8 +351,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		// Process Language packages
 		if r.Class == utils.LangPackages {
-			// Check if this is a Python-related target
-			if r.Type == utils.PythonPackages {
+			// Check if this is a Python or Node.js related target
+			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
