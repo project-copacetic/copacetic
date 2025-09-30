@@ -87,6 +87,17 @@ func TestComprehensiveBulkPatching(t *testing.T) {
 
 	assert.ElementsMatch(t, expectedPatchedTags, allPatchedTags, "The set of patched tags in the registry did not match expectations")
 	t.Logf("Successfully verified all %d patched tags.", len(allPatchedTags))
+
+	unexpectedPatchedTags := []string{
+		"1.25.1-patched-e2e", // Excluded by allow list
+		"1.25.0-patched-e2e", // Excluded by allow list
+		"3.18.0-patched-e2e", // Excluded by ignore list
+	}
+
+	for _, unexpectedTag := range unexpectedPatchedTags {
+		assert.NotContains(t, allPatchedTags, unexpectedTag, "Found an unexpected patched tag that should have been excluded")
+	}
+	t.Logf("Successfully verified all %d excluded tags were not patched.", len(unexpectedPatchedTags))
 }
 
 func listAllPatchedTags(t *testing.T, registryHost string, repos []string) []string {

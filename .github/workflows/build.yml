@@ -541,7 +541,7 @@ jobs:
           go-version: "1.24"
           check-latest: true
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -554,4 +554,4 @@ jobs:
         run: |
           set -eu -o pipefail
           # The test now runs in a more realistic and consistent environment
-          go test -v ./integration/bulk --copa="$(pwd)/copa"
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/bulk --copa="$(pwd)/copa"
