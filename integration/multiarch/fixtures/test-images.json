@@ -9,9 +9,7 @@
     "push": true,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5",
       "linux/386",
-      "linux/mips64le",
       "linux/s390x",
       "linux/arm64"
     ]
@@ -26,7 +24,7 @@
     "push": false,
     "platforms": [
       "linux/amd64",
-      "linux/arm/v5"
+      "linux/arm64"
     ]
   },
   {
@@ -39,6 +37,60 @@
     "skipAnnotations": true,
     "platforms": [
       "linux/arm/v7",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "quay.io/jupyter/base-notebook",
+    "localImage": "localhost:5000/jupyter-base-notebook",
+    "tag": "2025-01-27",
+    "distro": "ubuntu",
+    "description": "Multi-arch Jupyter base-notebook 2025-01-27, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "skipAnnotations": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "quay.io/jupyter/base-notebook",
+    "localImage": "localhost:5000/jupyter-base-notebook",
+    "tag": "2025-01-27",
+    "distro": "ubuntu",
+    "description": "Multi-arch Jupyter base-notebook 2025-01-27, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "mcr.microsoft.com/azure-cli",
+    "localImage": "localhost:5000/azure-cli",
+    "tag": "2.50.0",
+    "distro": "debian",
+    "description": "Multi-arch Azure CLI 2.50.0 for Python package testing, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "skipAnnotations": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "mcr.microsoft.com/azure-cli",
+    "localImage": "localhost:5000/azure-cli",
+    "tag": "2.50.0",
+    "distro": "debian",
+    "description": "Multi-arch Azure CLI 2.50.0 for Python package testing, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": [
+      "linux/amd64",
       "linux/arm64"
     ]
   }

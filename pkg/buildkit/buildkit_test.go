@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 
 	"github.com/stretchr/testify/mock"
 
@@ -27,6 +30,11 @@ import (
 	caps "github.com/moby/buildkit/util/apicaps/pb"
 	"github.com/stretchr/testify/assert"
 	"google.golang.org/grpc"
+)
+
+const (
+	goosDarwin  = "darwin"
+	goosWindows = "windows"
 )
 
 type mockControlServer struct {
@@ -85,12 +93,27 @@ func makeCapList(capIDs ...apicaps.CapID) []*caps.APICap {
 }
 
 func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
-	tmp := t.TempDir()
-	l, err := net.Listen("unix", filepath.Join(tmp, "buildkitd.sock"))
+	// Use a shorter path strategy that works across platforms
+	var sockPath string
+	if runtime.GOOS == goosDarwin {
+		// On macOS, use /tmp directly for shorter paths to avoid socket path length limits
+		sockPath = filepath.Join(utils.DefaultTempWorkingFolder, fmt.Sprintf("bk-%d.sock", time.Now().UnixNano()))
+	} else {
+		// On other platforms, use temp dir but with shorter name
+		tmp := t.TempDir()
+		sockPath = filepath.Join(tmp, "bk.sock")
+	}
+
+	l, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { l.Close() })
+	t.Cleanup(func() {
+		l.Close()
+		if runtime.GOOS == goosDarwin {
+			os.Remove(sockPath) // Clean up manually on macOS since we're not using TempDir
+		}
+	})
 
 	srv := grpc.NewServer()
 	t.Cleanup(srv.Stop)
@@ -423,7 +446,19 @@ func TestMapGoArch(t *testing.T) {
 }
 
 func TestIsSupportedOsType(t *testing.T) {
-	supported := []string{"alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma"}
+	supported := []string{
+		utils.OSTypeAlpine,
+		utils.OSTypeDebian,
+		utils.OSTypeUbuntu,
+		utils.OSTypeCBLMariner,
+		utils.OSTypeAzureLinux,
+		utils.OSTypeCentOS,
+		utils.OSTypeOracle,
+		utils.OSTypeRedHat,
+		utils.OSTypeRocky,
+		utils.OSTypeAmazon,
+		utils.OSTypeAlma,
+	}
 	for _, os := range supported {
 		if !isSupportedOsType(os) {
 			t.Errorf("expected %s to be supported", os)
@@ -480,7 +515,7 @@ func TestQemuAvailable_Mocked(t *testing.T) {
 			stubDir:  func(string) ([]os.DirEntry, error) { return []os.DirEntry{}, nil },
 			stubRead: func(string) ([]byte, error) { return nil, nil },
 			stubPath: func(string) (string, error) { return "", os.ErrNotExist },
-			want:     false,
+			want:     runtime.GOOS == goosDarwin || runtime.GOOS == goosWindows, // true on macOS/Windows due to Docker Desktop assumption
 		},
 	}
 

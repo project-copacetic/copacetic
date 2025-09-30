@@ -1,6 +1,5 @@
 ---
 title: Introduction
-slug: /
 ---
 
 # Project Copacetic: Directly patch container image vulnerabilities
