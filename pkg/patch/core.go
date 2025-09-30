@@ -217,7 +217,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}, nil
 }
 
-// getValidatedUpdates extracts validated updates (excluding errored packages)
+// getValidatedUpdates extracts validated updates (excluding errored packages).
 func getValidatedUpdates(updates *unversioned.UpdateManifest, errPkgs []string) []unversioned.UpdatePackage {
 	var validatedUpdates []unversioned.UpdatePackage
 	if updates != nil {
