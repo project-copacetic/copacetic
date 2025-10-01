@@ -86,8 +86,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           ]
         }
       ],
-      "status": "fixed",
-      "timestamp": ""
+      "status": "fixed"
     }
   ],
   "timestamp": "2009-11-17T20:34:58Z"
@@ -156,8 +155,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           ]
         }
       ],
-      "status": "fixed",
-      "timestamp": ""
+      "status": "fixed"
     },
     {
       "vulnerability": {
@@ -173,8 +171,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           ]
         }
       ],
-      "status": "fixed",
-      "timestamp": ""
+      "status": "fixed"
     }
   ],
   "timestamp": "2009-11-17T20:34:58Z"
