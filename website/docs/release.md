@@ -67,8 +67,10 @@ For patch releases (e.g., `v<MAJOR>.<MINOR>.<PATCH>`) that contain bug fixes or 
 
    Check out release branch from the tag:
 
+   ```sh
    git checkout release-<MAJOR>.<MINOR>
    git pull upstream release-<MAJOR>.<MINOR>
+   ```
 
 2. **Cherry-pick the Fix**
 
