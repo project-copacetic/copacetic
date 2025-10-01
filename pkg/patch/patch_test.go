@@ -289,18 +289,21 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 			Ref:      "docker.io/library/nginx:patched-amd64",
 			Message:  "",
 		},
-		"linux/arm64": {
-			Platform: "linux/arm64",
-			Status:   "Error",
-			Ref:      "",
-			Message:  "emulation is not enabled for platform linux/arm64",
-		},
-		"linux/arm/v7": {
-			Platform: "linux/arm/v7",
-			Status:   "Ignored",
-			Ref:      "",
-			Message:  "",
-		},
+"linux/arm64": {
+	Platform: "linux/arm64",
+	Status:   "Error",
+	Ref:      "",
+	Message: "emulation is not enabled for platform linux/arm64. " +
+		"To enable emulation, run:\n\n" +
+		"  docker run --privileged --rm tonistiigi/binfmt --install all\n\n" +
+		"See docs: https://docs.docker.com/build/building/multi-platform/#qemu",
+},
+"linux/arm/v7": {
+	Platform: "linux/arm/v7",
+	Status:   "Ignored",
+	Ref:      "",
+	Message:  "",
+},
 		"windows/amd64": {
 			Platform: "windows/amd64",
 			Status:   "Not Patched",
