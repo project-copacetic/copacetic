@@ -25,19 +25,19 @@ type EOLAPIResponse struct {
 }
 
 var (
-	apiBaseURL = "https://endoflife.date/api/v1/products"
-	httpClient = &http.Client{Timeout: 10 * time.Second}
+	apiBaseURL   = "https://endoflife.date/api/v1/products"
+	httpClient   = &http.Client{Timeout: 10 * time.Second}
 	retryTimeout = 15 * time.Second
 )
 
-// SetEOLAPIBaseURL allows configuration of the EOL API base URL
+// SetEOLAPIBaseURL allows configuration of the EOL API base URL.
 func SetEOLAPIBaseURL(url string) {
 	if url != "" {
 		apiBaseURL = strings.TrimSuffix(url, "/")
 	}
 }
 
-// GetEOLAPIBaseURL returns the current EOL API base URL
+// GetEOLAPIBaseURL returns the current EOL API base URL.
 func GetEOLAPIBaseURL() string {
 	return apiBaseURL
 }
@@ -214,7 +214,7 @@ func CheckEOSL(osType, osVersion string) (bool, string, error) {
 	}
 }
 
-// makeEOLAPIRequest creates and executes an HTTP request to the EOL API
+// makeEOLAPIRequest creates and executes an HTTP request to the EOL API.
 func makeEOLAPIRequest(url string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
