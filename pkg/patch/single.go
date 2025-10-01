@@ -242,7 +242,6 @@ func validatePlatformEmulation(targetPlatform types.PatchPlatform) error { //nol
 
 		log.Warnf("Emulation is not enabled for platform %s.\n"+
 			"To enable emulation, run:\n\n"+
-			"  docker run --privileged --rm tonistiigi/binfmt --install all\n\n"+
 			"See docs: https://docs.docker.com/build/building-multi-platform/#qemu",
 			platform)
 
