@@ -2,6 +2,7 @@ package types
 
 import (
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client/llb"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
@@ -43,9 +44,11 @@ func (p PatchPlatform) String() string {
 
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalRef reference.Named
-	PatchedDesc *ispec.Descriptor
-	PatchedRef  reference.Named
+	OriginalRef  reference.Named
+	PatchedDesc  *ispec.Descriptor
+	PatchedRef   reference.Named
+	PatchedState *llb.State // BuildKit state for OCI export
+	ConfigData   []byte     // Image config data
 }
 
 type MultiPlatformSummary struct {
