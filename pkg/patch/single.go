@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -213,6 +214,10 @@ func patchSingleArchImage(
 
 	// Wait for completion
 	if err := eg.Wait(); err != nil {
+		if errors.Is(err, types.ErrNoUpdatesFound) {
+			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			return res, types.ErrNoUpdatesFound
+		}
 		return nil, err
 	}
 
@@ -531,4 +536,17 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	}
 
 	return validTypes, nil
+}
+
+func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
+	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+	if err != nil {
+		log.Warnf("Could not get original descriptor for up-to-date platform %s/%s: %v", targetPlatform.OS, targetPlatform.Architecture, err)
+	}
+
+	return &types.PatchResult{
+		OriginalRef: imageName,
+		PatchedRef:  imageName,
+		PatchedDesc: originalDesc,
+	}, nil
 }

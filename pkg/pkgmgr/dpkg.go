@@ -17,6 +17,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -344,8 +345,15 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
-	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
+	const updatesAvailableMarker = "/updates.txt"
+	checkUpgradable := fmt.Sprintf(`sh -c 'if apt-get -s upgrade 2>/dev/null | grep -q "^Inst"; then touch %s; fi'`, updatesAvailableMarker)
 	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+
+	_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
+	if err != nil {
+		log.Info("No upgradable packages found for this image.")
+		return nil, nil, types.ErrNoUpdatesFound
+	}
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
@@ -462,29 +470,32 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
 				`bash`, `-c`, `
-							json_str=$PACKAGES_PRESENT
-							update_packages=""
+                            json_str=$PACKAGES_PRESENT
+                            update_packages=""
 
-							while IFS=':' read -r package version; do
-								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-								latest_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+                            while IFS=':' read -r package version; do
+                                pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+                                pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+                                latest_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
 
-								if [ "$latest_version" != "$pkg_version" ]; then
-									update_packages="$update_packages $pkg_name"
-								fi
-							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+                                if [ "$latest_version" != "$pkg_version" ]; then
+                                    update_packages="$update_packages $pkg_name"
+                                fi
+                            done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
-							if [ -z "$update_packages" ]; then
-								echo "No packages to update"
-								exit 1
-							fi
-
-							mkdir /var/cache/apt/archives
-							cd /var/cache/apt/archives
-							echo "$update_packages" > packages.txt
-					`,
+                            if [ -n "$update_packages" ]; then
+                                mkdir -p /var/cache/apt/archives
+                                cd /var/cache/apt/archives
+                                echo "$update_packages" > packages.txt
+                                # marker for upgradable packages
+                                touch /updates.txt
+                            fi
+                    `,
 			})).Root()
+		if _, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &updated, "/updates.txt"); err != nil {
+			log.Info("No upgradable packages found for this image (distroless path).")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
 	}
 
 	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
