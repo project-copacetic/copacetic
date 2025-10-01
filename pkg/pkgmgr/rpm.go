@@ -114,7 +114,7 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string, useCachePrefix bool) string {
 	var image, version string
 
-	if osType == "azurelinux" {
+	if osType == utils.OSTypeAzureLinux {
 		image = "azurelinux/base/core"
 		if strings.Contains(osVersion, "3.0") {
 			version = "3.0"
@@ -126,7 +126,7 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 		image = "cbl-mariner/base/core"
 		version = "2.0"
 
-		if manifest != nil && manifest.Metadata.OS.Type == "cbl-mariner" {
+		if manifest != nil && manifest.Metadata.OS.Type == utils.OSTypeCBLMariner {
 			vers := strings.Split(manifest.Metadata.OS.Version, ".")
 			if len(vers) < 2 {
 				vers = append(vers, "0")
@@ -212,14 +212,14 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var err error
 
 	if manifest != nil {
-		if manifest.Metadata.OS.Type == "oracle" && !ignoreErrors {
+		if manifest.Metadata.OS.Type == utils.OSTypeOracle && !ignoreErrors {
 			err = errors.New("detected Oracle image passed in\n" +
 				"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
 			return &rm.config.ImageState, nil, err
 		}
 
 		rpmComparer = VersionComparer{isValidRPMVersion, isLessThanRPMVersion}
-		updates, err = GetUniqueLatestUpdates(manifest.Updates, rpmComparer, ignoreErrors)
+		updates, err = GetUniqueLatestUpdates(manifest.OSUpdates, rpmComparer, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -249,7 +249,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 	var updatedImageState *llb.State
 	var resultManifestBytes []byte
 	if rm.isDistroless {
-		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, ignoreErrors)
+		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, imagePlatform, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -578,12 +578,21 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	return err == nil
 }
 
-func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
+func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
-	toolingBase := llb.Image(toolImage,
-		llb.ResolveModeDefault,
-	)
+
+	// First try with the specified platform, fallback to host platform if it fails
+	toolingBase, err := tryImage(ctx, toolImage, rm.config.Client, platform)
+	if err != nil {
+		log.Debugf("Failed to resolve tooling image %s with platform %v, falling back to host platform: %v", toolImage, platform, err)
+		// Try again without platform specification (uses host platform)
+		toolingBase, err = tryImage(ctx, toolImage, rm.config.Client, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve tooling image %s even with host platform fallback: %w", toolImage, err)
+		}
+		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
+	}
 
 	// List all packages installed in the tooling image
 	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
@@ -650,8 +659,11 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
+								# Convert OS_VERSION from X.Y.Z to X.Y format
+								OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
 								tdnf makecache
-								tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs $packages_formatted
+								tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
 
 								ls /tmp/rootfs/var/lib/rpm
 						`,
@@ -676,7 +688,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			# Convert OS_VERSION from X.Y.Z to X.Y format
+			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+
+			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
 			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
 				exit $?
@@ -728,7 +743,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa | tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-1
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa --qf '%{NAME}\t%{VERSION}-%{RELEASE}\t%{INSTALLTIME}\t%{BUILDTIME}\t%{VENDOR}\t%{EPOCH}\t%{SIZE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n' \
 		| tee /tmp/rootfs/var/lib/rpmmanifest/container-manifest-2
-		 
+
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		rm /tmp/rootfs/var/lib/rpm

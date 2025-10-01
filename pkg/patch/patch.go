@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -19,8 +20,19 @@ var (
 	bkNewClient = buildkit.NewClient
 )
 
-// Patch executes the patching workflow for a given set of options.
+// Patch command applies package updates to an OCI image given a vulnerability report for a given set of options.
 func Patch(ctx context.Context, opts *types.Options) error {
+	allowedProgressModes := map[string]struct{}{
+		"auto":    {},
+		"plain":   {},
+		"tty":     {},
+		"quiet":   {},
+		"rawjson": {},
+	}
+	if _, ok := allowedProgressModes[string(opts.Progress)]; !ok {
+		log.Warnf("Invalid value for --progress: %q. Allowed values are 'auto', 'plain' 'tty', 'quiet' or 'rawjson'. Defaulting to 'auto'.", string(opts.Progress))
+		opts.Progress = progressui.DisplayMode("auto")
+	}
 	// Create timeout context
 	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
@@ -56,10 +68,23 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
+	pkgTypes := opts.PkgTypes
 
 	// Validate configuration based on source policy if present
 	if err := validateBuildConfiguration(opts); err != nil {
 		return fmt.Errorf("build configuration validation failed: %w", err)
+	}
+
+	// Parse and validate package types early
+	pkgTypesList, err := parsePkgTypes(pkgTypes)
+	if err != nil {
+		return fmt.Errorf("invalid package types: %w", err)
+	}
+
+	// Validate that library package types require a scanner report
+	reportProvided := reportPath != ""
+	if err := validateLibraryPkgTypesRequireReport(pkgTypesList, reportProvided); err != nil {
+		return err
 	}
 
 	// Handle empty report path - check if image is manifest list or single platform
@@ -147,6 +172,9 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	patchPlatform := types.PatchPlatform{
 		Platform: defaultPlatform,
 	}
+	if patchPlatform.OS != LINUX {
+		patchPlatform.OS = LINUX
+	}
 	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
@@ -171,6 +199,5 @@ func validateBuildConfiguration(opts *types.Options) error {
 			return fmt.Errorf("failed to create build configuration: %w", err)
 		}
 	}
-
 	return nil
 }
