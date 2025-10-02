@@ -35,6 +35,7 @@ func ResolvePatchedTag(imageRef reference.Named, explicitTag, suffix string) (st
 	return fmt.Sprintf("%s-%s", baseTag, suffix), nil
 }
 
+// ResolvePatchedImageName merges with suffix rules or uses the explicitTag entirely, returning the final patched image name and tag.
 func ResolvePatchedImageName(imageRef reference.Named, explicitTag, suffix string) (imageName, patchTag string, err error) {
 	// Case 1: No explicit tag provided - generate one using suffix
 	if explicitTag == "" {
