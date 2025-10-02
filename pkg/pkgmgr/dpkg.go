@@ -345,14 +345,17 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.IgnoreCache,
 	).Root()
 
-	const updatesAvailableMarker = "/updates.txt"
-	checkUpgradable := fmt.Sprintf(`sh -c 'if apt-get -s upgrade 2>/dev/null | grep -q "^Inst"; then touch %s; fi'`, updatesAvailableMarker)
-	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	// Only check for upgradable packages when updating all (no specific updates list).
+	if updates == nil {
+		const updatesAvailableMarker = "/updates.txt"
+		checkUpgradable := fmt.Sprintf(`sh -c 'if apt-get -s upgrade 2>/dev/null | grep -q "^Inst"; then touch %s; fi'`, updatesAvailableMarker)
+		aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
 
-	_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
-	if err != nil {
-		log.Info("No upgradable packages found for this image.")
-		return nil, nil, types.ErrNoUpdatesFound
+		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
+		if err != nil {
+			log.Info("No upgradable packages found for this image.")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
 	}
 
 	// detect held packages and log them
