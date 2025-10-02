@@ -183,6 +183,27 @@ func TestGetRPMImageName(t *testing.T) {
 			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 		{
+			name:      "SUSE (SLES and BCI)",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "sles",
+			osVersion: "15.7",
+			image:     "ghcr.io/project-copacetic/copacetic/bci/bci-base:15.7",
+		},
+		{
+			name:      "openSUSE Leap",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "opensuse-leap",
+			osVersion: "latest",
+			image:     "ghcr.io/project-copacetic/copacetic/opensuse/leap:latest",
+		},
+		{
+			name:      "openSUSE Tumbleweed",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "opensuse-tumbleweed",
+			osVersion: "latest",
+			image:     "ghcr.io/project-copacetic/copacetic/opensuse/tumbleweed:latest",
+		},
+		{
 			name:      "Nil manifest",
 			manifest:  nil,
 			osType:    "",
@@ -711,6 +732,86 @@ func Test_unpackAndMergeUpdates_RPM(t *testing.T) {
 			}
 
 			result, resultBytes, err := rm.unpackAndMergeUpdates(context.TODO(), tt.updates, tt.toolImage, testPlatform, tt.ignoreErrors)
+
+			// Assert
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
+		})
+	}
+}
+
+func Test_zypperChrootInstallUpdates(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		mockSetup      func(reference *mocks.MockReference)
+		toolImage      string
+		expectedError  bool
+		expectedResult []byte
+	}{
+		{
+			name: "zypper - Successful update with specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.2.3"},
+				{Name: "package2", FixedVersion: "2.3.4"},
+			},
+			toolImage:      "test-tool-image:latest",
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\n"),
+		},
+		{
+			name: "zypper - Successful update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
+			updates:        nil,
+			toolImage:      "test-tool-image:latest",
+			expectedResult: []byte(""),
+			expectedError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+
+			if tt.mockSetup != nil {
+				tt.mockSetup(mockRef)
+			}
+
+			rm := &rpmManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Scratch(),
+				},
+			}
+
+			// Create a test platform
+			testPlatform := &ocispecs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
+			result, resultBytes, err := rm.zypperChrootInstallUpdates(context.TODO(), tt.updates, tt.toolImage, testPlatform)
 
 			// Assert
 			if tt.expectedError {

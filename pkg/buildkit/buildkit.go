@@ -190,7 +190,10 @@ func isSupportedOsType(osType string) bool {
 		utils.OSTypeRocky,
 		utils.OSTypeAmazon,
 		utils.OSTypeAlma,
-		utils.OSTypeAlmaLinux:
+		utils.OSTypeAlmaLinux,
+		utils.OSTypeSLES,
+		utils.OSTypeOpenSUSELeap,
+		utils.OSTypeOpenSUSETW:
 		return true
 	default:
 		return false

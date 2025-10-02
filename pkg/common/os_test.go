@@ -318,6 +318,58 @@ REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`,
 			wantType:    utils.OSTypeAlma,
 			wantVersion: "9.4",
 		},
+		{
+			name: "SLES and BCI",
+			osRelease: `NAME="SLES"
+VERSION="15-SP7"
+VERSION_ID="15.7"
+PRETTY_NAME="SUSE Linux Enterprise Server 15 SP7"
+ID="sles"
+ID_LIKE="suse"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:suse:sles:15:sp7"
+DOCUMENTATION_URL="https://documentation.suse.com/"`,
+			wantType:    utils.OSTypeSLES,
+			wantVersion: "15.7",
+		},
+		{
+			name: "opensuse Leap",
+			osRelease: `NAME="openSUSE Leap"
+VERSION="15.6"
+ID="opensuse-leap"
+ID_LIKE="suse opensuse"
+VERSION_ID="15.6"
+PRETTY_NAME="openSUSE Leap 15.6"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:opensuse:leap:15.6"
+BUG_REPORT_URL="https://bugs.opensuse.org"
+HOME_URL="https://www.opensuse.org/"
+DOCUMENTATION_URL="https://en.opensuse.org/Portal:Leap"
+LOGO="distributor-logo-Leap"`,
+			wantType:    utils.OSTypeOpenSUSELeap,
+			wantVersion: "15.6",
+		},
+		{
+			name: "openSUSE Tumbleweed",
+			osRelease: `NAME="openSUSE Tumbleweed"
+# VERSION="20250910"
+ID="opensuse-tumbleweed"
+ID_LIKE="opensuse suse"
+VERSION_ID="20250910"
+PRETTY_NAME="openSUSE Tumbleweed"
+ANSI_COLOR="0;32"
+# CPE 2.3 format, boo#1217921
+CPE_NAME="cpe:2.3:o:opensuse:tumbleweed:20250910:*:*:*:*:*:*:*"
+#CPE 2.2 format
+#CPE_NAME="cpe:/o:opensuse:tumbleweed:20250910"
+BUG_REPORT_URL="https://bugzilla.opensuse.org"
+SUPPORT_URL="https://bugs.opensuse.org"
+HOME_URL="https://www.opensuse.org"
+DOCUMENTATION_URL="https://en.opensuse.org/Portal:Tumbleweed"
+LOGO="distributor-logo-Tumbleweed"`,
+			wantType:    utils.OSTypeOpenSUSETW,
+			wantVersion: "20250910",
+		},
 		// Minimal test cases
 		{
 			name: "Debian Minimal",
