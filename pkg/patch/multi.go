@@ -96,9 +96,10 @@ func patchMultiPlatformImage(
 
 	summaryMap := make(map[string]*types.MultiPlatformSummary)
 
-	// Track if any platforms were successfully patched and if there were errors
+	// Track if any platforms errored, and patch attempt/success stats (exclude preserved)
 	var hasErrors bool
-	var successCount int
+	var patchedAttempts int
+	var patchedSuccesses int
 
 	for _, p := range platforms {
 		// rebind
@@ -178,7 +179,6 @@ func patchMultiPlatformImage(
 					Ref:      originalRef.String() + " (original reference)",
 					Message:  "Preserved original image (No Scan Report provided for platform)",
 				}
-				successCount++
 				mu.Unlock()
 				return nil
 			}
@@ -191,6 +191,12 @@ func patchMultiPlatformImage(
 
 			patchOpts := *opts
 			patchOpts.Report = reportFile
+
+			// Count a real patch attempt (not preserved)
+			mu.Lock()
+			patchedAttempts++
+			mu.Unlock()
+
 			res, err := patchSingleArchImage(gctx, ch, &patchOpts, p, true)
 			mu.Lock()
 			defer mu.Unlock()
@@ -222,7 +228,7 @@ func patchMultiPlatformImage(
 				Ref:      res.PatchedRef.String(),
 				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
 			}
-			successCount++
+			patchedSuccesses++
 			return nil
 		})
 	}
@@ -235,8 +241,9 @@ func patchMultiPlatformImage(
 		return err
 	}
 
-	// Check if we should fail based on the results
-	if hasErrors && successCount == 0 {
+	// Check if we should fail based on the results:
+	// Only consider real patch attempts (exclude preserved).
+	if hasErrors && patchedAttempts > 0 && patchedSuccesses == 0 {
 		return fmt.Errorf("all platform patches failed, see summary for details")
 	}
 
