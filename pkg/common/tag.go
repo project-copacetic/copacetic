@@ -39,7 +39,7 @@ func ResolvePatchedTag(imageRef reference.Named, explicitTag, suffix string) (st
 func ResolvePatchedImageName(imageRef reference.Named, explicitTag, suffix string) (imageName, patchTag string, err error) {
 	// Case 1: No explicit tag provided - generate one using suffix
 	if explicitTag == "" {
-		patchTag, err := ResolvePatchedTag(imageRef, explicitTag, suffix)
+		patchTag, err = ResolvePatchedTag(imageRef, explicitTag, suffix)
 		if err != nil {
 			return "", "", fmt.Errorf("failed to generate tag: %w", err)
 		}
