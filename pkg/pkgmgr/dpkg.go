@@ -490,7 +490,6 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
                                 mkdir -p /var/cache/apt/archives
                                 cd /var/cache/apt/archives
                                 echo "$update_packages" > packages.txt
-                                # marker for upgradable packages
                                 touch /updates.txt
                             fi
                     `,

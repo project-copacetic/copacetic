@@ -197,9 +197,6 @@ func patchMultiPlatformImage(
 			defer mu.Unlock()
 			if err != nil {
 				if errors.Is(err, types.ErrNoUpdatesFound) {
-					mu.Lock()
-					defer mu.Unlock()
-
 					patchResults = append(patchResults, *res)
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
@@ -210,8 +207,6 @@ func patchMultiPlatformImage(
 					return nil
 				}
 
-				mu.Lock()
-				defer mu.Unlock()
 				status := "Error"
 				if ignoreError {
 					status = "Ignored"
@@ -227,9 +222,6 @@ func patchMultiPlatformImage(
 				}
 				return nil
 			}
-
-			mu.Lock()
-			defer mu.Unlock()
 			if res == nil {
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,

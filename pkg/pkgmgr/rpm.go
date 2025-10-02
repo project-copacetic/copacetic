@@ -640,7 +640,6 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
                                 if [ -n "$update_packages" ]; then
                                     echo "$update_packages" > packages.txt
-                                    # marker for upgradable packages
                                     touch /updates.txt
                                 fi
                         `,
