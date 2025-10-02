@@ -19,6 +19,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -135,7 +136,7 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 		if file.IsDir() {
 			continue
 		}
-		report, err := report.TryParseScanReport(filePath, scanner)
+		report, err := report.TryParseScanReport(filePath, scanner, utils.PkgTypeOS, utils.PatchTypePatch)
 		if err != nil {
 			return nil, fmt.Errorf("error parsing report %w", err)
 		}
@@ -168,7 +169,18 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 
 func isSupportedOsType(osType string) bool {
 	switch osType {
-	case "alpine", "debian", "ubuntu", "cbl-mariner", "azurelinux", "centos", "oracle", "redhat", "rocky", "amazon", "alma":
+	case utils.OSTypeAlpine,
+		utils.OSTypeDebian,
+		utils.OSTypeUbuntu,
+		utils.OSTypeCBLMariner,
+		utils.OSTypeAzureLinux,
+		utils.OSTypeCentOS,
+		utils.OSTypeOracle,
+		utils.OSTypeRedHat,
+		utils.OSTypeRocky,
+		utils.OSTypeAmazon,
+		utils.OSTypeAlma,
+		utils.OSTypeAlmaLinux:
 		return true
 	default:
 		return false
@@ -338,7 +350,33 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 			},
 		})
 		if err != nil {
-			return nil, nil, "", err
+			log.Warnf("Failed to resolve BaseImage %s: %v. Falling back to using current image %s as base", baseImage, err, image)
+			// Fallback: Create a new config with the BaseImage label set to current image
+			imageConfig := make(map[string]interface{})
+			if err := json.Unmarshal(configData, &imageConfig); err != nil {
+				log.Warnf("Failed to unmarshal image config: %v", err)
+				return configData, nil, image, nil
+			}
+			configMap, ok := imageConfig["config"].(map[string]interface{})
+			if !ok {
+				log.Warnf("Invalid config structure in image config")
+				return configData, nil, image, nil
+			}
+			if configMap["labels"] == nil {
+				configMap["labels"] = make(map[string]interface{})
+			}
+			labelsMap, ok := configMap["labels"].(map[string]interface{})
+			if !ok {
+				log.Warnf("Invalid labels structure in image config")
+				return configData, nil, image, nil
+			}
+			labelsMap["BaseImage"] = image
+			updatedConfigData, err := json.Marshal(imageConfig)
+			if err != nil {
+				log.Warnf("Failed to marshal updated image config: %v", err)
+				return configData, nil, image, nil
+			}
+			return updatedConfigData, nil, image, nil
 		}
 
 		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)

@@ -32,7 +32,7 @@ func TestCheckEOSL(t *testing.T) {
 	}{
 		{
 			name:      "EOL (Debian Stretch)",
-			osType:    "debian",
+			osType:    OSTypeDebian,
 			osVersion: "stretch",
 			mockAPIResponse: EOLAPIResponse{
 				Result: EOLProductInfo{IsEOL: true, EOLDate: "2022-06-30", IsMaintained: false},
@@ -44,7 +44,7 @@ func TestCheckEOSL(t *testing.T) {
 		},
 		{
 			name:      "Non-EOL (Debian Bullseye)",
-			osType:    "debian",
+			osType:    OSTypeDebian,
 			osVersion: "11",
 			mockAPIResponse: EOLAPIResponse{
 				Result: EOLProductInfo{IsEOL: false, EOLDate: "2026-07-01", IsMaintained: true},
@@ -56,7 +56,7 @@ func TestCheckEOSL(t *testing.T) {
 		},
 		{
 			name:              "OS Not Found in API",
-			osType:            "cbl-mariner",
+			osType:            OSTypeCBLMariner,
 			osVersion:         "5.0",
 			mockAPIResponse:   nil,
 			mockAPIStatusCode: http.StatusNotFound,
@@ -66,7 +66,7 @@ func TestCheckEOSL(t *testing.T) {
 		},
 		{
 			name:              "API Rate Limited",
-			osType:            "ubuntu",
+			osType:            OSTypeUbuntu,
 			osVersion:         "22.04",
 			mockAPIResponse:   nil,
 			mockAPIStatusCode: http.StatusTooManyRequests,

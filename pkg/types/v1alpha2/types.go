@@ -1,6 +1,9 @@
-package unversioned
+package v1alpha2
+
+const APIVersion string = "v1alpha2"
 
 type UpdateManifest struct {
+	APIVersion  string             `json:"apiVersion"`
 	Metadata    Metadata           `json:"metadata"`
 	OSUpdates   UpdatePackages     `json:"osupdates"`
 	LangUpdates LangUpdatePackages `json:"langupdates"`
@@ -22,7 +25,7 @@ type OS struct {
 
 type Config struct {
 	Arch    string `json:"arch"`
-	Variant string `json:"variant"`
+	Variant string `json:"variant,omitempty"`
 }
 
 type UpdatePackage struct {
