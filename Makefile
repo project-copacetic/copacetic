@@ -24,6 +24,12 @@ DEFAULT_LDFLAGS   := -X $(BASE_PACKAGE_NAME)/pkg/version.GitCommit=$(GIT_COMMIT)
 GOARCH            := $(shell go env GOARCH)
 GOOS              := $(shell go env GOOS)
 
+# Frontend build variables
+FRONTEND_IMAGE_NAME ?= ghcr.io/project-copacetic/copacetic-frontend
+FRONTEND_PLATFORMS  ?= linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/386,linux/ppc64le,linux/s390x,linux/riscv64
+FRONTEND_VER        ?= latest
+
+
 # Message lack of native build support in Windows
 ifeq ($(GOOS),windows)
   $(error Windows native build is unsupported, use WSL instead)
@@ -55,6 +61,18 @@ $(CLI_BINARY):
 	$(info $(INFOMARK) Building $(CLI_BINARY) ...)
 	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) \
 	go build $(GCFLAGS) -ldflags $(LDFLAGS) -o $(BINS_OUT_DIR)/$(CLI_BINARY);
+
+################################################################################
+# Target: frontend (frontend image)                                            #
+################################################################################
+.PHONY: frontend
+frontend: $(CLI_BINARY)
+	$(info $(INFOMARK) Creating multiplatform frontend image ...)
+	docker buildx build \
+		-f frontend.Dockerfile \
+		-t $(FRONTEND_IMAGE_NAME):$(FRONTEND_VER) \
+		--platform $(FRONTEND_PLATFORMS) \
+		--push .
 
 ################################################################################
 # Target: install                                                              #

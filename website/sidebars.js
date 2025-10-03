@@ -35,6 +35,7 @@ const sidebars = {
         'app-level-patching',
         'github-action',
         'docker-extension',
+        'buildkit-frontend',
         'custom-address',
         'output',
         'scanner-plugins',
