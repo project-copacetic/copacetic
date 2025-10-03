@@ -731,3 +731,70 @@ func TestTrivyParserParseEdgeCases(t *testing.T) {
 		})
 	}
 }
+
+// TestTrivyParserParseWithNodeJS tests the TrivyParser.Parse method with Node.js packages.
+func TestTrivyParserParseWithNodeJS(t *testing.T) {
+	tests := []struct {
+		name            string
+		file            string
+		wantOSUpdates   int
+		wantLangUpdates int
+		wantErr         bool
+	}{
+		{
+			name:            "OS packages only",
+			file:            "testdata/trivy_valid.json",
+			wantOSUpdates:   1,
+			wantLangUpdates: 0,
+			wantErr:         false,
+		},
+		{
+			name:            "OS and Node.js packages",
+			file:            "testdata/trivy_node_valid.json",
+			wantOSUpdates:   1,
+			wantLangUpdates: 2,
+			wantErr:         false,
+		},
+		{
+			name:            "invalid file",
+			file:            "testdata/invalid.json",
+			wantOSUpdates:   0,
+			wantLangUpdates: 0,
+			wantErr:         true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := &TrivyParser{}
+			manifest, err := parser.Parse(tc.file)
+
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, manifest)
+			assert.Equal(t, tc.wantOSUpdates, len(manifest.OSUpdates))
+			assert.Equal(t, tc.wantLangUpdates, len(manifest.LangUpdates))
+
+			// Validate specific content for Node.js test
+			if tc.name == "OS and Node.js packages" {
+				// Check OS package
+				assert.Equal(t, "protobuf-c", manifest.OSUpdates[0].Name)
+
+				// Check Node.js packages
+				assert.Equal(t, "ansi-regex", manifest.LangUpdates[0].Name)
+				assert.Equal(t, "3.0.0", manifest.LangUpdates[0].InstalledVersion)
+				assert.Equal(t, "3.0.1", manifest.LangUpdates[0].FixedVersion)
+				assert.Equal(t, utils.NodePackages, manifest.LangUpdates[0].Type)
+
+				assert.Equal(t, "follow-redirects", manifest.LangUpdates[1].Name)
+				assert.Equal(t, "1.14.7", manifest.LangUpdates[1].InstalledVersion)
+				assert.Equal(t, "1.14.8", manifest.LangUpdates[1].FixedVersion)
+				assert.Equal(t, utils.NodePackages, manifest.LangUpdates[1].Type)
+			}
+		})
+	}
+}
