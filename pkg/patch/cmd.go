@@ -39,6 +39,8 @@ type patchArgs struct {
 	pkgTypes          string
 	libraryPatchLevel string
 	progress          string
+	eolAPIBaseURL     string
+	exitOnEOL         bool
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -74,6 +76,8 @@ func NewPatchCmd() *cobra.Command {
 				PkgTypes:          ua.pkgTypes,
 				LibraryPatchLevel: ua.libraryPatchLevel,
 				Progress:          progressui.DisplayMode(ua.progress),
+				EOLAPIBaseURL:     ua.eolAPIBaseURL,
+				ExitOnEOL:         ua.exitOnEOL,
 			}
 			return Patch(context.Background(), opts)
 		},
@@ -101,6 +105,8 @@ func NewPatchCmd() *cobra.Command {
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
+	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
+	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
