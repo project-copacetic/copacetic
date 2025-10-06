@@ -173,12 +173,18 @@ func patchMultiPlatformImage(
 
 				mu.Lock()
 				patchResults = append(patchResults, result)
+				var preserveReason string
+				if reportDir != "" && p.ReportFile == "" {
+					preserveReason = "Preserved original image (No Scan Report provided for platform)"
+				} else {
+					preserveReason = "Preserved original image (Platform not provided via --platform)"
+				}
 				// Add summary entry for unpatched platform
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
 					Status:   "Not Patched",
 					Ref:      originalRef.String() + " (original reference)",
-					Message:  "Preserved original image (Platform not provided via --platform)",
+					Message:  preserveReason,
 				}
 				mu.Unlock()
 				return nil
