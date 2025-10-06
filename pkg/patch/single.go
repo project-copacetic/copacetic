@@ -194,7 +194,7 @@ func patchSingleArchImage(
 	// Start the main build process
 	eg.Go(func() error {
 		return executePatchBuild(ctx, ch, bkClient, buildConfig, imageName, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel)
+			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel, opts.ExitOnEOL)
 	})
 
 	// Display progress
@@ -414,6 +414,7 @@ func executePatchBuild(
 	ignoreError bool,
 	reportFile, _, format, output, patchedImageName string,
 	buildChannel chan *client.SolveStatus,
+	exitOnEOL bool,
 ) error {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -449,6 +450,7 @@ func executePatchBuild(
 			WorkingFolder:    workingFolder,
 			IgnoreError:      ignoreError,
 			ErrorChannel:     ch,
+			ExitOnEOL:        exitOnEOL,
 		}
 
 		// Execute the core patching logic
