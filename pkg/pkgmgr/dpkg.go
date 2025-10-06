@@ -210,10 +210,14 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
+		llb.WithCustomName("Updating package database"),
 	).Root()
 
 	const installBusyBoxCmd = "apt-get install busybox-static"
-	busyBoxInstalled := updated.Run(llb.Shlex(installBusyBoxCmd), llb.WithProxy(utils.GetProxy())).Root()
+	busyBoxInstalled := updated.Run(
+		llb.Shlex(installBusyBoxCmd),
+		llb.WithProxy(utils.GetProxy()),
+		llb.WithCustomName("Installing busybox")).Root()
 	busyBoxApplied := imageStateCurrent.File(llb.Copy(busyBoxInstalled, "/bin/busybox", "/bin/busybox"))
 	mkFolders := busyBoxApplied.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
@@ -345,11 +349,17 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	).Root()
 
 	checkUpgradable := `sh -c "apt-get -s upgrade 2>/dev/null | grep -q "^Inst" || exit 1"`
-	aptGetUpdated = aptGetUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+	aptGetUpdated = aptGetUpdated.Run(
+		llb.Shlex(checkUpgradable),
+		llb.WithCustomName("Checking for upgradable packages"),
+	).Root()
 
 	// detect held packages and log them
 	checkHeldCmd := `sh -c "apt-mark showhold | tee /held.txt"`
-	heldState := aptGetUpdated.Run(llb.Shlex(checkHeldCmd)).Root()
+	heldState := aptGetUpdated.Run(
+		llb.Shlex(checkHeldCmd),
+		llb.WithCustomName("Checking held packages"),
+	).Root()
 
 	// read that file from the solve output
 	heldBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &heldState, "/held.txt")
@@ -378,17 +388,33 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		installCmd = `sh -c "output=$(apt-get upgrade -y && apt-get clean -y && apt-get autoremove -y 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
 	}
 
-	aptGetInstalled := aptGetUpdated.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy())).Root()
+	var customName string
+	if updates != nil {
+		customName = fmt.Sprintf("Installing %d security updates", len(updates))
+	} else {
+		customName = "Upgrading all packages"
+	}
+	aptGetInstalled := aptGetUpdated.Run(
+		llb.Shlex(installCmd),
+		llb.WithProxy(utils.GetProxy()),
+		llb.WithCustomName(customName),
+	).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		aptGetInstalled = aptGetInstalled.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+		aptGetInstalled = aptGetInstalled.Run(
+			buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"),
+			llb.WithCustomName("Validating package updates"),
+		).Root()
 	}
 
 	// Write results.manifest to host for post-patch validation
 	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, dpkgStatusPath, resultManifest)
-	resultsWritten := aptGetInstalled.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
+	resultsWritten := aptGetInstalled.Dir(resultsPath).Run(
+		llb.Shlex(outputResultsCmd),
+		llb.WithCustomName("Generating package manifest"),
+	).Root()
 	resultsDiff := llb.Diff(aptGetInstalled, resultsWritten)
 
 	resultsBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
@@ -448,6 +474,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
+		llb.WithCustomName("Updating package database in tooling container"),
 	).Root()
 
 	// Retrieve all package info from image to be patched.
@@ -484,7 +511,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							cd /var/cache/apt/archives
 							echo "$update_packages" > packages.txt
 					`,
-			})).Root()
+			}),
+			llb.WithCustomName("Analyzing packages for updates"),
+		).Root()
 	}
 
 	// Replace status file in tooling image with new status file with relevant pacakges from image to be patched.
@@ -515,7 +544,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							echo "$STATUS_FILE" > /var/lib/dpkg/status
 							ls -lh /var/lib/dpkg
 						`,
-		})).Root()
+		}),
+		llb.WithCustomName("Setting up package database in tooling container"),
+	).Root()
 
 	// Download all requested update packages without specifying the version. This works around:
 	//  - Reports being slightly out of date, where a newer security revision has displaced the one specified leading to not found errors.
@@ -554,12 +585,19 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// Mount image rootfs into tooling image.
 	// Now, when Copa does dpkg install into the temp rootfs, it wont get override any config files since they are already there.
+	var downloadCustomName string
+	if updates != nil {
+		downloadCustomName = fmt.Sprintf("Downloading and installing %d security updates", len(updates))
+	} else {
+		downloadCustomName = "Downloading and installing all package updates"
+	}
 	downloaded := updated.Run(
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		llb.AddEnv("UPDATE_ALL", updateAll),
 		llb.AddEnv("STATUSD_FILE_MAP", string(jsonStatusdFileMap)),
 		buildkit.Sh(`./download.sh`),
 		llb.WithProxy(utils.GetProxy()),
+		llb.WithCustomName(downloadCustomName),
 	).AddMount("/tmp/debian-rootfs", withDPkgStatus)
 
 	resultBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &downloaded, "/manifest")
