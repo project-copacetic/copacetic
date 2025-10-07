@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.8e70b037.css">
-<script src="/copacetic/website/assets/js/runtime~main.760fa139.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.75021d7f.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.c1c415a1.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -39,7 +39,7 @@
 <h2 class="anchor anchorWithStickyNavbar_LWe7" id="multi-platform-command-reference">Multi-Platform Command Reference<a href="#multi-platform-command-reference" class="hash-link" aria-label="Direct link to Multi-Platform Command Reference" title="Direct link to Multi-Platform Command Reference" translate="no">​</a></h2>
 <h3 class="anchor anchorWithStickyNavbar_LWe7" id="platform-specific-flags">Platform-Specific Flags<a href="#platform-specific-flags" class="hash-link" aria-label="Direct link to Platform-Specific Flags" title="Direct link to Platform-Specific Flags" translate="no">​</a></h3>
 <p>These flags are essential for multi-platform patching:</p>
-<table><thead><tr><th>Flag</th><th>Description</th><th>Example</th></tr></thead><tbody><tr><td><code>--platform</code></td><td>Specifies which platforms to patch from manifest list</td><td><code>--platform linux/amd64,linux/arm64</code></td></tr><tr><td><code>--report</code></td><td>Directory with platform-specific vulnerability reports</td><td><code>--report ./platform-reports/</code></td></tr><tr><td><code>--ignore-errors</code></td><td>Continue patching other platforms if one fails</td><td><code>--ignore-errors</code></td></tr><tr><td><code>--push</code></td><td>Push all manifests and index/manifest list to registry</td><td><code>--push</code></td></tr></tbody></table>
+<table><thead><tr><th>Flag</th><th>Description</th><th>Example</th></tr></thead><tbody><tr><td><code>--platform</code></td><td>Specifies which platforms to patch from manifest list</td><td><code>--platform linux/amd64,linux/arm64</code></td></tr><tr><td><code>--report</code></td><td>Directory with platform-specific vulnerability reports</td><td><code>--report ./platform-reports/</code></td></tr><tr><td><code>--ignore-errors</code></td><td>Continue patching other platforms if one fails</td><td><code>--ignore-errors</code></td></tr><tr><td><code>--push</code></td><td>Push all manifests and index/manifest list to registry</td><td><code>--push</code></td></tr><tr><td><code>--oci-dir</code></td><td>Export multi-platform index/manifest as OCI layout directory</td><td><code>--oci-dir ./output-directory</code></td></tr></tbody></table>
 <h2 class="anchor anchorWithStickyNavbar_LWe7" id="multi-platform-behavior">Multi-Platform Behavior<a href="#multi-platform-behavior" class="hash-link" aria-label="Direct link to Multi-Platform Behavior" title="Direct link to Multi-Platform Behavior" translate="no">​</a></h2>
 <ul>
 <li>
@@ -50,6 +50,9 @@
 </li>
 <li>
 <p><strong>Platform preservation</strong>: When using <code>--platform</code>, only specified platforms are patched; others are preserved unchanged in the final manifest.</p>
+</li>
+<li>
+<p><strong>OCI layout export</strong>: The <code>--oci-dir</code> flag creates a local OCI Image Layout directory structure for the patched manifest. Use when opting to not push to registry. <code>--push</code> and <code>--oci-dir</code> cannot be used together.</p>
 </li>
 <li>
 <p><strong>No local storage for unspecified platforms</strong>: If <code>--push</code> is not specified, the individual patched images will be saved locally, but preserved platforms will only exist in the registry.</p>
