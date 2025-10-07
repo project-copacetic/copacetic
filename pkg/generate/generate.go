@@ -263,9 +263,15 @@ func extractPatchLayer(
 
 			// Update validation data for VEX document generation
 			pkgType = result.PackageType
-			if validatedManifest != nil && result.ValidatedManifest != nil {
-				validatedManifest.OSUpdates = result.ValidatedManifest.OSUpdates
-				validatedManifest.LangUpdates = result.ValidatedManifest.LangUpdates
+			if validatedManifest != nil && result.ValidatedUpdates != nil {
+				// Filter OS and Language updates from ValidatedUpdates
+				for _, update := range result.ValidatedUpdates {
+					if update.Type == "library" {
+						validatedManifest.LangUpdates = append(validatedManifest.LangUpdates, update)
+					} else {
+						validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, update)
+					}
+				}
 			}
 
 			// Get the patched image state from result
