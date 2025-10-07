@@ -8,6 +8,7 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/exp/slices"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
@@ -35,19 +36,26 @@ type Options struct {
 	// Optional error channel for patch command integration
 	ErrorChannel chan error
 
+	// If true, return the BuildKit state instead of solving it
+	ReturnState bool
+
 	// EOL configuration
 	ExitOnEOL bool
 }
 
 // Result contains the result of the core patching operation.
 type Result struct {
-	// BuildKit gateway result
+	// BuildKit gateway result (nil if ReturnState is true)
 	Result *gwclient.Result
 
 	// Package manager information
-	PackageType       string
-	ErroredPackages   []string
-	ValidatedManifest *unversioned.UpdateManifest
+	PackageType      string
+	ErroredPackages  []string
+	ValidatedUpdates []unversioned.UpdatePackage
+
+	// BuildKit state and config (only set if ReturnState is true)
+	PatchedState *llb.State
+	ConfigData   []byte
 }
 
 // Context wraps the context and gateway client for core operations.
@@ -64,7 +72,6 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	workingFolder := opts.WorkingFolder
 	ignoreError := opts.IgnoreError
 	updates := opts.Updates
-	validatedUpdates := opts.ValidatedUpdates
 
 	// Configure buildctl/client for use by package manager
 	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
@@ -93,6 +100,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
+	// For normal Docker export, continue with solving but preserve states
 	// Handle Language Specific Updates
 	if updates != nil && len(updates.LangUpdates) > 0 {
 		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates)
@@ -152,6 +160,23 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		log.Debug("No language-specific updates found in the manifest.")
 	}
 
+	// Preserve the state and config for potential OCI export use
+	// This allows both Docker export AND OCI layout creation from the same patching operation
+	preservedState := patchedImageState
+	preservedConfig := config.ConfigData
+
+	// If ReturnState is true, return the state without solving
+	if opts.ReturnState {
+		return &Result{
+			Result:           nil, // No result when returning state
+			PackageType:      manager.GetPackageType(),
+			ErroredPackages:  errPkgs,
+			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
+			PatchedState:     preservedState,
+			ConfigData:       preservedConfig,
+		}, nil
+	}
+
 	// Marshal the state for the target platform
 	def, err := patchedImageState.Marshal(ctx, llb.Platform(opts.TargetPlatform.Platform))
 	if err != nil {
@@ -183,19 +208,29 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
 
-	// for the vex document, return all updates that were processed
-	// The VEX generation logic will handle filtering based on success/failure
-	if validatedUpdates != nil && updates != nil {
-		validatedUpdates.OSUpdates = updates.OSUpdates
-		validatedUpdates.LangUpdates = updates.LangUpdates
-	}
-
+	// Return result with BOTH the solved result AND preserved states
+	// This enables Docker export (from result) AND OCI layout (from states)
 	return &Result{
-		Result:            res,
-		PackageType:       manager.GetPackageType(),
-		ErroredPackages:   errPkgs,
-		ValidatedManifest: validatedUpdates,
+		Result:           res,
+		PackageType:      manager.GetPackageType(),
+		ErroredPackages:  errPkgs,
+		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
+		PatchedState:     preservedState,  // Always preserve for OCI export
+		ConfigData:       preservedConfig, // Always preserve for OCI export
 	}, nil
+}
+
+// getValidatedUpdates extracts validated updates (excluding errored packages).
+func getValidatedUpdates(updates *unversioned.UpdateManifest, errPkgs []string) []unversioned.UpdatePackage {
+	var validatedUpdates []unversioned.UpdatePackage
+	if updates != nil {
+		for _, update := range updates.OSUpdates {
+			if !slices.Contains(errPkgs, update.Name) {
+				validatedUpdates = append(validatedUpdates, update)
+			}
+		}
+	}
+	return validatedUpdates
 }
 
 // setupPackageManager creates and configures the appropriate package manager
