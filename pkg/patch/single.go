@@ -94,14 +94,14 @@ func patchSingleArchImage(
 	}
 
 	// resolve final patched tag
-	patchedTag, err = common.ResolvePatchedTag(imageName, patchedTag, suffix)
+	patchImage, patchedTag, err := common.ResolvePatchedImageName(imageName, patchedTag, suffix)
 	if err != nil {
 		return nil, err
 	}
 	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	patchedImageName := fmt.Sprintf("%s:%s", patchImage, patchedTag)
 	log.Infof("Patched image name: %s", patchedImageName)
 
 	// Setup working folder
