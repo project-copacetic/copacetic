@@ -106,14 +106,14 @@ func patchSingleArchImage(
 	}
 
 	// resolve final patched tag
-	patchedTag, err = common.ResolvePatchedTag(imageName, patchedTag, suffix)
+	patchImage, patchedTag, err := common.ResolvePatchedImageName(imageName, patchedTag, suffix)
 	if err != nil {
 		return nil, err
 	}
 	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	patchedImageName := fmt.Sprintf("%s:%s", patchImage, patchedTag)
 	log.Infof("Patched image name: %s", patchedImageName)
 
 	// Setup working folder
@@ -194,7 +194,7 @@ func patchSingleArchImage(
 	// Start the main build process
 	eg.Go(func() error {
 		return executePatchBuild(ctx, ch, bkClient, buildConfig, imageName, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel)
+			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel, opts.ExitOnEOL)
 	})
 
 	// Display progress
@@ -421,6 +421,7 @@ func executePatchBuild(
 	ignoreError bool,
 	reportFile, _, format, output, patchedImageName string,
 	buildChannel chan *client.SolveStatus,
+	exitOnEOL bool,
 ) error {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -456,6 +457,7 @@ func executePatchBuild(
 			WorkingFolder:    workingFolder,
 			IgnoreError:      ignoreError,
 			ErrorChannel:     ch,
+			ExitOnEOL:        exitOnEOL,
 		}
 
 		// Execute the core patching logic

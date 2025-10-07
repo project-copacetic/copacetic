@@ -44,4 +44,8 @@ type Options struct {
 
 	// Generate specific
 	OutputContext string
+
+	// EOL configuration
+	EOLAPIBaseURL string
+	ExitOnEOL     bool
 }
