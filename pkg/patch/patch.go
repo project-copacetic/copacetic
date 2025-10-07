@@ -12,6 +12,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 // for testing.
@@ -58,6 +59,12 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 // patchWithContext orchestrates the main patching workflow.
 func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) error {
+	// Configure EOL API if provided
+	if opts.EOLAPIBaseURL != "" {
+		utils.SetEOLAPIBaseURL(opts.EOLAPIBaseURL)
+		log.Debugf("Configured EOL API base URL: %s", opts.EOLAPIBaseURL)
+	}
+
 	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms

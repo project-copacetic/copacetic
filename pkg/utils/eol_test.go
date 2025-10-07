@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func newEOLAPIMockServer(handler http.HandlerFunc) *httptest.Server {
@@ -15,9 +17,11 @@ func newEOLAPIMockServer(handler http.HandlerFunc) *httptest.Server {
 func TestCheckEOSL(t *testing.T) {
 	originalBaseURL := apiBaseURL
 	originalHTTPClient := httpClient
+	originalRetryTimeout := retryTimeout
 	defer func() {
 		apiBaseURL = originalBaseURL
 		httpClient = originalHTTPClient
+		retryTimeout = originalRetryTimeout
 	}()
 
 	tests := []struct {
@@ -65,7 +69,7 @@ func TestCheckEOSL(t *testing.T) {
 			expectError:       false,
 		},
 		{
-			name:              "API Rate Limited",
+			name:              "API Rate Limited - No Retry (Short Timeout)",
 			osType:            OSTypeUbuntu,
 			osVersion:         "22.04",
 			mockAPIResponse:   nil,
@@ -93,6 +97,11 @@ func TestCheckEOSL(t *testing.T) {
 
 			apiBaseURL = strings.TrimSuffix(server.URL, "/")
 			httpClient = server.Client()
+
+			// Set a short retry timeout for rate limit tests
+			if strings.Contains(tt.name, "Rate Limited") {
+				retryTimeout = 50 * time.Millisecond
+			}
 
 			gotIsEOL, gotEOLDate, err := CheckEOSL(tt.osType, tt.osVersion)
 
@@ -134,6 +143,152 @@ func TestNormalizeOSIdentifierForAPI(t *testing.T) {
 			}
 			if gotVersion != tt.expectedAPIVersion {
 				t.Errorf("normalizeOSIdentifierForAPI() version: got %v, want %v", gotVersion, tt.expectedAPIVersion)
+			}
+		})
+	}
+}
+
+func TestRetryOn429(t *testing.T) {
+	originalBaseURL := apiBaseURL
+	originalHTTPClient := httpClient
+	originalRetryTimeout := retryTimeout
+	defer func() {
+		apiBaseURL = originalBaseURL
+		httpClient = originalHTTPClient
+		retryTimeout = originalRetryTimeout
+	}()
+
+	// Set a longer retry timeout for this test
+	retryTimeout = 3 * time.Second
+
+	var requestCount int64
+	server := newEOLAPIMockServer(func(w http.ResponseWriter, _ *http.Request) {
+		count := atomic.AddInt64(&requestCount, 1)
+		if count <= 2 {
+			// First two requests return 429
+			w.WriteHeader(http.StatusTooManyRequests)
+		} else {
+			// Third request succeeds
+			w.WriteHeader(http.StatusOK)
+			response := EOLAPIResponse{
+				Result: EOLProductInfo{IsEOL: false, EOLDate: "2026-07-01", IsMaintained: true},
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		}
+	})
+	defer server.Close()
+
+	apiBaseURL = strings.TrimSuffix(server.URL, "/")
+	httpClient = server.Client()
+
+	start := time.Now()
+	isEOL, eolDate, err := CheckEOSL("debian", "11")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Errorf("CheckEOSL() with retry: unexpected error = %v", err)
+	}
+	if isEOL != false {
+		t.Errorf("CheckEOSL() with retry: gotIsEOL = %v, want false", isEOL)
+	}
+	if eolDate != "2026-07-01" {
+		t.Errorf("CheckEOSL() with retry: gotEOLDate = '%s', want '2026-07-01'", eolDate)
+	}
+	if atomic.LoadInt64(&requestCount) != 3 {
+		t.Errorf("Expected 3 requests, got %d", atomic.LoadInt64(&requestCount))
+	}
+	// Should have taken at least 1s + 2s = 3s for the backoff
+	if elapsed < 3*time.Second {
+		t.Errorf("Expected at least 3s for retry backoff, got %v", elapsed)
+	}
+}
+
+func TestRetryTimeoutExceeded(t *testing.T) {
+	originalBaseURL := apiBaseURL
+	originalHTTPClient := httpClient
+	originalRetryTimeout := retryTimeout
+	defer func() {
+		apiBaseURL = originalBaseURL
+		httpClient = originalHTTPClient
+		retryTimeout = originalRetryTimeout
+	}()
+
+	// Set a very short retry timeout
+	retryTimeout = 100 * time.Millisecond
+
+	var requestCount int64
+	server := newEOLAPIMockServer(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt64(&requestCount, 1)
+		// Always return 429
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+	defer server.Close()
+
+	apiBaseURL = strings.TrimSuffix(server.URL, "/")
+	httpClient = server.Client()
+
+	start := time.Now()
+	isEOL, eolDate, err := CheckEOSL("debian", "11")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Error("CheckEOSL() with timeout: expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "retry timeout exceeded") {
+		t.Errorf("CheckEOSL() with timeout: expected 'retry timeout exceeded' error, got %v", err)
+	}
+	if isEOL != false {
+		t.Errorf("CheckEOSL() with timeout: gotIsEOL = %v, want false", isEOL)
+	}
+	if eolDate != "API Rate Limited" {
+		t.Errorf("CheckEOSL() with timeout: gotEOLDate = '%s', want 'API Rate Limited'", eolDate)
+	}
+	// Should have completed within retry timeout + some buffer
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Expected completion within 500ms, got %v", elapsed)
+	}
+	// Should have made at least one request
+	if atomic.LoadInt64(&requestCount) < 1 {
+		t.Errorf("Expected at least 1 request, got %d", atomic.LoadInt64(&requestCount))
+	}
+}
+
+func TestSetEOLAPIBaseURL(t *testing.T) {
+	originalBaseURL := apiBaseURL
+	defer func() {
+		apiBaseURL = originalBaseURL
+	}()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Normal URL",
+			input:    "https://example.com/api/v1/products",
+			expected: "https://example.com/api/v1/products",
+		},
+		{
+			name:     "URL with trailing slash",
+			input:    "https://example.com/api/v1/products/",
+			expected: "https://example.com/api/v1/products",
+		},
+		{
+			name:     "Empty URL",
+			input:    "",
+			expected: originalBaseURL, // Should not change
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset to original before each test
+			apiBaseURL = originalBaseURL
+			SetEOLAPIBaseURL(tt.input)
+			got := GetEOLAPIBaseURL()
+			if got != tt.expected {
+				t.Errorf("SetEOLAPIBaseURL(%s): got %s, want %s", tt.input, got, tt.expected)
 			}
 		})
 	}
