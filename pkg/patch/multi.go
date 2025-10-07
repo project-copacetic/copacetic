@@ -247,11 +247,17 @@ func patchMultiPlatformImage(
 		return fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	resolvedPatchedTag, err := common.ResolvePatchedTag(imageName, opts.PatchedTag, opts.Suffix)
+	resolvedImage, resolvedPatchedTag, err := common.ResolvePatchedImageName(imageName, opts.PatchedTag, opts.Suffix)
 	if err != nil {
 		return err
 	}
-	patchedImageName, err := reference.WithTag(imageName, resolvedPatchedTag)
+
+	patchedImage, err := reference.ParseNormalizedNamed(resolvedImage)
+	if err != nil {
+		return fmt.Errorf("failed to parse reference: %w", err)
+	}
+
+	patchedImageName, err := reference.WithTag(patchedImage, resolvedPatchedTag)
 	if err != nil {
 		return fmt.Errorf("failed to parse patched image name: %w", err)
 	}
