@@ -1,0 +1,20 @@
+[
+  {
+    "image": "docker.io/library/mongo-express",
+    "tag": "latest",
+    "digest": "sha256:1b23d7976f0210dbec74045c209e52fbb26d29b2e873d6c6fa3d3f0ae32c2a64",
+    "description": "Mongo Express web UI with Express.js"
+  },
+  {
+    "image": "mcr.microsoft.com/devcontainers/javascript-node",
+    "tag": "1-18-bullseye",
+    "digest": "",
+    "description": "DevContainer with global npm and corepack"
+  },
+  {
+    "image": "docker.io/library/ghost",
+    "tag": "latest",
+    "digest": "sha256:ffc213a6f2db7210b69396dc4330b4a9c5e27c8b044ae453854d53bd3937a6ec",
+    "description": "Ghost CMS publishing platform"
+  }
+]

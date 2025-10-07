@@ -1,292 +1,128 @@
 package nodejs
 
 import (
+	_ "embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+//go:embed fixtures/test-images.json
+var testImages []byte
+
+type testImage struct {
+	Image       string `json:"image"`
+	Tag         string `json:"tag"`
+	Digest      string `json:"digest"`
+	Description string `json:"description"`
+}
+
 func TestNodeJSPatching(t *testing.T) {
-	testCases := []struct {
-		name                    string
-		image                   string
-		expectedPatches         int
-		expectedVulnerabilities int
-		shouldSucceed           bool
-		expectedPackageVersions map[string]string
-		generateReport          bool
-	}{
-		{
-			name:                    "vulnerable-node-app with npm vulnerabilities",
-			image:                   "test-vulnerable-node-app:latest",
-			expectedPatches:         7,
-			expectedVulnerabilities: 0,
-			shouldSucceed:           true,
-			generateReport:          true,
-			expectedPackageVersions: map[string]string{
-				"ansi-regex": "3.0.1",
-				"lodash":     "4.17.21",
-				"minimist":   "1.2.6",
-				"node-fetch": "2.6.7",
-			},
-		},
-	}
+	// Download Trivy DB once before running tests
+	downloadTrivyDB(t)
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Build test image if it doesn't exist
-			if !imageExists(t, tc.image) {
-				buildTestImage(t, tc.image)
+	var images []testImage
+	err := json.Unmarshal(testImages, &images)
+	require.NoError(t, err)
+
+	for _, img := range images {
+		t.Run(img.Description, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+
+			// Build image reference
+			ref := img.Image + ":" + img.Tag
+			if img.Digest != "" {
+				ref += "@" + img.Digest
 			}
 
-			// Generate report if needed
-			var reportPath string
-			if tc.generateReport {
-				reportPath = generateTrivyReport(t, tc.image)
-				defer os.Remove(reportPath)
-			}
+			// Scan original image
+			scanResults := filepath.Join(dir, "scan.json")
+			t.Log("scanning original image")
+			scanImage(t, ref, scanResults, false)
 
-			// Run the patch operation
-			_, err := runPatch(t, tc.image, reportPath)
+			// Patch the image with the scan report
+			tagPatched := img.Tag + "-patched"
+			t.Log("patching image")
+			patchImage(t, ref, tagPatched, scanResults)
 
-			if tc.shouldSucceed {
-				if err != nil {
-					t.Logf("Copa command failed with error: %v", err)
-					t.Logf("Note: Output was streamed above, check console for Copa logs")
-					require.NoError(t, err, "Patch operation should succeed")
-				} else {
-					t.Logf("✅ Copa patch command completed successfully")
-
-					// Verify patched image was created
-					patchedImage := strings.Replace(tc.image, ":latest", ":patched", 1)
-					assert.True(t, imageExists(t, patchedImage), "Patched image should exist")
-
-					// Verify package versions were updated correctly
-					if tc.expectedPackageVersions != nil {
-						verifyPackageVersions(t, patchedImage, tc.expectedPackageVersions)
-					}
-				}
-			} else {
-				assert.Error(t, err, "Patch operation should fail")
-			}
+			// Scan patched image and expect no vulnerabilities
+			patchedRef := img.Image + ":" + tagPatched
+			t.Log("scanning patched image")
+			scanImage(t, patchedRef, "", true)
 		})
 	}
 }
 
-func TestNodeJSGlobalPackages(t *testing.T) {
-	testCases := []struct {
-		name           string
-		image          string
-		shouldSucceed  bool
-		generateReport bool
-	}{
-		{
-			name:           "devcontainer with global npm packages",
-			image:          "mcr.microsoft.com/devcontainers/javascript-node:1-18-bullseye",
-			shouldSucceed:  true,
-			generateReport: true,
-		},
-		{
-			name:           "strapi with many npm vulnerabilities",
-			image:          "strapi/strapi:latest@sha256:be2aa1b207c74474319873d2a343c572e17273f5c3017c308c4a21bd6e1992e9",
-			shouldSucceed:  true,
-			generateReport: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Generate report if needed
-			var reportPath string
-			if tc.generateReport {
-				reportPath = generateTrivyReport(t, tc.image)
-				defer os.Remove(reportPath)
-			}
-
-			_, err := runPatch(t, tc.image, reportPath)
-
-			if tc.shouldSucceed {
-				if err != nil {
-					t.Logf("Copa command completed with note: %v", err)
-				} else {
-					t.Logf("✅ Copa global package patching test completed successfully")
-
-					// Verify patched image was created
-					// The tag is set to "patched" in runPatch
-					patchedImage := strings.Split(tc.image, ":")[0] + ":patched"
-					assert.True(t, imageExists(t, patchedImage), "Patched image should exist")
-				}
-			} else {
-				assert.Error(t, err, "Patch operation should fail")
-			}
-		})
-	}
-}
-
-func TestNodeJSPatchingEdgeCases(t *testing.T) {
-	testCases := []struct {
-		name           string
-		image          string
-		shouldSucceed  bool
-		expectedError  string
-		generateReport bool
-	}{
-		{
-			name:           "image without Node.js",
-			image:          "alpine:3.21.0@sha256:21dc6063fd678b478f57c0e13f47560d0ea4eeba26dfc947b2a4f81f686b9f45",
-			shouldSucceed:  true,
-			expectedError:  "",
-			generateReport: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Generate report if needed
-			var reportPath string
-			if tc.generateReport {
-				reportPath = generateTrivyReport(t, tc.image)
-				defer os.Remove(reportPath)
-			}
-
-			_, err := runPatch(t, tc.image, reportPath)
-
-			if tc.shouldSucceed {
-				if err != nil {
-					t.Logf("Copa command completed with note: %v", err)
-				} else {
-					t.Logf("✅ Copa edge case test completed successfully")
-				}
-			} else {
-				assert.Error(t, err, "Patch operation should fail")
-			}
-		})
-	}
-}
-
-func runPatch(t *testing.T, image, report string) ([]byte, error) {
-	args := []string{
-		"patch",
-		"-i=" + image,
-		"-r=" + report,
-		"-s=" + scannerPlugin,
-		"-t=" + "patched",
-		"--timeout=2m",
-		"--debug",
-		"--pkg-types=os,library",
-	}
-	if buildkitAddr != "" {
-		args = append(args, "-a="+buildkitAddr)
-	}
-
-	t.Logf("Running copa patch with args: %v", args)
-
-	//#nosec G204
-	cmd := exec.Command(copaPath, args...)
-	// Enable experimental features for library patching
-	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
-
-	// Stream output in real-time for debugging
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	t.Logf("Starting copa patch command...")
-	err := cmd.Run()
-
-	return []byte{}, err
-}
-
-func imageExists(t *testing.T, image string) bool {
-	t.Helper()
-	cmd := exec.Command("docker", "inspect", image)
-	err := cmd.Run()
-	return err == nil
-}
-
-func buildTestImage(t *testing.T, imageName string) {
+func downloadTrivyDB(t *testing.T) {
 	t.Helper()
 
-	if imageName != "test-vulnerable-node-app:latest" {
-		t.Fatalf("buildTestImage only supports building test-vulnerable-node-app:latest, got: %s", imageName)
-	}
-
-	t.Logf("Building test image: %s", imageName)
-
-	cwd, _ := os.Getwd()
-	t.Logf("Current working directory: %s", cwd)
-
-	buildPath := filepath.Join("testdata", "test-nodejs-app")
-	if _, err := os.Stat(buildPath); os.IsNotExist(err) {
-		buildPath = filepath.Join("test", "e2e", "nodejs", "testdata", "test-nodejs-app")
-		if _, err := os.Stat(buildPath); os.IsNotExist(err) {
-			t.Fatalf("Build path does not exist: %s", buildPath)
-		}
-	}
-	t.Logf("Build path: %s", buildPath)
-
-	cmd := exec.Command("docker", "build", "-t", imageName, buildPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Failed to build test image %s: %v\nOutput: %s", imageName, err, string(output))
-	}
-
-	t.Logf("Successfully built test image: %s", imageName)
+	cmd := exec.Command("trivy", "image", "--download-db-only")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "Failed to download Trivy DB:\n%s", string(out))
 }
 
-func verifyPackageVersions(t *testing.T, image string, expectedVersions map[string]string) {
+func scanImage(t *testing.T, image, outputFile string, expectNoVulns bool) {
 	t.Helper()
-
-	cmd := exec.Command("docker", "run", "--rm", image, "sh", "-c", "cd /app && npm list --depth=0 --json")
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "Should be able to get package list from patched image")
-
-	var npmList struct {
-		Dependencies map[string]struct {
-			Version string `json:"version"`
-		} `json:"dependencies"`
-	}
-
-	err = json.Unmarshal(output, &npmList)
-	require.NoError(t, err, "Should be able to parse npm list output")
-
-	for pkg, expectedVersion := range expectedVersions {
-		dep, exists := npmList.Dependencies[pkg]
-		assert.True(t, exists, "Package %s should exist in dependencies", pkg)
-		if exists {
-			assert.Equal(t, expectedVersion, dep.Version, "Package %s should have version %s", pkg, expectedVersion)
-		}
-	}
-}
-
-func generateTrivyReport(t *testing.T, image string) string {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	reportPath := filepath.Join(tmpDir, "report.json")
 
 	args := []string{
 		"trivy",
 		"image",
+		"--quiet",
 		"--pkg-types=os,library",
 		"--ignore-unfixed",
-		"--format=json",
-		"--output=" + reportPath,
-		image,
+		"--skip-db-update",
 	}
 
-	cmd := exec.Command(args[0], args[1:]...) // #nosec G204 - test code with controlled inputs
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Logf("Trivy scan output: %s", string(output))
-		require.NoError(t, err, "Failed to generate Trivy report for image %s", image)
+	if outputFile != "" {
+		args = append(args, "-o="+outputFile, "-f=json")
 	}
 
-	t.Logf("Generated Trivy report for %s at %s", image, reportPath)
-	return reportPath
+	// If we expect no vulnerabilities, use --exit-code=1 to fail if any are found
+	if expectNoVulns {
+		args = append(args, "--exit-code=1")
+	}
+
+	args = append(args, image)
+
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
+	out, err := cmd.CombinedOutput()
+
+	if expectNoVulns {
+		require.NoError(t, err, "Expected no vulnerabilities in patched image, but scan failed:\n%s", string(out))
+	} else if outputFile != "" {
+		// For initial scan, just require it created the output file
+		require.FileExists(t, outputFile, "Trivy scan should create output file")
+	}
+}
+
+func patchImage(t *testing.T, image, tag, reportFile string) {
+	t.Helper()
+
+	args := []string{
+		"patch",
+		"-i=" + image,
+		"-r=" + reportFile,
+		"-t=" + tag,
+		"--pkg-types=os,library",
+		"--timeout=5m",
+	}
+
+	if buildkitAddr != "" {
+		args = append(args, "-a="+buildkitAddr)
+	}
+
+	//#nosec G204
+	cmd := exec.Command(copaPath, args...)
+	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
+	out, err := cmd.CombinedOutput()
+
+	require.NoError(t, err, fmt.Sprintf("Copa patch failed:\n%s", string(out)))
 }
