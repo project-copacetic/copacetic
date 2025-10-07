@@ -449,7 +449,7 @@ jobs:
   test-generate:
     needs: build
     name: Test generate command ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest-16-cores
     timeout-minutes: 15
     strategy:
       fail-fast: false

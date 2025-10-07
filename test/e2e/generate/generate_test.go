@@ -282,6 +282,86 @@ func extractTar(t *testing.T, tarFile, destDir string) {
 	}
 }
 
+func TestGenerateWithVEXOutput(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode")
+	}
+
+	// check if we can run docker commands for this test
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("skipping test; docker binary not found in path")
+	}
+
+	// create a temp directory for test files
+	tempDir, err := os.MkdirTemp("", "copa-generate-vex-test-*")
+	require.NoError(t, err, "failed to create temp directory")
+	defer os.RemoveAll(tempDir)
+
+	// generate vulnerability report using Trivy
+	reportFile := filepath.Join(tempDir, "report.json")
+	generateTrivyReport(t, nginxImage, reportFile)
+
+	// run copa generate with report and VEX output
+	outputFile := filepath.Join(tempDir, "build-context.tar")
+	vexFile := filepath.Join(tempDir, "patched.vex.json")
+	generateCmd := exec.Command(
+		copaPath,
+		"generate",
+		"--image", nginxImage,
+		"--report", reportFile,
+		"--output-context", outputFile,
+		"--format", "openvex",
+		"--output", vexFile,
+		"-a="+buildkitAddr,
+	)
+
+	output, err := generateCmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("failed to generate build context with VEX: %s", string(output)))
+
+	// verify the tar file was created
+	require.FileExists(t, outputFile, "build context tar file should exist")
+
+	// verify the VEX file was created
+	require.FileExists(t, vexFile, "VEX document should be created")
+
+	// verify VEX file has content
+	vexInfo, err := os.Stat(vexFile)
+	require.NoError(t, err, "failed to stat VEX file")
+	require.Greater(t, vexInfo.Size(), int64(0), "VEX file should not be empty")
+
+	// verify VEX file is valid JSON
+	vexContent, err := os.ReadFile(vexFile)
+	require.NoError(t, err, "failed to read VEX file")
+	require.Contains(t, string(vexContent), "\"@context\"", "VEX should be valid OpenVEX format")
+	require.Contains(t, string(vexContent), "\"@id\"", "VEX should contain @id field")
+	require.Contains(t, string(vexContent), "statements", "VEX should contain statements")
+
+	// verify tar file contents
+	validateTarContents(t, outputFile, nginxImage)
+
+	// test docker build with the generated context
+	buildContextDir := filepath.Join(tempDir, "build-context")
+	err = os.MkdirAll(buildContextDir, 0o755)
+	require.NoError(t, err, "failed to create build context directory")
+
+	// extract tar file
+	extractTar(t, outputFile, buildContextDir)
+
+	// build the image using docker
+	patchedImage := "nginx:1.21.6-vex-patched-test"
+	buildCmd := exec.Command("docker", "build", "-t", patchedImage, buildContextDir)
+	buildOutput, err := buildCmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("failed to build patched image: %s", string(buildOutput)))
+
+	// verify the patched image was created
+	inspectCmd := exec.Command("docker", "inspect", patchedImage)
+	err = inspectCmd.Run()
+	require.NoError(t, err, "patched image should exist")
+
+	// clean up
+	removeLocalImage(t, patchedImage)
+}
+
 func removeLocalImage(_ *testing.T, image string) {
 	cmd := exec.Command("docker", "rmi", "-f", image)
 	_ = cmd.Run()

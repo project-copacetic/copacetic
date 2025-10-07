@@ -1,5 +1,5 @@
 ---
-title: Copa Generate Command
+title: Docker Build Integration
 ---
 
 The `copa generate` command enables you to leverage Docker's native build capabilities for patching container images. By producing a standard Docker build context, it allows you to use familiar `docker build` commands and options like `--platform`, `--push`, `--cache-from`, and `--output` that aren't available with `copa patch`. This integration with Docker's build system provides maximum flexibility for incorporating security patches into your existing container workflows.
@@ -53,25 +53,25 @@ copa generate [flags]
 
 ### Flags
 
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--image` | `-i` | Application image name and tag to patch **(required)** | |
-| `--report` | `-r` | Vulnerability report file path (optional) | |
-| `--tag` | `-t` | Tag for the patched image | |
-| `--tag-suffix` | | Suffix for the patched image (if no explicit --tag provided) | `patched` |
-| `--output-context` | | Path to save the generated tar context (instead of stdout) | stdout |
-| `--scanner` | `-s` | Scanner that generated the report | `trivy` |
-| `--addr` | `-a` | Address of buildkitd service | local docker daemon |
-| `--working-folder` | `-w` | Working folder | system temp folder |
-| `--timeout` | | Timeout for the operation | `5m` |
-| `--ignore-errors` | | Ignore errors during patching | `false` |
-| `--format` | `-f` | Output format for VEX document | `openvex` |
-| `--output` | `-o` | Output file path for VEX document | |
-| `--loader` | `-l` | Loader to use for loading images (`docker`, `podman`, or empty for auto-detection) | auto-detect |
-| `--platform` | | Target platform(s) for multi-arch images (e.g., `linux/amd64,linux/arm64`). Valid platforms: `linux/amd64`, `linux/arm64`, `linux/riscv64`, `linux/ppc64le`, `linux/s390x`, `linux/386`, `linux/arm/v7`, `linux/arm/v6` | all platforms |
-| `--cacert` | | Absolute path to buildkitd CA certificate | |
-| `--cert` | | Absolute path to buildkit client certificate | |
-| `--key` | | Absolute path to buildkit client key | |
+| Flag               | Short | Description                                                                                                                                                                                                             | Default             |
+| ------------------ | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| `--image`          | `-i`  | Application image name and tag to patch **(required)**                                                                                                                                                                  |                     |
+| `--report`         | `-r`  | Vulnerability report file path (optional)                                                                                                                                                                               |                     |
+| `--tag`            | `-t`  | Tag for the patched image                                                                                                                                                                                               |                     |
+| `--tag-suffix`     |       | Suffix for the patched image (if no explicit --tag provided)                                                                                                                                                            | `patched`           |
+| `--output-context` |       | Path to save the generated tar context (instead of stdout)                                                                                                                                                              | stdout              |
+| `--scanner`        | `-s`  | Scanner that generated the report                                                                                                                                                                                       | `trivy`             |
+| `--addr`           | `-a`  | Address of buildkitd service                                                                                                                                                                                            | local docker daemon |
+| `--working-folder` | `-w`  | Working folder                                                                                                                                                                                                          | system temp folder  |
+| `--timeout`        |       | Timeout for the operation                                                                                                                                                                                               | `5m`                |
+| `--ignore-errors`  |       | Ignore errors during patching                                                                                                                                                                                           | `false`             |
+| `--format`         | `-f`  | Output format for VEX document                                                                                                                                                                                          | `openvex`           |
+| `--output`         | `-o`  | Output file path for VEX document                                                                                                                                                                                       |                     |
+| `--loader`         | `-l`  | Loader to use for loading images (`docker`, `podman`, or empty for auto-detection)                                                                                                                                      | auto-detect         |
+| `--platform`       |       | Target platform(s) for multi-arch images (e.g., `linux/amd64,linux/arm64`). Valid platforms: `linux/amd64`, `linux/arm64`, `linux/riscv64`, `linux/ppc64le`, `linux/s390x`, `linux/386`, `linux/arm/v7`, `linux/arm/v6` | all platforms       |
+| `--cacert`         |       | Absolute path to buildkitd CA certificate                                                                                                                                                                               |                     |
+| `--cert`           |       | Absolute path to buildkit client certificate                                                                                                                                                                            |                     |
+| `--key`            |       | Absolute path to buildkit client key                                                                                                                                                                                    |                     |
 
 ## Basic Usage
 
@@ -108,6 +108,25 @@ trivy image --vuln-type os --ignore-unfixed -f json -o nginx-report.json nginx:1
 copa generate -i nginx:1.21.6 -r nginx-report.json | docker build -t nginx:1.21.6-patched -
 ```
 
+### With VEX Output
+
+Generate a VEX (Vulnerability Exploitability eXchange) document alongside the patch context:
+
+```bash
+# Generate patch context and VEX document
+copa generate -i nginx:1.21.6 -r nginx-report.json \
+  -f openvex -o nginx-patched.vex.json \
+  --output-context patch-context.tar
+
+# Build the patched image
+docker build -t nginx:1.21.6-patched - < patch-context.tar
+
+# The VEX document can be used for compliance and attestation
+cat nginx-patched.vex.json
+```
+
+**Note:** The VEX document generated by `copa generate` uses the image tag as the reference (e.g., `nginx:1.21.6-patched`), since the image digest is not available until after the Docker build completes. If you need the digest in your VEX document, use `copa patch` instead.
+
 ## Build Context Structure
 
 The generated tar file contains:
@@ -132,13 +151,15 @@ LABEL sh.copa.image.patched="2024-03-20T10:30:00Z"
 
 ## Comparison with `copa patch`
 
-| Feature | `copa patch` | `copa generate` |
-|---------|--------------|-----------------|
-| **Output** | Patched image in registry/daemon | Build context tar stream |
-| **Registry Access** | Required for push | Not required |
-| **Use Case** | Direct patching | Pipeline integration |
-| **Flexibility** | Less flexible | Highly flexible |
-| **Performance** | Single operation | Can be parallelized |
+| Feature                   | `copa patch`                     | `copa generate`               |
+| ------------------------- | -------------------------------- | ----------------------------- |
+| **Output**                | Patched image in registry/daemon | Build context tar stream      |
+| **Registry Access**       | Required for push                | Not required                  |
+| **Use Case**              | Direct patching                  | Pipeline integration          |
+| **Flexibility**           | Less flexible                    | Highly flexible               |
+| **Performance**           | Single operation                 | Can be parallelized           |
+| **VEX Output**            | Yes (with image digest)          | Yes (with image tag only)     |
+| **Docker Build Features** | Limited (no buildx flags)        | Full (all docker build flags) |
 
 ## Best Practices
 

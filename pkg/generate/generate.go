@@ -239,12 +239,13 @@ func extractPatchLayer(
 
 			// Setup patch options
 			patchOpts := &patch.Options{
-				ImageName:      image,
-				TargetPlatform: &patchPlatform,
-				Updates:        updates,
-				WorkingFolder:  workingFolder,
-				IgnoreError:    ignoreErrors,
-				ErrorChannel:   ch,
+				ImageName:        image,
+				TargetPlatform:   &patchPlatform,
+				Updates:          updates,
+				ValidatedUpdates: validatedManifest,
+				WorkingFolder:    workingFolder,
+				IgnoreError:      ignoreErrors,
+				ErrorChannel:     ch,
 			}
 
 			// Create patch context
@@ -317,19 +318,6 @@ func extractPatchLayer(
 			return buildErr
 		}
 
-		// Generate VEX document if applicable
-		if reportFile != "" && validatedManifest != nil && output != "" {
-			// For generate command, we don't have a digest yet since we're not creating an image
-			// Use the patched image name with tag
-			nameWithTag := patchedImageName
-			// vex document must contain at least one statement
-			if len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0 {
-				if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameWithTag, format, output); err != nil {
-					ch <- err
-					return err
-				}
-			}
-		}
 		_ = solveResponse // Suppress unused variable warning
 		return buildErr
 	})
@@ -338,6 +326,19 @@ func extractPatchLayer(
 
 	if err := eg.Wait(); err != nil {
 		return nil, err
+	}
+
+	// Generate VEX document if applicable (after build completes successfully)
+	if reportFile != "" && validatedManifest != nil && output != "" {
+		// For generate command, we don't have a digest yet since we're not creating an image
+		// Use the patched image name with tag
+		nameWithTag := patchedImageName
+		// vex document must contain at least one statement
+		if len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0 {
+			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameWithTag, format, output); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	// Get the patch layer data
