@@ -14,7 +14,7 @@ var (
 
 func TestMain(m *testing.M) {
 	flag.StringVar(&buildkitAddr, "addr", "", "buildkit address to pass through to copa binary")
-	flag.StringVar(&copaPath, "copa", "./copa", "path to copa binary")
+	flag.StringVar(&copaPath, "copa", "../../../dist/linux_amd64/release/copa", "path to copa binary")
 	flag.StringVar(&scannerPlugin, "scanner", "trivy", "Scanner used to generate the report")
 	flag.Parse()
 

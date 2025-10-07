@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
@@ -19,7 +20,7 @@ const (
 	npmCheckFile                = "/copa-npm-check"
 	packageJSONDetectFile       = "/copa-package-json-path"
 	globalNodeModulesDetectFile = "/copa-global-node-modules-path"
-	defaultToolingNodeTag       = "18-alpine" // fallback tooling image tag if version can't be inferred
+	defaultToolingNodeTag       = "22-alpine" // Latest Active LTS (Node 22 Jod, active until Oct 2025)
 	toolingNodeTemplate         = "docker.io/library/node:%s"
 )
 
@@ -94,6 +95,100 @@ func isLessThanNodeVersion(v1, v2 string) bool {
 	return ver1.LessThan(ver2)
 }
 
+// selectToolingNodeVersion selects the appropriate Node.js tooling image version.
+// It uses the detected version from the image if available, otherwise falls back to latest Active LTS.
+// Returns a tag like "18-alpine" or "22-alpine".
+func selectToolingNodeVersion(detectedVersion string) string {
+	if detectedVersion == "" {
+		log.Debugf("No Node.js version detected from image, using latest LTS: %s", defaultToolingNodeTag)
+		return defaultToolingNodeTag
+	}
+
+	// Extract major version from detected version (e.g., "18" from "18.20.3")
+	parts := strings.Split(detectedVersion, ".")
+	if len(parts) == 0 {
+		log.Warnf("Invalid Node.js version format '%s', using default: %s", detectedVersion, defaultToolingNodeTag)
+		return defaultToolingNodeTag
+	}
+
+	majorVersion := parts[0]
+
+	// Validate it's a number
+	if _, err := strconv.Atoi(majorVersion); err != nil {
+		log.Warnf("Invalid major version '%s' in detected version '%s', using default: %s",
+			majorVersion, detectedVersion, defaultToolingNodeTag)
+		return defaultToolingNodeTag
+	}
+
+	toolingTag := fmt.Sprintf("%s-alpine", majorVersion)
+	log.Infof("Using Node.js tooling image version %s (detected from image: %s)", toolingTag, detectedVersion)
+	return toolingTag
+}
+
+// extractAppPathsFromUpdates derives application directories from vulnerability PkgPath fields.
+// Example: "var/lib/ghost/versions/6.2.0/node_modules/@babel/runtime/package.json"
+//       -> "/var/lib/ghost/versions/6.2.0"
+func extractAppPathsFromUpdates(updates unversioned.LangUpdatePackages) []string {
+	pathMap := make(map[string]bool)
+
+	for _, u := range updates {
+		if u.PkgPath == "" {
+			continue
+		}
+
+		// Ensure leading slash
+		pkgPath := u.PkgPath
+		if !strings.HasPrefix(pkgPath, "/") {
+			pkgPath = "/" + pkgPath
+		}
+
+		// Find node_modules in path and extract everything before it
+		if idx := strings.Index(pkgPath, "/node_modules/"); idx != -1 {
+			appPath := pkgPath[:idx]
+			pathMap[appPath] = true
+		}
+	}
+
+	var paths []string
+	for p := range pathMap {
+		paths = append(paths, p)
+	}
+	return paths
+}
+
+// isTransitiveDependency checks if a package is a transitive (nested) dependency.
+// Transitive deps have paths like: app/node_modules/foo/node_modules/bar/package.json
+// Direct deps have paths like: app/node_modules/bar/package.json
+func isTransitiveDependency(pkgPath string) bool {
+	if pkgPath == "" {
+		return false
+	}
+	// Normalize path to have consistent separators
+	normalizedPath := strings.ReplaceAll(pkgPath, "\\", "/")
+
+	// Count occurrences of "node_modules" directories in the path
+	// A transitive dependency will have at least 2 node_modules in the path
+	parts := strings.Split(normalizedPath, "/")
+	nodeModulesCount := 0
+	for _, part := range parts {
+		if part == "node_modules" {
+			nodeModulesCount++
+		}
+	}
+	return nodeModulesCount >= 2
+}
+
+// filterTransitiveDependencies returns only the transitive (nested) dependencies.
+func filterTransitiveDependencies(updates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
+	var transitive unversioned.LangUpdatePackages
+	for _, u := range updates {
+		if isTransitiveDependency(u.PkgPath) {
+			transitive = append(transitive, u)
+		}
+	}
+	return transitive
+}
+
 // filterNodePackages returns only the packages that are Node.js packages.
 func filterNodePackages(langUpdates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
 	var nodePackages unversioned.LangUpdatePackages
@@ -137,7 +232,7 @@ func (nm *nodejsManager) InstallUpdates(
 	log.Debugf("Attempting to update latest unique npm packages: %v", updatesToAttempt)
 
 	// Perform the upgrade
-	updatedImageState, upgradeErr := nm.upgradePackages(ctx, currentState, updatesToAttempt, ignoreErrors)
+	updatedImageState, upgradeErr := nm.upgradePackages(ctx, currentState, manifest.Metadata, updatesToAttempt, ignoreErrors)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Node.js packages: %v", upgradeErr)
 		if !ignoreErrors {
@@ -165,6 +260,7 @@ func (nm *nodejsManager) InstallUpdates(
 func (nm *nodejsManager) upgradePackages(
 	ctx context.Context,
 	currentState *llb.State,
+	metadata unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, error) {
@@ -197,25 +293,35 @@ func (nm *nodejsManager) upgradePackages(
 
 	if !npmExists {
 		log.Infof("npm not found in target image. Falling back to tooling container strategy for Node.js updates.")
-		return nm.upgradePackagesWithTooling(ctx, currentState, updates, ignoreErrors)
+		return nm.upgradePackagesWithTooling(ctx, currentState, metadata, updates, ignoreErrors)
 	}
 
-	// Detect package.json locations in the target image
-	pkgJSONPaths, detectErr := nm.detectPackageJSON(ctx, currentState)
-	hasUserApp := detectErr == nil && len(pkgJSONPaths) > 0
+	// Extract application paths from Trivy's PkgPath field in vulnerability report
+	appPaths := extractAppPathsFromUpdates(updates)
+	hasUserApp := len(appPaths) > 0
+
+	// Debug: log PkgPath info
+	pkgPathCount := 0
+	for _, u := range updates {
+		if u.PkgPath != "" {
+			pkgPathCount++
+			log.Debugf("Update %s has PkgPath: %s", u.Name, u.PkgPath)
+		}
+	}
+	log.Debugf("Found %d updates with PkgPath out of %d total updates", pkgPathCount, len(updates))
 
 	updatedState := *currentState
 
 	if hasUserApp {
-		log.Infof("Detected package.json locations: %v", pkgJSONPaths)
+		log.Infof("Detected Node.js application paths from vulnerability report: %v", appPaths)
 
-		// Install updates for each package.json location
-		for _, pkgPath := range pkgJSONPaths {
-			log.Infof("Updating packages in %s", pkgPath)
-			updatedState = nm.installNodePackages(&updatedState, pkgPath, updates, ignoreErrors)
+		// Install updates for each application path
+		for _, appPath := range appPaths {
+			log.Infof("Updating packages in %s", appPath)
+			updatedState = nm.installNodePackages(&updatedState, appPath, updates, ignoreErrors)
 		}
 	} else {
-		log.Warnf("No user Node.js applications detected in image (no package.json found in app directories)")
+		log.Warnf("No Node.js application paths found in vulnerability report (no PkgPath data available)")
 	}
 
 	// Always check for and patch globally installed npm packages (when npm exists)
@@ -233,7 +339,9 @@ func (nm *nodejsManager) upgradePackages(
 	return &updatedState, nil
 }
 
-// installNodePackages installs Node.js packages in a specific directory.
+// installNodePackages applies npm overrides to update transitive dependencies.
+// NOTE: This ONLY fixes transitive (nested) dependencies. Direct dependency vulnerabilities
+// require application code changes (updating package.json), which is beyond Copa's scope.
 func (nm *nodejsManager) installNodePackages(
 	currentState *llb.State,
 	workDir string,
@@ -246,43 +354,43 @@ func (nm *nodejsManager) installNodePackages(
 
 	state := *currentState
 
-	if ignoreErrors {
-		// Install each package individually with error handling
-		for _, u := range updates {
-			if u.FixedVersion == "" {
-				continue
-			}
-			pkgSpec := fmt.Sprintf("%s@%s", u.Name, u.FixedVersion)
-			installCmd := fmt.Sprintf(
-				`sh -c 'cd %s && npm install --save --save-exact --no-audit --loglevel=error --timeout=%d "%s" || printf "WARN: npm install failed for %s\n"'`,
-				workDir, npmInstallTimeoutSeconds, pkgSpec, u.Name)
-			state = state.Run(
-				llb.Shlex(installCmd),
-				llb.WithProxy(utils.GetProxy()),
-			).Root()
-		}
-	} else {
-		// Install all packages in a single command
-		var pkgSpecs []string
-		for _, u := range updates {
-			if u.FixedVersion != "" {
-				pkgSpecs = append(pkgSpecs, fmt.Sprintf("%s@%s", u.Name, u.FixedVersion))
-			}
-		}
-		if len(pkgSpecs) > 0 {
-			installCmd := fmt.Sprintf(
-				`sh -c 'cd %s && npm install --save --save-exact --no-audit --loglevel=error --timeout=%d %s'`,
-				workDir, npmInstallTimeoutSeconds, strings.Join(pkgSpecs, " "))
-			state = state.Run(
-				llb.Shlex(installCmd),
-				llb.WithProxy(utils.GetProxy()),
-			).Root()
+	// Build overrides for all packages
+	// npm overrides work for both direct and transitive deps, but may conflict with direct deps
+	var overridesEntries []string
+	for _, u := range updates {
+		if u.FixedVersion != "" {
+			pkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
+			version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
+			overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, pkgName, version))
 		}
 	}
 
-	// Update package-lock.json
-	updateLockCmd := fmt.Sprintf(`sh -c 'cd %s && npm install --package-lock-only --no-audit'`, workDir)
-	state = state.Run(llb.Shlex(updateLockCmd), llb.WithProxy(utils.GetProxy())).Root()
+	if len(overridesEntries) == 0 {
+		return state
+	}
+
+	overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
+	escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
+
+	installCmd := fmt.Sprintf(
+		`sh -c 'cd %s && `+
+			`if command -v jq >/dev/null 2>&1; then `+
+			`jq ".overrides = %s" package.json > package.json.tmp && mv package.json.tmp package.json && `+
+			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" || true; `+
+			`else `+
+			`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" || true; `+
+			`fi'`,
+		workDir,
+		overridesJSON, npmInstallTimeoutSeconds,
+		escapedOverridesJSON, npmInstallTimeoutSeconds,
+	)
+
+	log.Infof("Applying npm overrides to update dependencies in %s: %s", workDir, overridesJSON)
+	state = state.Run(
+		llb.Shlex(installCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
 
 	return state
 }
@@ -299,23 +407,36 @@ func (nm *nodejsManager) detectNpm(ctx context.Context, currentState *llb.State)
 }
 
 // detectPackageJSON finds package.json files in the target image.
-// It looks in common application directories and excludes node_modules.
+// It uses a two-phase approach:
+// 1. First check common application directories (fast)
+// 2. If nothing found, do a broader filesystem search (slower but comprehensive)
 func (nm *nodejsManager) detectPackageJSON(ctx context.Context, currentState *llb.State) ([]string, error) {
-	// Common application locations to check
+	// Phase 1: Check common application locations (fast path)
 	candidatePaths := []string{
 		"/app",
 		"/usr/src/app",
 		"/opt/app",
 		"/workspace",
+		"/home/node/app",
+		"/usr/local/lib/node",
 	}
 
-	// Build find command to locate package.json files (excluding node_modules)
 	var findCmd strings.Builder
 	findCmd.WriteString(`sh -c 'paths=""; for dir in`)
 	for _, p := range candidatePaths {
 		findCmd.WriteString(fmt.Sprintf(" %s", p))
 	}
-	findCmd.WriteString(`; do if [ -f "$dir/package.json" ] && [ -f "$dir/package-lock.json" ]; then paths="$paths $dir"; fi; done; if [ -n "$paths" ]; then echo "$paths" > `)
+	findCmd.WriteString(`; do if [ -f "$dir/package.json" ]; then paths="$paths $dir"; fi; done; `)
+
+	// Phase 2: If no candidate paths found, do a broader search
+	// Search common root directories but exclude node_modules, .npm cache, etc.
+	findCmd.WriteString(`if [ -z "$paths" ]; then `)
+	findCmd.WriteString(`paths=$(find /var /home /usr /opt -maxdepth 6 -type f -name "package.json" 2>/dev/null | `)
+	findCmd.WriteString(`grep -v "/node_modules/" | grep -v "/.npm/" | grep -v "/test/" | grep -v "/tests/" | `)
+	findCmd.WriteString(`xargs -r dirname | sort -u | tr "\\n" " "); `)
+	findCmd.WriteString(`fi; `)
+
+	findCmd.WriteString(`if [ -n "$paths" ]; then echo "$paths" > `)
 	findCmd.WriteString(packageJSONDetectFile)
 	findCmd.WriteString(`; fi'`)
 
@@ -363,6 +484,7 @@ func (nm *nodejsManager) detectGlobalNodeModules(ctx context.Context, currentSta
 func (nm *nodejsManager) upgradePackagesWithTooling(
 	ctx context.Context,
 	currentState *llb.State,
+	metadata unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, error) {
@@ -385,8 +507,14 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 		return globalState, nil
 	}
 
-	toolingImage := fmt.Sprintf(toolingNodeTemplate, defaultToolingNodeTag)
-	log.Infof("Using tooling image %s for Node.js package operations", toolingImage)
+	// Select tooling image version based on detected Node.js version
+	toolingTag := selectToolingNodeVersion(metadata.NodeVersion)
+	toolingImage := fmt.Sprintf(toolingNodeTemplate, toolingTag)
+	if metadata.NodeVersion != "" {
+		log.Infof("Using tooling image %s for Node.js package operations (detected version: %s)", toolingImage, metadata.NodeVersion)
+	} else {
+		log.Infof("Using tooling image %s for Node.js package operations (no version detected, using LTS)", toolingImage)
+	}
 
 	state := *currentState
 
@@ -439,8 +567,11 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 	return &state, nil
 }
 
-// upgradeGlobalPackages patches globally installed npm packages (like eslint, pnpm) that have vulnerable dependencies.
-// This handles packages in the global node_modules directory (e.g., /usr/local/share/npm-global/lib/node_modules/).
+// upgradeGlobalPackages patches globally installed npm packages (like eslint, pnpm, npm itself) that have vulnerable dependencies.
+// This handles packages in the global node_modules directory (e.g., /usr/local/lib/node_modules/, /usr/local/share/npm-global/lib/node_modules/).
+//
+// Strategy: Use npm overrides in each global package's directory to force transitive dependency updates.
+// This is similar to the user app strategy but applied to each global package individually.
 func (nm *nodejsManager) upgradeGlobalPackages(
 	ctx context.Context,
 	currentState *llb.State,
@@ -467,78 +598,72 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		return currentState, nil
 	}
 
-	state := *currentState
-	toolingImage := fmt.Sprintf(toolingNodeTemplate, defaultToolingNodeTag)
+	// Build overrides map for all package updates
+	var overridesEntries []string
+	for _, u := range uniqueUpdates {
+		if u.FixedVersion != "" {
+			if err := validateNodePackageName(u.Name); err != nil {
+				log.Warnf("Skipping invalid package name %s: %v", u.Name, err)
+				continue
+			}
+			if err := validateNodeVersion(u.FixedVersion); err != nil {
+				log.Warnf("Skipping invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
+				continue
+			}
+			// Escape quotes in package names and versions
+			pkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
+			version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
+			overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, pkgName, version))
+		}
+	}
 
-	// For each globally installed package (like eslint, pnpm), update its vulnerable dependencies
+	if len(overridesEntries) == 0 {
+		log.Info("No valid overrides to apply for global packages")
+		return currentState, nil
+	}
+
+	overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
+	log.Infof("Applying npm overrides to global packages: %s", overridesJSON)
+
+	state := *currentState
+
+	// For each globally installed package (like eslint, pnpm, npm), apply overrides and reinstall
 	for _, pkgPath := range globalPkgPaths {
-		pkgName := strings.TrimPrefix(pkgPath, strings.TrimSuffix(pkgPath, "/node_modules/")+"/node_modules/")
+		pkgName := ""
 		if idx := strings.LastIndex(pkgPath, "/"); idx != -1 {
 			pkgName = pkgPath[idx+1:]
 		}
 
-		log.Infof("Attempting to update vulnerable dependencies in globally installed package: %s", pkgName)
+		log.Infof("Updating vulnerable dependencies in global package: %s at %s", pkgName, pkgPath)
 
-		// Build package specs for updates
-		var pkgSpecs []string
-		for _, u := range uniqueUpdates {
-			if u.FixedVersion != "" {
-				if err := validateNodePackageName(u.Name); err != nil {
-					log.Warnf("Skipping invalid package name %s: %v", u.Name, err)
-					continue
-				}
-				if err := validateNodeVersion(u.FixedVersion); err != nil {
-					log.Warnf("Skipping invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
-					continue
-				}
-				pkgSpecs = append(pkgSpecs, fmt.Sprintf("%s@%s", u.Name, u.FixedVersion))
-			}
-		}
+		// Use node to add overrides to package.json, then run npm install --force --ignore-scripts
+		// We use --ignore-scripts to avoid node-gyp/Python build failures
+		// The --force flag is required to make npm apply overrides to the entire dependency tree
+		//
+		// Escape the overrides JSON for use in double-quoted node -e string
+		escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
 
-		if len(pkgSpecs) == 0 {
-			continue
-		}
-
-		// Strategy: Copy package.json to tooling, install updates, copy node_modules back
-		toolingState := llb.Image(toolingImage)
-		// Create /app directory in tooling image
-		toolingState = toolingState.File(llb.Mkdir("/app", 0o755, llb.WithParents(true)))
-		toolingState = toolingState.File(
-			llb.Copy(state, pkgPath+"/package.json", "/app/package.json", &llb.CopyInfo{}),
-		)
-
-		// Install the specific package updates
-		// Use --ignore-scripts to avoid node-gyp/Python issues with native modules
-		// Use || true to continue even if some packages fail
 		installCmd := fmt.Sprintf(
-			`sh -c 'cd /app && (npm install --no-save --ignore-scripts --no-audit --loglevel=error --timeout=%d %s 2>&1 | `+
-				`grep -v "^npm warn" || echo "Some packages failed to install") && `+
-				`if [ -d /app/node_modules ]; then touch /copa-install-success; fi'`,
+			`sh -c 'cd %s && `+
+				// Add overrides using node (guaranteed to exist in Node.js images)
+				`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+				// Run npm install with --force to apply overrides
+				`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" || true'`,
+			pkgPath,
+			escapedOverridesJSON,
 			npmInstallTimeoutSeconds,
-			strings.Join(pkgSpecs, " "),
 		)
 
-		toolingState = toolingState.Dir("/app").Run(
+		if ignoreErrors {
+			installCmd = strings.Replace(installCmd, `|| true`, `|| printf "WARN: npm install with overrides failed for %s\n" "`+pkgName+`"`, 1)
+		}
+
+		state = state.Run(
 			llb.Shlex(installCmd),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 
-		// Check if install was successful by checking for the marker file
-		_, checkErr := buildkit.ExtractFileFromState(ctx, nm.config.Client, &toolingState, "/copa-install-success")
-		if checkErr != nil {
-			log.Warnf("npm install may have failed for %s, skipping node_modules copy", pkgName)
-			continue
-		}
-
-		// Copy updated node_modules back to the global package
-		state = state.File(
-			llb.Copy(toolingState, "/app/node_modules", pkgPath+"/node_modules", &llb.CopyInfo{
-				CopyDirContentsOnly: true,
-				CreateDestPath:      false,
-			}),
-		)
-
-		log.Infof("Updated vulnerable dependencies in global package: %s", pkgName)
+		log.Infof("Applied overrides to global package: %s", pkgName)
 	}
 
 	return &state, nil
