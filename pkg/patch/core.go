@@ -38,6 +38,9 @@ type Options struct {
 
 	// If true, return the BuildKit state instead of solving it
 	ReturnState bool
+
+	// EOL configuration
+	ExitOnEOL bool
 }
 
 // Result contains the result of the core patching operation.
@@ -258,6 +261,11 @@ func setupPackageManager(ctx context.Context, c gwclient.Client, config *buildki
 				eolMsg += fmt.Sprintf(" (EOL date: %s)", eolDate)
 			}
 			eolMsg += " Patching may fail, be incomplete, or use archived repositories. Consider upgrading the base image."
+
+			if opts.ExitOnEOL {
+				log.Error(eolMsg)
+				return nil, fmt.Errorf("exiting due to EOL operating system: %s %s", osType, osVersion)
+			}
 			log.Warn(eolMsg)
 		}
 

@@ -143,6 +143,33 @@ Visit [endoflife.date](https://endoflife.date/) to easily check the End-of-Life 
 
 :::
 
+## How does Copa check for EOL status?
+
+Copa automatically checks if an image's operating system is End-of-Life by querying the [endoflife.date API](https://endoflife.date/). This check:
+
+- Runs before attempting to patch the image
+- Warns you if the OS is EOL and patching may fail
+- Can optionally exit with an error if EOL is detected (using `--exit-on-eol`)
+- Has built-in retry logic for 15s for rate limiting (HTTP 429 responses)
+
+### EOL Check Configuration
+
+You can customize the EOL check behavior using these flags:
+
+- `--exit-on-eol`: Exit with an error when an EOL operating system is detected (default: false)
+- `--eol-api-url`: Specify a custom EOL API base URL (default: `https://endoflife.date/api/v1/products`)
+
+### Retry Behavior
+
+If the EOL API returns a rate limit response (HTTP 429), Copa will automatically retry with exponential backoff:
+
+1. First retry: after 1 second
+2. Second retry: after 2 seconds
+3. Third retry: after 4 seconds
+4. Fourth retry: after 8 seconds (capped)
+
+If retries are exhausted, Copa logs a warning and continues with patching.
+
 ## What are my options for handling EOL images?
 
 1. **Preferred: Upgrade to a supported distribution version**
