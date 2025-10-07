@@ -127,7 +127,8 @@ func selectToolingNodeVersion(detectedVersion string) string {
 
 // extractAppPathsFromUpdates derives application directories from vulnerability PkgPath fields.
 // Example: "var/lib/ghost/versions/6.2.0/node_modules/@babel/runtime/package.json"
-//       -> "/var/lib/ghost/versions/6.2.0"
+//
+//	-> "/var/lib/ghost/versions/6.2.0".
 func extractAppPathsFromUpdates(updates unversioned.LangUpdatePackages) []string {
 	pathMap := make(map[string]bool)
 
@@ -154,39 +155,6 @@ func extractAppPathsFromUpdates(updates unversioned.LangUpdatePackages) []string
 		paths = append(paths, p)
 	}
 	return paths
-}
-
-// isTransitiveDependency checks if a package is a transitive (nested) dependency.
-// Transitive deps have paths like: app/node_modules/foo/node_modules/bar/package.json
-// Direct deps have paths like: app/node_modules/bar/package.json
-func isTransitiveDependency(pkgPath string) bool {
-	if pkgPath == "" {
-		return false
-	}
-	// Normalize path to have consistent separators
-	normalizedPath := strings.ReplaceAll(pkgPath, "\\", "/")
-
-	// Count occurrences of "node_modules" directories in the path
-	// A transitive dependency will have at least 2 node_modules in the path
-	parts := strings.Split(normalizedPath, "/")
-	nodeModulesCount := 0
-	for _, part := range parts {
-		if part == "node_modules" {
-			nodeModulesCount++
-		}
-	}
-	return nodeModulesCount >= 2
-}
-
-// filterTransitiveDependencies returns only the transitive (nested) dependencies.
-func filterTransitiveDependencies(updates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
-	var transitive unversioned.LangUpdatePackages
-	for _, u := range updates {
-		if isTransitiveDependency(u.PkgPath) {
-			transitive = append(transitive, u)
-		}
-	}
-	return transitive
 }
 
 // filterNodePackages returns only the packages that are Node.js packages.
@@ -232,7 +200,7 @@ func (nm *nodejsManager) InstallUpdates(
 	log.Debugf("Attempting to update latest unique npm packages: %v", updatesToAttempt)
 
 	// Perform the upgrade
-	updatedImageState, upgradeErr := nm.upgradePackages(ctx, currentState, manifest.Metadata, updatesToAttempt, ignoreErrors)
+	updatedImageState, upgradeErr := nm.upgradePackages(ctx, currentState, &manifest.Metadata, updatesToAttempt, ignoreErrors)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Node.js packages: %v", upgradeErr)
 		if !ignoreErrors {
@@ -260,7 +228,7 @@ func (nm *nodejsManager) InstallUpdates(
 func (nm *nodejsManager) upgradePackages(
 	ctx context.Context,
 	currentState *llb.State,
-	metadata unversioned.Metadata,
+	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, error) {
@@ -318,7 +286,7 @@ func (nm *nodejsManager) upgradePackages(
 		// Install updates for each application path
 		for _, appPath := range appPaths {
 			log.Infof("Updating packages in %s", appPath)
-			updatedState = nm.installNodePackages(&updatedState, appPath, updates, ignoreErrors)
+			updatedState = nm.installNodePackages(&updatedState, appPath, updates)
 		}
 	} else {
 		log.Warnf("No Node.js application paths found in vulnerability report (no PkgPath data available)")
@@ -346,7 +314,6 @@ func (nm *nodejsManager) installNodePackages(
 	currentState *llb.State,
 	workDir string,
 	updates unversioned.LangUpdatePackages,
-	ignoreErrors bool,
 ) llb.State {
 	if len(updates) == 0 {
 		return *currentState
@@ -408,8 +375,8 @@ func (nm *nodejsManager) detectNpm(ctx context.Context, currentState *llb.State)
 
 // detectPackageJSON finds package.json files in the target image.
 // It uses a two-phase approach:
-// 1. First check common application directories (fast)
-// 2. If nothing found, do a broader filesystem search (slower but comprehensive)
+// 1. First check common application directories (fast).
+// 2. If nothing found, do a broader filesystem search (slower but comprehensive).
 func (nm *nodejsManager) detectPackageJSON(ctx context.Context, currentState *llb.State) ([]string, error) {
 	// Phase 1: Check common application locations (fast path)
 	candidatePaths := []string{
@@ -484,7 +451,7 @@ func (nm *nodejsManager) detectGlobalNodeModules(ctx context.Context, currentSta
 func (nm *nodejsManager) upgradePackagesWithTooling(
 	ctx context.Context,
 	currentState *llb.State,
-	metadata unversioned.Metadata,
+	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, error) {

@@ -11,10 +11,10 @@ type UpdatePackages []UpdatePackage
 type LangUpdatePackages []UpdatePackage
 
 type Metadata struct {
-	OS          OS          `json:"os"`
-	Config      Config      `json:"config"`
-	NodeVersion string      `json:"nodeVersion,omitempty"` // Detected Node.js version from image
-	YarnVersion string      `json:"yarnVersion,omitempty"` // Detected Yarn version from image
+	OS          OS     `json:"os"`
+	Config      Config `json:"config"`
+	NodeVersion string `json:"nodeVersion,omitempty"` // Detected Node.js version from image
+	YarnVersion string `json:"yarnVersion,omitempty"` // Detected Yarn version from image
 }
 
 type OS struct {
