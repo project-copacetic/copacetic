@@ -33,7 +33,7 @@ permissions:
 jobs:
   unit-test:
     name: Unit Test
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -61,7 +61,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     permissions:
       packages: write
@@ -101,7 +101,7 @@ jobs:
   test-patch-trivy:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -147,7 +147,7 @@ jobs:
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -271,7 +271,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -318,7 +318,7 @@ jobs:
   test-push:
     needs: build
     name: Test push
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
       - name: Check out code
@@ -365,7 +365,7 @@ jobs:
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -449,7 +449,7 @@ jobs:
   test-generate:
     needs: build
     name: Test generate command ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -491,7 +491,7 @@ jobs:
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     steps:
       - name: Change docker daemon config
