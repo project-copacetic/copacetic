@@ -31,6 +31,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/daemon"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	v1types "github.com/google/go-containerregistry/pkg/v1/types"
 )
@@ -201,18 +202,31 @@ func isSupportedOsType(osType string) bool {
 // This is exported to support patching images that exist locally but not in a remote registry.
 func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 	imageName := ref.String()
-	log.Debugf("Trying: docker manifest inspect %s", imageName)
+	log.Debugf("Attempting to get manifest from local daemon for %s", imageName)
 
-	cmd := exec.Command("docker", "manifest", "inspect", imageName)
-	output, err := cmd.Output()
+	// Try to get the image from the local daemon using go-containerregistry
+	// First, try to get it as an image index (multi-platform)
+	ctx := context.Background()
+
+	// Attempt to read raw manifest from daemon
+	// The daemon package doesn't directly expose manifest inspection, so we use a workaround:
+	// Try to get the image and then extract its raw manifest
+	img, err := daemon.Image(ref, daemon.WithContext(ctx))
 	if err != nil {
-		log.Debugf("docker manifest inspect failed for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to inspect manifest using docker CLI: %v", err)
+		log.Debugf("Failed to get image from daemon for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to get image from local daemon: %v", err)
 	}
 
-	// Parse the manifest data
+	// Get the raw manifest
+	rawManifest, err := img.RawManifest()
+	if err != nil {
+		log.Debugf("Failed to get raw manifest for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to get raw manifest: %v", err)
+	}
+
+	// Parse the manifest to determine if it's a manifest list
 	var manifestData map[string]interface{}
-	if err := json.Unmarshal(output, &manifestData); err != nil {
+	if err := json.Unmarshal(rawManifest, &manifestData); err != nil {
 		log.Debugf("Failed to parse manifest JSON for %s: %v", imageName, err)
 		return nil, fmt.Errorf("failed to parse manifest JSON: %v", err)
 	}
@@ -220,7 +234,7 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 	// Check if this is a manifest list (has "manifests" field)
 	if manifests, ok := manifestData["manifests"]; ok {
 		if manifestSlice, ok := manifests.([]interface{}); ok && len(manifestSlice) > 0 {
-			log.Debugf("Found multi-platform manifest via CLI with %d platforms", len(manifestSlice))
+			log.Debugf("Found multi-platform manifest from daemon with %d platforms", len(manifestSlice))
 
 			// Parse the manifest list to extract individual platform image references
 			var enhancedManifestData struct {
@@ -237,7 +251,7 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 				} `json:"manifests"`
 			}
 
-			if err := json.Unmarshal(output, &enhancedManifestData); err != nil {
+			if err := json.Unmarshal(rawManifest, &enhancedManifestData); err != nil {
 				log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
 				return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
 			}
@@ -257,15 +271,15 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 			}
 
 			// Calculate digest from the manifest content
-			digest := fmt.Sprintf("%x", sha256.Sum256(output))
+			digest := fmt.Sprintf("%x", sha256.Sum256(rawManifest))
 
 			return &remote.Descriptor{
 				Descriptor: v1.Descriptor{
 					MediaType: v1types.MediaType(mediaType),
-					Size:      int64(len(output)),
+					Size:      int64(len(rawManifest)),
 					Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
 				},
-				Manifest: output,
+				Manifest: rawManifest,
 			}, nil
 		}
 	}
@@ -851,7 +865,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	switch {
 	case hasPreservedPlatforms && hasPatchedPlatforms:
 		log.Infof("Creating mixed OCI layout with %d patched and %d preserved platforms", len(platformStates), len(preservedPlatforms))
-		return createMixedOCILayout(outputDir, results, platforms, platformStates, platformSpecs, preservedPlatforms)
+		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms)
 	case hasPatchedPlatforms:
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
@@ -1220,14 +1234,37 @@ func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error 
 
 // extractTarToDirectory extracts a tar file to a directory.
 func extractTarToDirectory(tarPath, destDir string) error {
-	// Extract tar file using tar command
-	cmd := exec.Command("tar", "-xf", tarPath, "-C", destDir)
+	// Validate and clean paths to prevent path traversal attacks
+	cleanTarPath := filepath.Clean(tarPath)
+	cleanDestDir := filepath.Clean(destDir)
 
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to extract tar %s: %v, output: %s", tarPath, err, string(output))
+	// Ensure destination directory doesn't contain path traversal sequences
+	if strings.Contains(cleanDestDir, "..") {
+		return fmt.Errorf("destination directory contains invalid path traversal sequence: %s", destDir)
 	}
 
-	log.Debugf("Successfully extracted tar %s to directory %s", tarPath, destDir)
+	// Verify tar file exists and is a regular file
+	tarInfo, err := os.Stat(cleanTarPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat tar file %s: %w", cleanTarPath, err)
+	}
+	if !tarInfo.Mode().IsRegular() {
+		return fmt.Errorf("tar path %s is not a regular file", cleanTarPath)
+	}
+
+	// Ensure destination directory exists
+	if err := os.MkdirAll(cleanDestDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create destination directory %s: %w", cleanDestDir, err)
+	}
+
+	// Extract tar file using tar command with validated paths
+	cmd := exec.Command("tar", "-xf", cleanTarPath, "-C", cleanDestDir)
+
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to extract tar %s: %v, output: %s", cleanTarPath, err, string(output))
+	}
+
+	log.Debugf("Successfully extracted tar %s to directory %s", cleanTarPath, cleanDestDir)
 	return nil
 }
 
@@ -1244,7 +1281,6 @@ func getPlatformSuffix(platform *specs.Platform) string {
 func createMixedOCILayout(
 	outputDir string,
 	results []types.PatchResult,
-	_ []types.PatchPlatform,
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
 	preservedPlatforms []types.PatchPlatform,
