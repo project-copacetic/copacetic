@@ -16,5 +16,11 @@
     "tag": "latest",
     "digest": "sha256:ffc213a6f2db7210b69396dc4330b4a9c5e27c8b044ae453854d53bd3937a6ec",
     "description": "Ghost CMS publishing platform"
+  },
+  {
+    "image": "docker.io/library/node",
+    "tag": "18",
+    "digest": "",
+    "description": "Official Node.js image"
   }
 ]
