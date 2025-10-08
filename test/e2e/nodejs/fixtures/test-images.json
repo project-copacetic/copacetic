@@ -1,9 +1,9 @@
 [
   {
-    "image": "directus/directus",
+    "image": "verdaccio/verdaccio",
     "tag": "latest",
-    "digest": "sha256:4d4ba1596b3cae218a3fc8f5f2a55f2ac9eec93eb3fda68b2c51fe6b18d20040",
-    "description": "Directus Headless CMS"
+    "digest": "",
+    "description": "Private NPM registry"
   },
   {
     "image": "docker.io/library/ghost",

@@ -159,7 +159,7 @@ func patchImage(t *testing.T, image, tag, reportFile string) {
 		"-r=" + reportFile,
 		"-t=" + tag,
 		"--pkg-types=library",
-		"--library-patch-level=minor",
+		"--library-patch-level=major",
 		"--timeout=10m", // Increased timeout for potentially long npm installs
 	}
 
