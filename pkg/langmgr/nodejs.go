@@ -340,49 +340,64 @@ func (nm *nodejsManager) upgradePackages(
 		return nm.upgradePackagesWithTooling(ctx, currentState, metadata, updates, ignoreErrors)
 	}
 
-	// Extract application paths from Trivy's PkgPath field in vulnerability report
-	appPaths := extractAppPathsFromUpdates(updates)
-	hasUserApp := len(appPaths) > 0
+	// Separate vulnerabilities into two lists
+	var userAppUpdates unversioned.LangUpdatePackages
+	var globalUpdates unversioned.LangUpdatePackages
 
-	// Debug: log PkgPath info
-	pkgPathCount := 0
+	// Get the global root path to distinguish between global and app vulnerabilities.
+	globalNodeModules, _ := nm.detectGlobalNodeModules(ctx, currentState)
+	globalPathSet := make(map[string]bool)
+	for _, p := range globalNodeModules {
+		globalPathSet[p] = true
+	}
+
 	for _, u := range updates {
-		if u.PkgPath != "" {
-			pkgPathCount++
-			log.Debugf("Update %s has PkgPath: %s", u.Name, u.PkgPath)
+		isGlobal := false
+		for pathPrefix := range globalPathSet {
+			if strings.HasPrefix(u.PkgPath, pathPrefix) {
+				globalUpdates = append(globalUpdates, u)
+				isGlobal = true
+				break
+			}
+		}
+		if !isGlobal {
+			userAppUpdates = append(userAppUpdates, u)
 		}
 	}
-	log.Debugf("Found %d updates with PkgPath out of %d total updates", pkgPathCount, len(updates))
 
 	updatedState := *currentState
 
-	if hasUserApp {
+	appPaths := extractAppPathsFromUpdates(userAppUpdates)
+	if len(appPaths) > 0 {
 		log.Infof("Detected Node.js application paths from vulnerability report: %v", appPaths)
-
-		// Install updates for each application path
 		for _, appPath := range appPaths {
-			// Sanity check: Does this path actually contain a package.json?
 			if _, err := getDirectDependencies(ctx, nm.config.Client, &updatedState, appPath); err != nil {
 				log.Warnf("Path %s does not appear to be a valid Node.js project (missing package.json?), skipping.", appPath)
 				continue
 			}
 			log.Infof("Updating packages in %s", appPath)
-			updatedState = nm.installNodePackages(ctx, &updatedState, appPath, updates)
+			// Pass ONLY the user app updates to the installer.
+			updatedState = nm.installNodePackages(ctx, &updatedState, appPath, userAppUpdates)
 		}
 	} else {
-		log.Warnf("No Node.js application paths found in vulnerability report (no PkgPath data available)")
+		log.Debug("No user application vulnerabilities found to patch.")
 	}
 
-	// Always check for and patch globally installed npm packages (when npm exists)
-	log.Info("Checking for globally installed Node.js packages with vulnerable dependencies...")
-	globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, updates, ignoreErrors)
-	if globalErr != nil {
-		if !ignoreErrors {
-			return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
+	// --- Process Global Vulnerabilities ---
+	if len(globalUpdates) > 0 {
+		log.Info("Checking for globally installed Node.js packages with vulnerable dependencies...")
+		// Pass ONLY the global updates to the global patcher.
+		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, globalUpdates, ignoreErrors)
+		if globalErr != nil {
+			if !ignoreErrors {
+				return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
+			}
+			log.Warnf("Failed to patch global packages but continuing due to ignore-errors: %v", globalErr)
+		} else {
+			updatedState = *globalPatchedState
 		}
-		log.Warnf("Failed to patch global packages but continuing due to ignore-errors: %v", globalErr)
 	} else {
-		updatedState = *globalPatchedState
+		log.Debug("No global package vulnerabilities found to patch.")
 	}
 
 	return &updatedState, nil

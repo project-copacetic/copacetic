@@ -1,11 +1,17 @@
 const http = require('http');
-const _ = require('lodash');
+const mkdirp = require('mkdirp');
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  // Use lodash just to show it's a dependency
-  const message = _.join(['Hello', 'Vulnerable', 'World'], ' ');
-  res.end(message);
+  // Use mkdirp just to show it's a dependency
+  try {
+    await mkdirp('./tmp-dir-from-app');
+    res.end('Hello World! Directory created.');
+  } catch (err) {
+    console.error(err);
+    res.statusCode = 500;
+    res.end(`Hello World! Error creating directory: ${err.message}`);
+  }
 });
 
 const PORT = 3000;
