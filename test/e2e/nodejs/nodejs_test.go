@@ -54,8 +54,7 @@ func TestNodeJSPatching(t *testing.T) {
 				ref += "@" + img.Digest
 			}
 
-			// 1. Scan the original image. This generates the report for `copa patch`
-			// and also gives us the baseline list of vulnerabilities.
+			// 1. Scan the original image.
 			t.Log("scanning original image for baseline")
 			scanResultsFile := filepath.Join(dir, "scan.json")
 			vulnsBefore := scanAndParse(t, ref, scanResultsFile)
@@ -65,24 +64,24 @@ func TestNodeJSPatching(t *testing.T) {
 				return
 			}
 
-			// 2. Patch the image using the generated report.
+			// 2. Patch the image and capture its output.
 			t.Log("patching image")
 			tagPatched := img.Tag + "-patched"
-			patchImage(t, ref, tagPatched, scanResultsFile)
+			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
 
-			// 3. Scan the newly patched image to get the list of remaining vulnerabilities.
+			// 3. Scan the newly patched image.
 			t.Log("scanning patched image for verification")
 			patchedRef := img.Image + ":" + tagPatched
-			vulnsAfter := scanAndParse(t, patchedRef, "") // No need to save this report file.
+			vulnsAfter := scanAndParse(t, patchedRef, "")
 
-			// 4. Verify that the patch was successful and didn't introduce new issues.
+			// 4. Verify the patch was successful.
 			t.Logf("Comparing vulnerabilities: Before (%d) vs After (%d)", len(vulnsBefore), len(vulnsAfter))
 
 			// Assertion 1: The number of vulnerabilities should decrease.
-			assert.Less(t, len(vulnsAfter), len(vulnsBefore), "the number of vulnerabilities should be lower after patching")
+			// The Copa command's output is now included in the failure message.
+			assert.Less(t, len(vulnsAfter), len(vulnsBefore), "the number of vulnerabilities should be lower after patching. Copa output:\n%s", copaOutput)
 
 			// Assertion 2: No new vulnerabilities should have been introduced.
-			// Every vulnerability that exists *after* the patch must have existed *before*.
 			for key, vuln := range vulnsAfter {
 				assert.Contains(t, vulnsBefore, key, "no new vulnerabilities should be introduced. Found new vuln: %+v", vuln)
 			}
@@ -92,18 +91,15 @@ func TestNodeJSPatching(t *testing.T) {
 
 func downloadTrivyDB(t *testing.T) {
 	t.Helper()
-
 	cmd := exec.Command("trivy", "image", "--download-db-only")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "Failed to download Trivy DB:\n%s", string(out))
 }
 
-// scanAndParse runs trivy on an image, saves the JSON report to outputFile (if provided),
-// and returns a map of the found vulnerabilities for easy comparison.
+// scanAndParse remains unchanged.
 func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vulnerability {
 	t.Helper()
 
-	// If no output file is specified for saving, create a temporary one for parsing.
 	if outputFile == "" {
 		f, err := os.CreateTemp(t.TempDir(), "scan-*.json")
 		require.NoError(t, err)
@@ -125,9 +121,7 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
 	_, _ = cmd.CombinedOutput()
-	// We don't assert require.NoError here, as trivy will exit with a non-zero code if it finds vulns.
 
-	// Parse the JSON report to extract vulnerabilities.
 	reportBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "failed to read trivy report file")
 
@@ -138,7 +132,6 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 	}
 	require.NoError(t, json.Unmarshal(reportBytes, &report), "failed to unmarshal trivy report")
 
-	// Consolidate all found vulnerabilities into a map for easy lookup.
 	vulns := make(map[string]Vulnerability)
 	for _, res := range report.Results {
 		for _, v := range res.Vulnerabilities {
@@ -150,7 +143,8 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 	return vulns
 }
 
-func patchImage(t *testing.T, image, tag, reportFile string) {
+// patchImage now returns the command output as a string.
+func patchImage(t *testing.T, image, tag, reportFile string) string {
 	t.Helper()
 
 	args := []string{
@@ -160,7 +154,8 @@ func patchImage(t *testing.T, image, tag, reportFile string) {
 		"-t=" + tag,
 		"--pkg-types=library",
 		"--library-patch-level=major",
-		"--timeout=10m", // Increased timeout for potentially long npm installs
+		"--timeout=10m",
+		"--debug", // Keeping debug for now so the output is rich
 	}
 
 	if buildkitAddr != "" {
@@ -172,4 +167,45 @@ func patchImage(t *testing.T, image, tag, reportFile string) {
 	out, err := cmd.CombinedOutput()
 
 	require.NoError(t, err, fmt.Sprintf("Copa patch failed:\n%s", string(out)))
+
+	return string(out)
+}
+
+func TestCustomBuildPatching(t *testing.T) {
+	// Define explicit, full image names with tags.
+	imageTag := "copa-e2e-custom-vulnerable-app:latest"
+	patchedTag := "copa-e2e-custom-vulnerable-app:patched"
+
+	// Schedule cleanup to automatically remove the Docker images after the test runs.
+	t.Cleanup(func() {
+		t.Logf("Cleaning up images: %s, %s", imageTag, patchedTag)
+		cmd := exec.Command("docker", "rmi", "-f", imageTag, patchedTag)
+		_ = cmd.Run()
+	})
+
+	// 1. Build the vulnerable Docker image from the ./testdata directory.
+	t.Logf("Building vulnerable image: %s", imageTag)
+	buildCmd := exec.Command("docker", "build", "-t", imageTag, "./testdata")
+	buildOutput, err := buildCmd.CombinedOutput()
+	require.NoError(t, err, "Failed to build docker image from testdata:\n%s", string(buildOutput))
+
+	dir := t.TempDir()
+
+	// 2. Scan the original image using the explicit tag.
+	t.Log("Scanning original image for baseline")
+	scanResultsFile := filepath.Join(dir, "scan.json")
+	vulnsBefore := scanAndParse(t, imageTag, scanResultsFile)
+	require.NotEmpty(t, vulnsBefore, "expected to find vulnerabilities in the custom-built image")
+
+	// 3. Patch the image, passing the full original and new tags.
+	t.Log("Patching image")
+	copaOutput := patchImage(t, imageTag, patchedTag, scanResultsFile)
+
+	// 4. Scan the newly patched image using its full tag.
+	t.Logf("Scanning patched image for verification: %s", patchedTag)
+	vulnsAfter := scanAndParse(t, patchedTag, "")
+
+	// 5. Verify that the patch was successful.
+	t.Logf("Comparing vulnerabilities: Before (%d) vs After (%d)", len(vulnsBefore), len(vulnsAfter))
+	assert.Empty(t, vulnsAfter, "the patched image should have no remaining vulnerabilities. Copa output:\n%s", copaOutput)
 }
