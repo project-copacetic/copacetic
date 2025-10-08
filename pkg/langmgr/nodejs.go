@@ -717,7 +717,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		log.Infof("Upgrading npm to version %s (compatible with Node.js %s)", npmVersion, nodeVersionStr)
 
 		upgradeCmd := fmt.Sprintf(
-			`sh -c 'npm install -g npm@"%s" --loglevel=error 2>&1 | grep -v "^npm warn" || echo "npm upgrade completed"'`,
+			`sh -c 'npm install -g npm@"%s" --engine-strict --loglevel=error 2>&1 | grep -v "^npm warn" || echo "npm upgrade completed"'`,
 			npmVersion,
 		)
 
