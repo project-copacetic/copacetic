@@ -631,6 +631,20 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 
 	log.Infof("Detected %d globally installed Node.js package(s): %v", len(globalPkgPaths), globalPkgPaths)
 
+	var filteredGlobalPkgPaths []string
+	for _, pkgPath := range globalPkgPaths {
+		pkgName := filepath.Base(pkgPath)
+		if pkgName == "npm" || pkgName == "corepack" {
+			log.Infof("Skipping patching of core Node.js infrastructure package: %s", pkgName)
+			continue
+		}
+		filteredGlobalPkgPaths = append(filteredGlobalPkgPaths, pkgPath)
+	}
+	if len(filteredGlobalPkgPaths) == 0 {
+		log.Debug("No user-installed global packages to patch.")
+		return currentState, nil
+	}
+
 	// Get unique updates
 	nodeComparer := VersionComparer{isValidNodeVersion, isLessThanNodeVersion}
 	uniqueUpdates, err := GetUniqueLatestUpdates(updates, nodeComparer, ignoreErrors)
@@ -645,7 +659,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 	state := *currentState
 
 	// For each globally installed package, filter and apply overrides.
-	for _, pkgPath := range globalPkgPaths {
+	for _, pkgPath := range filteredGlobalPkgPaths {
 		pkgName := ""
 		if idx := strings.LastIndex(pkgPath, "/"); idx != -1 {
 			pkgName = pkgPath[idx+1:]
