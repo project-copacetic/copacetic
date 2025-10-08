@@ -1,9 +1,9 @@
 [
   {
-    "image": "docker.io/library/mongo-express",
+    "image": "rocketchat/rocket.chat",
     "tag": "latest",
-    "digest": "sha256:1b23d7976f0210dbec74045c209e52fbb26d29b2e873d6c6fa3d3f0ae32c2a64",
-    "description": "Mongo Express web UI with Express.js"
+    "digest": "sha256:64058d062f2e08c2ca0d4dc1d94b249b5b6525c872c4cce7dde7221e484a7f84",
+    "description": "Rocket.Chat communication platform"
   },
   {
     "image": "docker.io/library/ghost",
@@ -14,7 +14,7 @@
   {
     "image": "nodered/node-red",
     "tag": "latest",
-    "digest": "",
+    "digest": "sha256:da6ac47cce14ed8df7ceddc8a15c8f4c0a41e0836c4d6e68e7a6a82329305a6b",
     "description": "Node-RED flow-based programming tool"
   }
 ]
