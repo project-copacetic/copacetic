@@ -2,13 +2,16 @@ package langmgr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -69,30 +72,86 @@ func validateNodeVersion(version string) error {
 
 // isValidNodeVersion checks if a version string is a valid semver version.
 func isValidNodeVersion(v string) bool {
-	// Remove any leading 'v'
-	v = strings.TrimPrefix(v, "v")
-	_, err := semver.NewVersion(v)
-	return err == nil
+	// Trivy can return a list like "1.2.3, 2.0.0". We just need one to be valid.
+	parts := strings.Split(v, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		trimmed = strings.TrimPrefix(trimmed, "v")
+		if _, err := semver.NewVersion(trimmed); err == nil {
+			return true // Found at least one valid version.
+		}
+	}
+	return false
+}
+
+// cleanAndGetFirstVersion extracts the first valid version from a potentially comma-separated string.
+func cleanAndGetFirstVersion(v string) string {
+	parts := strings.Split(v, ",")
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		trimmed = strings.TrimPrefix(trimmed, "v")
+		if _, err := semver.NewVersion(trimmed); err == nil {
+			return trimmed // Return the first one that's valid.
+		}
+	}
+	return v // Fallback to original if none are valid
 }
 
 // isLessThanNodeVersion compares two semver version strings.
 // It returns true if v1 is less than v2, and false if there's an error.
 func isLessThanNodeVersion(v1, v2 string) bool {
-	// Remove any leading 'v'
-	v1 = strings.TrimPrefix(v1, "v")
-	v2 = strings.TrimPrefix(v2, "v")
+	// Clean the version strings to get a single, valid version for comparison.
+	cleanV1 := cleanAndGetFirstVersion(v1)
+	cleanV2 := cleanAndGetFirstVersion(v2)
 
-	ver1, err1 := semver.NewVersion(v1)
+	ver1, err1 := semver.NewVersion(cleanV1)
 	if err1 != nil {
-		log.Warnf("Error parsing Node version '%s': %v", v1, err1)
+		log.Warnf("Error parsing Node version '%s' from '%s': %v", cleanV1, v1, err1)
 		return false
 	}
-	ver2, err2 := semver.NewVersion(v2)
+	ver2, err2 := semver.NewVersion(cleanV2)
 	if err2 != nil {
-		log.Warnf("Error parsing Node version '%s': %v", v2, err2)
+		log.Warnf("Error parsing Node version '%s' from '%s': %v", cleanV2, v2, err2)
 		return false
 	}
 	return ver1.LessThan(ver2)
+}
+
+// getDirectDependencies reads a package.json from the image state and returns a set of its direct dependencies.
+func getDirectDependencies(ctx context.Context, c *gwclient.Client, st *llb.State, workDir string) (map[string]bool, error) {
+	deps := make(map[string]bool)
+	pkgJSONPath := filepath.Join(workDir, "package.json")
+
+	if c == nil {
+		return deps, fmt.Errorf("buildkit client is nil")
+	}
+
+	// Read the package.json file from the LLB state
+	data, err := buildkit.ExtractFileFromState(ctx, *c, st, pkgJSONPath)
+	if err != nil {
+		// It's okay if the file doesn't exist, just return an empty set.
+		log.Warnf("Could not read package.json from %s: %v", pkgJSONPath, err)
+		return deps, nil
+	}
+
+	// Parse the JSON to get dependencies and devDependencies
+	var pkg struct {
+		Dependencies    map[string]string `json:"dependencies"`
+		DevDependencies map[string]string `json:"devDependencies"`
+	}
+	if err := json.Unmarshal(data, &pkg); err != nil {
+		log.Warnf("Could not parse package.json from %s: %v", pkgJSONPath, err)
+		return deps, nil
+	}
+
+	for dep := range pkg.Dependencies {
+		deps[dep] = true
+	}
+	for dep := range pkg.DevDependencies {
+		deps[dep] = true
+	}
+
+	return deps, nil
 }
 
 // selectToolingNodeVersion selects the appropriate Node.js tooling image version.
@@ -292,7 +351,7 @@ func (nm *nodejsManager) upgradePackages(
 		// Install updates for each application path
 		for _, appPath := range appPaths {
 			log.Infof("Updating packages in %s", appPath)
-			updatedState = nm.installNodePackages(&updatedState, appPath, updates)
+			updatedState = nm.installNodePackages(ctx, &updatedState, appPath, updates)
 		}
 	} else {
 		log.Warnf("No Node.js application paths found in vulnerability report (no PkgPath data available)")
@@ -317,6 +376,7 @@ func (nm *nodejsManager) upgradePackages(
 // NOTE: This ONLY fixes transitive (nested) dependencies. Direct dependency vulnerabilities
 // require application code changes (updating package.json), which is beyond Copa's scope.
 func (nm *nodejsManager) installNodePackages(
+	ctx context.Context,
 	currentState *llb.State,
 	workDir string,
 	updates unversioned.LangUpdatePackages,
@@ -325,12 +385,22 @@ func (nm *nodejsManager) installNodePackages(
 		return *currentState
 	}
 
+	// Get the direct dependencies from the app's package.json
+	directDeps, err := getDirectDependencies(ctx, &nm.config.Client, currentState, workDir)
+	if err != nil {
+		log.Warnf("Could not determine direct dependencies for %s, proceeding without filtering.", workDir)
+	}
+
 	state := *currentState
 
 	// Build overrides for all packages
 	// npm overrides work for both direct and transitive deps, but may conflict with direct deps
 	var overridesEntries []string
 	for _, u := range updates {
+		if directDeps[u.Name] {
+			log.Warnf("Skipping override for direct dependency '%s' in %s", u.Name, workDir)
+			continue
+		}
 		if u.FixedVersion != "" {
 			pkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
 			version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
@@ -339,6 +409,7 @@ func (nm *nodejsManager) installNodePackages(
 	}
 
 	if len(overridesEntries) == 0 {
+		log.Info("No applicable transitive dependency overrides found.")
 		return state
 	}
 
@@ -359,7 +430,7 @@ func (nm *nodejsManager) installNodePackages(
 		escapedOverridesJSON, npmInstallTimeoutSeconds,
 	)
 
-	log.Infof("Applying npm overrides to update dependencies in %s: %s", workDir, overridesJSON)
+	log.Infof("Applying npm overrides to update transitive dependencies in %s: %s", workDir, overridesJSON)
 	state = state.Run(
 		llb.Shlex(installCmd),
 		llb.WithProxy(utils.GetProxy()),
@@ -571,36 +642,9 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		return currentState, nil
 	}
 
-	// Build overrides map for all package updates
-	var overridesEntries []string
-	for _, u := range uniqueUpdates {
-		if u.FixedVersion != "" {
-			if err := validateNodePackageName(u.Name); err != nil {
-				log.Warnf("Skipping invalid package name %s: %v", u.Name, err)
-				continue
-			}
-			if err := validateNodeVersion(u.FixedVersion); err != nil {
-				log.Warnf("Skipping invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
-				continue
-			}
-			// Escape quotes in package names and versions
-			pkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
-			version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
-			overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, pkgName, version))
-		}
-	}
-
-	if len(overridesEntries) == 0 {
-		log.Info("No valid overrides to apply for global packages")
-		return currentState, nil
-	}
-
-	overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
-	log.Infof("Applying npm overrides to global packages: %s", overridesJSON)
-
 	state := *currentState
 
-	// For each globally installed package (like eslint, pnpm, npm), apply overrides and reinstall
+	// For each globally installed package, filter and apply overrides.
 	for _, pkgPath := range globalPkgPaths {
 		pkgName := ""
 		if idx := strings.LastIndex(pkgPath, "/"); idx != -1 {
@@ -609,11 +653,33 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 
 		log.Infof("Updating vulnerable dependencies in global package: %s at %s", pkgName, pkgPath)
 
-		// Use node to add overrides to package.json, then run npm install --force --ignore-scripts
-		// We use --ignore-scripts to avoid node-gyp/Python build failures
-		// The --force flag is required to make npm apply overrides to the entire dependency tree
-		//
-		// Escape the overrides JSON for use in double-quoted node -e string
+		// Get direct dependencies for this specific global package
+		directDeps, err := getDirectDependencies(ctx, &nm.config.Client, &state, pkgPath)
+		if err != nil {
+			log.Warnf("Could not determine direct dependencies for global package %s, proceeding without filtering.", pkgName)
+		}
+
+		// Build a filtered list of overrides for this global package
+		var overridesEntries []string
+		for _, u := range uniqueUpdates {
+			if directDeps[u.Name] {
+				log.Warnf("Skipping override for direct dependency '%s' in global package '%s'", u.Name, pkgName)
+				continue
+			}
+			if u.FixedVersion != "" {
+				valPkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
+				version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
+				overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, valPkgName, version))
+			}
+		}
+
+		if len(overridesEntries) == 0 {
+			log.Infof("No applicable transitive dependency overrides for global package '%s'", pkgName)
+			continue
+		}
+
+		overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
+		log.Infof("Applying npm overrides to global package %s: %s", pkgName, overridesJSON)
 		escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
 
 		installCmd := fmt.Sprintf(
