@@ -249,7 +249,14 @@ func validatePlatformEmulation(targetPlatform types.PatchPlatform) error { //nol
 	log.Debugf("Host platform %+v does not match target platform %+v", hostPlatform, targetPlatform)
 
 	if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
-		return fmt.Errorf("emulation is not enabled for platform %s", targetPlatform.OS+"/"+targetPlatform.Architecture)
+		platform := targetPlatform.OS + "/" + targetPlatform.Architecture
+
+		log.Warnf("Emulation is not enabled for platform %s.\n"+
+			"To enable emulation, see docs: \n"+
+			"https://docs.docker.com/build/building-multi-platform/#qemu",
+			platform)
+
+		return fmt.Errorf("emulation is not enabled for platform %s", platform)
 	}
 
 	log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
