@@ -23,8 +23,9 @@ const (
 	npmCheckFile                = "/copa-npm-check"
 	packageJSONDetectFile       = "/copa-package-json-path"
 	globalNodeModulesDetectFile = "/copa-global-node-modules-path"
-	defaultToolingNodeTag       = "22-alpine" // Latest Active LTS (Node 22 Jod, active until Oct 2025)
+	defaultToolingNodeTag       = "lts-alpine" // Latest Active LTS (automatically tracks current LTS version)
 	toolingNodeTemplate         = "docker.io/library/node:%s"
+	npmVersionLatest            = "latest" // Fallback npm version when Node.js version is unknown
 )
 
 type nodejsManager struct {
@@ -163,6 +164,48 @@ func getDirectDependencies(ctx context.Context, c gwclient.Client, st *llb.State
 	}
 
 	return deps, nil
+}
+
+// hasNpmVulnerabilities checks if any updates target npm's dependencies.
+// Returns true if any vulnerability is in npm's dependency tree.
+func hasNpmVulnerabilities(updates unversioned.LangUpdatePackages) bool {
+	for _, u := range updates {
+		if strings.Contains(u.PkgPath, "/node_modules/npm/") {
+			return true
+		}
+	}
+	return false
+}
+
+// selectNpmVersionForNode returns the appropriate npm version for a given Node.js major version.
+// This ensures compatibility between npm and Node.js versions.
+func selectNpmVersionForNode(nodeVersion string) string {
+	if nodeVersion == "" {
+		return npmVersionLatest // Fallback when Node version unknown
+	}
+
+	parts := strings.Split(nodeVersion, ".")
+	if len(parts) == 0 {
+		return npmVersionLatest
+	}
+
+	majorVersion, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return npmVersionLatest
+	}
+
+	switch {
+	case majorVersion >= 23:
+		return "^11.0.0" // Future versions use npm 11+
+	case majorVersion == 22:
+		return "^10.0.0" // Node 22 can use npm 10 or 11, use 10 for safety
+	case majorVersion >= 18:
+		return "^10.0.0" // Node 18-21 use npm 10
+	case majorVersion >= 14:
+		return "^9.0.0" // Node 14-17 use npm 9
+	default:
+		return npmVersionLatest // Old versions: best effort
+	}
 }
 
 // selectToolingNodeVersion selects the appropriate Node.js tooling image version.
@@ -353,8 +396,14 @@ func (nm *nodejsManager) upgradePackages(
 
 	for _, u := range updates {
 		isGlobal := false
+		// Normalize the package path to ensure it has a leading slash
+		pkgPath := u.PkgPath
+		if !strings.HasPrefix(pkgPath, "/") {
+			pkgPath = "/" + pkgPath
+		}
+
 		for pathPrefix := range globalPathSet {
-			if strings.HasPrefix(u.PkgPath, pathPrefix) {
+			if strings.HasPrefix(pkgPath, pathPrefix) || strings.Contains(pkgPath, "/node_modules/npm/") {
 				globalUpdates = append(globalUpdates, u)
 				isGlobal = true
 				break
@@ -387,7 +436,7 @@ func (nm *nodejsManager) upgradePackages(
 	if len(globalUpdates) > 0 {
 		log.Info("Checking for globally installed Node.js packages with vulnerable dependencies...")
 		// Pass ONLY the global updates to the global patcher.
-		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, globalUpdates, ignoreErrors)
+		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, metadata, globalUpdates, ignoreErrors)
 		if globalErr != nil {
 			if !ignoreErrors {
 				return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
@@ -572,7 +621,7 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 		log.Info("Checking for globally installed Node.js packages...")
 
 		// Try to patch global packages even without an app
-		globalState, globalErr := nm.upgradeGlobalPackages(ctx, currentState, updates, ignoreErrors)
+		globalState, globalErr := nm.upgradeGlobalPackages(ctx, currentState, metadata, updates, ignoreErrors)
 		if globalErr != nil {
 			if !ignoreErrors {
 				return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
@@ -642,22 +691,64 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 	return &state, nil
 }
 
-// upgradeGlobalPackages patches globally installed npm packages (like eslint, pnpm, npm itself) that have vulnerable dependencies.
-// This handles packages in the global node_modules directory (e.g., /usr/local/lib/node_modules/, /usr/local/share/npm-global/lib/node_modules/).
+// upgradeGlobalPackages patches globally installed npm packages (like eslint, pnpm) that have vulnerable dependencies.
+// This handles packages in the global node_modules directory (e.g., /usr/local/lib/node_modules/).
 //
-// Strategy: Use npm overrides in each global package's directory to force transitive dependency updates.
-// This is similar to the user app strategy but applied to each global package individually.
+// Strategy: If npm has vulnerabilities, upgrade npm to latest compatible version.
+// For other global packages, use npm overrides to update transitive dependencies.
 func (nm *nodejsManager) upgradeGlobalPackages(
 	ctx context.Context,
 	currentState *llb.State,
+	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, error) {
+	state := *currentState
+
+	// Check if npm itself has vulnerabilities - if so, upgrade npm to latest compatible version
+	if hasNpmVulnerabilities(updates) {
+		log.Info("Detected vulnerabilities in npm dependencies. Upgrading npm to latest compatible version...")
+
+		npmVersion := selectNpmVersionForNode(metadata.NodeVersion)
+		nodeVersionStr := metadata.NodeVersion
+		if nodeVersionStr == "" {
+			nodeVersionStr = "unknown"
+		}
+		log.Infof("Upgrading npm to version %s (compatible with Node.js %s)", npmVersion, nodeVersionStr)
+
+		upgradeCmd := fmt.Sprintf(
+			`sh -c 'npm install -g npm@"%s" --loglevel=error 2>&1 | grep -v "^npm warn" || echo "npm upgrade completed"'`,
+			npmVersion,
+		)
+
+		state = state.Run(
+			llb.Shlex(upgradeCmd),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
+
+		log.Infof("npm upgraded to version compatible with Node.js %s", nodeVersionStr)
+
+		// After upgrading npm, filter out npm vulnerabilities from updates
+		var nonNpmUpdates unversioned.LangUpdatePackages
+		for _, u := range updates {
+			if !strings.Contains(u.PkgPath, "/node_modules/npm/") {
+				nonNpmUpdates = append(nonNpmUpdates, u)
+			}
+		}
+		updates = nonNpmUpdates
+
+		// If no more updates after filtering npm, we're done
+		if len(updates) == 0 {
+			log.Info("All vulnerabilities were in npm dependencies, which have been addressed by upgrading npm")
+			return &state, nil
+		}
+	}
+
 	// Detect global node_modules packages
-	globalPkgPaths, err := nm.detectGlobalNodeModules(ctx, currentState)
+	globalPkgPaths, err := nm.detectGlobalNodeModules(ctx, &state)
 	if err != nil || len(globalPkgPaths) == 0 {
 		log.Debug("No global Node.js packages detected, skipping global patching")
-		return currentState, nil
+		return &state, nil
 	}
 
 	log.Infof("Detected %d globally installed Node.js package(s): %v", len(globalPkgPaths), globalPkgPaths)
@@ -673,7 +764,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 	}
 	if len(filteredGlobalPkgPaths) == 0 {
 		log.Debug("No user-installed global packages to patch.")
-		return currentState, nil
+		return &state, nil
 	}
 
 	// Get unique updates
@@ -684,10 +775,8 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 	}
 	if len(uniqueUpdates) == 0 {
 		log.Info("No valid Node.js package updates to apply to global packages")
-		return currentState, nil
+		return &state, nil
 	}
-
-	state := *currentState
 
 	// For each globally installed package, filter and apply overrides.
 	for _, pkgPath := range filteredGlobalPkgPaths {
