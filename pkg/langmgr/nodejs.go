@@ -118,30 +118,41 @@ func isLessThanNodeVersion(v1, v2 string) bool {
 }
 
 // getDirectDependencies reads a package.json from the image state and returns a set of its direct dependencies.
-func getDirectDependencies(ctx context.Context, c *gwclient.Client, st *llb.State, workDir string) (map[string]bool, error) {
+func getDirectDependencies(ctx context.Context, c gwclient.Client, st *llb.State, workDir string) (map[string]bool, error) {
 	deps := make(map[string]bool)
 	pkgJSONPath := filepath.Join(workDir, "package.json")
 
-	if c == nil {
-		return deps, fmt.Errorf("buildkit client is nil")
-	}
+	reader := st.File(llb.Copy(*st, pkgJSONPath, "/tmp/package.json.out", &llb.CopyInfo{AllowWildcard: true}))
 
-	// Read the package.json file from the LLB state
-	data, err := buildkit.ExtractFileFromState(ctx, *c, st, pkgJSONPath)
+	def, err := reader.Marshal(ctx)
 	if err != nil {
-		// It's okay if the file doesn't exist, just return an empty set.
-		log.Warnf("Could not read package.json from %s: %v", pkgJSONPath, err)
-		return deps, nil
+		return nil, fmt.Errorf("failed to marshal state for reading package.json: %w", err)
 	}
 
-	// Parse the JSON to get dependencies and devDependencies
+	// Step 1: Solve the state to get a result.
+	result, err := c.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB()})
+	if err != nil {
+		return nil, fmt.Errorf("could not solve for package.json in %s: %w", workDir, err)
+	}
+
+	// Step 2: Get the file reference from the result.
+	ref, err := result.SingleRef()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get reference from solved package.json: %w", err)
+	}
+
+	// Step 3: Read the file from the reference.
+	data, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/tmp/package.json.out"})
+	if err != nil {
+		return nil, fmt.Errorf("could not read package.json from %s: %w", workDir, err)
+	}
+
 	var pkg struct {
 		Dependencies    map[string]string `json:"dependencies"`
 		DevDependencies map[string]string `json:"devDependencies"`
 	}
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		log.Warnf("Could not parse package.json from %s: %v", pkgJSONPath, err)
-		return deps, nil
+		return nil, fmt.Errorf("could not parse package.json from %s: %w", workDir, err)
 	}
 
 	for dep := range pkg.Dependencies {
@@ -351,7 +362,7 @@ func (nm *nodejsManager) upgradePackages(
 		// Install updates for each application path
 		for _, appPath := range appPaths {
 			// Sanity check: Does this path actually contain a package.json?
-			if _, err := getDirectDependencies(ctx, &nm.config.Client, &updatedState, appPath); err != nil {
+			if _, err := getDirectDependencies(ctx, nm.config.Client, &updatedState, appPath); err != nil {
 				log.Warnf("Path %s does not appear to be a valid Node.js project (missing package.json?), skipping.", appPath)
 				continue
 			}
@@ -391,7 +402,7 @@ func (nm *nodejsManager) installNodePackages(
 	}
 
 	// Get the direct dependencies from the app's package.json
-	directDeps, err := getDirectDependencies(ctx, &nm.config.Client, currentState, workDir)
+	directDeps, err := getDirectDependencies(ctx, nm.config.Client, currentState, workDir)
 	if err != nil {
 		log.Warnf("Could not determine direct dependencies for %s, proceeding without filtering.", workDir)
 	}
@@ -673,7 +684,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		log.Infof("Updating vulnerable dependencies in global package: %s at %s", pkgName, pkgPath)
 
 		// Get direct dependencies for this specific global package
-		directDeps, err := getDirectDependencies(ctx, &nm.config.Client, &state, pkgPath)
+		directDeps, err := getDirectDependencies(ctx, nm.config.Client, &state, pkgPath)
 		if err != nil {
 			log.Warnf("Could not determine direct dependencies for global package %s, proceeding without filtering.", pkgName)
 		}
