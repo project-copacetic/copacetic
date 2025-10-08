@@ -137,6 +137,12 @@ func extractAppPathsFromUpdates(updates unversioned.LangUpdatePackages) []string
 			continue
 		}
 
+		if strings.Count(u.PkgPath, "/node_modules/") > 1 {
+			// This is likely a dependency of a global package, not a user app.
+			// Let the upgradeGlobalPackages function handle it.
+			continue
+		}
+
 		// Ensure leading slash
 		pkgPath := u.PkgPath
 		if !strings.HasPrefix(pkgPath, "/") {
@@ -343,10 +349,10 @@ func (nm *nodejsManager) installNodePackages(
 		`sh -c 'cd %s && `+
 			`if command -v jq >/dev/null 2>&1; then `+
 			`jq ".overrides = %s" package.json > package.json.tmp && mv package.json.tmp package.json && `+
-			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" || true; `+
+			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"; `+
 			`else `+
 			`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" || true; `+
+			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"; `+
 			`fi'`,
 		workDir,
 		overridesJSON, npmInstallTimeoutSeconds,
@@ -615,7 +621,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				// Add overrides using node (guaranteed to exist in Node.js images)
 				`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
 				// Run npm install with --force to apply overrides
-				`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" || true'`,
+				`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
 			pkgPath,
 			escapedOverridesJSON,
 			npmInstallTimeoutSeconds,
