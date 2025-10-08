@@ -350,6 +350,11 @@ func (nm *nodejsManager) upgradePackages(
 
 		// Install updates for each application path
 		for _, appPath := range appPaths {
+			// Sanity check: Does this path actually contain a package.json?
+			if _, err := getDirectDependencies(ctx, &nm.config.Client, &updatedState, appPath); err != nil {
+				log.Warnf("Path %s does not appear to be a valid Node.js project (missing package.json?), skipping.", appPath)
+				continue
+			}
 			log.Infof("Updating packages in %s", appPath)
 			updatedState = nm.installNodePackages(ctx, &updatedState, appPath, updates)
 		}
