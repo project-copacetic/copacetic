@@ -215,5 +215,14 @@
         "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
         "ignoreErrors": false,
         "isManifestList": false
+    },
+    {
+        "image": "registry.suse.com/bci/bci-micro",
+        "tag": "15.7-42.1",
+        "digest": "sha256:682126fbb8603c66bc615024220d2f4fa79e146fba005a14d926e8cf9c4eae15",
+        "distro": "SUSE BCI Micro distroless",
+        "description": "Valid rpm DB, no zypper",
+        "ignoreErrors": false,
+        "isManifestList": false
     }
 ]
