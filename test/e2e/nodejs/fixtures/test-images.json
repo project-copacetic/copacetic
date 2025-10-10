@@ -22,17 +22,5 @@
     "tag": "latest",
     "digest": "sha256:fd61e89668e83e6cdcb9c741361dbab458abdf221735cb96f6d2480a06f3a305",
     "description": "Private NPM registry"
-  },
-  {
-    "image": "requarks/wiki",
-    "tag": "latest",
-    "digest": "sha256:1eaa2de751c2925871a95a02e0ddbdd5c48bf2e016653b2e4a8f0c646cc4ff83",
-    "description": "Wiki.js modern wiki application"
-  },
-  {
-    "image": "mcr.microsoft.com/devcontainers/javascript-node",
-    "tag": "1.1.13-18-bullseye",
-    "digest": "sha256:4d188a9f3ccb5b36c8d0d060c56802eb4025de665885ba6dddd2843a4f6597f8",
-    "description": "Microsoft's official Node.js development container image"
   }
 ]
