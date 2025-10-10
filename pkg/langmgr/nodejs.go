@@ -449,12 +449,27 @@ func (nm *nodejsManager) upgradePackages(
 		log.Debug("No global package vulnerabilities found to patch.")
 	}
 
+	// Clean up npm cache and remove old vulnerable package tarballs
+	// This is crucial to prevent Trivy from detecting old cached vulnerable packages
+	log.Info("Aggressively cleaning npm cache and removing all cached package files")
+	cleanupCmd := `sh -c '` +
+		// Run npm cache clean (may fail if npm not available, that's ok)
+		`npm cache clean --force 2>&1 || echo "WARN: npm cache clean command failed"; ` +
+		// Find and remove ALL .npm cache directories across the entire filesystem
+		`find / -type d -path "*/.npm/_cacache" -prune -exec rm -rf {} \; 2>&1 || echo "WARN: find command for .npm/_cacache failed"; ` +
+		// Also target common known cache locations explicitly
+		`rm -rf /root/.npm 2>&1 || echo "WARN: Failed to remove /root/.npm"; ` +
+		`rm -rf ~/.npm 2>&1 || echo "WARN: Failed to remove ~/.npm"; ` +
+		`rm -rf /home/*/.npm 2>&1 || echo "WARN: Failed to remove /home/*/.npm"; ` +
+		// Remove npm's global cache if it exists
+		`rm -rf /tmp/npm-* 2>&1 || echo "WARN: Failed to remove /tmp/npm-*"'`
+	updatedState = updatedState.Run(llb.Shlex(cleanupCmd), llb.WithProxy(utils.GetProxy())).Root()
+
 	return &updatedState, nil
 }
 
-// installNodePackages applies npm overrides to update transitive dependencies.
-// NOTE: This ONLY fixes transitive (nested) dependencies. Direct dependency vulnerabilities
-// require application code changes (updating package.json), which is beyond Copa's scope.
+// installNodePackages updates both direct and transitive dependencies.
+// It uses npm install for direct dependencies and npm overrides for transitive dependencies.
 func (nm *nodejsManager) installNodePackages(
 	ctx context.Context,
 	currentState *llb.State,
@@ -468,51 +483,85 @@ func (nm *nodejsManager) installNodePackages(
 	// Get the direct dependencies from the app's package.json
 	directDeps, err := getDirectDependencies(ctx, nm.config.Client, currentState, workDir)
 	if err != nil {
-		log.Warnf("Could not determine direct dependencies for %s, proceeding without filtering.", workDir)
+		log.Warnf("Could not determine direct dependencies for %s, proceeding without filtering: %v", workDir, err)
 	}
 
 	state := *currentState
+	var transitiveUpdates unversioned.LangUpdatePackages
 
-	// Build overrides for all packages
-	// npm overrides work for both direct and transitive deps, but may conflict with direct deps
-	var overridesEntries []string
+	// == Step 1: Install Direct Dependencies One-by-One ==
+	log.Infof("Processing direct dependency updates for %s...", workDir)
 	for _, u := range updates {
 		if directDeps[u.Name] {
-			log.Warnf("Skipping override for direct dependency '%s' in %s", u.Name, workDir)
-			continue
-		}
-		if u.FixedVersion != "" {
-			pkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
-			version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
-			overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, pkgName, version))
+			if u.FixedVersion == "" {
+				continue
+			}
+			pkgSpec := fmt.Sprintf("%s@%s", u.Name, u.FixedVersion)
+
+			// This command attempts to install a single package. If it fails, it prints a warning
+			// but allows the overall script to continue.
+			installCmd := fmt.Sprintf(
+				`sh -c 'cd %s && echo "INFO: Attempting to install direct dependency: %s" && `+
+					`(npm install %s --save-exact --legacy-peer-deps --no-audit --ignore-scripts --timeout=%d 2>&1 || `+
+					`echo "WARN: Failed to install %s. Version may not exist or has conflicts.")'`,
+				workDir, pkgSpec, pkgSpec, npmInstallTimeoutSeconds, pkgSpec,
+			)
+
+			log.Infof("Installing direct dependency %s in %s", pkgSpec, workDir)
+			state = state.Run(
+				llb.Shlex(installCmd),
+				llb.WithProxy(utils.GetProxy()),
+			).Root()
+		} else {
+			transitiveUpdates = append(transitiveUpdates, u)
 		}
 	}
 
-	if len(overridesEntries) == 0 {
-		log.Info("No applicable transitive dependency overrides found.")
-		return state
+	// == Step 2: Install Transitive Dependencies with Overrides ==
+	if len(transitiveUpdates) > 0 {
+		log.Infof("Processing %d transitive dependency update(s) for %s via overrides...", len(transitiveUpdates), workDir)
+
+		var overridesEntries []string
+		for _, u := range transitiveUpdates {
+			if u.FixedVersion != "" {
+				pkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
+				version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
+				overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, pkgName, version))
+			}
+		}
+
+		if len(overridesEntries) > 0 {
+			overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
+			escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
+
+			// This command applies all overrides at once and then runs install.
+			// It should be more reliable now that direct dependencies are handled.
+			installCmd := fmt.Sprintf(
+				`sh -c 'cd %s && `+
+					`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+					`npm install --force --no-audit --ignore-scripts --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
+				workDir, escapedOverridesJSON, npmInstallTimeoutSeconds,
+			)
+
+			log.Infof("Applying npm overrides for transitive dependencies in %s: %s", workDir, overridesJSON)
+			state = state.Run(
+				llb.Shlex(installCmd),
+				llb.WithProxy(utils.GetProxy()),
+			).Root()
+		}
 	}
 
-	overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
-	escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
-
-	installCmd := fmt.Sprintf(
+	// == Step 3: Final Cleanup ==
+	log.Infof("Running final cleanup for %s...", workDir)
+	cleanupCmd := fmt.Sprintf(
 		`sh -c 'cd %s && `+
-			`if command -v jq >/dev/null 2>&1; then `+
-			`jq ".overrides = %s" package.json > package.json.tmp && mv package.json.tmp package.json && `+
-			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"; `+
-			`else `+
-			`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-			`npm install --force --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"; `+
-			`fi'`,
+			`npm prune --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
+			`npm dedupe --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
+			`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
 		workDir,
-		overridesJSON, npmInstallTimeoutSeconds,
-		escapedOverridesJSON, npmInstallTimeoutSeconds,
 	)
-
-	log.Infof("Applying npm overrides to update transitive dependencies in %s: %s", workDir, overridesJSON)
 	state = state.Run(
-		llb.Shlex(installCmd),
+		llb.Shlex(cleanupCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
@@ -778,7 +827,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		return &state, nil
 	}
 
-	// For each globally installed package, filter and apply overrides.
+	// For each globally installed package, handle both direct and transitive dependencies
 	for _, pkgPath := range filteredGlobalPkgPaths {
 		pkgName := ""
 		if idx := strings.LastIndex(pkgPath, "/"); idx != -1 {
@@ -793,50 +842,117 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			log.Warnf("Could not determine direct dependencies for global package %s, proceeding without filtering.", pkgName)
 		}
 
-		// Build a filtered list of overrides for this global package
-		var overridesEntries []string
+		// Separate into direct and transitive updates
+		var directUpdates unversioned.LangUpdatePackages
+		var transitiveUpdates unversioned.LangUpdatePackages
+
 		for _, u := range uniqueUpdates {
 			if directDeps[u.Name] {
-				log.Warnf("Skipping override for direct dependency '%s' in global package '%s'", u.Name, pkgName)
-				continue
-			}
-			if u.FixedVersion != "" {
-				valPkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
-				version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
-				overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, valPkgName, version))
+				directUpdates = append(directUpdates, u)
+			} else {
+				transitiveUpdates = append(transitiveUpdates, u)
 			}
 		}
 
-		if len(overridesEntries) == 0 {
-			log.Infof("No applicable transitive dependency overrides for global package '%s'", pkgName)
-			continue
+		// First, install direct dependency updates for global package
+		if len(directUpdates) > 0 {
+			log.Infof("Installing %d direct dependency update(s) for global package '%s'", len(directUpdates), pkgName)
+
+			// Remove old versions first
+			log.Infof("Removing old versions of packages to be updated in global package '%s'", pkgName)
+			for _, u := range directUpdates {
+				removeCmd := fmt.Sprintf(
+					`sh -c 'cd %s && rm -rf node_modules/%s 2>/dev/null || echo "WARN: Failed to remove node_modules/%s from global package"'`,
+					pkgPath, u.Name, u.Name,
+				)
+				state = state.Run(llb.Shlex(removeCmd)).Root()
+			}
+
+			var pkgSpecs []string
+			for _, u := range directUpdates {
+				if u.FixedVersion != "" {
+					pkgSpecs = append(pkgSpecs, fmt.Sprintf("%s@%s", u.Name, u.FixedVersion))
+				}
+			}
+
+			if len(pkgSpecs) > 0 {
+				installCmd := fmt.Sprintf(
+					`sh -c 'cd %s && `+
+						`npm install %s --save-exact --legacy-peer-deps --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
+						`npm prune --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
+						`npm dedupe --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
+						// CRITICAL: Clean cache in same layer
+						`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
+					pkgPath, strings.Join(pkgSpecs, " "), npmInstallTimeoutSeconds,
+				)
+
+				log.Infof("Installing direct dependencies for global package %s: %s", pkgName, strings.Join(pkgSpecs, ", "))
+				state = state.Run(
+					llb.Shlex(installCmd),
+					llb.WithProxy(utils.GetProxy()),
+				).Root()
+			}
 		}
 
-		overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
-		log.Infof("Applying npm overrides to global package %s: %s", pkgName, overridesJSON)
-		escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
+		// Then, apply overrides for transitive dependencies
+		if len(transitiveUpdates) > 0 {
+			log.Infof("Applying overrides for %d transitive dependency update(s) in global package '%s'", len(transitiveUpdates), pkgName)
 
-		installCmd := fmt.Sprintf(
-			`sh -c 'cd %s && `+
-				// Add overrides using node (guaranteed to exist in Node.js images)
-				`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-				// Run npm install with --force to apply overrides
-				`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
-			pkgPath,
-			escapedOverridesJSON,
-			npmInstallTimeoutSeconds,
-		)
+			// Remove old versions from entire node_modules tree
+			log.Infof("Removing all instances of vulnerable packages from global package '%s'", pkgName)
+			for _, u := range transitiveUpdates {
+				removeCmd := fmt.Sprintf(
+					`sh -c 'cd %s && find node_modules -type d -name "%s" -prune -exec rm -rf {} + 2>/dev/null || echo "WARN: Failed to remove all instances of %s from global package"'`,
+					pkgPath, u.Name, u.Name,
+				)
+				state = state.Run(llb.Shlex(removeCmd)).Root()
+			}
 
-		if ignoreErrors {
-			installCmd = strings.Replace(installCmd, `|| true`, `|| printf "WARN: npm install with overrides failed for %s\n" "`+pkgName+`"`, 1)
+			var overridesEntries []string
+			for _, u := range transitiveUpdates {
+				if u.FixedVersion != "" {
+					valPkgName := strings.ReplaceAll(u.Name, `"`, `\"`)
+					version := strings.ReplaceAll(u.FixedVersion, `"`, `\"`)
+					overridesEntries = append(overridesEntries, fmt.Sprintf(`"%s": "%s"`, valPkgName, version))
+				}
+			}
+
+			if len(overridesEntries) > 0 {
+				overridesJSON := "{" + strings.Join(overridesEntries, ", ") + "}"
+				log.Infof("Applying npm overrides to global package %s: %s", pkgName, overridesJSON)
+				escapedOverridesJSON := strings.ReplaceAll(overridesJSON, `"`, `\"`)
+
+				installCmd := fmt.Sprintf(
+					`sh -c 'cd %s && `+
+						// Add overrides using node (guaranteed to exist in Node.js images)
+						`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
+						`pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+						// Run npm install with --force to apply overrides
+						`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
+						`npm prune --force 2>&1 | grep -v "^npm warn" && npm dedupe --force 2>&1 | grep -v "^npm warn" && `+
+						// CRITICAL: Clean cache in same layer
+						`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
+					pkgPath,
+					escapedOverridesJSON,
+					npmInstallTimeoutSeconds,
+				)
+
+				if ignoreErrors {
+					installCmd = strings.Replace(installCmd, `|| true`, `|| printf "WARN: npm install with overrides failed for %s\n" "`+pkgName+`"`, 1)
+				}
+
+				state = state.Run(
+					llb.Shlex(installCmd),
+					llb.WithProxy(utils.GetProxy()),
+				).Root()
+			}
 		}
 
-		state = state.Run(
-			llb.Shlex(installCmd),
-			llb.WithProxy(utils.GetProxy()),
-		).Root()
-
-		log.Infof("Applied overrides to global package: %s", pkgName)
+		if len(directUpdates) > 0 || len(transitiveUpdates) > 0 {
+			log.Infof("Successfully updated dependencies in global package: %s", pkgName)
+		} else {
+			log.Infof("No applicable dependency updates for global package '%s'", pkgName)
+		}
 	}
 
 	return &state, nil
