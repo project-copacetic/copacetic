@@ -13,13 +13,13 @@ require (
 	github.com/distribution/reference v0.6.0
 	github.com/docker/buildx v0.28.0
 	github.com/docker/cli v28.4.0+incompatible
-	github.com/docker/docker v28.4.0+incompatible
+	github.com/docker/docker v28.5.0+incompatible
 	github.com/google/go-containerregistry v0.20.6
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.24.0
+	github.com/moby/buildkit v0.25.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.7
@@ -155,6 +155,6 @@ require (
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250707201910-8d1bb00bc6a7 // indirect
-	google.golang.org/protobuf v1.36.8 // indirect
+	google.golang.org/protobuf v1.36.9 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
