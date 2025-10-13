@@ -16,8 +16,8 @@ github.com/aquasecurity/go-pep440-version v0.0.1 h1:8VKKQtH2aV61+0hovZS3T//rUF+6
 github.com/aquasecurity/go-pep440-version v0.0.1/go.mod h1:3naPe+Bp6wi3n4l5iBFCZgS0JG8vY6FT0H4NGhFJ+i4=
 github.com/aquasecurity/go-version v0.0.1 h1:4cNl516agK0TCn5F7mmYN+xVs1E3S45LkgZk3cbaW2E=
 github.com/aquasecurity/go-version v0.0.1/go.mod h1:s1UU6/v2hctXcOa3OLwfj5d9yoXHa3ahf+ipSwEvGT0=
-github.com/aquasecurity/trivy v0.67.0 h1:aRzrsWu6RL7tm978uGpQtA2Z2Imx6gsMiod86qEvEhk=
-github.com/aquasecurity/trivy v0.67.0/go.mod h1:jz7tY/h1pvocQyGoDpPyOECgwSigVvKNCiXmeWFlJIM=
+github.com/aquasecurity/trivy v0.67.2 h1:Y/lWulURavDuXuU0YmExzho7IDhQe6b/RgNwrKPO2P8=
+github.com/aquasecurity/trivy v0.67.2/go.mod h1:jz7tY/h1pvocQyGoDpPyOECgwSigVvKNCiXmeWFlJIM=
 github.com/aquasecurity/trivy-db v0.0.0-20250929072116-eba1ced2340a h1:Wmvjq3zQGsZ8Wlqh75zvujh7LZNTXU4YoEf8tyL1LoM=
 github.com/aquasecurity/trivy-db v0.0.0-20250929072116-eba1ced2340a/go.mod h1:upAJqDQkN5FdIJbtJMpokncGNhYAPGkpoCbaGciWPt4=
 github.com/aws/aws-sdk-go-v2 v1.39.0 h1:xm5WV/2L4emMRmMjHFykqiA4M/ra0DJVSWUkDyBjbg4=
