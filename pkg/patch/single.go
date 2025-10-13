@@ -35,18 +35,6 @@ const (
 	LINUX       = "linux"
 )
 
-// getRepoNameWithDigest extracts repo name with digest from image name and digest.
-// e.g. "docker.io/library/nginx:1.21.6-patched" -> "nginx@sha256:...".
-func getRepoNameWithDigest(patchedImageName, imageDigest string) string {
-	parts := strings.Split(patchedImageName, "/")
-	last := parts[len(parts)-1]
-	if idx := strings.IndexRune(last, ':'); idx >= 0 {
-		last = last[:idx]
-	}
-	nameWithDigest := fmt.Sprintf("%s@%s", last, imageDigest)
-	return nameWithDigest
-}
-
 // removeIfNotDebug removes working folder unless debug mode is enabled.
 func removeIfNotDebug(workingFolder string) {
 	if log.GetLevel() >= log.DebugLevel {
@@ -106,14 +94,14 @@ func patchSingleArchImage(
 	}
 
 	// resolve final patched tag
-	patchedTag, err = common.ResolvePatchedTag(imageName, patchedTag, suffix)
+	patchImage, patchedTag, err := common.ResolvePatchedImageName(imageName, patchedTag, suffix)
 	if err != nil {
 		return nil, err
 	}
 	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
-	patchedImageName := fmt.Sprintf("%s:%s", imageName.Name(), patchedTag)
+	patchedImageName := fmt.Sprintf("%s:%s", patchImage, patchedTag)
 	log.Infof("Patched image name: %s", patchedImageName)
 
 	// Setup working folder
@@ -182,7 +170,7 @@ func patchSingleArchImage(
 	pipeR, pipeW := io.Pipe()
 
 	// Create build configuration
-	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, bkOpts, pipeW)
+	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, pipeW)
 	if err != nil {
 		return nil, err
 	}
@@ -191,10 +179,33 @@ func patchSingleArchImage(
 	buildChannel := make(chan *client.SolveStatus)
 	eg, ctx := errgroup.WithContext(ctx)
 
-	// Start the main build process
+	// Resolve image reference for BuildKit operations
+	// For multi-platform images with local manifests, use platform-specific reference
+	buildkitImageRef := imageName
+	if multiPlatform {
+		platformImageRef, err := buildkit.GetPlatformImageReference(image, &targetPlatform.Platform)
+		if err == nil {
+			// Successfully resolved platform-specific reference for local manifest
+			log.Debugf("Using platform-specific image reference for BuildKit: %s", platformImageRef)
+			buildkitImageRefNamed, err := reference.ParseNormalizedNamed(platformImageRef)
+			if err == nil {
+				buildkitImageRef = buildkitImageRefNamed
+			}
+		} else {
+			log.Debugf("Could not resolve platform-specific reference, using original: %v", err)
+		}
+	}
+
+	// Start the main build process and capture preserved states
+	var patchResult *Result
 	eg.Go(func() error {
-		return executePatchBuild(ctx, ch, bkClient, buildConfig, imageName, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, scanner, format, output, patchedImageName, buildChannel, opts.ExitOnEOL)
+		result, err := executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL)
+		if err != nil {
+			return err
+		}
+		patchResult = result
+		return nil
 	})
 
 	// Display progress
@@ -216,8 +227,8 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	// Get patched descriptor and add annotations
-	return createPatchResult(imageName, patchedImageName, &targetPlatform, image, finalLoaderType)
+	// Get patched descriptor and add annotations, including preserved states
+	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -238,7 +249,14 @@ func validatePlatformEmulation(targetPlatform types.PatchPlatform) error { //nol
 	log.Debugf("Host platform %+v does not match target platform %+v", hostPlatform, targetPlatform)
 
 	if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
-		return fmt.Errorf("emulation is not enabled for platform %s", targetPlatform.OS+"/"+targetPlatform.Architecture)
+		platform := targetPlatform.OS + "/" + targetPlatform.Architecture
+
+		log.Warnf("Emulation is not enabled for platform %s.\n"+
+			"To enable emulation, see docs: \n"+
+			"https://docs.docker.com/build/building-multi-platform/#qemu",
+			platform)
+
+		return fmt.Errorf("emulation is not enabled for platform %s", platform)
 	}
 
 	log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
@@ -341,9 +359,9 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 	return pipeR.Close()
 }
 
-// createPatchResult creates the final patch result with descriptor and annotations.
-func createPatchResult(imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, image, loaderType string,
+// createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
+func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
+	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -394,11 +412,19 @@ func createPatchResult(imageName reference.Named, patchedImageName string,
 		return nil, fmt.Errorf("failed to parse patched image name %s: %w", patchedImageName, err)
 	}
 
-	return &types.PatchResult{
+	result := &types.PatchResult{
 		OriginalRef: imageName,
 		PatchedRef:  patchedRef,
 		PatchedDesc: patchedDesc,
-	}, nil
+	}
+
+	// Include preserved BuildKit states if available
+	if patchResult != nil {
+		result.PatchedState = patchResult.PatchedState
+		result.ConfigData = patchResult.ConfigData
+	}
+
+	return result, nil
 }
 
 // executePatchBuild executes the actual patch build process.
@@ -412,12 +438,14 @@ func executePatchBuild(
 	workingFolder string,
 	updates *unversioned.UpdateManifest,
 	ignoreError bool,
-	reportFile, _, format, output, patchedImageName string,
+	reportFile, format, output, patchedImageName string,
 	buildChannel chan *client.SolveStatus,
 	exitOnEOL bool,
-) error {
+) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
+	var patchResult *Result // Store the patch result with preserved states
+
 	if updates != nil {
 		// create a new manifest with the successfully patched packages
 		validatedManifest = &unversioned.UpdateManifest{
@@ -450,6 +478,7 @@ func executePatchBuild(
 			WorkingFolder:    workingFolder,
 			IgnoreError:      ignoreError,
 			ErrorChannel:     ch,
+			ReturnState:      false, // Always solve for Docker export
 			ExitOnEOL:        exitOnEOL,
 		}
 
@@ -459,13 +488,28 @@ func executePatchBuild(
 			return nil, err
 		}
 
-		// Pass pkgType to the outside scope
-		pkgType = result.PackageType
+		// Store the result with preserved states for later use
+		patchResult = result
 
 		// Update validation data for VEX document generation
-		if validatedManifest != nil {
-			validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, result.ValidatedManifest.OSUpdates...)
-			validatedManifest.LangUpdates = append(validatedManifest.LangUpdates, result.ValidatedManifest.LangUpdates...)
+		pkgType = result.PackageType
+
+		// Build validated manifest (exclude errored packages) using original updates + result.ErroredPackages
+		if validatedManifest != nil && updates != nil {
+			errored := map[string]struct{}{}
+			for _, e := range result.ErroredPackages {
+				errored[e] = struct{}{}
+			}
+			for _, u := range updates.OSUpdates {
+				if _, bad := errored[u.Name]; !bad {
+					validatedManifest.OSUpdates = append(validatedManifest.OSUpdates, u)
+				}
+			}
+			for _, u := range updates.LangUpdates {
+				if _, bad := errored[u.Name]; !bad {
+					validatedManifest.LangUpdates = append(validatedManifest.LangUpdates, u)
+				}
+			}
 		}
 
 		return result.Result, nil
@@ -478,17 +522,17 @@ func executePatchBuild(
 		patchedImageDigest = digest
 	}
 	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
-		nameDigestOrTag := getRepoNameWithDigest(patchedImageName, patchedImageDigest)
+		nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
 		// vex document must contain at least one statement
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
 				ch <- err
-				return err
+				return nil, err
 			}
 		}
 	}
 
-	return err
+	return patchResult, err
 }
 
 // shouldIncludeOSUpdates returns true if OS updates should be included based on package types.

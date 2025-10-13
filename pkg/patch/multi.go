@@ -253,11 +253,17 @@ func patchMultiPlatformImage(
 		return fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	resolvedPatchedTag, err := common.ResolvePatchedTag(imageName, opts.PatchedTag, opts.Suffix)
+	resolvedImage, resolvedPatchedTag, err := common.ResolvePatchedImageName(imageName, opts.PatchedTag, opts.Suffix)
 	if err != nil {
 		return err
 	}
-	patchedImageName, err := reference.WithTag(imageName, resolvedPatchedTag)
+
+	patchedImage, err := reference.ParseNormalizedNamed(resolvedImage)
+	if err != nil {
+		return fmt.Errorf("failed to parse reference: %w", err)
+	}
+
+	patchedImageName, err := reference.WithTag(patchedImage, resolvedPatchedTag)
 	if err != nil {
 		return fmt.Errorf("failed to parse patched image name: %w", err)
 	}
@@ -325,6 +331,14 @@ func patchMultiPlatformImage(
 	}
 	w.Flush()
 	log.Info("\nMulti-arch patch summary:\n" + b.String())
+
+	// Create OCI layout if requested and not pushing to registry
+	if opts.OCIDir != "" && !opts.Push {
+		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms); err != nil {
+			log.Warnf("Failed to create OCI layout: %v", err)
+			return fmt.Errorf("failed to create OCI layout: %w", err)
+		}
+	}
 
 	return nil
 }
