@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/aquasecurity/go-pep440-version v0.0.1
-	github.com/aquasecurity/trivy v0.67.0
+	github.com/aquasecurity/trivy v0.67.2
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.1
