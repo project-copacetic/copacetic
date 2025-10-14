@@ -13,8 +13,6 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
-
-	"github.com/project-copacetic/copacetic/pkg/buildkit"
 )
 
 // BuildConfig holds configuration for building and exporting images.
@@ -29,7 +27,6 @@ func createBuildConfig(
 	patchedImageName string,
 	shouldExportOCI bool,
 	push bool,
-	_ buildkit.Opts,
 	pipeW io.WriteCloser,
 ) (*BuildConfig, error) {
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)

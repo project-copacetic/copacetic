@@ -166,7 +166,7 @@ func createMultiPlatformManifest(
 		log.Debugf("Index annotation: %s = %s", ak.Key, v)
 	}
 
-	idxBytes, desc, err := resolver.Combine(ctx, srcRefs, annotations, false)
+	idxBytes, desc, _, err := resolver.Combine(ctx, srcRefs, annotations, false)
 	if err != nil {
 		return fmt.Errorf("failed to combine sources into manifest list: %w", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 // for testing.
@@ -58,15 +59,16 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 // patchWithContext orchestrates the main patching workflow.
 func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) error {
+	// Configure EOL API if provided
+	if opts.EOLAPIBaseURL != "" {
+		utils.SetEOLAPIBaseURL(opts.EOLAPIBaseURL)
+		log.Debugf("Configured EOL API base URL: %s", opts.EOLAPIBaseURL)
+	}
+
 	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
 	pkgTypes := opts.PkgTypes
-
-	// Validate configuration based on source policy if present
-	if err := validateBuildConfiguration(opts); err != nil {
-		return fmt.Errorf("build configuration validation failed: %w", err)
-	}
 
 	// Parse and validate package types early
 	pkgTypesList, err := parsePkgTypes(pkgTypes)
@@ -173,24 +175,4 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
-}
-
-// validateBuildConfiguration validates the build configuration and source policies.
-func validateBuildConfiguration(opts *types.Options) error {
-	// Validate source policy if build options are provided
-	if opts.BkAddr != "" {
-		bkOpts := buildkit.Opts{
-			Addr:       opts.BkAddr,
-			CACertPath: opts.BkCACertPath,
-			CertPath:   opts.BkCertPath,
-			KeyPath:    opts.BkKeyPath,
-		}
-
-		// Create temporary build config to validate source policy
-		_, err := createBuildConfig("temp", false, false, bkOpts, nil)
-		if err != nil {
-			return fmt.Errorf("failed to create build configuration: %w", err)
-		}
-	}
-	return nil
 }

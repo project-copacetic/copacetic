@@ -12,6 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
@@ -102,9 +103,17 @@ func getPlatformDescriptorFromManifest(
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
 	}
 
-	desc, err := remote.Get(ref)
+	// Try local daemon first, then fall back to remote
+	desc, err := buildkit.TryGetManifestFromLocal(ref)
 	if err != nil {
-		return nil, fmt.Errorf("error fetching descriptor for %q: %w", imageRef, err)
+		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		desc, err = remote.Get(ref)
+		if err != nil {
+			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", imageRef, err)
+		}
+		log.Debugf("Successfully fetched descriptor from remote registry for %s", imageRef)
+	} else {
+		log.Debugf("Successfully fetched descriptor from local daemon for %s", imageRef)
 	}
 
 	if !desc.MediaType.IsIndex() {

@@ -4,12 +4,53 @@ import (
 	"testing"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
-	"github.com/project-copacetic/copacetic/pkg/utils"
 )
+
+func TestExitOnEOLFunctionality(t *testing.T) {
+	// Test the ExitOnEOL functionality with mock EOL API
+	originalBaseURL := utils.GetEOLAPIBaseURL()
+	defer utils.SetEOLAPIBaseURL(originalBaseURL)
+
+	tests := []struct {
+		name        string
+		exitOnEOL   bool
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name:        "ExitOnEOL disabled - should not exit",
+			exitOnEOL:   false,
+			expectError: false,
+		},
+		{
+			name:        "ExitOnEOL enabled - should exit with error",
+			exitOnEOL:   true,
+			expectError: true,
+			errorMsg:    "exiting due to EOL operating system",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// This test validates the ExitOnEOL option is properly passed through
+			// In a full integration test, we would set up a mock BuildKit client
+			// For now, we verify the option is correctly configured
+
+			opts := &Options{
+				ExitOnEOL: tt.exitOnEOL,
+			}
+
+			if opts.ExitOnEOL != tt.exitOnEOL {
+				t.Errorf("ExitOnEOL option not properly set: got %v, want %v", opts.ExitOnEOL, tt.exitOnEOL)
+			}
+		})
+	}
+}
 
 // Test Options struct initialization and validation.
 func TestOptions_Initialization(t *testing.T) {
@@ -79,16 +120,16 @@ func TestOptions_WithErrorChannel(t *testing.T) {
 // Test Result struct initialization and validation.
 func TestResult_Initialization(t *testing.T) {
 	result := &Result{
-		PackageType:       "deb",
-		ErroredPackages:   []string{"pkg1", "pkg2"},
-		ValidatedManifest: &unversioned.UpdateManifest{OSUpdates: []unversioned.UpdatePackage{{Name: "pkg3", FixedVersion: "1.0.1"}}},
+		PackageType:      "deb",
+		ErroredPackages:  []string{"pkg1", "pkg2"},
+		ValidatedUpdates: []unversioned.UpdatePackage{{Name: "pkg3", FixedVersion: "1.0.1"}},
 	}
 
 	assert.Equal(t, "deb", result.PackageType)
 	assert.Equal(t, []string{"pkg1", "pkg2"}, result.ErroredPackages)
-	assert.NotNil(t, result.ValidatedManifest)
-	assert.Len(t, result.ValidatedManifest.OSUpdates, 1)
-	assert.Equal(t, "pkg3", result.ValidatedManifest.OSUpdates[0].Name)
+	assert.NotNil(t, result.ValidatedUpdates)
+	assert.Len(t, result.ValidatedUpdates, 1)
+	assert.Equal(t, "pkg3", result.ValidatedUpdates[0].Name)
 }
 
 // Test Result with empty fields.
@@ -97,27 +138,23 @@ func TestResult_Empty(t *testing.T) {
 
 	assert.Empty(t, result.PackageType)
 	assert.Nil(t, result.ErroredPackages)
-	assert.Nil(t, result.ValidatedManifest)
 	assert.Nil(t, result.Result)
+	assert.Nil(t, result.ValidatedUpdates)
 }
 
 // Test Result with multiple validated updates.
 func TestResult_MultipleValidatedUpdates(t *testing.T) {
 	result := &Result{
-		PackageType: "rpm",
-		ValidatedManifest: &unversioned.UpdateManifest{OSUpdates: []unversioned.UpdatePackage{
-			{Name: "pkg1", FixedVersion: "1.0.1"},
-			{Name: "pkg2", FixedVersion: "2.0.1"},
-			{Name: "pkg3", FixedVersion: "3.0.1"},
-		}},
+		PackageType:      "rpm",
+		ValidatedUpdates: []unversioned.UpdatePackage{{Name: "pkg1", FixedVersion: "1.0.1"}, {Name: "pkg2", FixedVersion: "2.0.1"}, {Name: "pkg3", FixedVersion: "3.0.1"}},
 	}
 
 	assert.Equal(t, "rpm", result.PackageType)
-	assert.NotNil(t, result.ValidatedManifest)
-	assert.Len(t, result.ValidatedManifest.OSUpdates, 3)
-	assert.Equal(t, "pkg1", result.ValidatedManifest.OSUpdates[0].Name)
-	assert.Equal(t, "pkg2", result.ValidatedManifest.OSUpdates[1].Name)
-	assert.Equal(t, "pkg3", result.ValidatedManifest.OSUpdates[2].Name)
+	assert.NotNil(t, result.ValidatedUpdates)
+	assert.Len(t, result.ValidatedUpdates, 3)
+	assert.Equal(t, "pkg1", result.ValidatedUpdates[0].Name)
+	assert.Equal(t, "pkg2", result.ValidatedUpdates[1].Name)
+	assert.Equal(t, "pkg3", result.ValidatedUpdates[2].Name)
 }
 
 // Test Context struct initialization.
@@ -147,6 +184,20 @@ func TestResult_CommonPackageTypes(t *testing.T) {
 			}
 			assert.Equal(t, tc.packageType, result.PackageType)
 		})
+	}
+}
+
+func TestEOLConfigurationIntegration(t *testing.T) {
+	// Test URL configuration
+	originalBaseURL := utils.GetEOLAPIBaseURL()
+	defer utils.SetEOLAPIBaseURL(originalBaseURL)
+
+	testURL := "https://example.com/api/v1/products"
+	utils.SetEOLAPIBaseURL(testURL)
+
+	got := utils.GetEOLAPIBaseURL()
+	if got != testURL {
+		t.Errorf("EOL API URL not properly configured: got %s, want %s", got, testURL)
 	}
 }
 

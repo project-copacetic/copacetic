@@ -37,6 +37,7 @@ type Options struct {
 	Push      bool
 	Platforms []string
 	Loader    string
+	OCIDir    string
 
 	// Package types and library patch level
 	PkgTypes          string
@@ -44,4 +45,8 @@ type Options struct {
 
 	// Generate specific
 	OutputContext string
+
+	// EOL configuration
+	EOLAPIBaseURL string
+	ExitOnEOL     bool
 }
