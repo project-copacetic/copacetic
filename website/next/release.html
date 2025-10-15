@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.8e70b037.css">
-<script src="/copacetic/website/assets/js/runtime~main.75021d7f.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.6b100915.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.c1c415a1.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -53,18 +53,14 @@
 <div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout main</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream main</span><br></span></code></pre></div></div>
 </li>
 <li>
-<p><strong>Create Release Branch</strong></p>
-<p>Create the release branch:</p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout -b release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span></code></pre></div></div>
-</li>
-<li>
 <p><strong>Create and Push the Tag</strong></p>
 <div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a &lt;NEW VERSION&gt; -m &#x27;&lt;NEW VERSION&gt;&#x27;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream &lt;NEW VERSION&gt;</span><br></span></code></pre></div></div>
 </li>
 <li>
 <p><strong>Publishing</strong></p>
 <ul>
-<li>GoReleaser will automatically create a new release</li>
+<li>GoReleaser will automatically create a new release.</li>
+<li>Release branches are automatically created during the release process. When a tag is pushed, the GitHub workflow automatically creates a corresponding release branch.</li>
 <li>Review and edit the release at: <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer">GitHub Releases</a></li>
 <li>Review the respective copa-action image at: <a href="https://github.com/project-copacetic/copacetic/pkgs/container/copa-action" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
 <li>Review the respective copa-extension image at: <a href="https://github.com/project-copacetic/copacetic/pkgs/container/copa-extension" target="_blank" rel="noopener noreferrer">GitHub Container Registry</a></li>
@@ -75,11 +71,9 @@
 <p>For patch releases (e.g., <code>v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;</code>) that contain bug fixes or security patches:</p>
 <ol>
 <li>
-<p><strong>Create Release Branch (if it doesn&#x27;t exist)</strong></p>
-<p>Create the release branch from the tag:</p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout -b release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x v&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span></code></pre></div></div>
-<p>If the release branch already exists:</p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span></code></pre></div></div>
+<p><strong>Check out Release Branch</strong></p>
+<p>Check out release branch from the tag:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span></code></pre></div></div>
 </li>
 <li>
 <p><strong>Cherry-pick the Fix</strong></p>
@@ -91,7 +85,7 @@
 <li>
 <p><strong>Open a Pull Request</strong></p>
 <p>Create a PR to the release branch:</p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">gh pr create --base release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x --title &quot;Cherry-pick fix for v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot; --body &quot;Cherry-picking fix from main branch for patch release v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot;</span><br></span></code></pre></div></div>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">gh pr create --base release-&lt;MAJOR&gt;.&lt;MINOR&gt; --title &quot;Cherry-pick fix for v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot; --body &quot;Cherry-picking fix from main branch for patch release v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot;</span><br></span></code></pre></div></div>
 </li>
 <li>
 <p><strong>Review and Merge</strong></p>
@@ -104,7 +98,7 @@
 <li>
 <p><strong>Tag the Release</strong></p>
 <p>After the PR is merged, tag the release from the release branch:</p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;.x</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt; -m &quot;Release v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;</span><br></span></code></pre></div></div>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream release-&lt;MAJOR&gt;.&lt;MINOR&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt; -m &quot;Release v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;&quot;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.&lt;PATCH&gt;</span><br></span></code></pre></div></div>
 </li>
 <li>
 <p><strong>Publishing</strong></p>
