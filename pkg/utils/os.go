@@ -5,18 +5,21 @@ package utils
 // These values correspond to normalized distro 'Type' values in manifests and
 // inputs to GetPackageManager.
 const (
-	OSTypeAlpine     = "alpine"
-	OSTypeDebian     = "debian"
-	OSTypeUbuntu     = "ubuntu"
-	OSTypeCBLMariner = "cbl-mariner"
-	OSTypeAzureLinux = "azurelinux"
-	OSTypeCentOS     = "centos"
-	OSTypeOracle     = "oracle"
-	OSTypeRedHat     = "redhat"
-	OSTypeRocky      = "rocky"
-	OSTypeAmazon     = "amazon"
-	OSTypeAlma       = "alma"
-	OSTypeAlmaLinux  = "almalinux"
+	OSTypeAlpine       = "alpine"
+	OSTypeDebian       = "debian"
+	OSTypeUbuntu       = "ubuntu"
+	OSTypeCBLMariner   = "cbl-mariner"
+	OSTypeAzureLinux   = "azurelinux"
+	OSTypeCentOS       = "centos"
+	OSTypeOracle       = "oracle"
+	OSTypeRedHat       = "redhat"
+	OSTypeRocky        = "rocky"
+	OSTypeAmazon       = "amazon"
+	OSTypeAlma         = "alma"
+	OSTypeAlmaLinux    = "almalinux"
+	OSTypeSLES         = "sles"
+	OSTypeOpenSUSELeap = "opensuse-leap"
+	OSTypeOpenSUSETW   = "opensuse-tumbleweed"
 )
 
 // RPMDistros is a helper slice listing rpm-family OS identifiers.
@@ -30,4 +33,7 @@ var RPMDistros = []string{
 	OSTypeAmazon,
 	OSTypeAlma,
 	OSTypeAlmaLinux,
+	OSTypeSLES,
+	OSTypeOpenSUSELeap,
+	OSTypeOpenSUSETW,
 }
