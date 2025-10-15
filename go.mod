@@ -3,6 +3,7 @@ module github.com/project-copacetic/copacetic
 go 1.25
 
 require (
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/aquasecurity/go-pep440-version v0.0.1
 	github.com/aquasecurity/trivy v0.67.2
 	github.com/cenkalti/backoff/v4 v4.3.0
