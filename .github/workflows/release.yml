@@ -4,6 +4,17 @@ on:
   push:
     tags:
       - v*
+  workflow_dispatch:
+    inputs:
+      increment:
+        description: 'Version increment type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
 
 permissions:
   contents: read
@@ -24,11 +35,148 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate tag version (for manual tag pushes)
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          # Get the pushed tag
+          PUSHED_TAG="${{ github.ref }}"
+          PUSHED_TAG=${PUSHED_TAG#refs/tags/}
+          echo "Validating pushed tag: $PUSHED_TAG"
+          
+          # Get the previous latest tag (excluding the just-pushed one)
+          LATEST_TAG=$(git tag --sort=-version:refname | grep -v "^${PUSHED_TAG}$" | head -1)
+          
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous tag found, skipping validation"
+            exit 0
+          fi
+          
+          echo "Latest previous tag: $LATEST_TAG"
+          
+          # Parse pushed tag version
+          PUSHED_VERSION=${PUSHED_TAG#v}
+          IFS='.' read -r PUSHED_MAJOR PUSHED_MINOR PUSHED_PATCH <<< "$PUSHED_VERSION"
+          PUSHED_PATCH=${PUSHED_PATCH%%-*}
+          
+          # Parse latest tag version
+          LATEST_VERSION=${LATEST_TAG#v}
+          IFS='.' read -r LATEST_MAJOR LATEST_MINOR LATEST_PATCH <<< "$LATEST_VERSION"
+          LATEST_PATCH=${LATEST_PATCH%%-*}
+          
+          # Compare versions
+          echo "Comparing versions: $PUSHED_MAJOR.$PUSHED_MINOR.$PUSHED_PATCH vs $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+          
+          if [ "$PUSHED_MAJOR" -lt "$LATEST_MAJOR" ]; then
+            echo "::error::Error: Pushed tag $PUSHED_TAG is not greater than latest tag $LATEST_TAG"
+            echo "::error::  Pushed: $PUSHED_MAJOR.$PUSHED_MINOR.$PUSHED_PATCH vs Latest: $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+            echo "::error::  This might be a typo - did you mean v${LATEST_MAJOR}.$((LATEST_MINOR + 1)).0 instead of $PUSHED_TAG?"
+            exit 1
+          elif [ "$PUSHED_MAJOR" -eq "$LATEST_MAJOR" ]; then
+            if [ "$PUSHED_MINOR" -lt "$LATEST_MINOR" ]; then
+              echo "::error::Error: Pushed tag $PUSHED_TAG is not greater than latest tag $LATEST_TAG"
+              echo "::error::  Pushed: $PUSHED_MAJOR.$PUSHED_MINOR.$PUSHED_PATCH vs Latest: $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+              echo "::error::  This might be a typo - did you mean v${PUSHED_MAJOR}.$((LATEST_MINOR + 1)).0 instead of $PUSHED_TAG?"
+              exit 1
+            elif [ "$PUSHED_MINOR" -eq "$LATEST_MINOR" ]; then
+              if [ "$PUSHED_PATCH" -le "$LATEST_PATCH" ]; then
+                echo "::error::Error: Pushed tag $PUSHED_TAG is not greater than latest tag $LATEST_TAG"
+                echo "::error::  Pushed: $PUSHED_MAJOR.$PUSHED_MINOR.$PUSHED_PATCH vs Latest: $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+                exit 1
+              fi
+            fi
+          fi
+          
+          echo "✓ Version validation passed: $PUSHED_TAG > $LATEST_TAG"
+
+      - name: Calculate and validate new version
+        id: version
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # Get the latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+          
+          # Remove 'v' prefix and parse version components
+          VERSION=${LATEST_TAG#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          
+          # Strip any pre-release suffix from patch version
+          PATCH=${PATCH%%-*}
+          
+          # Increment based on input
+          case "${{ github.event.inputs.increment }}" in
+            major)
+              MAJOR=$(("$MAJOR" + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$(("$MINOR" + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$(("$PATCH" + 1))
+              ;;
+          esac
+          
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "New version: $NEW_VERSION"
+          
+          # Validate new version is strictly greater than latest
+          # Parse both versions for comparison
+          LATEST_MAJOR=${LATEST_TAG#v}
+          LATEST_MAJOR=${LATEST_MAJOR%%.*}
+          LATEST_MINOR=${VERSION#*.}
+          LATEST_MINOR=${LATEST_MINOR%%.*}
+          LATEST_PATCH=${VERSION##*.}
+          LATEST_PATCH=${LATEST_PATCH%%-*}
+          
+          # Compare versions
+          if [ "$MAJOR" -lt "$LATEST_MAJOR" ]; then
+            echo "Error: New version $NEW_VERSION is not greater than latest version $LATEST_TAG"
+            echo "  New: $MAJOR.$MINOR.$PATCH vs Latest: $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+            exit 1
+          elif [ "$MAJOR" -eq "$LATEST_MAJOR" ]; then
+            if [ "$MINOR" -lt "$LATEST_MINOR" ]; then
+              echo "Error: New version $NEW_VERSION is not greater than latest version $LATEST_TAG"
+              echo "  New: $MAJOR.$MINOR.$PATCH vs Latest: $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+              exit 1
+            elif [ "$MINOR" -eq "$LATEST_MINOR" ]; then
+              if [ "$PATCH" -le "$LATEST_PATCH" ]; then
+                echo "Error: New version $NEW_VERSION is not greater than latest version $LATEST_TAG"
+                echo "  New: $MAJOR.$MINOR.$PATCH vs Latest: $LATEST_MAJOR.$LATEST_MINOR.$LATEST_PATCH"
+                exit 1
+              fi
+            fi
+          fi
+          
+          echo "✓ Version validation passed: $NEW_VERSION > $LATEST_TAG"
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest_version=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create and push new tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          NEW_VERSION="${{ steps.version.outputs.new_version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEW_VERSION" -m "Release $NEW_VERSION"
+          git push origin "$NEW_VERSION"
+          echo "Created and pushed tag: $NEW_VERSION"
+
       - name: Create release branch
         run: |
+          # Get the tag being released
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_REF="${{ steps.version.outputs.new_version }}"
+          else
+            TAG_REF="${{ github.ref }}"
+          fi
+          
           # Extract version from tag (e.g., v0.11.0 -> 0.11)
-          VERSION=$(echo "${{ github.ref }}" | sed 's/refs\/tags\/v//' | \
-            sed 's/\.[0-9]*\(-.*\)*$//')
+          VERSION="${TAG_REF#refs/tags/v}"
+          VERSION="${VERSION#v}"
+          VERSION="${VERSION%.*}"
           BRANCH_NAME="release-${VERSION}"
           
           # Check if release branch already exists
@@ -46,6 +194,22 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+
+      - name: Set version variable
+        id: set_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ steps.version.outputs.new_version }}"
+          else
+            VERSION="${{ github.ref }}"
+          fi
+          # Remove refs/tags/ prefix if present
+          VERSION="${VERSION#refs/tags/}"
+          # Remove v prefix for use in docker tags
+          VERSION_NO_V="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_no_v=$VERSION_NO_V" >> "$GITHUB_OUTPUT"
+          echo "Using version: $VERSION"
 
       - uses: anchore/sbom-action/download-syft@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
 
@@ -75,7 +239,7 @@ jobs:
 
       - name: Build and push copa-action image with new version
         run: |
-          tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
+          tag="${{ steps.set_version.outputs.version_no_v }}"
           docker buildx build --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-action:v"$tag" --push .
 
       - name: Checkout copa-extension repository
@@ -96,5 +260,5 @@ jobs:
 
       - name: Build and push copa-extension image with new version
         run: |
-          tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
+          tag="${{ steps.set_version.outputs.version_no_v }}"
           docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-extension:v"$tag" container/copa-extension
