@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -224,7 +225,7 @@ func patchMultiPlatformImage(
 				}
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
-					Status:   "Error",
+					Status:   status,
 					Ref:      "",
 					Message:  err.Error(),
 				}
