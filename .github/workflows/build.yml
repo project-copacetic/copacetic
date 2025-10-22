@@ -33,7 +33,7 @@ permissions:
 jobs:
   unit-test:
     name: Unit Test
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -44,7 +44,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -61,7 +61,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     permissions:
       packages: write
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Build copa
         shell: bash
@@ -101,7 +101,7 @@ jobs:
   test-patch-trivy:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -117,7 +117,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -147,7 +147,7 @@ jobs:
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -163,7 +163,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -271,7 +271,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -282,7 +282,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash
@@ -318,14 +318,14 @@ jobs:
   test-push:
     needs: build
     name: Test push
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
       - name: Check out code
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -365,7 +365,7 @@ jobs:
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -408,7 +408,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -446,10 +446,52 @@ jobs:
         with:
           paths: "test-results.xml"
 
+  test-generate:
+    needs: build
+    name: Test generate command ${{ matrix.buildkit_mode }}
+    runs-on: oracle-vm-16cpu-64gb-x86-64
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
+    steps:
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - run: docker system prune -a -f --volumes
+      - name: Check out code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Run e2e tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          go test -v ./test/e2e/generate --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
-    runs-on: ubuntu-latest-16-cores
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     steps:
       - name: Change docker daemon config
@@ -484,7 +526,7 @@ jobs:
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash
@@ -515,6 +557,258 @@ jobs:
         run: |
           set -eu -o pipefail
           gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/multiplatform-plugin --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
+
+  test-patch-local-multiplatform-oci-layout:
+    needs: build
+    name: Test multiplatform OCI layout creation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Change docker daemon config
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        with:
+          install: true
+          platforms: linux/amd64,linux/arm64
+      - name: Check out code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Install multiplatform tooling
+        shell: bash
+        run: .github/workflows/scripts/download-multiplatform-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - run: docker system prune -a -f --volumes
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Set up local registry with insecure access
+        run: |
+          docker run -d -p 5000:5000 --restart=always --name registry registry:2
+          # wait for the registry to be healthy
+          for i in $(seq 1 60); do
+            if curl -f http://localhost:5000/v2/_catalog; then
+              echo "Registry is healthy after ${i} attempts"
+              break
+            fi
+            echo "Waiting for registry... attempt ${i}/60"
+            sleep 1
+          done
+          # Verify registry is accessible
+          curl -f http://localhost:5000/v2/_catalog || { echo "ERROR: Registry not accessible"; exit 1; }
+      - name: Test OCI layout creation with local multiplatform manifest
+        shell: bash
+        run: |
+          set -eu -o pipefail
+
+          BASE_IMAGE="mcr.microsoft.com/cbl-mariner/base/core:2.0.20240112"
+          LOCAL_REGISTRY="localhost:5000"
+          PLATFORM_AMD64_IMAGE="${LOCAL_REGISTRY}/mariner:2.0.20240112-amd64"
+          PLATFORM_ARM64_IMAGE="${LOCAL_REGISTRY}/mariner:2.0.20240112-arm64"
+          LOCAL_MANIFEST="${LOCAL_REGISTRY}/mariner:2.0.20240112-multiplatform"
+          
+          echo "Building and pushing platform-specific images to local registry..."
+          
+          # Get platform-specific digests from the multi-platform image
+          AMD64_DIGEST=$(docker manifest inspect "${BASE_IMAGE}" | jq -r '.manifests[] | select(.platform.architecture=="amd64") | .digest')
+          ARM64_DIGEST=$(docker manifest inspect "${BASE_IMAGE}" | jq -r '.manifests[] | select(.platform.architecture=="arm64") | .digest')
+          
+          echo "AMD64 digest: ${AMD64_DIGEST}"
+          echo "ARM64 digest: ${ARM64_DIGEST}"
+          
+          # Pull and push amd64 image using specific digest
+          echo "Pulling amd64 image by digest..."
+          docker pull "${BASE_IMAGE}@${AMD64_DIGEST}"
+          echo "Tagging and pushing amd64 image..."
+          docker tag "${BASE_IMAGE}@${AMD64_DIGEST}" "${PLATFORM_AMD64_IMAGE}"
+          docker push "${PLATFORM_AMD64_IMAGE}"
+          
+          # Pull and push arm64 image using specific digest
+          echo "Pulling arm64 image by digest..."
+          docker pull "${BASE_IMAGE}@${ARM64_DIGEST}"
+          echo "Tagging and pushing arm64 image..."
+          docker tag "${BASE_IMAGE}@${ARM64_DIGEST}" "${PLATFORM_ARM64_IMAGE}"
+          docker push "${PLATFORM_ARM64_IMAGE}"
+          
+          echo "Verifying platform-specific images exist in local registry..."
+          curl -s http://localhost:5000/v2/mariner/tags/list | jq .
+          
+          # Verify images using registry API with retries
+          for i in $(seq 1 10); do
+            if curl -s -f "http://localhost:5000/v2/mariner/manifests/2.0.20240112-amd64" > /dev/null; then
+              echo "✓ AMD64 image verified in registry"
+              break
+            fi
+            echo "Waiting for AMD64 image... attempt ${i}/10"
+            sleep 2
+          done
+          
+          for i in $(seq 1 10); do
+            if curl -s -f "http://localhost:5000/v2/mariner/manifests/2.0.20240112-arm64" > /dev/null; then
+              echo "✓ ARM64 image verified in registry"
+              break
+            fi
+            echo "Waiting for ARM64 image... attempt ${i}/10"
+            sleep 2
+          done
+          
+          echo "Enabling Docker CLI experimental features for manifest commands..."
+          export DOCKER_CLI_EXPERIMENTAL=enabled
+          
+          echo "Creating local Docker manifest that references local registry platform images..."
+          # Pull the images locally first to ensure they're available for manifest creation
+          docker pull "${PLATFORM_AMD64_IMAGE}"
+          docker pull "${PLATFORM_ARM64_IMAGE}"
+          
+          # Create local manifest list using --insecure for local registry
+          docker manifest create --insecure "${LOCAL_MANIFEST}" "${PLATFORM_AMD64_IMAGE}" "${PLATFORM_ARM64_IMAGE}"
+          docker manifest push --insecure "${LOCAL_MANIFEST}"
+          
+          echo "Verifying local multiplatform manifest was created..."
+          docker manifest inspect "${LOCAL_MANIFEST}"
+          
+          # Verify manifest exists in registry
+          curl -s "http://localhost:5000/v2/mariner/manifests/2.0.20240112-multiplatform" | jq .
+          
+          # Create temp directory for OCI layout
+          OCI_LAYOUT_DIR=$(mktemp -d)
+          
+          echo "Patching local multiplatform manifest and creating OCI layout (patching only amd64)..."
+          
+          # Set buildkit to use Docker daemon to ensure it can access the local registry
+          export COPA_BUILDKIT_ADDR="docker://"
+          
+          # Patch only amd64 platform, preserve arm64 platform
+          ./copa patch \
+            -i="${LOCAL_MANIFEST}" \
+            -t="patched" \
+            --platform="linux/amd64" \
+            --timeout=30m \
+            --ignore-errors=true \
+            --oci-dir="${OCI_LAYOUT_DIR}" \
+            --debug
+          
+          echo "Validating OCI layout structure..."
+          
+          # Check that OCI layout directory was created
+          if [ ! -d "${OCI_LAYOUT_DIR}" ]; then
+            echo "ERROR: OCI layout directory was not created"
+            exit 1
+          fi
+          
+          # Check for required OCI layout files
+          if [ ! -f "${OCI_LAYOUT_DIR}/oci-layout" ]; then
+            echo "ERROR: oci-layout file missing"
+            exit 1
+          fi
+          
+          if [ ! -f "${OCI_LAYOUT_DIR}/index.json" ]; then
+            echo "ERROR: index.json file missing"
+            exit 1
+          fi
+          
+          if [ ! -d "${OCI_LAYOUT_DIR}/blobs" ]; then
+            echo "ERROR: blobs directory missing"
+            exit 1
+          fi
+          
+          echo "Validating OCI layout content..."
+          
+          # Check that index.json contains multiplatform index
+          MEDIA_TYPE=$(jq -r '.mediaType' "${OCI_LAYOUT_DIR}/index.json")
+          echo "Index media type: ${MEDIA_TYPE}"
+          
+          if [ "${MEDIA_TYPE}" != "application/vnd.oci.image.index.v1+json" ]; then
+            echo "ERROR: Expected OCI image index media type, got ${MEDIA_TYPE}"
+            exit 1
+          fi
+          
+          # Check for multiple platforms in the index (mixed layout)
+          PLATFORM_COUNT=$(jq '.manifests | length' "${OCI_LAYOUT_DIR}/index.json")
+          echo "Found ${PLATFORM_COUNT} platform(s) in index"
+          
+          if [ "${PLATFORM_COUNT}" -ne 2 ]; then
+            echo "ERROR: Expected exactly 2 platforms (1 patched, 1 preserved), found ${PLATFORM_COUNT}"
+            exit 1
+          fi
+          
+          # Validate specific platforms exist
+          AMD64_FOUND=$(jq -r '.manifests[] | select(.platform.architecture=="amd64") | .platform.architecture' "${OCI_LAYOUT_DIR}/index.json")
+          ARM64_FOUND=$(jq -r '.manifests[] | select(.platform.architecture=="arm64") | .platform.architecture' "${OCI_LAYOUT_DIR}/index.json")
+          
+          if [ "${AMD64_FOUND}" != "amd64" ]; then
+            echo "ERROR: amd64 platform not found in index"
+            exit 1
+          fi
+          
+          if [ "${ARM64_FOUND}" != "arm64" ]; then
+            echo "ERROR: arm64 platform not found in index"
+            exit 1
+          fi
+          
+          # Cleanup
+          echo "Cleaning up..."
+          rm -rf "${OCI_LAYOUT_DIR}"
+          docker stop registry || true
+          docker rm registry || true
+          
+          echo "Local registry mixed OCI layout test completed successfully!"
+
+  test-nodejs:
+    needs: build
+    name: Test Node.js patching
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: read-all
+    steps:
+      - name: Check out code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Add containerd-snapshotter to docker daemon
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+      - name: Run Node.js e2e tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/nodejs --addr=docker:// --copa="$(pwd)/copa" -timeout 0
       - name: Test Summary
         uses: test-summary/action@v2
         with:

@@ -24,12 +24,57 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set Version Variables
+        id: vars
+        run: |
+          # Remove the 'refs/tags/v' prefix.
+          VERSION_TAG=$(echo "${{ github.ref }}" | sed 's,refs/tags/v,,')
+          echo "version_tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Version Order
+        run: |
+          PUSHED_TAG="v${{ steps.vars.outputs.version_tag }}"
+          
+          # Get the immediate previous tag.
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${PUSHED_TAG}^" 2>/dev/null || echo "v0.0.0")
+          
+          echo "Validating pushed tag: ${PUSHED_TAG}"
+          echo "Comparing against previous tag: ${PREVIOUS_TAG}"
+
+          # Create a list of the two tags and sort them. The pushed tag must be the last one.
+          LATEST_SORTED=$(printf "%s\n%s" "$PUSHED_TAG" "$PREVIOUS_TAG" | sort -V | tail -n1)
+
+          if [ "$LATEST_SORTED" != "$PUSHED_TAG" ] || [ "$PUSHED_TAG" == "$PREVIOUS_TAG" ]; then
+            echo "::error::Validation Failed: Pushed tag '${PUSHED_TAG}' is not strictly greater than the previous tag '${PREVIOUS_TAG}'."
+            echo "::error::This could be a typo. Did you mean to release a different version?"
+            exit 1
+          fi
+
+          echo "✅ Version validation passed."
+
+      - name: Create release branch
+        run: |
+          # Extract version from tag (e.g., v0.11.0 -> 0.11 or v0.12.0-rc.1 -> 0.12)
+          VERSION=$(echo "${{ steps.vars.outputs.version_tag }}" | cut -d'.' -f1,2)
+          BRANCH_NAME="release-${VERSION}"
+          
+          # Check if release branch already exists
+          if git show-ref --verify --quiet \
+            "refs/remotes/origin/${BRANCH_NAME}"; then
+            echo "Release branch ${BRANCH_NAME} already exists, skipping"
+          else
+            echo "Creating release branch ${BRANCH_NAME}"
+            git checkout -b "${BRANCH_NAME}"
+            git push origin "${BRANCH_NAME}"
+            echo "Created and pushed release branch ${BRANCH_NAME}"
+          fi
+
       - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
           check-latest: true
 
-      - uses: anchore/sbom-action/download-syft@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+      - uses: anchore/sbom-action/download-syft@aa0e114b2e19480f157109b9922bda359bd98b90 # v0.20.8
 
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
@@ -42,7 +87,8 @@ jobs:
       - name: Checkout copa-action repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: project-copacetic/copa-action
+          repository: ${{ github.repository_owner }}/copa-action
+          path: copa-action
           ref: main
 
       - name: Set up Docker
@@ -57,16 +103,29 @@ jobs:
 
       - name: Build and push copa-action image with new version
         run: |
-          tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
-          docker buildx build --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-action:v"$tag" --push .
+          tag="${{ steps.vars.outputs.version_tag }}"
+          image_owner="${{ github.repository_owner }}"
+          docker buildx build --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
 
       - name: Checkout copa-extension repository
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
         with:
-          repository: project-copacetic/copa-extension
+          repository: ${{ github.repository_owner }}/copa-extension
+          path: copa-extension
           ref: main
+
+      - name: Set up Docker for copa-extension
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to ghcr for copa-extension
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa-extension image with new version
         run: |
-          tag="$(echo "${{ github.ref }}" | tr -d 'refs/tags/v')"
-          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t ghcr.io/project-copacetic/copa-extension:v"$tag" container/copa-extension
+          tag="${{ steps.vars.outputs.version_tag }}"
+          image_owner="${{ github.repository_owner }}"
+          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension

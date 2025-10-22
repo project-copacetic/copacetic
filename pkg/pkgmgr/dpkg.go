@@ -343,6 +343,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		llb.Shlex("apt-get update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
+		llb.WithCustomName("Updating package database"),
 	).Root()
 
 	// Only check for upgradable packages when updating all (no specific updates list).
