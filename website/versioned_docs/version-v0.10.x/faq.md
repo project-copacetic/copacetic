@@ -145,7 +145,7 @@ Common indicators include:
     ID=debian
     ```
 
-:::tip Check Distribution End-of-Life Status
+:::tip[Check Distribution End-of-Life Status]
 
 Visit [endoflife.date](https://endoflife.date/) to easily check the End-of-Life (EOL) dates for your Linux distribution, programming languages, frameworks, and other software.
 
