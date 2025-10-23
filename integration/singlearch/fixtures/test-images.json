@@ -219,10 +219,10 @@
     {
         "image": "registry.suse.com/bci/bci-micro",
         "tag": "15.7-42.1",
-        "digest": "sha256:682126fbb8603c66bc615024220d2f4fa79e146fba005a14d926e8cf9c4eae15",
+        "digest": "sha256:995231c41ed26a5cb630b485485ea10b4d794ee65eea9f2b7886ab5d84677ec0",
         "distro": "SUSE BCI Micro distroless",
         "description": "Valid rpm DB, no zypper",
         "ignoreErrors": false,
-        "isManifestList": false
+        "isManifestList": true
     }
 ]
