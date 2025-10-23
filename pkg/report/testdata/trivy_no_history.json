@@ -3,10 +3,6 @@
   "ArtifactName": "quay.io/prometheus/alertmanager:v0.28.1",
   "ArtifactType": "container_image",
   "Metadata": {
-    "OS": {
-      "Family": "alpine",
-      "Name": "3.21.0"
-    },
     "ImageConfig": {
       "architecture": "amd64"
     }
