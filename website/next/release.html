@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.cc765d86.css">
-<script src="/copacetic/website/assets/js/runtime~main.9f770da9.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.9780dee2.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.9be24233.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -41,12 +41,48 @@
 <li class="">Tags are created on the default branch (typically <code>main</code>), or on a release branch when applicable.</li>
 <li class="">Patch releases increment the Z portion, e.g., <code>v0.6.1</code> → <code>v0.6.2</code>.</li>
 <li class="">Minor releases increment the Y portion, e.g., <code>v0.9.0</code> → <code>v0.10.0</code>.</li>
-<li class="">Pre-releases (alpha, beta, rc) are not currently in use, but should follow the pattern <code>vX.Y.Z-rc.N</code>, etc., if introduced.</li>
+<li class="">Release candidates (RC) follow the pattern <code>vX.Y.Z-rc.N</code>, e.g., <code>v0.12.0-rc.1</code>, <code>v0.12.0-rc.2</code>.</li>
 </ul>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="release-process">Release Process<a href="#release-process" class="hash-link" aria-label="Direct link to Release Process" title="Direct link to Release Process" translate="no">​</a></h2>
 <p>Copacetic uses <a href="https://goreleaser.com/" target="_blank" rel="noopener noreferrer" class="">GoReleaser</a> for automating releases. The release process differs depending on whether you&#x27;re cutting a major/minor release or a patch release.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="release-candidate-rc-process">Release Candidate (RC) Process<a href="#release-candidate-rc-process" class="hash-link" aria-label="Direct link to Release Candidate (RC) Process" title="Direct link to Release Candidate (RC) Process" translate="no">​</a></h3>
+<p>For major and minor releases, it is recommended to publish a release candidate (RC) before the final release to gather community feedback and ensure stability.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="creating-a-release-candidate">Creating a Release Candidate<a href="#creating-a-release-candidate" class="hash-link" aria-label="Direct link to Creating a Release Candidate" title="Direct link to Creating a Release Candidate" translate="no">​</a></h4>
+<ol>
+<li class="">
+<p><strong>Prepare the Release Branch</strong></p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout main</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull upstream main</span><br></span></code></pre></div></div>
+</li>
+<li class="">
+<p><strong>Create and Push the RC Tag</strong></p>
+<p>For the first release candidate:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.1 -m &#x27;v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.1&#x27;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.1</span><br></span></code></pre></div></div>
+<p>For subsequent release candidates (if fixes are needed):</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.2 -m &#x27;v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.2&#x27;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.2</span><br></span></code></pre></div></div>
+</li>
+<li class="">
+<p><strong>Gather Feedback</strong></p>
+<ul>
+<li class="">Announce the RC to the community</li>
+<li class="">Monitor for bug reports and feedback</li>
+<li class="">Address critical issues if found</li>
+</ul>
+</li>
+<li class="">
+<p><strong>Proceed to Final Release</strong></p>
+<ul>
+<li class="">If no critical issues are found, proceed with the final release (see Major/Minor Release Process below)</li>
+<li class="">If critical issues are discovered, fix them and create a new RC (increment the RC number)</li>
+</ul>
+</li>
+</ol>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="publishing-the-final-release">Publishing the Final Release<a href="#publishing-the-final-release" class="hash-link" aria-label="Direct link to Publishing the Final Release" title="Direct link to Publishing the Final Release" translate="no">​</a></h4>
+<p>Once the RC has been validated and no critical issues remain, follow the Major/Minor Release Process below to publish the final release.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="majorminor-release-process">Major/Minor Release Process<a href="#majorminor-release-process" class="hash-link" aria-label="Direct link to Major/Minor Release Process" title="Direct link to Major/Minor Release Process" translate="no">​</a></h3>
 <p>For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):</p>
+<blockquote>
+<p><strong>Note:</strong> It is recommended to create a release candidate (RC) first before publishing the final release. See the <a href="#release-candidate-rc-process" class="">Release Candidate (RC) Process</a> section above.</p>
+</blockquote>
 <ol>
 <li class="">
 <p><strong>Prepare the Release Branch</strong></p>
@@ -120,6 +156,6 @@
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="acknowledgement">Acknowledgement<a href="#acknowledgement" class="hash-link" aria-label="Direct link to Acknowledgement" title="Direct link to Acknowledgement" translate="no">​</a></h2>
 <p>This document builds upon the release processes and practices of open-source projects such as Kubernetes, Helm, and Gatekeeper.</p>
 <hr>
-<p>For full release details and the latest updates, visit the <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer" class="">Copacetic Releases page</a>.</p></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/next/maintainer-guidelines"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Maintainer Guidelines</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/next/adopters"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Adopters</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#overview" class="table-of-contents__link toc-highlight">Overview</a></li><li><a href="#frequently-asked-questions" class="table-of-contents__link toc-highlight">Frequently Asked Questions</a></li><li><a href="#release-versioning" class="table-of-contents__link toc-highlight">Release Versioning</a><ul><li><a href="#tagging-strategy" class="table-of-contents__link toc-highlight">Tagging Strategy</a></li></ul></li><li><a href="#release-process" class="table-of-contents__link toc-highlight">Release Process</a><ul><li><a href="#majorminor-release-process" class="table-of-contents__link toc-highlight">Major/Minor Release Process</a></li><li><a href="#patch-release-process" class="table-of-contents__link toc-highlight">Patch Release Process</a></li></ul></li><li><a href="#supported-releases" class="table-of-contents__link toc-highlight">Supported Releases</a></li><li><a href="#supported-platforms" class="table-of-contents__link toc-highlight">Supported Platforms</a></li><li><a href="#acknowledgement" class="table-of-contents__link toc-highlight">Acknowledgement</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
+<p>For full release details and the latest updates, visit the <a href="https://github.com/project-copacetic/copacetic/releases" target="_blank" rel="noopener noreferrer" class="">Copacetic Releases page</a>.</p></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/next/maintainer-guidelines"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">Maintainer Guidelines</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/next/adopters"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Adopters</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#overview" class="table-of-contents__link toc-highlight">Overview</a></li><li><a href="#frequently-asked-questions" class="table-of-contents__link toc-highlight">Frequently Asked Questions</a></li><li><a href="#release-versioning" class="table-of-contents__link toc-highlight">Release Versioning</a><ul><li><a href="#tagging-strategy" class="table-of-contents__link toc-highlight">Tagging Strategy</a></li></ul></li><li><a href="#release-process" class="table-of-contents__link toc-highlight">Release Process</a><ul><li><a href="#release-candidate-rc-process" class="table-of-contents__link toc-highlight">Release Candidate (RC) Process</a></li><li><a href="#majorminor-release-process" class="table-of-contents__link toc-highlight">Major/Minor Release Process</a></li><li><a href="#patch-release-process" class="table-of-contents__link toc-highlight">Patch Release Process</a></li></ul></li><li><a href="#supported-releases" class="table-of-contents__link toc-highlight">Supported Releases</a></li><li><a href="#supported-platforms" class="table-of-contents__link toc-highlight">Supported Platforms</a></li><li><a href="#acknowledgement" class="table-of-contents__link toc-highlight">Acknowledgement</a></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
 </body>
 </html>
