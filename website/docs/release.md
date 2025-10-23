@@ -28,15 +28,59 @@ All releases follow the format `vX.Y.Z`, where X is the major version, Y is the 
 - Tags are created on the default branch (typically `main`), or on a release branch when applicable.
 - Patch releases increment the Z portion, e.g., `v0.6.1` → `v0.6.2`.
 - Minor releases increment the Y portion, e.g., `v0.9.0` → `v0.10.0`.
-- Pre-releases (alpha, beta, rc) are not currently in use, but should follow the pattern `vX.Y.Z-rc.N`, etc., if introduced.
+- Release candidates (RC) follow the pattern `vX.Y.Z-rc.N`, e.g., `v0.12.0-rc.1`, `v0.12.0-rc.2`.
 
 ## Release Process
 
 Copacetic uses [GoReleaser](https://goreleaser.com/) for automating releases. The release process differs depending on whether you're cutting a major/minor release or a patch release.
 
+### Release Candidate (RC) Process
+
+For major and minor releases, it is recommended to publish a release candidate (RC) before the final release to gather community feedback and ensure stability.
+
+#### Creating a Release Candidate
+
+1. **Prepare the Release Branch**
+
+   ```sh
+   git checkout main
+   git pull upstream main
+   ```
+
+2. **Create and Push the RC Tag**
+
+   For the first release candidate:
+
+   ```sh
+   git tag -a v<MAJOR>.<MINOR>.0-rc.1 -m 'v<MAJOR>.<MINOR>.0-rc.1'
+   git push upstream v<MAJOR>.<MINOR>.0-rc.1
+   ```
+
+   For subsequent release candidates (if fixes are needed):
+
+   ```sh
+   git tag -a v<MAJOR>.<MINOR>.0-rc.2 -m 'v<MAJOR>.<MINOR>.0-rc.2'
+   git push upstream v<MAJOR>.<MINOR>.0-rc.2
+   ```
+
+3. **Gather Feedback**
+   - Announce the RC to the community
+   - Monitor for bug reports and feedback
+   - Address critical issues if found
+
+4. **Proceed to Final Release**
+   - If no critical issues are found, proceed with the final release (see Major/Minor Release Process below)
+   - If critical issues are discovered, fix them and create a new RC (increment the RC number)
+
+#### Publishing the Final Release
+
+Once the RC has been validated and no critical issues remain, follow the Major/Minor Release Process below to publish the final release.
+
 ### Major/Minor Release Process
 
 For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):
+
+> **Note:** It is recommended to create a release candidate (RC) first before publishing the final release. See the [Release Candidate (RC) Process](#release-candidate-rc-process) section above.
 
 1. **Prepare the Release Branch**
 
