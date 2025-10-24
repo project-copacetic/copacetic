@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strings"
@@ -9,12 +10,12 @@ import (
 	"text/tabwriter"
 
 	"github.com/distribution/reference"
+	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
-	"github.com/project-copacetic/copacetic/pkg/common"
-	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
 // patchMultiPlatformImage patches a multi-platform image across all discovered platforms.
@@ -207,16 +208,32 @@ func patchMultiPlatformImage(
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
+				if errors.Is(err, types.ErrNoUpdatesFound) {
+					patchResults = append(patchResults, *res)
+					summaryMap[platformKey] = &types.MultiPlatformSummary{
+						Platform: platformKey,
+						Status:   "Up-to-date",
+						Ref:      res.OriginalRef.String() + " (original)",
+						Message:  "Image is already up-to-date",
+					}
+					return nil
+				}
+
+				status := "Error"
+				if ignoreError {
+					status = "Ignored"
+				}
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
-					Status:   "Error",
+					Status:   status,
 					Ref:      "",
 					Message:  err.Error(),
 				}
 				hasErrors = true
 				// Continue processing other platforms
 				return nil
-			} else if res == nil {
+			}
+			if res == nil {
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
 					Status:   "Error",
@@ -338,6 +355,16 @@ func patchMultiPlatformImage(
 	w.Flush()
 	log.Info("\nMulti-arch patch summary:\n" + b.String())
 
+	anyPatchesApplied := false
+	for _, summary := range summaryMap {
+		if summary.Status == "Patched" {
+			anyPatchesApplied = true
+			break
+		}
+	}
+	if !anyPatchesApplied && len(summaryMap) > 0 {
+		return types.ErrNoUpdatesFound
+	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
 		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms); err != nil {

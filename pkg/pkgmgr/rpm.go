@@ -17,6 +17,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -489,25 +490,31 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		if dnfTooling == "" {
 			dnfTooling = rm.rpmTools["dnf"]
 		}
-		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-		if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
-			return nil, nil, fmt.Errorf("no patchable packages found")
+		if updates == nil {
+			checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+			if !rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate) {
+				return nil, nil, types.ErrNoUpdatesFound
+			}
 		}
 
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
 	case rm.rpmTools["yum"] != "":
-		checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
-			return nil, nil, fmt.Errorf("no patchable packages found")
+		if updates == nil {
+			checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
+			if !rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate) {
+				return nil, nil, types.ErrNoUpdatesFound
+			}
 		}
 
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
-		if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
-			return nil, nil, fmt.Errorf("no patchable packages found")
+		if updates == nil {
+			checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
+			if !rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate) {
+				return nil, nil, types.ErrNoUpdatesFound
+			}
 		}
 
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
@@ -619,28 +626,30 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
 			llb.Args([]string{
 				`bash`, `-c`, `
-								json_str=$PACKAGES_PRESENT
-								update_packages=""
+                                json_str=$PACKAGES_PRESENT
+                                update_packages=""
 
-								while IFS=':' read -r package version; do
-									pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
+                                while IFS=':' read -r package version; do
+                                    pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
-									pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-									latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
+                                    pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
+                                    latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
 
-									if [ "$latest_version" != "$pkg_version" ]; then
-										update_packages="$update_packages $pkg_name"
-									fi
-								done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
+                                    if [ "$latest_version" != "$pkg_version" ]; then
+                                        update_packages="$update_packages $pkg_name"
+                                    fi
+                                done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
-								if [ -z "$update_packages" ]; then
-									echo "No packages to update"
-									exit 1
-								fi
-
-								echo "$update_packages" > packages.txt
-						`,
+                                if [ -n "$update_packages" ]; then
+                                    echo "$update_packages" > packages.txt
+                                    touch /updates.txt
+                                fi
+                        `,
 			})).Root()
+		if _, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &busyboxCopied, "/updates.txt"); err != nil {
+			log.Info("No upgradable packages found for this image (RPM distroless path).")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
 	}
 
 	// Create a new state for tooling image with all the packages from the image we are trying to patch

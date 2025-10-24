@@ -12,6 +12,7 @@ import (
 	apkVer "github.com/knqyf263/go-apk-version"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -168,9 +169,15 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 	// If updating all packages, check for upgrades before proceeding with patch
 	if updates == nil {
-		checkUpgradable := `sh -c "apk list 2>/dev/null | grep -q "upgradable" || exit 1"`
-		apkUpdated = apkUpdated.Run(llb.Shlex(checkUpgradable),
-			llb.WithCustomName("Checking for available updates")).Root()
+		const updatesAvailableMarker = "/updates.txt"
+		checkUpgradable := fmt.Sprintf(`sh -c 'if apk list 2>/dev/null | grep -q "upgradable"; then touch %s; fi'`, updatesAvailableMarker)
+		stateWithCheck := apkUpdated.Run(llb.Shlex(checkUpgradable)).Root()
+
+		_, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &stateWithCheck, updatesAvailableMarker)
+		if err != nil {
+			log.Info("No upgradable packages found for this image.")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
 	}
 
 	var apkInstalled llb.State
