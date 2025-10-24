@@ -348,13 +348,24 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 	}
 
 	// Extract Node.js and Yarn versions from image history
-	nodeVersion, yarnVersion := extractVersionsFromImageHistory(report.Metadata.ImageConfig.History)
+	var nodeVersion, yarnVersion string
+	if report.Metadata.ImageConfig.History != nil {
+		nodeVersion, yarnVersion = extractVersionsFromImageHistory(report.Metadata.ImageConfig.History)
+	}
+
+	// Initialize OS metadata with safe defaults
+	osType := ""
+	osVersion := ""
+	if report.Metadata.OS != nil {
+		osType = string(report.Metadata.OS.Family)
+		osVersion = report.Metadata.OS.Name
+	}
 
 	updates := unversioned.UpdateManifest{
 		Metadata: unversioned.Metadata{
 			OS: unversioned.OS{
-				Type:    string(report.Metadata.OS.Family),
-				Version: report.Metadata.OS.Name,
+				Type:    osType,
+				Version: osVersion,
 			},
 			Config: unversioned.Config{
 				Arch:    report.Metadata.ImageConfig.Architecture,

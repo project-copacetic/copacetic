@@ -798,3 +798,50 @@ func TestTrivyParserParseWithNodeJS(t *testing.T) {
 		})
 	}
 }
+
+// TestTrivyParserParseNoHistory tests that the parser handles reports without ImageConfig.History gracefully.
+func TestTrivyParserParseNoHistory(t *testing.T) {
+	tests := []struct {
+		name            string
+		file            string
+		wantOSUpdates   int
+		wantLangUpdates int
+		wantErr         bool
+	}{
+		{
+			name:            "Trivy report without ImageConfig.History",
+			file:            "testdata/trivy_no_history.json",
+			wantOSUpdates:   1,
+			wantLangUpdates: 0,
+			wantErr:         false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := &TrivyParser{}
+			manifest, err := parser.Parse(tc.file)
+
+			if tc.wantErr {
+				assert.Error(t, err)
+				return
+			}
+
+			assert.NoError(t, err)
+			assert.NotNil(t, manifest)
+			assert.Equal(t, tc.wantOSUpdates, len(manifest.OSUpdates))
+			assert.Equal(t, tc.wantLangUpdates, len(manifest.LangUpdates))
+
+			// Validate that NodeVersion and YarnVersion are empty when no History is present
+			assert.Empty(t, manifest.Metadata.NodeVersion, "NodeVersion should be empty when ImageConfig.History is nil")
+			assert.Empty(t, manifest.Metadata.YarnVersion, "YarnVersion should be empty when ImageConfig.History is nil")
+
+			// Validate the OS update
+			if tc.wantOSUpdates > 0 {
+				assert.Equal(t, "libssl3", manifest.OSUpdates[0].Name)
+				assert.Equal(t, "3.3.2-r4", manifest.OSUpdates[0].InstalledVersion)
+				assert.Equal(t, "3.3.2-r5", manifest.OSUpdates[0].FixedVersion)
+			}
+		})
+	}
+}
