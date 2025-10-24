@@ -83,7 +83,11 @@ func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms 
 		targetPlatform = platforms.Normalize(targetPlatform)
 
 		for _, discovered := range discoveredPlatforms {
-			if platforms.Only(targetPlatform).Match(discovered.Platform) {
+			// Use exact matching instead of platforms.Match to avoid cross-architecture matching
+			// This will prevent matching amd64 with 386 even though they're both x86 family
+			if targetPlatform.OS == discovered.OS &&
+				targetPlatform.Architecture == discovered.Architecture &&
+				targetPlatform.Variant == discovered.Variant {
 				filtered = append(filtered, discovered)
 				break
 			}
