@@ -1,0 +1,26 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "quay.io/prometheus/alertmanager:v0.28.1",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "ImageConfig": {
+      "architecture": "amd64"
+    }
+  },
+  "Results": [
+    {
+      "Target": "quay.io/prometheus/alertmanager:v0.28.1 (alpine 3.21.0)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2024-1234",
+          "PkgID": "libssl3@3.3.2-r4",
+          "PkgName": "libssl3",
+          "InstalledVersion": "3.3.2-r4",
+          "FixedVersion": "3.3.2-r5"
+        }
+      ]
+    }
+  ]
+}
