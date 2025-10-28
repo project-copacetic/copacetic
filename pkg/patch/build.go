@@ -15,6 +15,10 @@ import (
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
 )
 
+const (
+	attrValueTrue = "true"
+)
+
 // BuildConfig holds configuration for building and exporting images.
 type BuildConfig struct {
 	SolveOpt        client.SolveOpt
@@ -45,11 +49,11 @@ func createBuildConfig(
 		"annotation." + copaAnnotationKeyPrefix + ".image.patched": time.Now().UTC().Format(time.RFC3339),
 	}
 	if shouldExportOCI {
-		attrs["oci-mediatypes"] = "true"
+		attrs["oci-mediatypes"] = attrValueTrue
 	}
 
 	if push {
-		attrs["push"] = "true"
+		attrs["push"] = attrValueTrue
 		solveOpt.Exports = []client.ExportEntry{
 			{
 				Type:  client.ExporterImage,
@@ -57,6 +61,11 @@ func createBuildConfig(
 			},
 		}
 	} else {
+		// Use uncompressed layers for local export to ensure diff_id == blob digest
+		// This fixes Trivy scanning issues where compressed layers have mismatched hashes
+		attrs["compression"] = "uncompressed"
+		attrs["force-compression"] = attrValueTrue
+
 		solveOpt.Exports = []client.ExportEntry{
 			{
 				Type:  client.ExporterDocker,
