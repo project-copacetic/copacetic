@@ -57,6 +57,11 @@ func createBuildConfig(
 			},
 		}
 	} else {
+		// Use uncompressed layers for local export to ensure diff_id == blob digest
+		// This fixes Trivy scanning issues where compressed layers have mismatched hashes
+		attrs["compression"] = "uncompressed"
+		attrs["force-compression"] = "true"
+
 		solveOpt.Exports = []client.ExportEntry{
 			{
 				Type:  client.ExporterDocker,
