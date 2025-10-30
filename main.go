@@ -1,11 +1,14 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/cmd"
 	"github.com/project-copacetic/copacetic/pkg/generate"
+	"github.com/project-copacetic/copacetic/pkg/patch"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -51,7 +54,12 @@ func initConfig() {
 func main() {
 	cobra.OnInitialize(initConfig)
 	rootCmd := newRootCmd()
+
 	if err := rootCmd.Execute(); err != nil {
+		if errors.Is(err, types.ErrNoUpdatesFound) {
+			log.Info("Image is already up-to-date. No patch was applied.")
+			os.Exit(0)
+		}
 		os.Exit(1)
 	}
 }
