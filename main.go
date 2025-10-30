@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/cmd"
+	"github.com/project-copacetic/copacetic/pkg/generate"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -37,6 +38,7 @@ func newRootCmd() *cobra.Command {
 	flags.BoolVar(&debug, "debug", false, "enable debug level logging")
 
 	rootCmd.AddCommand(cmd.NewPatchCmd())
+	rootCmd.AddCommand(generate.NewGenerateCmd())
 	return rootCmd
 }
 

@@ -34,6 +34,7 @@ const (
 	// Package types for language managers.
 	LangPackages   = "lang-pkgs"
 	PythonPackages = "python-pkg"
+	NodePackages   = "node-pkg"
 
 	DefaultTempWorkingFolder = "/tmp"
 )

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -295,6 +297,41 @@ func parseTrivyReport(file string) (*trivyTypes.Report, error) {
 	return &msr, nil
 }
 
+// extractVersionsFromImageHistory extracts Node.js and Yarn versions from Docker image history.
+// It looks for ENV commands like "ENV NODE_VERSION=18.20.3" and "ENV YARN_VERSION=1.22.19".
+func extractVersionsFromImageHistory(history []v1.History) (nodeVersion, yarnVersion string) {
+	// Regular expressions to match version environment variables
+	nodeVersionRe := regexp.MustCompile(`ENV NODE_VERSION=([0-9]+\.[0-9]+\.[0-9]+)`)
+	yarnVersionRe := regexp.MustCompile(`ENV YARN_VERSION=([0-9]+\.[0-9]+\.[0-9]+)`)
+
+	for _, h := range history {
+		if h.CreatedBy == "" {
+			continue
+		}
+
+		// Extract Node.js version
+		if nodeVersion == "" {
+			if matches := nodeVersionRe.FindStringSubmatch(h.CreatedBy); len(matches) > 1 {
+				nodeVersion = matches[1]
+			}
+		}
+
+		// Extract Yarn version
+		if yarnVersion == "" {
+			if matches := yarnVersionRe.FindStringSubmatch(h.CreatedBy); len(matches) > 1 {
+				yarnVersion = matches[1]
+			}
+		}
+
+		// Stop early if both found
+		if nodeVersion != "" && yarnVersion != "" {
+			break
+		}
+	}
+
+	return nodeVersion, yarnVersion
+}
+
 func NewTrivyParser() *TrivyParser {
 	return &TrivyParser{}
 }
@@ -310,6 +347,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		return nil, err
 	}
 
+	// Extract Node.js and Yarn versions from image history
+	nodeVersion, yarnVersion := extractVersionsFromImageHistory(report.Metadata.ImageConfig.History)
+
 	updates := unversioned.UpdateManifest{
 		Metadata: unversioned.Metadata{
 			OS: unversioned.OS{
@@ -320,6 +360,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 				Arch:    report.Metadata.ImageConfig.Architecture,
 				Variant: report.Metadata.ImageConfig.Variant,
 			},
+			NodeVersion: nodeVersion,
+			YarnVersion: yarnVersion,
 		},
 	}
 
@@ -351,8 +393,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		// Process Language packages
 		if r.Class == utils.LangPackages {
-			// Check if this is a Python-related target
-			if r.Type == utils.PythonPackages {
+			// Check if this is a Python or Node.js related target
+			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
@@ -363,6 +405,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
+								PkgPath:          vuln.PkgPath, // Preserve package path from Trivy
 							}
 							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
 						}

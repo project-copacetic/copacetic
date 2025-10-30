@@ -43,6 +43,9 @@ type patchArgs struct {
 	pkgTypes          string
 	libraryPatchLevel string
 	progress          string
+	ociDir            string
+	eolAPIBaseURL     string
+	exitOnEOL         bool
 	configFile        string
 }
 
@@ -80,6 +83,9 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				PkgTypes:          ua.pkgTypes,
 				LibraryPatchLevel: ua.libraryPatchLevel,
 				Progress:          progressui.DisplayMode(ua.progress),
+				OCIDir:            ua.ociDir,
+				EOLAPIBaseURL:     ua.eolAPIBaseURL,
+				ExitOnEOL:         ua.exitOnEOL,
 				ConfigFile:        ua.configFile,
 			}
 
@@ -123,11 +129,14 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+	flags.StringVar(&ua.ociDir, "oci-dir", "", "Create OCI layout at specified directory for multi-platform images (only used when --push is not specified)")
 	flags.StringSliceVar(&ua.platform, "platform", nil,
 		"Target platform(s) for multi-arch images when no report directory is provided (e.g., linux/amd64,linux/arm64). "+
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
 			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
 	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
+	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
+	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1

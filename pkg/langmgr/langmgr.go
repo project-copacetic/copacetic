@@ -43,6 +43,8 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 		switch packageType {
 		case utils.PythonPackages:
 			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
+		case utils.NodePackages:
+			managers = append(managers, &nodejsManager{config: config, workingFolder: workingFolder})
 		default:
 			log.Warnf("Unknown package type '%s' found in language updates", packageType)
 		}
@@ -78,8 +80,16 @@ func GetUniqueLatestUpdates(
 		return unversioned.LangUpdatePackages{}, nil
 	}
 
-	dict := make(map[string]string)
+	// Track the highest version and collect metadata for each package
+	type packageInfo struct {
+		version  string
+		pkgPaths map[string]bool // Track all unique PkgPaths for this package
+		pkgType  string
+		pkgClass string
+	}
+	dict := make(map[string]*packageInfo)
 	var allErrors *multierror.Error
+
 	for _, u := range updates {
 		switch {
 		case u.FixedVersion == "":
@@ -87,11 +97,23 @@ func GetUniqueLatestUpdates(
 			log.Debugf("Skipping package %s: no suitable version found according to patch level restrictions", u.Name)
 			continue
 		case cmp.IsValid(u.FixedVersion):
-			ver, ok := dict[u.Name]
+			info, ok := dict[u.Name]
 			if !ok {
-				dict[u.Name] = u.FixedVersion
-			} else if cmp.LessThan(ver, u.FixedVersion) {
-				dict[u.Name] = u.FixedVersion
+				// First time seeing this package
+				dict[u.Name] = &packageInfo{
+					version:  u.FixedVersion,
+					pkgPaths: map[string]bool{u.PkgPath: true},
+					pkgType:  u.Type,
+					pkgClass: u.Class,
+				}
+			} else {
+				// Package already exists, update version if higher and track PkgPath
+				if cmp.LessThan(info.version, u.FixedVersion) {
+					info.version = u.FixedVersion
+				}
+				if u.PkgPath != "" {
+					info.pkgPaths[u.PkgPath] = true
+				}
 			}
 		default:
 			err := fmt.Errorf("invalid version %s found for package %s", u.FixedVersion, u.Name)
@@ -104,9 +126,24 @@ func GetUniqueLatestUpdates(
 		return nil, allErrors.ErrorOrNil()
 	}
 
+	// Build output with preserved metadata
 	out := unversioned.LangUpdatePackages{}
-	for k, v := range dict {
-		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
+	for pkgName, info := range dict {
+		// If multiple PkgPaths exist, we'll just pick the first one
+		// In practice, for app-level patching, packages should have consistent paths
+		var pkgPath string
+		for path := range info.pkgPaths {
+			pkgPath = path
+			break
+		}
+
+		out = append(out, unversioned.UpdatePackage{
+			Name:         pkgName,
+			FixedVersion: info.version,
+			PkgPath:      pkgPath,
+			Type:         info.pkgType,
+			Class:        info.pkgClass,
+		})
 	}
 	return out, nil
 }

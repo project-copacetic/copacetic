@@ -45,24 +45,16 @@ For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):
    git pull upstream main
    ```
 
-2. **Create Release Branch**
-
-   Create the release branch:
-
-   ```sh
-   git checkout -b release-<MAJOR>.<MINOR>
-   git push upstream release-<MAJOR>.<MINOR>
-   ```
-
-3. **Create and Push the Tag**
+2. **Create and Push the Tag**
 
    ```sh
    git tag -a <NEW VERSION> -m '<NEW VERSION>'
    git push upstream <NEW VERSION>
    ```
 
-4. **Publishing**
-   - GoReleaser will automatically create a new release
+3. **Publishing**
+   - GoReleaser will automatically create a new release.
+   - Release branches are automatically created during the release process. When a tag is pushed, the GitHub workflow automatically creates a corresponding release branch.
    - Review and edit the release at: [GitHub Releases](https://github.com/project-copacetic/copacetic/releases)
    - Review the respective copa-action image at: [GitHub Container Registry](https://github.com/project-copacetic/copacetic/pkgs/container/copa-action)
    - Review the respective copa-extension image at: [GitHub Container Registry](https://github.com/project-copacetic/copacetic/pkgs/container/copa-extension)
@@ -71,20 +63,13 @@ For major and minor releases (e.g., v0.11.0, v0.12.0, v1.0.0):
 
 For patch releases (e.g., `v<MAJOR>.<MINOR>.<PATCH>`) that contain bug fixes or security patches:
 
-1. **Create Release Branch (if it doesn't exist)**
+1. **Check out Release Branch**
 
-   Create the release branch from the tag:
-
-   ```sh
-   git checkout -b release-<MAJOR>.<MINOR>.x v<MAJOR>.<MINOR>.x
-   git push upstream release-<MAJOR>.<MINOR>.x
-   ```
-
-   If the release branch already exists:
+   Check out release branch from the tag:
 
    ```sh
-   git checkout release-<MAJOR>.<MINOR>.x
-   git pull upstream release-<MAJOR>.<MINOR>.x
+   git checkout release-<MAJOR>.<MINOR>
+   git pull upstream release-<MAJOR>.<MINOR>
    ```
 
 2. **Cherry-pick the Fix**
@@ -106,8 +91,8 @@ For patch releases (e.g., `v<MAJOR>.<MINOR>.<PATCH>`) that contain bug fixes or 
    Create a PR to the release branch:
 
    ```sh
-   git push upstream release-<MAJOR>.<MINOR>.x
-   gh pr create --base release-<MAJOR>.<MINOR>.x --title "Cherry-pick fix for v<MAJOR>.<MINOR>.<PATCH>" --body "Cherry-picking fix from main branch for patch release v<MAJOR>.<MINOR>.<PATCH>"
+   git push upstream release-<MAJOR>.<MINOR>
+   gh pr create --base release-<MAJOR>.<MINOR> --title "Cherry-pick fix for v<MAJOR>.<MINOR>.<PATCH>" --body "Cherry-picking fix from main branch for patch release v<MAJOR>.<MINOR>.<PATCH>"
    ```
 
 4. **Review and Merge**
@@ -121,8 +106,8 @@ For patch releases (e.g., `v<MAJOR>.<MINOR>.<PATCH>`) that contain bug fixes or 
    After the PR is merged, tag the release from the release branch:
 
    ```sh
-   git checkout release-<MAJOR>.<MINOR>.x
-   git pull upstream release-<MAJOR>.<MINOR>.x
+   git checkout release-<MAJOR>.<MINOR>
+   git pull upstream release-<MAJOR>.<MINOR>
    git tag -a v<MAJOR>.<MINOR>.<PATCH> -m "Release v<MAJOR>.<MINOR>.<PATCH>"
    git push upstream v<MAJOR>.<MINOR>.<PATCH>
    ```
