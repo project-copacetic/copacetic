@@ -27,30 +27,27 @@ jobs:
       - name: Set Version Variables
         id: vars
         run: |
-          # Remove the 'refs/tags/v' prefix.
-          VERSION_TAG=$(echo "${{ github.ref }}" | sed 's,refs/tags/v,,')
-          echo "version_tag=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+          # Get the version without the 'refs/tags/v' prefix, e.g., "1.2.3"
+          VERSION_TAG_ONLY=$(echo "${{ github.ref }}" | sed 's,refs/tags/v,,')
+          
+          # Reconstruct the full pushed tag, e.g., "v1.2.3"
+          PUSHED_TAG="v${VERSION_TAG_ONLY}"
+          
+          # Get the immediate previous tag relative to the pushed tag.
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${PUSHED_TAG}^" 2>/dev/null || echo "v0.0.0")
+
+          # Output for other steps
+          echo "version_tag=${VERSION_TAG_ONLY}" >> "$GITHUB_OUTPUT"
+          
+          # Outputs for the validation step
+          echo "pushed_tag=${PUSHED_TAG}" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=${PREVIOUS_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Validate Version Order
-        run: |
-          PUSHED_TAG="v${{ steps.vars.outputs.version_tag }}"
-          
-          # Get the immediate previous tag.
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${PUSHED_TAG}^" 2>/dev/null || echo "v0.0.0")
-          
-          echo "Validating pushed tag: ${PUSHED_TAG}"
-          echo "Comparing against previous tag: ${PREVIOUS_TAG}"
-
-          # Create a list of the two tags and sort them. The pushed tag must be the last one.
-          LATEST_SORTED=$(printf "%s\n%s" "$PUSHED_TAG" "$PREVIOUS_TAG" | sort -V | tail -n1)
-
-          if [ "$LATEST_SORTED" != "$PUSHED_TAG" ] || [ "$PUSHED_TAG" == "$PREVIOUS_TAG" ]; then
-            echo "::error::Validation Failed: Pushed tag '${PUSHED_TAG}' is not strictly greater than the previous tag '${PREVIOUS_TAG}'."
-            echo "::error::This could be a typo. Did you mean to release a different version?"
-            exit 1
-          fi
-
-          echo "✅ Version validation passed."
+        run: bash .github/workflows/scripts/release/validate_version.sh
+        env:
+          PUSHED_TAG: ${{ steps.vars.outputs.pushed_tag }}
+          PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
 
       - name: Create release branch
         run: |
