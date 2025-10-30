@@ -39,6 +39,7 @@ const sidebars = {
         'custom-address',
         'output',
         'scanner-plugins',
+        'bulk-image-patching',
         "multiplatform-patching",
       ],
     },

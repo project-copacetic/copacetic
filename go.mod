@@ -4,7 +4,6 @@ go 1.25
 
 require (
 	github.com/Masterminds/semver/v3 v3.4.0
-	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/aquasecurity/go-pep440-version v0.0.1
 	github.com/aquasecurity/trivy v0.67.2
 	github.com/cenkalti/backoff/v4 v4.3.0
@@ -173,5 +172,4 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20250804133106-a7a43d27e69b // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250818200422-3122310a409c // indirect
 	google.golang.org/protobuf v1.36.9 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
