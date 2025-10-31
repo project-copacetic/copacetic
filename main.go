@@ -7,7 +7,6 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/cmd"
 	"github.com/project-copacetic/copacetic/pkg/generate"
-	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
