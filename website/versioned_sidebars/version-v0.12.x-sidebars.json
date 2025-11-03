@@ -1,0 +1,54 @@
+{
+  "sidebar": [
+    {
+      "type": "category",
+      "label": "Getting Started",
+      "collapsed": false,
+      "items": [
+        "introduction",
+        "installation",
+        "quick-start",
+        "best-practices",
+        "troubleshooting",
+        "faq"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Features",
+      "collapsed": false,
+      "items": [
+        "app-level-patching",
+        "docker-build",
+        "github-action",
+        "docker-extension",
+        "custom-address",
+        "output",
+        "scanner-plugins",
+        "multiplatform-patching"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Contributing",
+      "collapsed": false,
+      "items": [
+        "contributing",
+        "code-of-conduct",
+        "design",
+        "development-tips",
+        "maintainer-guidelines",
+        "release"
+      ]
+    },
+    {
+      "type": "category",
+      "label": "Community",
+      "collapsed": false,
+      "items": [
+        "adopters",
+        "talks-and-presentations"
+      ]
+    }
+  ]
+}
