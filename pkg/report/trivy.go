@@ -432,6 +432,10 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			if r.Type == utils.DotNetPackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
+					// Skip Microsoft.Build.* packages as they are SDK/build-time dependencies, not runtime
+					if strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") {
+						continue
+					}
 					if vuln.FixedVersion != "" {
 						if _, exists := langPackageVulns[vuln.PkgName]; !exists {
 							langPackageVulns[vuln.PkgName] = []trivyTypes.DetectedVulnerability{}
