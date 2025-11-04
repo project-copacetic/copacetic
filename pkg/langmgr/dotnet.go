@@ -323,8 +323,12 @@ func (dnm *dotnetManager) upgradePackages(
 	).Root()
 
 	// Start with dotnet clean - run in project directory if found
+	cleanCmd := `sh -c 'if [ -s /tmp/project_file ]; then ` +
+		`PROJECT_FILE=$(cat /tmp/project_file); PROJECT_DIR=$(dirname "$PROJECT_FILE"); ` +
+		`cd "$PROJECT_DIR" && dotnet clean; ` +
+		`else echo "WARN: No project file found, skipping clean"; fi'`
 	dotnetState := projectDiscoveryState.Run(
-		llb.Shlex(`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); PROJECT_DIR=$(dirname "$PROJECT_FILE"); cd "$PROJECT_DIR" && dotnet clean; else echo "WARN: No project file found, skipping clean"; fi'`),
+		llb.Shlex(cleanCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
@@ -333,7 +337,13 @@ func (dnm *dotnetManager) upgradePackages(
 		if u.FixedVersion != "" {
 			// To update an existing package, we need to remove it first then add the new version
 			// This ensures the package reference is properly updated even if it already exists
-			updateCmd := fmt.Sprintf(`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); cd "$(dirname "$PROJECT_FILE")" && echo "Updating %s from existing version to %s..." && dotnet remove "$PROJECT_FILE" package %s 2>/dev/null || true && dotnet add "$PROJECT_FILE" package %s --version %s; else echo "ERROR: No project file found for package %s"; exit 1; fi'`, u.Name, u.FixedVersion, u.Name, u.Name, u.FixedVersion, u.Name)
+			updateCmd := fmt.Sprintf(
+				`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); `+
+					`cd "$(dirname "$PROJECT_FILE")" && echo "Updating %s from existing version to %s..." && `+
+					`dotnet remove "$PROJECT_FILE" package %s 2>/dev/null || true && `+
+					`dotnet add "$PROJECT_FILE" package %s --version %s; `+
+					`else echo "ERROR: No project file found for package %s"; exit 1; fi'`,
+				u.Name, u.FixedVersion, u.Name, u.Name, u.FixedVersion, u.Name)
 
 			if ignoreErrors {
 				// Suppress errors and log a warning if the command fails
@@ -344,7 +354,11 @@ func (dnm *dotnetManager) upgradePackages(
 				baseCmd = updateCmd
 			}
 		} else {
-			addCmd := fmt.Sprintf(`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); cd "$(dirname "$PROJECT_FILE")" && dotnet add "$PROJECT_FILE" package %s; else echo "ERROR: No project file found for package %s"; exit 1; fi'`, u.Name, u.Name)
+			addCmd := fmt.Sprintf(
+				`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); `+
+					`cd "$(dirname "$PROJECT_FILE")" && dotnet add "$PROJECT_FILE" package %s; `+
+					`else echo "ERROR: No project file found for package %s"; exit 1; fi'`,
+				u.Name, u.Name)
 			log.Warnf("No FixedVersion available for .NET package %s, attempting upgrade without specific version.", u.Name)
 
 			if ignoreErrors {
@@ -364,7 +378,10 @@ func (dnm *dotnetManager) upgradePackages(
 	// Run dotnet build to ensure everything compiles correctly
 	// Use --no-restore since dotnet add package already restores automatically
 	log.Debug("Running dotnet build to verify package compatibility")
-	buildCmd := `sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); cd "$(dirname "$PROJECT_FILE")" && dotnet build "$PROJECT_FILE" --no-restore --nologo --verbosity quiet; else echo "WARN: No project file found for build"; fi || echo "WARN: dotnet build completed with warnings/errors (package conflicts resolved)"'`
+	buildCmd := `sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); ` +
+		`cd "$(dirname "$PROJECT_FILE")" && dotnet build "$PROJECT_FILE" --no-restore --nologo --verbosity quiet; ` +
+		`else echo "WARN: No project file found for build"; fi || ` +
+		`echo "WARN: dotnet build completed with warnings/errors (package conflicts resolved)"'`
 
 	builtState := dotnetState.Run(
 		llb.Shlex(buildCmd),
@@ -374,7 +391,7 @@ func (dnm *dotnetManager) upgradePackages(
 	// Republish the application to update dependency files in output directories
 	// This ensures that .deps.json and other runtime files reflect the updated packages
 	log.Debug("Running dotnet publish to update published artifacts")
-	
+
 	publishCmd := `sh -c '
 if [ -s /tmp/project_file ]; then
 	PROJECT_FILE=$(cat /tmp/project_file)
@@ -445,7 +462,10 @@ fi'`
 	// problem with an image like dontnet/aspnet is its a runtime image so upgrade commands wont work - can consider mounting the image to a dotnet sdk
 
 	// Write package list to host for post-patch validation
-	const outputResultsTemplate = `sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); cd "$(dirname "$PROJECT_FILE")" && dotnet list "$PROJECT_FILE" package > %s; if [ $? -ne 0 ]; then echo "WARN: dotnet list package returned $?"; fi; else echo "WARN: No project file found for package list" > %s; fi'`
+	const outputResultsTemplate = `sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); ` +
+		`cd "$(dirname "$PROJECT_FILE")" && dotnet list "$PROJECT_FILE" package > %s; ` +
+		`if [ $? -ne 0 ]; then echo "WARN: dotnet list package returned $?"; fi; ` +
+		`else echo "WARN: No project file found for package list" > %s; fi'`
 
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, filepath.Join(resultsPath, resultManifest), filepath.Join(resultsPath, resultManifest))
 	mkFolders := publishedState.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
