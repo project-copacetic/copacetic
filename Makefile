@@ -71,8 +71,7 @@ frontend: $(CLI_BINARY)
 	docker buildx build \
 		-f frontend.Dockerfile \
 		-t $(FRONTEND_IMAGE_NAME):$(FRONTEND_VER) \
-		--platform $(FRONTEND_PLATFORMS) \
-		--push .
+		--platform $(FRONTEND_PLATFORMS) .
 
 ################################################################################
 # Target: install                                                              #
