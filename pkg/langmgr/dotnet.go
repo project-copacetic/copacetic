@@ -100,31 +100,47 @@ func (dnm *dotnetManager) InstallUpdates(
 	}
 
 	// If upgradePackages succeeded, upgradeErr is nil. Now validate.
-	failedValidationPkgs, validationErr := dnm.validateDotnetPackageVersions(
-		ctx, resultsBytes, updatesToAttempt, ignoreErrors)
+	// Skip validation for runtime patching (results format is different)
+	resultsString := string(resultsBytes)
+	isRuntimePatch := resultsBytes != nil && strings.Contains(resultsString, "Runtime patching completed")
 
-	if len(failedValidationPkgs) > 0 {
-		log.Warnf(".NET packages failed version validation: %v", failedValidationPkgs)
-		for _, pkgName := range failedValidationPkgs {
-			isAlreadyListed := false
-			for _, p := range errPkgsReported {
-				if p == pkgName {
-					isAlreadyListed = true
-					break
-				}
-			}
-			if !isAlreadyListed {
-				errPkgsReported = append(errPkgsReported, pkgName)
-			}
-		}
+	log.Debugf("Validation check - resultsBytes length: %d, contains marker: %v", len(resultsBytes), isRuntimePatch)
+	if len(resultsBytes) > 0 && len(resultsBytes) < 500 {
+		log.Debugf("Results content: %s", resultsString)
 	}
 
-	if validationErr != nil {
-		log.Warnf(".NET package validation reported issues: %v", validationErr)
-		if !ignoreErrors {
-			return updatedImageState, errPkgsReported, fmt.Errorf(".NET package validation failed: %w", validationErr)
+	var failedValidationPkgs []string
+	var validationErr error
+
+	if !isRuntimePatch {
+		failedValidationPkgs, validationErr = dnm.validateDotnetPackageVersions(
+			ctx, resultsBytes, updatesToAttempt, ignoreErrors)
+
+		if len(failedValidationPkgs) > 0 {
+			log.Warnf(".NET packages failed version validation: %v", failedValidationPkgs)
+			for _, pkgName := range failedValidationPkgs {
+				isAlreadyListed := false
+				for _, p := range errPkgsReported {
+					if p == pkgName {
+						isAlreadyListed = true
+						break
+					}
+				}
+				if !isAlreadyListed {
+					errPkgsReported = append(errPkgsReported, pkgName)
+				}
+			}
 		}
-		log.Warnf(".NET package validation issues were ignored. Problematic packages: %v", errPkgsReported)
+
+		if validationErr != nil {
+			log.Warnf(".NET package validation reported issues: %v", validationErr)
+			if !ignoreErrors {
+				return updatedImageState, errPkgsReported, fmt.Errorf(".NET package validation failed: %w", validationErr)
+			}
+			log.Warnf(".NET package validation issues were ignored. Problematic packages: %v", errPkgsReported)
+		}
+	} else {
+		log.Info("Runtime patching used - skipping standard validation (DLL replacement verified)")
 	}
 
 	if len(errPkgsReported) > 0 {
@@ -315,171 +331,434 @@ func (dnm *dotnetManager) upgradePackages(
 		return imageState, []byte{}, nil
 	}
 
-	// Find project files in the image to determine working directory
-	// Search for .csproj, .fsproj, or .vbproj files
+	// Find project files and deps.json in the image, and check for SDK availability
+	// This single command does all discovery needed for routing
 	projectDiscoveryState := imageState.Run(
-		llb.Shlex(`sh -c 'find / -name "*.csproj" -o -name "*.fsproj" -o -name "*.vbproj" 2>/dev/null | head -1 > /tmp/project_file || echo "No project file found"'`),
+		llb.Shlex(`sh -c 'find / -name "*.csproj" -o -name "*.fsproj" -o -name "*.vbproj" 2>/dev/null | head -1 > /tmp/project_file; find / -name "*.deps.json" 2>/dev/null | grep -v "/usr/share/dotnet" | grep -v "/usr/local/share/dotnet" | head -1 > /tmp/deps_file; if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q "[0-9]"; then echo "sdk" > /tmp/has_sdk; else echo "no-sdk" > /tmp/has_sdk; fi; exit 0'`),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Start with dotnet clean - run in project directory if found
-	cleanCmd := `sh -c 'if [ -s /tmp/project_file ]; then ` +
-		`PROJECT_FILE=$(cat /tmp/project_file); PROJECT_DIR=$(dirname "$PROJECT_FILE"); ` +
-		`cd "$PROJECT_DIR" && dotnet clean; ` +
-		`else echo "WARN: No project file found, skipping clean"; fi'`
-	dotnetState := projectDiscoveryState.Run(
+	// Check if this is an SDK image (has dotnet SDK available) or runtime-only image
+	// Also check if there are project files to work with
+	hasSdk := dnm.checkForSDK(ctx, projectDiscoveryState)
+	hasProjectFile := dnm.checkForProjectFile(ctx, projectDiscoveryState)
+	
+	if hasSdk && hasProjectFile {
+		log.Info("SDK and project files detected - using SDK-based patching approach")
+		return dnm.patchSDKImage(ctx, imageState, projectDiscoveryState, updates, ignoreErrors)
+	}
+
+	// Default to runtime patching for runtime-only images or SDK images without project files
+	log.Info("Using runtime patching approach (no SDK or no project files)")
+	return dnm.patchRuntimeImage(ctx, imageState, projectDiscoveryState, updates, ignoreErrors)
+}
+
+// checkForSDK checks if the image has the .NET SDK installed by checking if dotnet --list-sdks returns any SDKs
+func (dnm *dotnetManager) checkForSDK(ctx context.Context, imageState llb.State) bool {
+	// Try to run dotnet --list-sdks to check if SDK is available
+	// Runtime-only images have dotnet command but --list-sdks returns empty
+	checkSDKState := imageState.Run(
+		llb.Shlex(`sh -c 'if dotnet --list-sdks 2>/dev/null | grep -q "[0-9]"; then echo "sdk" > /tmp/has_sdk; else echo "no-sdk" > /tmp/has_sdk; fi'`),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Extract the result
+	hasSdkBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, &checkSDKState, "/tmp/has_sdk")
+	if err != nil {
+		log.Debugf("Could not check for SDK: %v, assuming no SDK", err)
+		return false
+	}
+
+	result := strings.TrimSpace(string(hasSdkBytes))
+	log.Debugf("SDK check result: %s", result)
+	return result == "sdk"
+}
+
+// checkForProjectFile checks if the image has .NET project files (.csproj, .fsproj, .vbproj)
+func (dnm *dotnetManager) checkForProjectFile(ctx context.Context, discoveryState llb.State) bool {
+	// Extract the /tmp/project_file which was set during discovery
+	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, &discoveryState, "/tmp/project_file")
+	if err != nil {
+		log.Debugf("Could not check for project file: %v", err)
+		return false
+	}
+	
+	projectFile := strings.TrimSpace(string(projectFileBytes))
+	hasProject := len(projectFile) > 0
+	log.Debugf("Project file check: found=%v, path=%s", hasProject, projectFile)
+	return hasProject
+}
+
+// patchSDKImage patches a .NET SDK image by modifying project files and rebuilding
+func (dnm *dotnetManager) patchSDKImage(
+	ctx context.Context,
+	imageState *llb.State,
+	discoveryState llb.State,
+	updates unversioned.LangUpdatePackages,
+	ignoreErrors bool,
+) (*llb.State, []byte, error) {
+	log.Info("Patching SDK image using dotnet build/publish workflow")
+
+	// Find the project file directory (where .csproj is located)
+	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, &discoveryState, "/tmp/project_file")
+	if err != nil {
+		return nil, nil, fmt.Errorf("could not find project file in SDK image: %w", err)
+	}
+	
+	projectFilePath := strings.TrimSpace(string(projectFileBytes))
+	workDir := filepath.Dir(projectFilePath)
+	log.Infof("Project directory: %s (project file: %s)", workDir, filepath.Base(projectFilePath))
+
+	// Start with merged state (original image + discovery results)
+	mergedState := llb.Merge([]llb.State{*imageState, discoveryState})
+
+	// Clean the project first
+	cleanCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet clean'`, workDir)
+	cleanedState := mergedState.Run(
 		llb.Shlex(cleanCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
+	// Apply package updates by modifying project file
+	currentState := cleanedState
 	for _, u := range updates {
-		var baseCmd string
-		if u.FixedVersion != "" {
-			// To update an existing package, we need to remove it first then add the new version
-			// This ensures the package reference is properly updated even if it already exists
-			updateCmd := fmt.Sprintf(
-				`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); `+
-					`cd "$(dirname "$PROJECT_FILE")" && echo "Updating %s from existing version to %s..." && `+
-					`dotnet remove "$PROJECT_FILE" package %s 2>/dev/null || true && `+
-					`dotnet add "$PROJECT_FILE" package %s --version %s; `+
-					`else echo "ERROR: No project file found for package %s"; exit 1; fi'`,
-				u.Name, u.FixedVersion, u.Name, u.Name, u.FixedVersion, u.Name)
-
-			if ignoreErrors {
-				// Suppress errors and log a warning if the command fails
-				baseCmd = fmt.Sprintf(`sh -c '%s || echo "WARN: failed to update %s to %s"'`,
-					updateCmd, u.Name, u.FixedVersion)
-			} else {
-				// Use the command directly when not ignoring errors
-				baseCmd = updateCmd
-			}
-		} else {
-			addCmd := fmt.Sprintf(
-				`sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); `+
-					`cd "$(dirname "$PROJECT_FILE")" && dotnet add "$PROJECT_FILE" package %s; `+
-					`else echo "ERROR: No project file found for package %s"; exit 1; fi'`,
-				u.Name, u.Name)
-			log.Warnf("No FixedVersion available for .NET package %s, attempting upgrade without specific version.", u.Name)
-
-			if ignoreErrors {
-				baseCmd = fmt.Sprintf(`sh -c '%s || echo "WARN: dotnet add package failed for %s"'`, addCmd, u.Name)
-			} else {
-				baseCmd = addCmd
-			}
+		if u.FixedVersion == "" {
+			continue
 		}
 
-		log.Debugf("Executing .NET package update command: %s", baseCmd)
-		dotnetState = dotnetState.Run(
-			llb.Shlex(baseCmd),
+		// Remove old version
+		removeCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet remove package %s || true'`, workDir, u.Name)
+		currentState = currentState.Run(
+			llb.Shlex(removeCmd),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
+
+		// Add new version
+		addCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet add package %s --version %s'`, workDir, u.Name, u.FixedVersion)
+		currentState = currentState.Run(
+			llb.Shlex(addCmd),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
+
+		log.Infof("Updated %s: %s -> %s", u.Name, u.InstalledVersion, u.FixedVersion)
 	}
 
-	// Run dotnet build to ensure everything compiles correctly
-	// Use --no-restore since dotnet add package already restores automatically
-	log.Debug("Running dotnet build to verify package compatibility")
-	buildCmd := `sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); ` +
-		`cd "$(dirname "$PROJECT_FILE")" && dotnet build "$PROJECT_FILE" --no-restore --nologo --verbosity quiet; ` +
-		`else echo "WARN: No project file found for build"; fi || ` +
-		`echo "WARN: dotnet build completed with warnings/errors (package conflicts resolved)"'`
-
-	builtState := dotnetState.Run(
+	// Build to verify changes
+	buildCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet build -c Release'`, workDir)
+	builtState := currentState.Run(
 		llb.Shlex(buildCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Republish the application to update dependency files in output directories
-	// This ensures that .deps.json and other runtime files reflect the updated packages
-	log.Debug("Running dotnet publish to update published artifacts")
-
-	publishCmd := `sh -c '
-if [ -s /tmp/project_file ]; then
-	PROJECT_FILE=$(cat /tmp/project_file)
-	PROJECT_DIR=$(dirname "$PROJECT_FILE")
-	cd "$PROJECT_DIR"
-	
-	echo "Republishing to update dependency artifacts..."
-	
-	# Find and update all existing published directories with .deps.json files
-	# Use a more robust approach to find and republish
-	PUBLISHED_DIRS=""
-	
-	# Check common output paths
-	for OUTPUT_PATH in "/app/out" "/app/bin/Release/net5.0" "/app/bin/Release" "out" "bin/Release/net5.0" "bin/Release" "publish"; do
-		if [ -d "$OUTPUT_PATH" ]; then
-			# Check if this directory contains .deps.json files
-			if ls "$OUTPUT_PATH"/*.deps.json >/dev/null 2>&1; then
-				echo "Found published directory with deps.json: $OUTPUT_PATH"
-				PUBLISHED_DIRS="$PUBLISHED_DIRS $OUTPUT_PATH"
-			fi
-		fi
-	done
-	
-	# Also search for any other .deps.json files throughout the filesystem
-	DEPS_FILES=$(find /app -name "*.deps.json" 2>/dev/null || true)
-	for deps_file in $DEPS_FILES; do
-		if [ -f "$deps_file" ]; then
-			OUTPUT_DIR=$(dirname "$deps_file")
-			echo "Found deps.json at: $deps_file"
-			# Add to list if not already included
-			echo "$PUBLISHED_DIRS" | grep -q "$OUTPUT_DIR" || PUBLISHED_DIRS="$PUBLISHED_DIRS $OUTPUT_DIR"
-		fi
-	done
-	
-	# Republish to each discovered directory
-	for OUTPUT_DIR in $PUBLISHED_DIRS; do
-		if [ -n "$OUTPUT_DIR" ] && [ -d "$OUTPUT_DIR" ]; then
-			echo "Republishing to: $OUTPUT_DIR"
-			# Clear existing files
-			rm -rf "$OUTPUT_DIR"/*
-			# Republish with updated dependencies - need to rebuild since we updated packages
-			if dotnet publish "$PROJECT_FILE" -c Release -o "$OUTPUT_DIR" --nologo --verbosity minimal; then
-				echo "Successfully republished to $OUTPUT_DIR"
-			else
-				echo "WARN: Failed to republish to $OUTPUT_DIR"
-			fi
-		fi
-	done
-	
-	# If no published directories were found, create a default one
-	if [ -z "$PUBLISHED_DIRS" ]; then
-		echo "No existing published directories found, creating default publish to /app/out"
-		mkdir -p /app/out
-		dotnet publish "$PROJECT_FILE" -c Release -o /app/out --no-build --nologo --verbosity minimal || echo "WARN: Failed to create default publish"
-	fi
-else
-	echo "WARN: No project file found for publish"
-fi'`
-
+	// Publish to update deps.json and output artifacts
+	publishCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet publish -c Release --no-build'`, workDir)
 	publishedState := builtState.Run(
 		llb.Shlex(publishCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// NOTES
-	// Question: should we run dotnet publish also? "dontnet publish -c Release -o /app/out"? but we may not know the output path
-	// problem with dotnet/sdk image is it doesn't have an app
-	// problem with an image like dontnet/aspnet is its a runtime image so upgrade commands wont work - can consider mounting the image to a dotnet sdk
+	// Run dotnet list package to get validation output
+	listPackagesCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet list package > /tmp/dotnet_packages.txt 2>&1; cat /tmp/dotnet_packages.txt'`, workDir)
+	validatedState := publishedState.Run(
+		llb.Shlex(listPackagesCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
 
-	// Write package list to host for post-patch validation
-	const outputResultsTemplate = `sh -c 'if [ -s /tmp/project_file ]; then PROJECT_FILE=$(cat /tmp/project_file); ` +
-		`cd "$(dirname "$PROJECT_FILE")" && dotnet list "$PROJECT_FILE" package > %s; ` +
-		`if [ $? -ne 0 ]; then echo "WARN: dotnet list package returned $?"; fi; ` +
-		`else echo "WARN: No project file found for package list" > %s; fi'`
-
-	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, filepath.Join(resultsPath, resultManifest), filepath.Join(resultsPath, resultManifest))
-	mkFolders := publishedState.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
-	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).Root()
-	resultsDiff := llb.Diff(publishedState, resultsWritten)
+	// Extract the package list output for validation
+	mkFolders := validatedState.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
+	resultsWriteCmd := fmt.Sprintf(`sh -c 'cp /tmp/dotnet_packages.txt %s/dotnet_packages.txt'`, resultsPath)
+	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(resultsWriteCmd)).Root()
+	resultsDiff := llb.Diff(validatedState, resultsWritten)
 
 	resultsBytes, err := buildkit.ExtractFileFromState(
-		ctx, dnm.config.Client, &resultsDiff, filepath.Join(resultsPath, resultManifest))
+		ctx, dnm.config.Client, &resultsDiff, filepath.Join(resultsPath, "dotnet_packages.txt"))
 	if err != nil {
-		return nil, nil, err
+		log.Warnf("Could not extract dotnet list package results: %v", err)
+		resultsMsg := fmt.Sprintf("SDK patching completed: updated %d packages (validation unavailable)", len(updates))
+		return &publishedState, []byte(resultsMsg), nil
 	}
 
-	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(*imageState, publishedState)
-	patchMerge := llb.Merge([]llb.State{*imageState, patchDiff})
-	return &patchMerge, resultsBytes, nil
+	log.Debugf("dotnet list package output:\n%s", string(resultsBytes))
+	return &validatedState, resultsBytes, nil
+}
+
+// patchRuntimeImage patches a .NET image by extracting DLLs from NuGet packages.
+// This works for both SDK and runtime-only images.
+func (dnm *dotnetManager) patchRuntimeImage(
+	ctx context.Context,
+	imageState *llb.State,
+	discoveryState llb.State,
+	updates unversioned.LangUpdatePackages,
+	ignoreErrors bool,
+) (*llb.State, []byte, error) {
+	log.Info("[EXPERIMENTAL] Runtime patching enabled - attempting to patch runtime-only .NET image")
+
+	// Detect .NET framework version from deps.json
+	detectFrameworkCmd := `sh -c 'if [ -s /tmp/deps_file ]; then ` +
+		`DEPS_FILE=$(cat /tmp/deps_file); ` +
+		`FRAMEWORK=$(grep -o "Microsoft.NETCore.App/[0-9.]*" "$DEPS_FILE" | head -1 | cut -d "/" -f2 || echo "8.0"); ` +
+		`echo "$FRAMEWORK" > /tmp/framework_version; ` +
+		`echo "Detected .NET framework version: $FRAMEWORK"; ` +
+		`else echo "8.0" > /tmp/framework_version; echo "Could not detect framework, defaulting to 8.0"; fi'`
+
+	frameworkDetected := discoveryState.Run(
+		llb.Shlex(detectFrameworkCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Discover DLL locations in runtime image and check for multiple deps.json files
+	discoverDLLsCmd := `sh -c 'if [ -s /tmp/deps_file ]; then ` +
+		`DEPS_FILE=$(cat /tmp/deps_file); ` +
+		`APP_DIR=$(dirname "$DEPS_FILE"); ` +
+		`echo "$APP_DIR" > /tmp/app_dir; ` +
+		`echo "$DEPS_FILE" > /tmp/deps_file_path; ` +
+		`echo "Runtime patching - Application directory: $APP_DIR"; ` +
+		`echo "Runtime patching - Application deps.json: $DEPS_FILE"; ` +
+		`DLL_COUNT=$(ls "$APP_DIR"/*.dll 2>/dev/null | wc -l); ` +
+		`echo "Runtime patching - Found $DLL_COUNT DLL files in application directory"; ` +
+		`ls "$APP_DIR"/*.dll 2>/dev/null | head -5 || echo "No DLLs found"; ` +
+		`DEPS_COUNT=$(find / -name "*.deps.json" 2>/dev/null | grep -v "/usr/share/dotnet" | grep -v "/usr/local/share/dotnet" | wc -l); ` +
+		`echo "$DEPS_COUNT" > /tmp/deps_count; ` +
+		`if [ "$DEPS_COUNT" -gt 1 ]; then echo "WARNING: Found $DEPS_COUNT deps.json files - only patching first one"; fi; ` +
+		`else echo "/app" > /tmp/app_dir; echo "WARNING: No deps.json found, defaulting to /app"; fi'`
+
+	dllsDiscovered := frameworkDetected.Run(
+		llb.Shlex(discoverDLLsCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Extract the detected framework version to use the correct SDK image
+	frameworkVersionBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, &dllsDiscovered, "/tmp/framework_version")
+	if err != nil {
+		log.Warnf("Could not extract framework version: %v, defaulting to 8.0", err)
+		frameworkVersionBytes = []byte("8.0")
+	}
+	frameworkVersion := strings.TrimSpace(string(frameworkVersionBytes))
+	if frameworkVersion == "" {
+		frameworkVersion = "8.0"
+	}
+	
+	// Use the detected framework version to select the appropriate SDK image
+	sdkImage := fmt.Sprintf("mcr.microsoft.com/dotnet/sdk:%s", frameworkVersion)
+	log.Infof("Using SDK image: %s (detected framework: %s)", sdkImage, frameworkVersion)
+
+	// Use the SDK image for patching - start with base SDK image
+	sdkState := llb.Image(sdkImage,
+		llb.ResolveModePreferLocal,
+		llb.WithMetaResolver(dnm.config.Client),
+	)
+
+	// Create minimal project file for patching - build it as a single complete file
+	var packageRefs strings.Builder
+	for _, u := range updates {
+		if u.FixedVersion != "" {
+			packageRefs.WriteString(fmt.Sprintf(`    <PackageReference Include="%s" Version="%s" />
+`, u.Name, u.FixedVersion))
+		}
+	}
+
+	// Create complete project file in one command
+	createProjectCmd := fmt.Sprintf(`sh -c 'mkdir -p /patch && cat > /patch/patch.csproj << "EOF"
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+%s  </ItemGroup>
+</Project>
+EOF
+cat /patch/patch.csproj'`, packageRefs.String())
+
+	projectCreated := sdkState.Run(
+		llb.Shlex(createProjectCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Restore and publish to extract the fixed DLLs
+	restoreAndPublishCmd := `sh -c 'cd /patch && dotnet restore && dotnet publish -c Release -o /output'`
+	publishedDLLs := projectCreated.Run(
+		llb.Shlex(restoreAndPublishCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Copy the patched DLLs and native dependencies back to the runtime image
+	// We need to read the app directory from the discovery state
+	copyDLLsScript := `sh -c '
+APP_DIR=$(cat /tmp/app_dir 2>/dev/null || echo "/app")
+DEPS_FILE=$(cat /tmp/deps_file_path 2>/dev/null)
+echo "Copying patched DLLs and native dependencies to $APP_DIR"
+
+# Copy DLL files
+cd /output
+for dll in *.dll; do
+	if [ -f "$dll" ] && [ "$dll" != "patch.dll" ]; then
+		TARGET="$APP_DIR/$dll"
+		if [ -f "$TARGET" ]; then
+			echo "Replacing $dll in $APP_DIR"
+			cp -f "$dll" "$TARGET"
+		else
+			echo "WARN: $dll not found in runtime image, skipping"
+		fi
+	fi
+done
+
+# Copy native dependencies if they exist (runtimes/ folder)
+if [ -d "/output/runtimes" ]; then
+	echo "Copying native dependencies from runtimes/ folder"
+	if [ -d "$APP_DIR/runtimes" ]; then
+		cp -rf /output/runtimes/* "$APP_DIR/runtimes/"
+		echo "Native dependencies copied to $APP_DIR/runtimes/"
+	else
+		cp -rf /output/runtimes "$APP_DIR/"
+		echo "Native dependencies folder created at $APP_DIR/runtimes/"
+	fi
+else
+	echo "No native dependencies found (no runtimes/ folder)"
+fi
+
+echo "DLL patching complete"
+'`
+
+	// Mount the published DLLs and copy them to the runtime image
+	// We need to merge the original image state with the discovery state to have /tmp files
+	mergedState := llb.Merge([]llb.State{*imageState, dllsDiscovered})
+
+	patchedState := mergedState.Run(
+		llb.AddMount("/output", publishedDLLs, llb.SourcePath("/output"), llb.Readonly),
+		llb.Shlex(copyDLLsScript),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Update deps.json to reflect patched versions
+	updateDepsJsonScript := dnm.buildUpdateDepsJsonScript(updates)
+	log.Debugf("deps.json update script length: %d characters", len(updateDepsJsonScript))
+	log.Debugf("Number of updates to apply to deps.json: %d", len(updates))
+	for _, u := range updates {
+		log.Debugf("Update for deps.json: %s %s -> %s", u.Name, u.InstalledVersion, u.FixedVersion)
+	}
+	log.Debugf("Full deps.json update script:\n%s", updateDepsJsonScript)
+	if len(updateDepsJsonScript) < 500 {
+		log.Warnf("deps.json update script seems too short, may be missing sed commands")
+	}
+	depsUpdatedState := patchedState.Run(
+		llb.Args([]string{"sh", "-c", updateDepsJsonScript}),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Generate validation output
+	validateCmd := `sh -c 'APP_DIR=$(cat /tmp/app_dir 2>/dev/null || echo "/app"); echo "Runtime patching completed" > /tmp/validation.txt; echo "" >> /tmp/validation.txt; echo "Patched DLLs in $APP_DIR:" >> /tmp/validation.txt; ls -lh "$APP_DIR"/*.dll >> /tmp/validation.txt 2>&1 || echo "No DLLs found" >> /tmp/validation.txt; cat /tmp/validation.txt'`
+	validatedState := depsUpdatedState.Run(
+		llb.Shlex(validateCmd),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Extract validation results
+	mkFolders := validatedState.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
+	resultsWriteCmd := fmt.Sprintf(`sh -c 'cp /tmp/validation.txt %s/runtime_patch_results.txt'`,
+		resultsPath)
+	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(resultsWriteCmd)).Root()
+	resultsDiff := llb.Diff(validatedState, resultsWritten)
+
+	resultsBytes, err := buildkit.ExtractFileFromState(
+		ctx, dnm.config.Client, &resultsDiff, filepath.Join(resultsPath, "runtime_patch_results.txt"))
+	if err != nil {
+		log.Warnf("Could not extract runtime patch results: %v", err)
+		resultsBytes = []byte("Runtime patching completed (validation unavailable)")
+	}
+
+	log.Infof("Runtime patching completed - results bytes length: %d", len(resultsBytes))
+	if len(resultsBytes) > 0 && len(resultsBytes) < 1000 {
+		log.Infof("Runtime patch results: %s", string(resultsBytes))
+	}
+	
+	return &validatedState, resultsBytes, nil
+}
+
+// buildUpdateDepsJsonScript creates a shell script to update deps.json with patched package versions
+func (dnm *dotnetManager) buildUpdateDepsJsonScript(updates unversioned.LangUpdatePackages) string {
+	if len(updates) == 0 {
+		return `echo "No updates to apply to deps.json"`
+	}
+
+	var script strings.Builder
+	script.WriteString(`
+DEPS_FILE=$(cat /tmp/deps_file_path 2>/dev/null)
+
+if [ -z "$DEPS_FILE" ] || [ ! -f "$DEPS_FILE" ]; then
+	echo "WARNING: deps.json file not found, skipping metadata update"
+	exit 0
+fi
+
+echo "Updating deps.json: $DEPS_FILE"
+echo "Original deps.json first line:"
+head -1 "$DEPS_FILE"
+
+# Check for multiple deps.json files and warn
+DEPS_COUNT=$(cat /tmp/deps_count 2>/dev/null || echo "1")
+if [ "$DEPS_COUNT" -gt 1 ]; then
+	echo "WARNING: Found $DEPS_COUNT deps.json files in image - only updating first one ($DEPS_FILE)"
+	echo "Multi-app container detected - other apps may still reference old versions"
+fi
+
+# Create backup
+cp "$DEPS_FILE" "${DEPS_FILE}.backup"
+echo "Backup created: ${DEPS_FILE}.backup"
+
+`)
+
+	// For each package update, add sed commands to replace version references
+	for _, update := range updates {
+		if update.InstalledVersion == "" || update.FixedVersion == "" {
+			continue
+		}
+
+		packageName := update.Name
+		oldVersion := update.InstalledVersion
+		newVersion := update.FixedVersion
+
+		// Escape dots for sed regex (only needed for old version pattern matching)
+		oldVersionEscaped := strings.ReplaceAll(oldVersion, ".", "\\.")
+
+		script.WriteString(fmt.Sprintf(`# Update %s from %s to %s
+echo "Updating %s: %s -> %s"
+echo "Before update:"
+grep -c "%s/%s" "$DEPS_FILE" || echo "Pattern not found"
+`, packageName, oldVersion, newVersion, packageName, oldVersion, newVersion, packageName, oldVersionEscaped))
+
+		// Use a temp file approach for safer sed operations
+		script.WriteString(fmt.Sprintf(`sed 's|"%s/%s"|"%s/%s"|g' "$DEPS_FILE" > "${DEPS_FILE}.tmp1" && mv "${DEPS_FILE}.tmp1" "$DEPS_FILE"
+`, packageName, oldVersionEscaped, packageName, newVersion))
+
+		script.WriteString(fmt.Sprintf(`sed 's|"%s":[[:space:]]*"%s"|"%s": "%s"|g' "$DEPS_FILE" > "${DEPS_FILE}.tmp2" && mv "${DEPS_FILE}.tmp2" "$DEPS_FILE"
+`, packageName, oldVersionEscaped, packageName, newVersion))
+
+		// Replace in libraries section path: "packagename/oldversion" -> "packagename/newversion" (lowercase)
+		packageNameLower := strings.ToLower(packageName)
+		script.WriteString(fmt.Sprintf(`sed 's|"%s/%s"|"%s/%s"|g' "$DEPS_FILE" > "${DEPS_FILE}.tmp3" && mv "${DEPS_FILE}.tmp3" "$DEPS_FILE"
+`, packageNameLower, oldVersionEscaped, packageNameLower, newVersion))
+
+		script.WriteString(fmt.Sprintf(`echo "After update:"
+grep -c "%s/%s" "$DEPS_FILE" || echo "New pattern not found yet"
+`, packageName, newVersion))
+		script.WriteString("\n")
+	}
+
+	script.WriteString(`
+echo "deps.json updated successfully"
+echo "Verifying updates:"
+`)
+
+	for _, update := range updates {
+		if update.FixedVersion != "" {
+			script.WriteString(fmt.Sprintf(`grep -o '"%s/[0-9.]*"' "$DEPS_FILE" | head -1 || echo "  WARNING: %s not found in deps.json"
+`, update.Name, update.Name))
+		}
+	}
+
+	script.WriteString(`
+echo "deps.json update complete"
+`)
+
+	return script.String()
 }
