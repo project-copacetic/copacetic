@@ -139,16 +139,17 @@ func patchSingleArchImage(
 				updates.LangUpdates = []unversioned.UpdatePackage{}
 			}
 
-			log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
+		log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
 
-			// If after filtering there are zero OS and zero library updates, return an error
-			// only when user explicitly requested some package types (default is OS) but none are patchable.
-			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
-				return nil, fmt.Errorf("no patchable vulnerabilities found in provided report for selected pkg-types (%s)", pkgTypes)
-			}
+		// If after filtering there are zero OS and zero library updates, return an error
+		// only when user explicitly requested some package types (default is OS) but none are patchable.
+		if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
+			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			return res, types.ErrNoUpdatesFound
 		}
+	}
 
-		log.Debugf("updates to apply: %v", updates)
+	log.Debugf("updates to apply: %v", updates)
 	}
 
 	// Create buildkit client
