@@ -333,28 +333,35 @@ func (dnm *dotnetManager) upgradePackages(
 
 	// Find project files and deps.json in the image, and check for SDK availability
 	// This single command does all discovery needed for routing
+	discoveryCmd := `sh -c 'find / -name "*.csproj" -o -name "*.fsproj" -o -name "*.vbproj" 2>/dev/null | ` +
+		`head -1 > /tmp/project_file; ` +
+		`find / -name "*.deps.json" 2>/dev/null | grep -v "/usr/share/dotnet" | ` +
+		`grep -v "/usr/local/share/dotnet" | head -1 > /tmp/deps_file; ` +
+		`if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q "[0-9]"; ` +
+		`then echo "sdk" > /tmp/has_sdk; else echo "no-sdk" > /tmp/has_sdk; fi; exit 0'`
+
 	projectDiscoveryState := imageState.Run(
-		llb.Shlex(`sh -c 'find / -name "*.csproj" -o -name "*.fsproj" -o -name "*.vbproj" 2>/dev/null | head -1 > /tmp/project_file; find / -name "*.deps.json" 2>/dev/null | grep -v "/usr/share/dotnet" | grep -v "/usr/local/share/dotnet" | head -1 > /tmp/deps_file; if command -v dotnet >/dev/null 2>&1 && dotnet --list-sdks 2>/dev/null | grep -q "[0-9]"; then echo "sdk" > /tmp/has_sdk; else echo "no-sdk" > /tmp/has_sdk; fi; exit 0'`),
+		llb.Shlex(discoveryCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
 	// Check if this is an SDK image (has dotnet SDK available) or runtime-only image
 	// Also check if there are project files to work with
-	hasSdk := dnm.checkForSDK(ctx, projectDiscoveryState)
-	hasProjectFile := dnm.checkForProjectFile(ctx, projectDiscoveryState)
-	
+	hasSdk := dnm.checkForSDK(ctx, &projectDiscoveryState)
+	hasProjectFile := dnm.checkForProjectFile(ctx, &projectDiscoveryState)
+
 	if hasSdk && hasProjectFile {
 		log.Info("SDK and project files detected - using SDK-based patching approach")
-		return dnm.patchSDKImage(ctx, imageState, projectDiscoveryState, updates, ignoreErrors)
+		return dnm.patchSDKImage(ctx, imageState, &projectDiscoveryState, updates, ignoreErrors)
 	}
 
 	// Default to runtime patching for runtime-only images or SDK images without project files
 	log.Info("Using runtime patching approach (no SDK or no project files)")
-	return dnm.patchRuntimeImage(ctx, imageState, projectDiscoveryState, updates, ignoreErrors)
+	return dnm.patchRuntimeImage(ctx, imageState, &projectDiscoveryState, updates, ignoreErrors)
 }
 
-// checkForSDK checks if the image has the .NET SDK installed by checking if dotnet --list-sdks returns any SDKs
-func (dnm *dotnetManager) checkForSDK(ctx context.Context, imageState llb.State) bool {
+// checkForSDK checks if the image has the .NET SDK installed by checking if dotnet --list-sdks returns any SDKs.
+func (dnm *dotnetManager) checkForSDK(ctx context.Context, imageState *llb.State) bool {
 	// Try to run dotnet --list-sdks to check if SDK is available
 	// Runtime-only images have dotnet command but --list-sdks returns empty
 	checkSDKState := imageState.Run(
@@ -374,43 +381,43 @@ func (dnm *dotnetManager) checkForSDK(ctx context.Context, imageState llb.State)
 	return result == "sdk"
 }
 
-// checkForProjectFile checks if the image has .NET project files (.csproj, .fsproj, .vbproj)
-func (dnm *dotnetManager) checkForProjectFile(ctx context.Context, discoveryState llb.State) bool {
+// checkForProjectFile checks if the image has .NET project files (.csproj, .fsproj, .vbproj).
+func (dnm *dotnetManager) checkForProjectFile(ctx context.Context, discoveryState *llb.State) bool {
 	// Extract the /tmp/project_file which was set during discovery
-	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, &discoveryState, "/tmp/project_file")
+	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, discoveryState, "/tmp/project_file")
 	if err != nil {
 		log.Debugf("Could not check for project file: %v", err)
 		return false
 	}
-	
+
 	projectFile := strings.TrimSpace(string(projectFileBytes))
 	hasProject := len(projectFile) > 0
 	log.Debugf("Project file check: found=%v, path=%s", hasProject, projectFile)
 	return hasProject
 }
 
-// patchSDKImage patches a .NET SDK image by modifying project files and rebuilding
+// patchSDKImage patches a .NET SDK image by modifying project files and rebuilding.
 func (dnm *dotnetManager) patchSDKImage(
 	ctx context.Context,
 	imageState *llb.State,
-	discoveryState llb.State,
+	discoveryState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, []byte, error) {
 	log.Info("Patching SDK image using dotnet build/publish workflow")
 
 	// Find the project file directory (where .csproj is located)
-	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, &discoveryState, "/tmp/project_file")
+	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, discoveryState, "/tmp/project_file")
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not find project file in SDK image: %w", err)
 	}
-	
+
 	projectFilePath := strings.TrimSpace(string(projectFileBytes))
 	workDir := filepath.Dir(projectFilePath)
 	log.Infof("Project directory: %s (project file: %s)", workDir, filepath.Base(projectFilePath))
 
 	// Start with merged state (original image + discovery results)
-	mergedState := llb.Merge([]llb.State{*imageState, discoveryState})
+	mergedState := llb.Merge([]llb.State{*imageState, *discoveryState})
 
 	// Clean the project first
 	cleanCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet clean'`, workDir)
@@ -487,7 +494,7 @@ func (dnm *dotnetManager) patchSDKImage(
 func (dnm *dotnetManager) patchRuntimeImage(
 	ctx context.Context,
 	imageState *llb.State,
-	discoveryState llb.State,
+	discoveryState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
 ) (*llb.State, []byte, error) {
@@ -537,7 +544,7 @@ func (dnm *dotnetManager) patchRuntimeImage(
 	if frameworkVersion == "" {
 		frameworkVersion = "8.0"
 	}
-	
+
 	// Use the detected framework version to select the appropriate SDK image
 	sdkImage := fmt.Sprintf("mcr.microsoft.com/dotnet/sdk:%s", frameworkVersion)
 	log.Infof("Using SDK image: %s (detected framework: %s)", sdkImage, frameworkVersion)
@@ -647,7 +654,12 @@ echo "DLL patching complete"
 	).Root()
 
 	// Generate validation output
-	validateCmd := `sh -c 'APP_DIR=$(cat /tmp/app_dir 2>/dev/null || echo "/app"); echo "Runtime patching completed" > /tmp/validation.txt; echo "" >> /tmp/validation.txt; echo "Patched DLLs in $APP_DIR:" >> /tmp/validation.txt; ls -lh "$APP_DIR"/*.dll >> /tmp/validation.txt 2>&1 || echo "No DLLs found" >> /tmp/validation.txt; cat /tmp/validation.txt'`
+	validateCmd := `sh -c 'APP_DIR=$(cat /tmp/app_dir 2>/dev/null || echo "/app"); ` +
+		`echo "Runtime patching completed" > /tmp/validation.txt; ` +
+		`echo "" >> /tmp/validation.txt; ` +
+		`echo "Patched DLLs in $APP_DIR:" >> /tmp/validation.txt; ` +
+		`ls -lh "$APP_DIR"/*.dll >> /tmp/validation.txt 2>&1 || echo "No DLLs found" >> /tmp/validation.txt; ` +
+		`cat /tmp/validation.txt'`
 	validatedState := depsUpdatedState.Run(
 		llb.Shlex(validateCmd),
 		llb.WithProxy(utils.GetProxy()),
@@ -671,11 +683,11 @@ echo "DLL patching complete"
 	if len(resultsBytes) > 0 && len(resultsBytes) < 1000 {
 		log.Infof("Runtime patch results: %s", string(resultsBytes))
 	}
-	
+
 	return &validatedState, resultsBytes, nil
 }
 
-// buildUpdateDepsJsonScript creates a shell script to update deps.json with patched package versions
+// buildUpdateDepsJsonScript creates a shell script to update deps.json with patched package versions.
 func (dnm *dotnetManager) buildUpdateDepsJsonScript(updates unversioned.LangUpdatePackages) string {
 	if len(updates) == 0 {
 		return `echo "No updates to apply to deps.json"`
