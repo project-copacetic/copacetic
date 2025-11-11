@@ -36,6 +36,7 @@ const sidebars = {
         'docker-build',
         'github-action',
         'docker-extension',
+        'buildkit-frontend',
         'custom-address',
         'output',
         'scanner-plugins',
