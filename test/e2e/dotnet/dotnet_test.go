@@ -100,14 +100,7 @@ func TestDotNetSDKImagePatching(t *testing.T) {
 
 func downloadTrivyDB(t *testing.T) {
 	t.Helper()
-	t.Log("downloading Trivy database")
-	cmd := exec.Command(
-		"trivy",
-		"image",
-		"--download-db-only",
-		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
-	)
-	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
+	cmd := exec.Command("trivy", "image", "--download-db-only")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to download trivy db:\n%s", string(output))
 }
@@ -135,7 +128,11 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
-	_, _ = cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("trivy scan failed: %v\nOutput: %s", err, string(output))
+		require.NoError(t, err, "trivy scan failed")
+	}
 
 	reportBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "failed to read trivy report file")
