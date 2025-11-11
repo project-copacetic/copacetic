@@ -216,6 +216,7 @@ func patchMultiPlatformImage(
 						Ref:      res.OriginalRef.String() + " (original)",
 						Message:  "Image is already up-to-date",
 					}
+					patchedSuccesses++ // Count up-to-date as success
 					return nil
 				}
 
@@ -300,9 +301,11 @@ func patchMultiPlatformImage(
 
 	if !opts.Push {
 		// Show push commands only for actually patched images (not preserved originals)
+		log.Debugf("Total patch results: %d", len(patchResults))
 		patchedOnlyResults := make([]types.PatchResult, 0)
 		for _, result := range patchResults {
 			// Only include results where the patched ref differs from original ref
+			log.Debugf("Checking result: PatchedRef=%s, OriginalRef=%s", result.PatchedRef.String(), result.OriginalRef.String())
 			if result.PatchedRef.String() != result.OriginalRef.String() {
 				patchedOnlyResults = append(patchedOnlyResults, result)
 			}
@@ -332,9 +335,8 @@ func patchMultiPlatformImage(
 			}
 
 			log.Infof("  docker buildx imagetools create --tag %s %s", patchedImageName.String(), strings.Join(refs, " "))
-		} else {
-			return fmt.Errorf("no images were processed, check the logs for errors")
 		}
+		// If no patches were needed (all up-to-date), that's fine - don't return an error
 	}
 
 	var b strings.Builder
@@ -355,14 +357,14 @@ func patchMultiPlatformImage(
 	w.Flush()
 	log.Info("\nMulti-arch patch summary:\n" + b.String())
 
-	anyPatchesApplied := false
+	anySuccesses := false
 	for _, summary := range summaryMap {
-		if summary.Status == "Patched" {
-			anyPatchesApplied = true
+		if summary.Status == "Patched" || summary.Status == "Up-to-date" {
+			anySuccesses = true
 			break
 		}
 	}
-	if !anyPatchesApplied && len(summaryMap) > 0 {
+	if !anySuccesses && len(summaryMap) > 0 {
 		return types.ErrNoUpdatesFound
 	}
 	// Create OCI layout if requested and not pushing to registry
