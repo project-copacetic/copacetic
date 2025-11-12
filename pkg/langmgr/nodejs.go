@@ -502,7 +502,7 @@ func (nm *nodejsManager) installNodePackages(
 			// but allows the overall script to continue.
 			installCmd := fmt.Sprintf(
 				`sh -c 'cd %s && echo "INFO: Attempting to install direct dependency: %s" && `+
-					`(npm install %s --save-exact --legacy-peer-deps --no-audit --ignore-scripts --timeout=%d 2>&1 || `+
+					`(npm install %s --save-exact --omit=dev --legacy-peer-deps --no-audit --ignore-scripts --timeout=%d 2>&1 || `+
 					`echo "WARN: Failed to install %s. Version may not exist or has conflicts.")'`,
 				workDir, pkgSpec, pkgSpec, npmInstallTimeoutSeconds, pkgSpec,
 			)
@@ -538,8 +538,9 @@ func (nm *nodejsManager) installNodePackages(
 			// It should be more reliable now that direct dependencies are handled.
 			installCmd := fmt.Sprintf(
 				`sh -c 'cd %s && `+
-					`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-					`npm install --force --no-audit --ignore-scripts --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
+					`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
+					`pkg.overrides=%s; delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+					`npm install --force --omit=dev --no-audit --ignore-scripts --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
 				workDir, escapedOverridesJSON, npmInstallTimeoutSeconds,
 			)
 
@@ -878,7 +879,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			if len(pkgSpecs) > 0 {
 				installCmd := fmt.Sprintf(
 					`sh -c 'cd %s && `+
-						`npm install %s --save-exact --legacy-peer-deps --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
+						`npm install %s --save-exact --omit=dev --legacy-peer-deps --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
 						`npm prune --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
 						`npm dedupe --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
 						// CRITICAL: Clean cache in same layer
@@ -925,10 +926,11 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				installCmd := fmt.Sprintf(
 					`sh -c 'cd %s && `+
 						// Add overrides using node (guaranteed to exist in Node.js images)
+						// Also remove devDependencies to prevent them from being installed
 						`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
-						`pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-						// Run npm install with --force to apply overrides
-						`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
+						`pkg.overrides=%s; delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+						// Run npm install with --force to apply overrides (omit devDependencies for production)
+						`npm install --force --omit=dev --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
 						`npm prune --force 2>&1 | grep -v "^npm warn" && npm dedupe --force 2>&1 | grep -v "^npm warn" && `+
 						// CRITICAL: Clean cache in same layer
 						`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
