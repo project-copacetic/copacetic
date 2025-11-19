@@ -8,19 +8,19 @@ require (
 	github.com/aquasecurity/trivy v0.67.2
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/containerd/errdefs v1.0.0
-	github.com/containerd/platforms v1.0.0-rc.1
+	github.com/containerd/platforms v1.0.0-rc.2
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/go-docker v0.4.0
 	github.com/distribution/reference v0.6.0
 	github.com/docker/buildx v0.29.1
-	github.com/docker/cli v28.5.1+incompatible
-	github.com/docker/docker v28.5.1+incompatible
+	github.com/docker/cli v28.5.2+incompatible
+	github.com/docker/docker v28.5.2+incompatible
 	github.com/google/go-containerregistry v0.20.6
 	github.com/hashicorp/go-multierror v1.1.1
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.25.1
+	github.com/moby/buildkit v0.25.2
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.7
@@ -32,10 +32,10 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/tonistiigi/fsutil v0.0.0-20250605211040-586307ad452f
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
-	golang.org/x/sync v0.17.0
-	golang.org/x/term v0.36.0
+	golang.org/x/sync v0.18.0
+	golang.org/x/term v0.37.0
 	google.golang.org/grpc v1.76.0
-	k8s.io/apimachinery v0.34.1
+	k8s.io/apimachinery v0.34.2
 )
 
 require (
@@ -61,7 +61,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.2 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.9.0 // indirect
-	github.com/containerd/containerd/v2 v2.1.4 // indirect
+	github.com/containerd/containerd/v2 v2.1.5 // indirect
 	github.com/containerd/continuity v0.4.5 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
@@ -149,7 +149,7 @@ require (
 	golang.org/x/crypto v0.43.0 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.46.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	golang.org/x/tools v0.38.0 // indirect
