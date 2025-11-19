@@ -22,7 +22,10 @@ Before using the Copa BuildKit frontend, ensure you have:
   - `buildctl` CLI tool; or
   - Docker Buildx (`docker buildx build`); or
   - BuildKit daemon running locally
-- **Copa Frontend Image**: Available at `ghcr.io/project-copacetic/copacetic-frontend:latest`
+- **Copa Frontend Image**: Available at `ghcr.io/project-copacetic/copacetic-frontend`
+  - Use `:latest` for the most recent stable release
+  - Use `:vX.Y.Z` (e.g., `:v0.13.0`) to pin to a specific Copa version
+  - Frontend versions are aligned with Copa CLI releases
 - **Vulnerability Scanner**: Trivy or another supported scanner for generating reports
 - **Container Runtime**: Docker or Podman for image operations
 
@@ -236,7 +239,7 @@ jobs:
       - name: Patch image with Copa frontend
         run: |
           docker buildx build \
-            --build-arg BUILDKIT_SYNTAX=ghcr.io/project-copacetic/copacetic-frontend:latest \
+            --build-arg BUILDKIT_SYNTAX=ghcr.io/project-copacetic/copacetic-frontend:v0.13.0 \
             --build-arg image=nginx:1.21.6 \
             --build-arg report=report.json \
             --build-context report=./build-context \

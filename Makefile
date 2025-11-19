@@ -26,8 +26,8 @@ GOOS              := $(shell go env GOOS)
 
 # Frontend build variables
 FRONTEND_IMAGE_NAME ?= ghcr.io/project-copacetic/copacetic-frontend
-FRONTEND_PLATFORMS  ?= linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6,linux/386,linux/ppc64le,linux/s390x,linux/riscv64
-FRONTEND_VER        ?= latest
+FRONTEND_PLATFORMS  ?= linux/amd64,linux/arm64
+FRONTEND_VER        ?= $(CLI_VERSION)
 
 
 # Message lack of native build support in Windows

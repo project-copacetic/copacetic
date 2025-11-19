@@ -126,3 +126,24 @@ jobs:
           tag="${{ steps.vars.outputs.version_tag }}"
           image_owner="${{ github.repository_owner }}"
           docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
+
+      - name: Set up Docker for copa frontend
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to ghcr for copa frontend
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push copa frontend image with new version
+        run: |
+          tag="${{ steps.vars.outputs.version_tag }}"
+          image_owner="${{ github.repository_owner }}"
+          docker buildx build --push \
+            --platform linux/amd64,linux/arm64 \
+            -f frontend.Dockerfile \
+            -t "ghcr.io/${image_owner}/copacetic-frontend:v${tag}" \
+            -t "ghcr.io/${image_owner}/copacetic-frontend:latest" \
+            .
