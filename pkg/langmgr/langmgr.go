@@ -45,6 +45,8 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
 		case utils.NodePackages:
 			managers = append(managers, &nodejsManager{config: config, workingFolder: workingFolder})
+		case utils.GoModules, utils.GoBinary:
+			managers = append(managers, &golangManager{config: config, workingFolder: workingFolder})
 		default:
 			log.Warnf("Unknown package type '%s' found in language updates", packageType)
 		}
