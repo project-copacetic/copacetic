@@ -123,8 +123,8 @@ Build attestations, signatures, and OCI referrers from the original image are no
 
 ## Understanding the Results
  
-After a multi-platform run, Copa prints a tabulur summary so you can quickly see what happened for each platform. 
-A typical example looks like(including a failure case):
+After a multi-platform run, Copa prints a tabular summary so you can quickly see what happened for each platform. 
+A typical example looks like (including a failure case):
 
 ```text
 Multi-arch patch summary:
