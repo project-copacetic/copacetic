@@ -58,6 +58,8 @@ type BuildInfo struct {
 	ProvenanceMode string
 	// BuilderID is the builder identity from provenance.
 	BuilderID string
+	// Dependencies maps module names to versions (from binary detection).
+	Dependencies map[string]string
 }
 
 // BinaryInfo contains information extracted from a Go binary using buildinfo.
@@ -66,6 +68,10 @@ type BinaryInfo struct {
 	Path string
 	// ModulePath is the main module path.
 	ModulePath string
+	// MainModule is the main module name.
+	MainModule string
+	// MainModuleVersion is the main module version.
+	MainModuleVersion string
 	// GoVersion is the Go version used to build the binary.
 	GoVersion string
 	// Dependencies maps module names to versions.
@@ -74,8 +80,18 @@ type BinaryInfo struct {
 	BuildSettings map[string]string
 	// VCSRevision is the VCS commit hash (if available).
 	VCSRevision string
+	// VCSTime is the VCS commit timestamp (if available).
+	VCSTime string
+	// VCS is the version control system (git, etc.).
+	VCS string
 	// VCSModified indicates if the working tree was modified.
 	VCSModified bool
+	// GOOS is the target operating system.
+	GOOS string
+	// GOARCH is the target architecture.
+	GOARCH string
+	// CGOEnabled indicates if CGO was enabled.
+	CGOEnabled bool
 }
 
 // ProvenanceCompleteness assesses how complete the provenance information is.
