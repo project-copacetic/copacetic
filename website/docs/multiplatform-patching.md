@@ -121,6 +121,25 @@ These flags are essential for multi-platform patching:
 Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
 :::
 
+## Understanding the Results
+ 
+After a multi-platform run, Copa prints a tabular summary so you can quickly see what happened for each platform. 
+A typical example looks like (including a failure case):
+
+```text
+Multi-arch patch summary:
+PLATFORM        STATUS   REFERENCE                                        MESSAGE
+linux/amd64     Patched  docker.io/library/nginx:1.27.1-patched-amd64     Successfully patched image (linux/amd64)
+linux/arm/v7    Patched  docker.io/library/nginx:1.27.1-patched-arm-v7    Successfully patched image (linux/arm/v7)
+linux/arm64     Patched  docker.io/library/nginx:1.27.1-patched-arm64     Successfully patched image (linux/arm64)
+linux/386       Error    -                                                Emulation is not enabled for platform linux/386
+linux/mips64le  Patched  docker.io/library/nginx:1.27.1-patched-mips64le  Successfully patched image (linux/mips64le)
+linux/ppc64le   Patched  docker.io/library/nginx:1.27.1-patched-ppc64le   Successfully patched image (linux/ppc64le)
+linux/s390x     Patched  docker.io/library/nginx:1.27.1-patched-s390x     Successfully patched image (linux/s390x)
+```
+In this example, the linux/386 platform failed with Error because QEMU emulation is not enabled on the host.
+If you see a similar error, follow the steps in [Cross-Platform Emulation Setup](#cross-platform-emulation-setup) to enable emulation and then rerun the patch.
+
 ## Cross-Platform Emulation Setup
 
 When patching images for architectures different from your host machine (e.g., patching ARM64 images on an AMD64 host), Copa uses QEMU emulation through BuildKit.
