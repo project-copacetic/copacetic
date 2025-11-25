@@ -2,6 +2,7 @@ package frontend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -141,6 +142,11 @@ func TestFrontendPatch(t *testing.T) {
 	// Test multiplatform with directory-based reports
 	t.Run("multiplatform-directory", func(t *testing.T) {
 		runFrontendMultiplatformTest(t)
+	})
+
+	// Test SBOM and provenance attestation generation
+	t.Run("sbom-provenance-attestations", func(t *testing.T) {
+		runFrontendAttestationTest(t)
 	})
 }
 
@@ -336,10 +342,13 @@ func buildFrontendImage(t *testing.T) {
 	require.NoError(t, err, fmt.Sprintf("failed to build frontend binary: %v\nOutput: %s", err, string(output)))
 
 	// Create a simple Dockerfile for the frontend image
+	// Must include BuildKit capability labels for named contexts support
 	dockerfileContent := `FROM alpine:3.18
 RUN apk add --no-cache ca-certificates busybox
 COPY copa-frontend /usr/bin/copa-frontend
 RUN chmod +x /usr/bin/copa-frontend
+LABEL moby.buildkit.frontend.network.none="true"
+LABEL moby.buildkit.frontend.caps="moby.buildkit.frontend.inputs,moby.buildkit.frontend.contexts"
 ENTRYPOINT ["/usr/bin/copa-frontend"]`
 
 	dockerfilePath := filepath.Join(projectRoot, "frontend-simple.Dockerfile")
@@ -504,4 +513,180 @@ func runFrontendMultiplatformTest(t *testing.T) {
 func removeLocalImage(_ *testing.T, image string) {
 	cmd := exec.Command("docker", "rmi", "-f", image)
 	_ = cmd.Run() // ignore errors during cleanup
+}
+
+// runFrontendAttestationTest tests that SBOM and provenance attestations can be generated
+// when using the Copa BuildKit frontend with docker buildx build.
+func runFrontendAttestationTest(t *testing.T) {
+	// This test uses docker buildx build instead of buildctl because
+	// the --sbom and --provenance flags are easier to use with buildx
+	baseImage := "docker.io/library/nginx:1.21.6"
+	localImage := "localhost:5000/nginx-attestation:1.21.6"
+	patchedImage := "localhost:5000/nginx-attestation:1.21.6-patched"
+
+	// Copy image to local registry
+	t.Logf("Copying %s to %s", baseImage, localImage)
+	copyCmd := exec.Command("oras", "cp", baseImage, localImage)
+	output, err := copyCmd.CombinedOutput()
+	require.NoErrorf(t, err, "oras cp failed:\n%s", string(output))
+	defer removeLocalImage(t, localImage)
+	defer removeLocalImage(t, patchedImage)
+
+	// Create temp directory
+	tempDir, err := os.MkdirTemp("", "copa-frontend-attestation-*")
+	require.NoError(t, err, "failed to create temp directory")
+	defer os.RemoveAll(tempDir)
+
+	// Run Trivy scan to generate vulnerability report
+	reportFile := filepath.Join(tempDir, "report.json")
+	t.Logf("Scanning %s with Trivy to generate report", localImage)
+
+	trivyCmd := exec.Command("trivy", "image",
+		"--format", "json",
+		"--output", reportFile,
+		"--quiet",
+		"--no-progress",
+		"--insecure",
+		localImage)
+
+	trivyOutput, err := trivyCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Trivy scan output: %s", string(trivyOutput))
+		require.NoError(t, err, "failed to run trivy scan")
+	}
+
+	// Get bridge gateway IP for BuildKit to access the registry
+	bridgeGateway := os.Getenv("DOCKER_BRIDGE_GATEWAY")
+	if bridgeGateway == "" {
+		bridgeGateway = defaultBridgeGateway
+	}
+
+	// Get the frontend image reference that BuildKit can access
+	frontendImageRef := strings.Replace(frontendImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
+	localImageRef := strings.Replace(localImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
+
+	// Create Dockerfile with syntax directive pointing to Copa frontend
+	// The syntax directive tells BuildKit to use the Copa frontend
+	dockerfilePath := filepath.Join(tempDir, "Dockerfile")
+	dockerfileContent := fmt.Sprintf("# syntax=%s\n", frontendImageRef)
+	err = os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0o600)
+	require.NoError(t, err, "failed to create Dockerfile")
+
+	// Create or get a buildx builder with insecure registry support
+	builderName := "copa-attestation-test-builder"
+
+	// Remove existing builder if it exists
+	_ = exec.Command("docker", "buildx", "rm", builderName).Run()
+
+	// Create buildkitd.toml config for insecure registries
+	configContent := fmt.Sprintf(`[registry."localhost:5000"]
+  http = true
+  insecure = true
+
+[registry."%s:5000"]
+  http = true
+  insecure = true`, bridgeGateway)
+
+	configFile := filepath.Join(tempDir, "buildkitd.toml")
+	err = os.WriteFile(configFile, []byte(configContent), 0o600)
+	require.NoError(t, err, "failed to create buildkitd config")
+
+	// Create new builder with insecure registry config
+	createCmd := exec.Command("docker", "buildx", "create", "--name", builderName,
+		"--driver", "docker-container",
+		"--driver-opt", "network=host",
+		"--config", configFile)
+	createOutput, err := createCmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("failed to create buildx builder: %s", string(createOutput)))
+	defer func() {
+		_ = exec.Command("docker", "buildx", "rm", builderName).Run()
+	}()
+
+	// Bootstrap the builder
+	bootstrapCmd := exec.Command("docker", "buildx", "inspect", "--bootstrap", builderName)
+	bootstrapOutput, err := bootstrapCmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("failed to bootstrap buildx builder: %s", string(bootstrapOutput)))
+
+	// Run docker buildx build with SBOM and provenance enabled
+	// Note: We use # syntax directive in Dockerfile instead of --build-arg BUILDKIT_SYNTAX
+	// because --build-arg BUILDKIT_SYNTAX doesn't work well with --build-context
+	t.Logf("Running docker buildx build with --sbom=true --provenance=true")
+	buildArgs := []string{
+		"buildx", "build",
+		"--builder", builderName,
+		"--build-arg", fmt.Sprintf("image=%s", localImageRef),
+		"--build-arg", "report=report.json",
+		"--build-context", fmt.Sprintf("report=%s", tempDir),
+		"--sbom=true",
+		"--provenance=true",
+		"--output", fmt.Sprintf("type=image,name=%s,push=true", patchedImage),
+		tempDir,
+	}
+
+	t.Logf("Build command: docker %v", buildArgs)
+	buildCmd := exec.Command("docker", buildArgs...)
+	buildOutput, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Build output: %s", string(buildOutput))
+	}
+	require.NoError(t, err, fmt.Sprintf("docker buildx build failed: %s", string(buildOutput)))
+
+	t.Logf("Patched image with attestations pushed to %s", patchedImage)
+
+	// Verify attestations exist using docker buildx imagetools inspect
+	t.Log("Verifying attestations using docker buildx imagetools inspect")
+	inspectCmd := exec.Command("docker", "buildx", "imagetools", "inspect", patchedImage, "--raw")
+	inspectOutput, err := inspectCmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("failed to inspect image: %s", string(inspectOutput)))
+
+	inspectStr := string(inspectOutput)
+	t.Logf("Image index manifest: %s", inspectStr)
+
+	// Check for attestation manifest (platform: unknown/unknown with attestation-manifest annotation)
+	require.Contains(t, inspectStr, "attestation-manifest",
+		"Expected attestation manifest in image index, but none found")
+
+	// Extract the attestation manifest digest to inspect its contents
+	// The attestation manifest contains the actual SBOM and provenance references
+	type manifestEntry struct {
+		Digest      string            `json:"digest"`
+		Annotations map[string]string `json:"annotations"`
+	}
+	type imageIndex struct {
+		Manifests []manifestEntry `json:"manifests"`
+	}
+
+	var idx imageIndex
+	err = json.Unmarshal(inspectOutput, &idx)
+	require.NoError(t, err, "failed to parse image index")
+
+	// Find the attestation manifest
+	var attestationDigest string
+	for _, m := range idx.Manifests {
+		if m.Annotations["vnd.docker.reference.type"] == "attestation-manifest" {
+			attestationDigest = m.Digest
+			break
+		}
+	}
+	require.NotEmpty(t, attestationDigest, "attestation manifest not found in image index")
+
+	// Inspect the attestation manifest to verify SBOM and provenance
+	attestationRef := fmt.Sprintf("%s@%s", patchedImage, attestationDigest)
+	t.Logf("Inspecting attestation manifest: %s", attestationRef)
+	attestInspectCmd := exec.Command("docker", "buildx", "imagetools", "inspect", attestationRef, "--raw")
+	attestInspectOutput, err := attestInspectCmd.CombinedOutput()
+	require.NoError(t, err, fmt.Sprintf("failed to inspect attestation manifest: %s", string(attestInspectOutput)))
+
+	attestStr := string(attestInspectOutput)
+	t.Logf("Attestation manifest: %s", attestStr)
+
+	// Check for SBOM predicate type in attestation manifest layers
+	require.Contains(t, attestStr, "spdx.dev/Document",
+		"Expected SBOM attestation (spdx.dev/Document) but none found in attestation manifest")
+
+	// Check for SLSA provenance predicate type
+	require.Contains(t, attestStr, "slsa.dev/provenance",
+		"Expected SLSA provenance attestation but none found in attestation manifest")
+
+	t.Log("Successfully verified SBOM and provenance attestations on patched image")
 }
