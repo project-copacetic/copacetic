@@ -345,3 +345,109 @@ Due to the limitations with compiled binaries and dependency resolution, it is *
 4. Rebuild and test compiled binaries before deploying to production
 
 Copa does not perform automated testing or validation of the patched application.
+
+#### Experimental: Go Binary Rebuilding
+
+:::warning Advanced Experimental Feature
+Go binary rebuilding is an advanced experimental feature that requires additional flags beyond `COPA_EXPERIMENTAL=1`. This feature attempts to automatically rebuild Go binaries with updated dependencies using information from SLSA provenance and/or embedded build info.
+:::
+
+Copa has experimental support for automatically rebuilding Go binaries with patched dependencies. This feature addresses the main limitation of Go module patching by attempting to rebuild the actual binary, not just updating module files.
+
+##### Enabling Binary Rebuild
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+# Enable Go binary rebuilding
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --enable-go-binary-rebuild
+```
+
+##### How Binary Rebuilding Works
+
+1. **SLSA Provenance Analysis**: Copa attempts to fetch SLSA provenance attestations from the container registry. If found, it extracts build information including Go version, build commands, and Dockerfile.
+
+2. **GitHub Fallback**: If provenance doesn't contain the Dockerfile (common with `slsa-github-generator`), Copa fetches it from the source repository using the commit hash in provenance.
+
+3. **Binary Detection**: If provenance is insufficient, Copa analyzes Go binaries in the image using `go version -m` to extract embedded build information.
+
+4. **Source Cloning**: Copa clones the source repository at the provenance commit using BuildKit Git operations.
+
+5. **Rebuild with Updates**: Copa rebuilds the binary with updated dependencies:
+   - Applies `go get module@version` for each vulnerable dependency
+   - Runs `go mod tidy` to clean up dependencies
+   - Executes the original build command with detected flags
+
+6. **Binary Replacement**: The rebuilt binary is copied back to its original location in the image.
+
+##### Binary Rebuild Requirements
+
+For binary rebuilding to work, the image should have one or more of:
+
+- **SLSA Provenance**: Built with `slsa-github-generator` or BuildKit with `--provenance=max`
+- **Embedded Build Info**: Go binaries built with `-buildinfo` (default since Go 1.18)
+- **Public Source Repository**: Source code accessible on GitHub at the provenance commit
+
+##### Supported SLSA Provenance Versions
+
+- SLSA v0.2 (common from slsa-github-generator)
+- SLSA v1.0 (newer provenance format)
+
+##### Binary Rebuild Limitations
+
+1. **Private Repositories**: Currently only public GitHub repositories are supported for source cloning and Dockerfile fetching.
+
+2. **Complex Builds**: Multi-stage Dockerfiles, custom build scripts, and CGO-dependent builds may not rebuild correctly.
+
+3. **Non-Go Tools**: The binary rebuild process requires standard Go toolchain. Builds using custom compilers or tools may fail.
+
+4. **Build Reproducibility**: Rebuilt binaries may differ from originals due to timestamps, Go version differences, or non-deterministic build steps.
+
+##### Example with Binary Rebuild
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+# Image built with slsa-github-generator provenance
+export IMAGE=ghcr.io/fluxcd/source-controller:v1.2.0
+
+# Scan for vulnerabilities
+trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
+
+# Patch with binary rebuilding
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --enable-go-binary-rebuild \
+    -t patched
+
+# Verify the patched binary
+trivy image patched --vuln-type library
+```
+
+##### Rebuild Strategy Fallback
+
+Copa uses a fallback chain for binary rebuilding:
+
+1. **Provenance Strategy**: Uses SLSA provenance with GitHub-enriched Dockerfile
+2. **Heuristic Strategy**: Uses embedded binary info when provenance is incomplete
+3. **go.mod Only**: Falls back to updating module files only (default behavior)
+
+The strategy used is logged during patching:
+
+```text
+INFO Using rebuild strategy: provenance
+INFO Binary rebuild successful: 1 binaries rebuilt
+```
+
+Or for fallback:
+
+```text
+WARN Provenance-based rebuild failed, falling back to go.mod updates
+INFO Note: Go binaries are not automatically rebuilt. Updated go.mod/go.sum only.
+```

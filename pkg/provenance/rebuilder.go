@@ -49,9 +49,16 @@ func (r *Rebuilder) AnalyzeImage(ctx context.Context, imageRef string, imageRoot
 			rebuildCtx.BuildInfo = buildInfo
 			rebuildCtx.Completeness = r.parser.AssessCompleteness(buildInfo)
 
+			// Step 1.5: If provenance is incomplete, try GitHub fallback
+			if !rebuildCtx.Completeness.CanRebuild || rebuildCtx.BuildInfo.Dockerfile == "" {
+				log.Info("Provenance incomplete, attempting GitHub fallback...")
+				r.enrichFromGitHub(ctx, rebuildCtx)
+				rebuildCtx.Completeness = r.parser.AssessCompleteness(buildInfo)
+			}
+
 			if rebuildCtx.Completeness.CanRebuild {
 				rebuildCtx.Strategy = RebuildStrategyProvenance
-				log.Info("SLSA provenance is complete enough for rebuild")
+				log.Info("SLSA provenance (possibly enriched from GitHub) is complete enough for rebuild")
 				return rebuildCtx, nil
 			}
 
@@ -87,6 +94,40 @@ func (r *Rebuilder) AnalyzeImage(ctx context.Context, imageRef string, imageRoot
 
 	log.Info("No rebuild strategy available, will only update go.mod/go.sum")
 	return rebuildCtx, nil
+}
+
+// enrichFromGitHub enriches the rebuild context with information from GitHub.
+// This is called when provenance lacks Dockerfile or other critical build information.
+func (r *Rebuilder) enrichFromGitHub(ctx context.Context, rebuildCtx *RebuildContext) {
+	if rebuildCtx.Provenance == nil {
+		return
+	}
+
+	// Extract source repo from provenance
+	repoURL, commit, err := r.parser.ExtractSourceRepo(rebuildCtx.Provenance)
+	if err != nil {
+		log.Debugf("Could not extract source repo from provenance: %v", err)
+		return
+	}
+
+	if repoURL == "" || commit == "" {
+		log.Debug("No source repo or commit found in provenance")
+		return
+	}
+
+	log.Infof("Found source repository in provenance: %s @ %s", repoURL, commit)
+
+	// Initialize buildInfo if nil
+	if rebuildCtx.BuildInfo == nil {
+		rebuildCtx.BuildInfo = &BuildInfo{
+			BuildArgs: make(map[string]string),
+		}
+	}
+
+	// Enrich from GitHub
+	if err := r.fetcher.EnrichBuildInfoFromGitHub(ctx, rebuildCtx.BuildInfo, repoURL, commit); err != nil {
+		log.Warnf("Failed to enrich build info from GitHub: %v", err)
+	}
 }
 
 // detectBinariesInImage finds and analyzes Go binaries in an extracted image.
@@ -219,30 +260,76 @@ func (r *Rebuilder) determineBaseImage(buildInfo *BuildInfo) string {
 	return ""
 }
 
+// cloneSourceCode clones the source repository using BuildKit Git LLB.
+// Returns an LLB state with the source code at /src.
+func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, error) {
+	// Extract source repo URL and commit from build info
+	repoURL := buildInfo.BuildArgs["_sourceRepo"]
+	commit := buildInfo.BuildArgs["_sourceCommit"]
+
+	if repoURL == "" {
+		return llb.State{}, fmt.Errorf("no source repository URL in build info")
+	}
+
+	log.Infof("Cloning source from %s @ %s", repoURL, commit)
+
+	// Use BuildKit Git LLB to clone the repository
+	// Format: https://github.com/owner/repo.git#commit
+	gitRef := repoURL
+	if !strings.HasSuffix(gitRef, ".git") {
+		gitRef += ".git"
+	}
+	if commit != "" {
+		gitRef += "#" + commit
+	}
+
+	// Clone the repository
+	gitState := llb.Git(gitRef, commit, llb.KeepGitDir())
+
+	log.Debugf("Created Git LLB state for %s", gitRef)
+	return gitState, nil
+}
+
 // buildBinaryWithUpdates creates a BuildKit LLB state that rebuilds the binary.
 func (r *Rebuilder) buildBinaryWithUpdates(
 	baseImage string,
 	buildInfo *BuildInfo,
 	updates map[string]string,
 ) (llb.State, error) {
-	// Start from base image
+	// Start from Go build image
 	state := llb.Image(baseImage)
 
-	// Set working directory
-	workdir := buildInfo.Workdir
-	if workdir == "" {
-		workdir = "/build"
+	// Determine workdir - use module path structure if available
+	workdir := "/build"
+	if buildInfo.Workdir != "" {
+		workdir = buildInfo.Workdir
 	}
+
+	// Try to clone source code from Git
+	sourceCloned := false
+	sourceState, err := r.cloneSourceCode(buildInfo)
+	if err == nil {
+		// Copy source code to build container
+		state = state.File(
+			llb.Copy(sourceState, "/", workdir, &llb.CopyInfo{
+				CreateDestPath: true,
+			}),
+		)
+		sourceCloned = true
+		log.Info("Cloned source code from Git repository")
+	} else {
+		log.Debugf("Could not clone source (will generate go.mod): %v", err)
+	}
+
 	state = state.Dir(workdir)
 
-	// Copy go.mod and go.sum if we have module info
-	if buildInfo.ModulePath != "" {
-		// Note: In real implementation, we'd need to extract these from the original image
-		// For now, we'll generate them based on detected dependencies
+	// If we couldn't clone source, generate a minimal go.mod
+	if !sourceCloned && buildInfo.ModulePath != "" {
 		goMod := r.generateGoMod(buildInfo, updates)
 		state = state.File(
-			llb.Mkfile("go.mod", 0o644, []byte(goMod)),
+			llb.Mkfile(filepath.Join(workdir, "go.mod"), 0o644, []byte(goMod)),
 		)
+		log.Info("Generated go.mod from dependency information")
 	}
 
 	// Download dependencies
@@ -268,6 +355,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 
 	// Build the binary
 	buildCmd := r.constructBuildCommand(buildInfo)
+	log.Debugf("Build command: %s", buildCmd)
 	state = state.Run(
 		llb.Shlex(buildCmd),
 		llb.WithProxy(llb.ProxyEnv{}),
@@ -375,4 +463,210 @@ func (r *Rebuilder) CopyBinaryToTarget(
 	return state.File(
 		llb.Copy(state, sourcePath, targetPath),
 	)
+}
+
+// RebuildError represents an error during the rebuild process with detailed context.
+type RebuildError struct {
+	Phase       string // Phase where error occurred (analysis, clone, build, copy)
+	Message     string
+	Underlying  error
+	Recoverable bool   // Whether fallback to go.mod update is possible
+	Suggestions []string
+}
+
+func (e *RebuildError) Error() string {
+	if e.Underlying != nil {
+		return fmt.Sprintf("[%s] %s: %v", e.Phase, e.Message, e.Underlying)
+	}
+	return fmt.Sprintf("[%s] %s", e.Phase, e.Message)
+}
+
+func (e *RebuildError) Unwrap() error {
+	return e.Underlying
+}
+
+// newRebuildError creates a new rebuild error with context.
+func newRebuildError(phase, message string, underlying error, recoverable bool, suggestions ...string) *RebuildError {
+	return &RebuildError{
+		Phase:       phase,
+		Message:     message,
+		Underlying:  underlying,
+		Recoverable: recoverable,
+		Suggestions: suggestions,
+	}
+}
+
+// RebuildWithFallback attempts to rebuild with automatic fallback to simpler strategies.
+// It tries strategies in order: provenance -> heuristic -> none (go.mod only).
+func (r *Rebuilder) RebuildWithFallback(
+	ctx context.Context,
+	rebuildCtx *RebuildContext,
+	baseState *llb.State,
+	updates map[string]string,
+) (*llb.State, *RebuildResult, error) {
+	result := &RebuildResult{
+		Strategy: rebuildCtx.Strategy.String(),
+	}
+
+	// Track all attempted strategies
+	var attemptedStrategies []string
+	var lastError error
+
+	// Strategy 1: Full provenance-based rebuild
+	if rebuildCtx.Strategy == RebuildStrategyProvenance && rebuildCtx.BuildInfo != nil {
+		attemptedStrategies = append(attemptedStrategies, "provenance")
+		log.Info("Attempting provenance-based rebuild...")
+
+		newState, rebuildResult, err := r.RebuildBinary(ctx, rebuildCtx, baseState, updates)
+		if err == nil && rebuildResult.Success {
+			return newState, rebuildResult, nil
+		}
+
+		lastError = err
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Provenance rebuild failed: %v", err))
+		log.Warnf("Provenance-based rebuild failed: %v", err)
+	}
+
+	// Strategy 2: Heuristic rebuild using binary detection
+	if rebuildCtx.BinaryInfo != nil && len(rebuildCtx.BinaryInfo) > 0 {
+		attemptedStrategies = append(attemptedStrategies, "heuristic")
+		log.Info("Attempting heuristic rebuild using binary detection...")
+
+		// Create a heuristic context if we don't have one
+		heuristicCtx := &RebuildContext{
+			Strategy:   RebuildStrategyHeuristic,
+			BinaryInfo: rebuildCtx.BinaryInfo,
+			BuildInfo:  r.detector.ConvertBinaryInfoToBuildInfo(rebuildCtx.BinaryInfo[0]),
+		}
+
+		newState, rebuildResult, err := r.RebuildBinary(ctx, heuristicCtx, baseState, updates)
+		if err == nil && rebuildResult.Success {
+			rebuildResult.Strategy = "heuristic (fallback)"
+			rebuildResult.Warnings = append(rebuildResult.Warnings, result.Warnings...)
+			return newState, rebuildResult, nil
+		}
+
+		lastError = err
+		result.Warnings = append(result.Warnings, fmt.Sprintf("Heuristic rebuild failed: %v", err))
+		log.Warnf("Heuristic rebuild failed: %v", err)
+	}
+
+	// All strategies failed
+	result.Success = false
+	result.Error = newRebuildError(
+		"rebuild",
+		fmt.Sprintf("all rebuild strategies failed (tried: %v)", attemptedStrategies),
+		lastError,
+		true, // Recoverable - can fall back to go.mod update
+		"Ensure the image has SLSA provenance with BuildKit metadata",
+		"Check that the image contains Go binaries with embedded build info",
+		"The image may need to be rebuilt with 'go build -buildinfo' flags",
+	)
+
+	return baseState, result, result.Error
+}
+
+// DiagnoseRebuildIssue analyzes why rebuild might not be possible and provides suggestions.
+func (r *Rebuilder) DiagnoseRebuildIssue(rebuildCtx *RebuildContext) []string {
+	var issues []string
+
+	if rebuildCtx == nil {
+		issues = append(issues, "No rebuild context available")
+		return issues
+	}
+
+	// Check provenance
+	if rebuildCtx.Provenance == nil {
+		issues = append(issues, "No SLSA provenance found for image. Try using images built with slsa-github-generator or BuildKit provenance=max")
+	} else {
+		if rebuildCtx.Completeness != nil && len(rebuildCtx.Completeness.MissingInfo) > 0 {
+			issues = append(issues, fmt.Sprintf("Provenance missing: %v", rebuildCtx.Completeness.MissingInfo))
+		}
+	}
+
+	// Check build info
+	if rebuildCtx.BuildInfo == nil {
+		issues = append(issues, "No build information extracted from provenance")
+	} else {
+		if rebuildCtx.BuildInfo.GoVersion == "" {
+			issues = append(issues, "Go version not detected - cannot determine build toolchain")
+		}
+		if rebuildCtx.BuildInfo.ModulePath == "" {
+			issues = append(issues, "Module path not detected - cannot set up Go module")
+		}
+		if rebuildCtx.BuildInfo.Dockerfile == "" {
+			issues = append(issues, "Dockerfile not in provenance - consider using BuildKit with provenance=max")
+		}
+	}
+
+	// Check binary info
+	if len(rebuildCtx.BinaryInfo) == 0 {
+		issues = append(issues, "No Go binaries detected in image - binary detection requires executable files")
+	}
+
+	if len(issues) == 0 {
+		issues = append(issues, "Build information appears complete - rebuild should be possible")
+	}
+
+	return issues
+}
+
+// FormatRebuildSummary creates a human-readable summary of the rebuild attempt.
+func (r *Rebuilder) FormatRebuildSummary(rebuildCtx *RebuildContext, result *RebuildResult) string {
+	var sb strings.Builder
+
+	sb.WriteString("\n=== Go Binary Rebuild Summary ===\n\n")
+
+	// Strategy used
+	sb.WriteString(fmt.Sprintf("Strategy: %s\n", result.Strategy))
+	sb.WriteString(fmt.Sprintf("Success: %v\n", result.Success))
+
+	// Build info if available
+	if rebuildCtx != nil && rebuildCtx.BuildInfo != nil {
+		sb.WriteString("\nBuild Information:\n")
+		sb.WriteString(fmt.Sprintf("  Go Version: %s\n", rebuildCtx.BuildInfo.GoVersion))
+		sb.WriteString(fmt.Sprintf("  Module: %s\n", rebuildCtx.BuildInfo.ModulePath))
+		sb.WriteString(fmt.Sprintf("  CGO Enabled: %v\n", rebuildCtx.BuildInfo.CGOEnabled))
+		if rebuildCtx.BuildInfo.Dockerfile != "" {
+			sb.WriteString("  Dockerfile: Available\n")
+		} else {
+			sb.WriteString("  Dockerfile: Not available\n")
+		}
+	}
+
+	// Binary info if available
+	if rebuildCtx != nil && len(rebuildCtx.BinaryInfo) > 0 {
+		sb.WriteString(fmt.Sprintf("\nDetected Binaries: %d\n", len(rebuildCtx.BinaryInfo)))
+		for _, bi := range rebuildCtx.BinaryInfo {
+			sb.WriteString(fmt.Sprintf("  - %s (Go %s)\n", bi.Path, bi.GoVersion))
+		}
+	}
+
+	// Results
+	if result.Success {
+		sb.WriteString(fmt.Sprintf("\nBinaries Rebuilt: %d\n", result.BinariesRebuilt))
+	} else if result.Error != nil {
+		sb.WriteString(fmt.Sprintf("\nError: %v\n", result.Error))
+	}
+
+	// Warnings
+	if len(result.Warnings) > 0 {
+		sb.WriteString("\nWarnings:\n")
+		for _, w := range result.Warnings {
+			sb.WriteString(fmt.Sprintf("  - %s\n", w))
+		}
+	}
+
+	// Suggestions for failure
+	if !result.Success && rebuildCtx != nil {
+		issues := r.DiagnoseRebuildIssue(rebuildCtx)
+		if len(issues) > 0 {
+			sb.WriteString("\nSuggestions:\n")
+			for _, issue := range issues {
+				sb.WriteString(fmt.Sprintf("  - %s\n", issue))
+			}
+		}
+	}
+
+	return sb.String()
 }

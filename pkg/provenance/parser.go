@@ -293,6 +293,156 @@ func (p *Parser) finalizeBuildInfo(buildInfo *BuildInfo) *BuildInfo {
 	return buildInfo
 }
 
+// ExtractSourceRepo extracts the source repository URL and commit hash from SLSA provenance.
+// This is used as a fallback when provenance doesn't contain the Dockerfile directly.
+func (p *Parser) ExtractSourceRepo(attestation *Attestation) (repoURL string, commit string, err error) {
+	if attestation == nil || attestation.Predicate == nil {
+		return "", "", fmt.Errorf("nil attestation or predicate")
+	}
+
+	// Try SLSA v0.2 format first (most common from slsa-github-generator)
+	if strings.Contains(attestation.PredicateType, "/v0.2") {
+		return p.extractSourceRepoV02(attestation.Predicate)
+	}
+
+	// Try SLSA v1.0 format
+	if strings.Contains(attestation.PredicateType, "/v1") {
+		return p.extractSourceRepoV1(attestation.Predicate)
+	}
+
+	return "", "", fmt.Errorf("unsupported SLSA provenance version for source extraction: %s", attestation.PredicateType)
+}
+
+// extractSourceRepoV02 extracts source repo from SLSA v0.2 provenance.
+func (p *Parser) extractSourceRepoV02(predicate map[string]any) (string, string, error) {
+	// In SLSA v0.2, source info is in materials array
+	// Format: {"uri": "git+https://github.com/org/repo@refs/heads/main", "digest": {"sha1": "abc123"}}
+	materials, ok := predicate["materials"].([]any)
+	if !ok {
+		return "", "", fmt.Errorf("no materials found in v0.2 provenance")
+	}
+
+	for _, material := range materials {
+		matMap, ok := material.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		uri, hasURI := matMap["uri"].(string)
+		if !hasURI {
+			continue
+		}
+
+		// Check if this is a git source
+		if strings.HasPrefix(uri, "git+") || strings.Contains(uri, "github.com") {
+			repoURL := uri
+			// Clean up git+ prefix and ref suffix
+			repoURL = strings.TrimPrefix(repoURL, "git+")
+			// Remove @refs/heads/... or @refs/tags/...
+			if idx := strings.Index(repoURL, "@refs/"); idx != -1 {
+				repoURL = repoURL[:idx]
+			}
+			// Convert to HTTPS if needed
+			repoURL = strings.TrimSuffix(repoURL, ".git")
+
+			// Extract commit from digest
+			var commit string
+			if digest, ok := matMap["digest"].(map[string]any); ok {
+				if sha1, ok := digest["sha1"].(string); ok {
+					commit = sha1
+				}
+			}
+
+			if repoURL != "" {
+				log.Debugf("Extracted source repo from v0.2 provenance: %s @ %s", repoURL, commit)
+				return repoURL, commit, nil
+			}
+		}
+	}
+
+	// Also check invocation.configSource for GitHub Actions
+	if invocation, ok := predicate["invocation"].(map[string]any); ok {
+		if configSource, ok := invocation["configSource"].(map[string]any); ok {
+			uri, hasURI := configSource["uri"].(string)
+			if hasURI && strings.Contains(uri, "github.com") {
+				repoURL := uri
+				repoURL = strings.TrimPrefix(repoURL, "git+")
+				if idx := strings.Index(repoURL, "@refs/"); idx != -1 {
+					repoURL = repoURL[:idx]
+				}
+				repoURL = strings.TrimSuffix(repoURL, ".git")
+
+				var commit string
+				if digest, ok := configSource["digest"].(map[string]any); ok {
+					if sha1, ok := digest["sha1"].(string); ok {
+						commit = sha1
+					}
+				}
+
+				if repoURL != "" {
+					log.Debugf("Extracted source repo from configSource: %s @ %s", repoURL, commit)
+					return repoURL, commit, nil
+				}
+			}
+		}
+	}
+
+	return "", "", fmt.Errorf("no git source found in v0.2 provenance materials")
+}
+
+// extractSourceRepoV1 extracts source repo from SLSA v1.0 provenance.
+func (p *Parser) extractSourceRepoV1(predicate map[string]any) (string, string, error) {
+	// In SLSA v1.0, source info is in buildDefinition.resolvedDependencies
+	buildDef, ok := predicate["buildDefinition"].(map[string]any)
+	if !ok {
+		return "", "", fmt.Errorf("no buildDefinition found in v1.0 provenance")
+	}
+
+	deps, ok := buildDef["resolvedDependencies"].([]any)
+	if !ok {
+		return "", "", fmt.Errorf("no resolvedDependencies found in v1.0 provenance")
+	}
+
+	for _, dep := range deps {
+		depMap, ok := dep.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		uri, hasURI := depMap["uri"].(string)
+		if !hasURI {
+			continue
+		}
+
+		// Check if this is a git source
+		if strings.HasPrefix(uri, "git+") || strings.Contains(uri, "github.com") {
+			repoURL := uri
+			repoURL = strings.TrimPrefix(repoURL, "git+")
+			if idx := strings.Index(repoURL, "@"); idx != -1 {
+				repoURL = repoURL[:idx]
+			}
+			repoURL = strings.TrimSuffix(repoURL, ".git")
+
+			// Extract commit from digest
+			var commit string
+			if digest, ok := depMap["digest"].(map[string]any); ok {
+				if sha1, ok := digest["sha1"].(string); ok {
+					commit = sha1
+				} else if gitCommit, ok := digest["gitCommit"].(string); ok {
+					commit = gitCommit
+				}
+			}
+
+			if repoURL != "" {
+				log.Debugf("Extracted source repo from v1.0 provenance: %s @ %s", repoURL, commit)
+				return repoURL, commit, nil
+			}
+		}
+	}
+
+	return "", "", fmt.Errorf("no git source found in v1.0 provenance dependencies")
+}
+
 // AssessCompleteness evaluates how complete the build information is.
 func (p *Parser) AssessCompleteness(buildInfo *BuildInfo) *ProvenanceCompleteness {
 	completeness := &ProvenanceCompleteness{
