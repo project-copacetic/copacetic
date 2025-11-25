@@ -64,7 +64,7 @@ func validateGoPackageName(name string) error {
 }
 
 // validateGoVersion validates a Go version string using semver rules.
-// Go versions should follow semantic versioning (e.g., v1.2.3, v0.0.0-20230101120000-abcdef123456)
+// Go versions should follow semantic versioning (e.g., v1.2.3, v0.0.0-20230101120000-abcdef123456).
 func validateGoVersion(version string) error {
 	if version == "" {
 		return fmt.Errorf("version cannot be empty")
@@ -608,8 +608,8 @@ func (gm *golangManager) copyRebuiltBinaryToImage(buildState *llb.State, targetS
 	// Determine where the binary was built (based on build workdir + main package)
 	// Default to common output locations
 	sourcePaths := []string{
-		"/build/app",           // Common output name
-		"/build/main",          // If main.go
+		"/build/app",                      // Common output name
+		"/build/main",                     // If main.go
 		"/build/" + binaryInfo.MainModule, // Module name
 	}
 
@@ -623,9 +623,9 @@ func (gm *golangManager) copyRebuiltBinaryToImage(buildState *llb.State, targetS
 	// Copy the binary from build state to target state
 	return targetState.File(
 		llb.Copy(*buildState, sourcePath, targetPath, &llb.CopyInfo{
-			CreateDestPath:      true,
-			AllowWildcard:       false,
-			AllowEmptyWildcard:  false,
+			CreateDestPath:     true,
+			AllowWildcard:      false,
+			AllowEmptyWildcard: false,
 		}),
 	)
 }

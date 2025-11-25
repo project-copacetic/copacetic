@@ -115,13 +115,13 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 	detector := NewDetector()
 
 	binaryInfo := &BinaryInfo{
-		Path:              "/app/bin",
-		ModulePath:        "github.com/example/app",
-		GoVersion:         "1.21.0",
-		CGOEnabled:        false,
-		GOOS:              "linux",
-		GOARCH:            "amd64",
-		VCSRevision:       "abc123",
+		Path:        "/app/bin",
+		ModulePath:  "github.com/example/app",
+		GoVersion:   "1.21.0",
+		CGOEnabled:  false,
+		GOOS:        "linux",
+		GOARCH:      "amd64",
+		VCSRevision: "abc123",
 		Dependencies: map[string]string{
 			"github.com/pkg/errors": "v0.9.1",
 			"golang.org/x/net":      "v0.19.0",

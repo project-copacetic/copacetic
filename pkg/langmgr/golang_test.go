@@ -422,12 +422,12 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 	workingFolder := "/tmp"
 
 	tests := []struct {
-		name           string
-		manifest       *unversioned.UpdateManifest
-		expectedCount  int
-		expectGoMgr    bool
+		name            string
+		manifest        *unversioned.UpdateManifest
+		expectedCount   int
+		expectGoMgr     bool
 		expectPythonMgr bool
-		expectNodeMgr  bool
+		expectNodeMgr   bool
 	}{
 		{
 			name: "only Go modules",
@@ -436,10 +436,10 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 					{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
 				},
 			},
-			expectedCount:  1,
-			expectGoMgr:    true,
+			expectedCount:   1,
+			expectGoMgr:     true,
 			expectPythonMgr: false,
-			expectNodeMgr:  false,
+			expectNodeMgr:   false,
 		},
 		{
 			name: "only Go binaries",
@@ -448,10 +448,10 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 					{Name: "github.com/user/repo", Type: utils.GoBinary, FixedVersion: "v1.2.3"},
 				},
 			},
-			expectedCount:  1,
-			expectGoMgr:    true,
+			expectedCount:   1,
+			expectGoMgr:     true,
 			expectPythonMgr: false,
-			expectNodeMgr:  false,
+			expectNodeMgr:   false,
 		},
 		{
 			name: "Go modules and Python packages",
@@ -461,10 +461,10 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 					{Name: "requests", Type: utils.PythonPackages, FixedVersion: "2.28.0"},
 				},
 			},
-			expectedCount:  2,
-			expectGoMgr:    true,
+			expectedCount:   2,
+			expectGoMgr:     true,
 			expectPythonMgr: true,
-			expectNodeMgr:  false,
+			expectNodeMgr:   false,
 		},
 		{
 			name: "all language types",
@@ -475,28 +475,28 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 					{Name: "express", Type: utils.NodePackages, FixedVersion: "4.18.0"},
 				},
 			},
-			expectedCount:  3,
-			expectGoMgr:    true,
+			expectedCount:   3,
+			expectGoMgr:     true,
 			expectPythonMgr: true,
-			expectNodeMgr:  true,
+			expectNodeMgr:   true,
 		},
 		{
 			name: "no language updates",
 			manifest: &unversioned.UpdateManifest{
 				LangUpdates: unversioned.LangUpdatePackages{},
 			},
-			expectedCount:  0,
-			expectGoMgr:    false,
+			expectedCount:   0,
+			expectGoMgr:     false,
 			expectPythonMgr: false,
-			expectNodeMgr:  false,
+			expectNodeMgr:   false,
 		},
 		{
-			name:           "nil manifest",
-			manifest:       nil,
-			expectedCount:  0,
-			expectGoMgr:    false,
+			name:            "nil manifest",
+			manifest:        nil,
+			expectedCount:   0,
+			expectGoMgr:     false,
 			expectPythonMgr: false,
-			expectNodeMgr:  false,
+			expectNodeMgr:   false,
 		},
 	}
 
