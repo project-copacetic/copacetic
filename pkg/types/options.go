@@ -43,6 +43,9 @@ type Options struct {
 	PkgTypes          string
 	LibraryPatchLevel string
 
+	// Go binary rebuilding (experimental)
+	EnableGoBinaryPatch bool
+
 	// Generate specific
 	OutputContext string
 

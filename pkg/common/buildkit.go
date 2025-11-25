@@ -27,7 +27,8 @@ func SetupBuildkitConfigAndManager(
 	osInfo *OSInfo, // If nil, will be detected from image
 ) (*buildkit.Config, pkgmgr.PackageManager, error) {
 	// Initialize buildkit config
-	config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, platform)
+	// Note: EnableGoBinaryPatch is false for generate command as it only generates manifests
+	config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, platform, false)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -41,6 +41,9 @@ type Options struct {
 
 	// EOL configuration
 	ExitOnEOL bool
+
+	// Go binary rebuilding (experimental)
+	EnableGoBinaryPatch bool
 }
 
 // Result contains the result of the core patching operation.
@@ -74,7 +77,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	updates := opts.Updates
 
 	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform, opts.EnableGoBinaryPatch)
 	if err != nil {
 		if opts.ErrorChannel != nil {
 			opts.ErrorChannel <- err

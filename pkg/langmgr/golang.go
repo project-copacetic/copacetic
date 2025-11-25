@@ -7,6 +7,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/provenance"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -370,6 +371,18 @@ func (gm *golangManager) upgradePackages(
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
+	// Check if binary rebuilding is enabled (experimental feature)
+	if gm.config.EnableGoBinaryPatch {
+		log.Info("Go binary rebuilding is enabled (experimental)")
+		rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates, ignoreErrors)
+		if rebuildErr == nil {
+			log.Info("Successfully rebuilt Go binaries with updated dependencies")
+			return rebuiltState, rebuildFailedPkgs, nil
+		}
+		log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
+		// Continue with standard go.mod update approach as fallback
+	}
+
 	// Detect if Go toolchain exists in the target image
 	goExists, err := gm.detectGo(ctx, currentState)
 	if err != nil {
@@ -435,6 +448,68 @@ func (gm *golangManager) upgradePackages(
 	}
 
 	return &state, failedPackages, nil
+}
+
+// attemptBinaryRebuild attempts to rebuild Go binaries using provenance and binary detection.
+func (gm *golangManager) attemptBinaryRebuild(
+	ctx context.Context,
+	currentState *llb.State,
+	updates unversioned.LangUpdatePackages,
+	ignoreErrors bool,
+) (*llb.State, []string, error) {
+	var failedPackages []string
+
+	log.Info("Attempting Go binary rebuild using SLSA provenance and binary detection")
+
+	// Create rebuilder
+	rebuilder := provenance.NewRebuilder()
+
+	// Analyze the image - note: we don't have direct access to image filesystem here
+	// For now, we'll rely on provenance only
+	// In a full implementation, we'd need to extract the image to analyze binaries
+	rebuildCtx, err := rebuilder.AnalyzeImage(ctx, gm.config.ImageName, "")
+	if err != nil {
+		return currentState, failedPackages, fmt.Errorf("failed to analyze image: %w", err)
+	}
+
+	// Check if we have enough information to rebuild
+	if rebuildCtx.Strategy == provenance.RebuildStrategyNone {
+		return currentState, failedPackages, fmt.Errorf("insufficient build information for binary rebuild")
+	}
+
+	log.Infof("Using rebuild strategy: %s", rebuildCtx.Strategy)
+
+	// Convert updates to module->version map
+	updateMap := make(map[string]string)
+	for _, update := range updates {
+		if update.FixedVersion != "" {
+			updateMap[update.Name] = update.FixedVersion
+			log.Infof("Will update %s to %s", update.Name, update.FixedVersion)
+		}
+	}
+
+	if len(updateMap) == 0 {
+		return currentState, failedPackages, fmt.Errorf("no version updates to apply")
+	}
+
+	// Attempt to rebuild binary
+	newState, result, err := rebuilder.RebuildBinary(ctx, rebuildCtx, currentState, updateMap)
+	if err != nil {
+		for module := range updateMap {
+			failedPackages = append(failedPackages, module)
+		}
+		return currentState, failedPackages, fmt.Errorf("binary rebuild failed: %w", err)
+	}
+
+	if !result.Success {
+		for module := range updateMap {
+			failedPackages = append(failedPackages, module)
+		}
+		return currentState, failedPackages, fmt.Errorf("binary rebuild unsuccessful: %v", result.Error)
+	}
+
+	log.Infof("Binary rebuild successful: %d binaries rebuilt", result.BinariesRebuilt)
+	return newState, failedPackages, nil
 }
 
 // updateGoModule updates a single Go module or workspace.
