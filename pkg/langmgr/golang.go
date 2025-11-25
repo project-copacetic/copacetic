@@ -39,6 +39,12 @@ func validateGoPackageName(name string) error {
 		return fmt.Errorf("package name cannot be empty")
 	}
 
+	// Skip "stdlib" - this represents Go standard library vulnerabilities
+	// which can only be fixed by upgrading Go itself, not by updating dependencies
+	if name == "stdlib" {
+		return fmt.Errorf("stdlib vulnerabilities require Go version upgrade, not supported: %s", name)
+	}
+
 	// Go module names should contain at least one slash (e.g., github.com/user/repo)
 	if !strings.Contains(name, "/") {
 		return fmt.Errorf("invalid Go module name (must be an import path): %s", name)
