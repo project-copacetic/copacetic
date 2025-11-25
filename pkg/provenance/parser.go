@@ -112,7 +112,7 @@ func (p *Parser) extractBuildArgs(params map[string]any, buildInfo *BuildInfo) {
 			buildInfo.BuildArgs[k] = strVal
 
 			// Look for Go version
-			if strings.ToLower(k) == "go_version" || strings.ToLower(k) == "goversion" {
+			if strings.EqualFold(k, "go_version") || strings.EqualFold(k, "goversion") {
 				buildInfo.GoVersion = strVal
 			}
 		}

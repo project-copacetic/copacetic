@@ -221,7 +221,7 @@ func (f *Fetcher) FetchDockerfileFromGitHub(ctx context.Context, repoURL, commit
 		log.Debugf("Dockerfile not found at %s (status: %d)", path, resp.StatusCode)
 	}
 
-	return "", fmt.Errorf("Dockerfile not found in %s/%s at commit %s", owner, repo, commit)
+	return "", fmt.Errorf("dockerfile not found in %s/%s at commit %s", owner, repo, commit)
 }
 
 // FetchGoModFromGitHub fetches go.mod from a GitHub repository at a specific commit.

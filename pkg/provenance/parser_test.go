@@ -9,12 +9,12 @@ import (
 
 func TestExtractSourceRepo(t *testing.T) {
 	tests := []struct {
-		name          string
-		attestation   *Attestation
-		wantRepoURL   string
-		wantCommit    string
-		wantErr       bool
-		errContains   string
+		name        string
+		attestation *Attestation
+		wantRepoURL string
+		wantCommit  string
+		wantErr     bool
+		errContains string
 	}{
 		{
 			name: "v0.2 provenance with git source in materials",
@@ -292,9 +292,9 @@ func TestAssessCompleteness(t *testing.T) {
 
 func TestExtractGoVersionFromGoMod(t *testing.T) {
 	tests := []struct {
-		name    string
-		goMod   string
-		want    string
+		name  string
+		goMod string
+		want  string
 	}{
 		{
 			name:  "standard go.mod",
@@ -333,9 +333,9 @@ func TestExtractGoVersionFromGoMod(t *testing.T) {
 
 func TestExtractModulePathFromGoMod(t *testing.T) {
 	tests := []struct {
-		name   string
-		goMod  string
-		want   string
+		name  string
+		goMod string
+		want  string
 	}{
 		{
 			name:  "standard module path",

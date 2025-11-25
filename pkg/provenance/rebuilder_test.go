@@ -1,6 +1,7 @@
 package provenance
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,8 +82,8 @@ func TestGenerateGoMod(t *testing.T) {
 				ModulePath: "github.com/example/app",
 				GoVersion:  "1.21",
 				Dependencies: map[string]string{
-					"github.com/pkg/errors":   "v0.9.1",
-					"golang.org/x/net":        "v0.18.0",
+					"github.com/pkg/errors": "v0.9.1",
+					"golang.org/x/net":      "v0.18.0",
 				},
 			},
 			updates: map[string]string{
@@ -177,8 +178,8 @@ func TestConstructBuildCommand(t *testing.T) {
 		{
 			name: "build with flags",
 			buildInfo: &BuildInfo{
-				CGOEnabled: false,
-				BuildFlags: []string{"-trimpath", "-ldflags=-s -w"},
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-trimpath", "-ldflags=-s -w"},
 				MainPackage: "./cmd/server",
 			},
 			contains: []string{
@@ -260,7 +261,7 @@ func TestDiagnoseRebuildIssue(t *testing.T) {
 			name: "missing build info fields",
 			rebuildCtx: &RebuildContext{
 				Provenance: &Attestation{},
-				BuildInfo: &BuildInfo{
+				BuildInfo:  &BuildInfo{
 					// Missing GoVersion, ModulePath, Dockerfile
 				},
 			},
@@ -309,9 +310,7 @@ func TestDiagnoseRebuildIssue(t *testing.T) {
 			for _, want := range tt.wantIssues {
 				found := false
 				for _, issue := range issues {
-					if assert.ObjectsAreEqual(want, issue) ||
-					   (len(want) > 0 && len(issue) > len(want) && issue[:len(want)] == want[:len(want)]) ||
-					   containsSubstring(issue, want) {
+					if strings.Contains(issue, want) {
 						found = true
 						break
 					}
@@ -322,19 +321,6 @@ func TestDiagnoseRebuildIssue(t *testing.T) {
 			}
 		})
 	}
-}
-
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && contains(s, substr))
-}
-
-func contains(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 func TestRebuildError(t *testing.T) {

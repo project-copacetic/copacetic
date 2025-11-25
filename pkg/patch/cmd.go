@@ -22,26 +22,26 @@ import (
 )
 
 type patchArgs struct {
-	appImage           string
-	report             string
-	patchedTag         string
-	suffix             string
-	workingFolder      string
-	timeout            time.Duration
-	scanner            string
-	ignoreError        bool
-	format             string
-	output             string
-	bkOpts             buildkit.Opts
-	push               bool
-	platform           []string
-	loader             string
-	pkgTypes           string
-	libraryPatchLevel  string
-	progress           string
-	ociDir             string
-	eolAPIBaseURL      string
-	exitOnEOL          bool
+	appImage            string
+	report              string
+	patchedTag          string
+	suffix              string
+	workingFolder       string
+	timeout             time.Duration
+	scanner             string
+	ignoreError         bool
+	format              string
+	output              string
+	bkOpts              buildkit.Opts
+	push                bool
+	platform            []string
+	loader              string
+	pkgTypes            string
+	libraryPatchLevel   string
+	progress            string
+	ociDir              string
+	eolAPIBaseURL       string
+	exitOnEOL           bool
 	enableGoBinaryPatch bool
 }
 

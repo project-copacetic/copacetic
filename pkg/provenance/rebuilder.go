@@ -417,9 +417,7 @@ func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo) string {
 	parts = append(parts, "go", "build")
 
 	// Add build flags
-	for _, flag := range buildInfo.BuildFlags {
-		parts = append(parts, flag)
-	}
+	parts = append(parts, buildInfo.BuildFlags...)
 
 	// Add main package or default to current directory
 	mainPkg := buildInfo.MainPackage
@@ -449,7 +447,7 @@ func (s RebuildStrategy) String() string {
 
 // CopyBinaryToTarget copies the rebuilt binary to its target location in the image.
 func (r *Rebuilder) CopyBinaryToTarget(
-	state llb.State,
+	state *llb.State,
 	binaryInfo *BinaryInfo,
 	buildDir string,
 ) llb.State {
@@ -461,7 +459,7 @@ func (r *Rebuilder) CopyBinaryToTarget(
 
 	// Copy the binary to the target location
 	return state.File(
-		llb.Copy(state, sourcePath, targetPath),
+		llb.Copy(*state, sourcePath, targetPath),
 	)
 }
 
@@ -470,7 +468,7 @@ type RebuildError struct {
 	Phase       string // Phase where error occurred (analysis, clone, build, copy)
 	Message     string
 	Underlying  error
-	Recoverable bool   // Whether fallback to go.mod update is possible
+	Recoverable bool // Whether fallback to go.mod update is possible
 	Suggestions []string
 }
 
@@ -528,7 +526,7 @@ func (r *Rebuilder) RebuildWithFallback(
 	}
 
 	// Strategy 2: Heuristic rebuild using binary detection
-	if rebuildCtx.BinaryInfo != nil && len(rebuildCtx.BinaryInfo) > 0 {
+	if len(rebuildCtx.BinaryInfo) > 0 {
 		attemptedStrategies = append(attemptedStrategies, "heuristic")
 		log.Info("Attempting heuristic rebuild using binary detection...")
 
@@ -578,10 +576,8 @@ func (r *Rebuilder) DiagnoseRebuildIssue(rebuildCtx *RebuildContext) []string {
 	// Check provenance
 	if rebuildCtx.Provenance == nil {
 		issues = append(issues, "No SLSA provenance found for image. Try using images built with slsa-github-generator or BuildKit provenance=max")
-	} else {
-		if rebuildCtx.Completeness != nil && len(rebuildCtx.Completeness.MissingInfo) > 0 {
-			issues = append(issues, fmt.Sprintf("Provenance missing: %v", rebuildCtx.Completeness.MissingInfo))
-		}
+	} else if rebuildCtx.Completeness != nil && len(rebuildCtx.Completeness.MissingInfo) > 0 {
+		issues = append(issues, fmt.Sprintf("Provenance missing: %v", rebuildCtx.Completeness.MissingInfo))
 	}
 
 	// Check build info
