@@ -467,20 +467,59 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 	log.Info("Attempting Go binary rebuild using SLSA provenance and binary detection")
 
-	// Create rebuilder
+	// Create rebuilder and detector
 	rebuilder := provenance.NewRebuilder()
+	detector := provenance.NewDetector()
 
-	// Analyze the image - note: we don't have direct access to image filesystem here
-	// For now, we'll rely on provenance only
-	// In a full implementation, we'd need to extract the image to analyze binaries
+	// Step 1: Analyze image via provenance (which may enrich from GitHub)
 	rebuildCtx, err := rebuilder.AnalyzeImage(ctx, gm.config.ImageName, "")
 	if err != nil {
-		return currentState, failedPackages, fmt.Errorf("failed to analyze image: %w", err)
+		log.Debugf("Provenance analysis failed: %v", err)
+		rebuildCtx = &provenance.RebuildContext{
+			Strategy: provenance.RebuildStrategyNone,
+		}
+	}
+
+	// Step 2: If provenance strategy is insufficient, try BuildKit binary detection
+	if rebuildCtx.Strategy == provenance.RebuildStrategyNone || rebuildCtx.BuildInfo == nil {
+		log.Info("Provenance insufficient, attempting binary detection via BuildKit")
+
+		binaryInfos, detectErr := detector.DetectAllGoBinariesInBuildKit(ctx, gm.config.Client, currentState)
+		if detectErr != nil {
+			log.Debugf("BuildKit binary detection failed: %v", detectErr)
+		} else if len(binaryInfos) > 0 {
+			log.Infof("Detected %d Go binaries in image via BuildKit", len(binaryInfos))
+
+			// Store binary info in rebuild context
+			rebuildCtx.BinaryInfo = binaryInfos
+
+			// Convert first binary info to build info if we don't have any
+			if rebuildCtx.BuildInfo == nil {
+				rebuildCtx.BuildInfo = detector.ConvertBinaryInfoToBuildInfo(binaryInfos[0])
+				rebuildCtx.Strategy = provenance.RebuildStrategyHeuristic
+				log.Infof("Using heuristic strategy with Go %s (module: %s)",
+					rebuildCtx.BuildInfo.GoVersion, rebuildCtx.BuildInfo.ModulePath)
+			} else {
+				// Merge binary info with existing build info
+				gm.mergeBinaryInfoToBuildInfo(rebuildCtx, binaryInfos[0])
+			}
+		}
 	}
 
 	// Check if we have enough information to rebuild
 	if rebuildCtx.Strategy == provenance.RebuildStrategyNone {
-		return currentState, failedPackages, fmt.Errorf("insufficient build information for binary rebuild")
+		return currentState, failedPackages, fmt.Errorf("insufficient build information for binary rebuild (no provenance or binary detection succeeded)")
+	}
+
+	// Log what information we have
+	if rebuildCtx.BuildInfo != nil {
+		log.Infof("Build info: Go %s, module: %s, CGO: %v",
+			rebuildCtx.BuildInfo.GoVersion,
+			rebuildCtx.BuildInfo.ModulePath,
+			rebuildCtx.BuildInfo.CGOEnabled)
+		if rebuildCtx.BuildInfo.Dockerfile != "" {
+			log.Info("Dockerfile available from provenance/GitHub")
+		}
 	}
 
 	log.Infof("Using rebuild strategy: %s", rebuildCtx.Strategy)
@@ -514,8 +553,81 @@ func (gm *golangManager) attemptBinaryRebuild(
 		return currentState, failedPackages, fmt.Errorf("binary rebuild unsuccessful: %v", result.Error)
 	}
 
+	// Copy the rebuilt binary back to the target image
+	if len(rebuildCtx.BinaryInfo) > 0 {
+		finalState := gm.copyRebuiltBinaryToImage(newState, currentState, rebuildCtx.BinaryInfo[0])
+		newState = &finalState
+	}
+
 	log.Infof("Binary rebuild successful: %d binaries rebuilt", result.BinariesRebuilt)
 	return newState, failedPackages, nil
+}
+
+// mergeBinaryInfoToBuildInfo merges detected binary info into existing build info.
+func (gm *golangManager) mergeBinaryInfoToBuildInfo(rebuildCtx *provenance.RebuildContext, binaryInfo *provenance.BinaryInfo) {
+	buildInfo := rebuildCtx.BuildInfo
+
+	// Fill in missing fields from binary detection
+	if buildInfo.GoVersion == "" {
+		buildInfo.GoVersion = binaryInfo.GoVersion
+	}
+	if buildInfo.ModulePath == "" {
+		buildInfo.ModulePath = binaryInfo.ModulePath
+	}
+
+	// Merge dependencies
+	if buildInfo.Dependencies == nil {
+		buildInfo.Dependencies = make(map[string]string)
+	}
+	for module, version := range binaryInfo.Dependencies {
+		if _, exists := buildInfo.Dependencies[module]; !exists {
+			buildInfo.Dependencies[module] = version
+		}
+	}
+
+	// Merge build settings
+	if buildInfo.BuildArgs == nil {
+		buildInfo.BuildArgs = make(map[string]string)
+	}
+	for key, value := range binaryInfo.BuildSettings {
+		if _, exists := buildInfo.BuildArgs[key]; !exists {
+			buildInfo.BuildArgs[key] = value
+		}
+	}
+
+	// Update strategy if we now have enough info
+	if rebuildCtx.Strategy == provenance.RebuildStrategyNone {
+		rebuildCtx.Strategy = provenance.RebuildStrategyHeuristic
+	}
+
+	log.Debug("Merged binary detection info into build info")
+}
+
+// copyRebuiltBinaryToImage copies the rebuilt binary from build state to the target image.
+func (gm *golangManager) copyRebuiltBinaryToImage(buildState *llb.State, targetState *llb.State, binaryInfo *provenance.BinaryInfo) llb.State {
+	// Determine where the binary was built (based on build workdir + main package)
+	// Default to common output locations
+	sourcePaths := []string{
+		"/build/app",           // Common output name
+		"/build/main",          // If main.go
+		"/build/" + binaryInfo.MainModule, // Module name
+	}
+
+	// Use the first source path for now
+	// In production, we'd determine the actual output location from the build command
+	sourcePath := sourcePaths[0]
+	targetPath := binaryInfo.Path
+
+	log.Infof("Copying rebuilt binary from %s to %s", sourcePath, targetPath)
+
+	// Copy the binary from build state to target state
+	return targetState.File(
+		llb.Copy(*buildState, sourcePath, targetPath, &llb.CopyInfo{
+			CreateDestPath:      true,
+			AllowWildcard:       false,
+			AllowEmptyWildcard:  false,
+		}),
+	)
 }
 
 // updateGoModule updates a single Go module or workspace.
