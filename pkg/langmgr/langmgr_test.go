@@ -48,17 +48,21 @@ func TestGetLanguageManagers(t *testing.T) {
 	managers = GetLanguageManagers(config, workingFolder, manifestWithPython)
 
 	assert.NotEmpty(t, managers, "Should return at least one language manager")
-	assert.Len(t, managers, 1, "Should return exactly one manager (Python)")
+	assert.Len(t, managers, 1, "Should return only Python manager when only python packages present")
 
-	// Check that we have a Python manager
-	found := false
+	// Check that we have Python manager and no .NET manager
+	pythonFound := false
+	dotnetFound := false
 	for _, manager := range managers {
 		if _, ok := manager.(*pythonManager); ok {
-			found = true
-			break
+			pythonFound = true
+		}
+		if _, ok := manager.(*dotnetManager); ok {
+			dotnetFound = true
 		}
 	}
-	assert.True(t, found, "Should include Python manager")
+	assert.True(t, pythonFound, "Should include Python manager")
+	assert.False(t, dotnetFound, "Should not include .NET manager without dotnet packages")
 }
 
 func TestGetUniqueLatestUpdates(t *testing.T) {
