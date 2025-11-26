@@ -20,8 +20,8 @@
     },
     {
         "image": "docker.io/arm64v8/redis",
-        "tag": "7.4.0-alpine",
-        "digest": "sha256:b7b10e22a82307ec3992e740fd6db023217414c16fafa43950b61edf6e719983",
+        "tag": "7.4-alpine3.21",
+        "digest": "sha256:1f456c9fc77eec35fc854105dd5072a1293da0a40fa826e8d5739d45d6c7e650",
         "distro": "Alpine",
         "description": "Valid apk/db, apk present, arm64 cross-arch",
         "ignoreErrors": false,
@@ -174,8 +174,8 @@
     },
     {
         "image": "docker.io/library/rockylinux",
-        "tag": "8.9.20231119",
-        "digest": "sha256:69cecc7163282ad83e27b739fe8473b7c56e280e83827dcda60e5d37102457f1",
+        "tag": "9.3.20231119",
+        "digest": "sha256:d644d203142cd5b54ad2a83a203e1dee68af2229f8fe32f52a30c6e1d3c3a9e0",
         "distro": "Rocky Linux",
         "description": "Valid rpm DB, yum present",
         "ignoreErrors": false,

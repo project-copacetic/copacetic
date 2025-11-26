@@ -487,6 +487,18 @@ func (nm *nodejsManager) installNodePackages(
 	}
 
 	state := *currentState
+
+	// Remove devDependencies from package.json to prevent them from being installed
+	// This ensures production images don't include development dependencies
+	log.Debugf("Removing devDependencies from package.json in %s", workDir)
+	removeDevDepsCmd := fmt.Sprintf(
+		`sh -c 'cd %s && `+
+			`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
+			`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"'`,
+		workDir,
+	)
+	state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
+
 	var transitiveUpdates unversioned.LangUpdatePackages
 
 	// == Step 1: Install Direct Dependencies One-by-One ==
@@ -502,7 +514,7 @@ func (nm *nodejsManager) installNodePackages(
 			// but allows the overall script to continue.
 			installCmd := fmt.Sprintf(
 				`sh -c 'cd %s && echo "INFO: Attempting to install direct dependency: %s" && `+
-					`(npm install %s --save-exact --legacy-peer-deps --no-audit --ignore-scripts --timeout=%d 2>&1 || `+
+					`(npm install %s --save-exact --omit=dev --legacy-peer-deps --no-audit --ignore-scripts --timeout=%d 2>&1 || `+
 					`echo "WARN: Failed to install %s. Version may not exist or has conflicts.")'`,
 				workDir, pkgSpec, pkgSpec, npmInstallTimeoutSeconds, pkgSpec,
 			)
@@ -538,8 +550,9 @@ func (nm *nodejsManager) installNodePackages(
 			// It should be more reliable now that direct dependencies are handled.
 			installCmd := fmt.Sprintf(
 				`sh -c 'cd %s && `+
-					`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-					`npm install --force --no-audit --ignore-scripts --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
+					`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
+					`pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
+					`npm install --force --omit=dev --no-audit --ignore-scripts --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn"'`,
 				workDir, escapedOverridesJSON, npmInstallTimeoutSeconds,
 			)
 
@@ -555,8 +568,8 @@ func (nm *nodejsManager) installNodePackages(
 	log.Infof("Running final cleanup for %s...", workDir)
 	cleanupCmd := fmt.Sprintf(
 		`sh -c 'cd %s && `+
-			`npm prune --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
-			`npm dedupe --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
+			`npm prune --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
+			`npm dedupe --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
 			`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
 		workDir,
 	)
@@ -842,6 +855,17 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			log.Warnf("Could not determine direct dependencies for global package %s, proceeding without filtering.", pkgName)
 		}
 
+		// Remove devDependencies from package.json to prevent them from being installed
+		// This ensures global packages don't include development dependencies
+		log.Debugf("Removing devDependencies from package.json for global package %s", pkgName)
+		removeDevDepsCmd := fmt.Sprintf(
+			`sh -c 'cd %s && `+
+				`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
+				`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"'`,
+			pkgPath,
+		)
+		state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
+
 		// Separate into direct and transitive updates
 		var directUpdates unversioned.LangUpdatePackages
 		var transitiveUpdates unversioned.LangUpdatePackages
@@ -878,9 +902,9 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			if len(pkgSpecs) > 0 {
 				installCmd := fmt.Sprintf(
 					`sh -c 'cd %s && `+
-						`npm install %s --save-exact --legacy-peer-deps --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
-						`npm prune --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
-						`npm dedupe --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
+						`npm install %s --save-exact --omit=dev --legacy-peer-deps --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
+						`npm prune --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
+						`npm dedupe --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" && `+
 						// CRITICAL: Clean cache in same layer
 						`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
 					pkgPath, strings.Join(pkgSpecs, " "), npmInstallTimeoutSeconds,
@@ -927,9 +951,9 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						// Add overrides using node (guaranteed to exist in Node.js images)
 						`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
 						`pkg.overrides=%s; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));" && `+
-						// Run npm install with --force to apply overrides
-						`npm install --force --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
-						`npm prune --force 2>&1 | grep -v "^npm warn" && npm dedupe --force 2>&1 | grep -v "^npm warn" && `+
+						// Run npm install with --force to apply overrides (omit devDependencies for production)
+						`npm install --force --omit=dev --ignore-scripts --no-audit --loglevel=error --timeout=%d 2>&1 | grep -v "^npm warn" && `+
+						`npm prune --omit=dev --force 2>&1 | grep -v "^npm warn" && npm dedupe --omit=dev --force 2>&1 | grep -v "^npm warn" && `+
 						// CRITICAL: Clean cache in same layer
 						`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
 					pkgPath,

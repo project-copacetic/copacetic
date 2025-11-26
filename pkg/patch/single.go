@@ -259,7 +259,7 @@ func validatePlatformEmulation(targetPlatform types.PatchPlatform) error { //nol
 
 		log.Warnf("Emulation is not enabled for platform %s.\n"+
 			"To enable emulation, see docs: \n"+
-			"https://docs.docker.com/build/building-multi-platform/#qemu",
+			"https://docs.docker.com/build/building/multi-platform/#qemu",
 			platform)
 
 		return fmt.Errorf("emulation is not enabled for platform %s", platform)
