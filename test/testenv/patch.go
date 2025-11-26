@@ -93,9 +93,12 @@ func (e *TestEnv) RunPatchTest(ctx context.Context, t *testing.T, cfg PatchTestC
 			}
 		}
 
+		// Normalize the image name to prevent URL parsing errors in BuildKit
+		normalizedImageName := NormalizeImageRef(cfg.ImageName)
+
 		// Create patch options
 		patchOpts := &patch.Options{
-			ImageName:      cfg.ImageName,
+			ImageName:      normalizedImageName,
 			TargetPlatform: targetPlatform,
 			Updates:        cfg.Updates,
 			WorkingFolder:  cfg.WorkingFolder,
@@ -179,9 +182,12 @@ func (e *TestEnv) RunPatchTestWithInspection(
 			}
 		}
 
+		// Normalize the image name to prevent URL parsing errors in BuildKit
+		normalizedImageName := NormalizeImageRef(cfg.ImageName)
+
 		// Create patch options
 		patchOpts := &patch.Options{
-			ImageName:      cfg.ImageName,
+			ImageName:      normalizedImageName,
 			TargetPlatform: targetPlatform,
 			Updates:        cfg.Updates,
 			WorkingFolder:  cfg.WorkingFolder,

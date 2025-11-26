@@ -1,12 +1,14 @@
 package testenv
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client"
@@ -228,19 +230,59 @@ func (l *LayerCountTest) parseOCITar(tarPath string, platform *specs.Platform) (
 	return parseImageLayerInfo(configData)
 }
 
-// extractTar extracts a tar file to a directory using the tar command.
+// extractTar extracts a tar file to a directory.
 func extractTar(tarPath, destDir string) error {
-	// Using os/exec to run tar is simpler for this use case
-	// In production code, you might want to use archive/tar
-	cmd := fmt.Sprintf("tar -xf %s -C %s", tarPath, destDir)
-	return runCommand(cmd)
-}
+	f, err := os.Open(tarPath)
+	if err != nil {
+		return fmt.Errorf("failed to open tar file: %w", err)
+	}
+	defer f.Close()
 
-// runCommand runs a shell command.
-func runCommand(cmd string) error {
-	// This is a simple helper for running shell commands
-	// In practice, you'd use os/exec directly
-	return nil // Placeholder - actual implementation would use exec.Command
+	tr := tar.NewReader(f)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read tar header: %w", err)
+		}
+
+		target := filepath.Join(destDir, header.Name)
+
+		// Ensure the target path is within destDir (prevent path traversal)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
+			return fmt.Errorf("invalid tar path: %s", header.Name)
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return fmt.Errorf("failed to create directory: %w", err)
+			}
+		case tar.TypeReg:
+			// Ensure parent directory exists
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return fmt.Errorf("failed to create parent directory: %w", err)
+			}
+			outFile, err := os.Create(target)
+			if err != nil {
+				return fmt.Errorf("failed to create file: %w", err)
+			}
+			// Use io.Copy with a LimitReader to prevent decompression bombs
+			if _, err := io.Copy(outFile, io.LimitReader(tr, header.Size)); err != nil {
+				outFile.Close()
+				return fmt.Errorf("failed to write file: %w", err)
+			}
+			outFile.Close()
+		case tar.TypeSymlink:
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				// Ignore symlink errors as they're not critical for our use case
+				continue
+			}
+		}
+	}
+	return nil
 }
 
 // AssertLayerCount asserts that the patched image has the expected number of layers.
