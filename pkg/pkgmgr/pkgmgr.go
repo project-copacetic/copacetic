@@ -176,6 +176,7 @@ func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionCompa
 func tryImage(ctx context.Context, imageRef string, c client.Client, platform *ocispecs.Platform) (llb.State, error) {
 	imageOpts := []llb.ImageOption{
 		llb.ResolveModeDefault,
+		llb.WithCustomName(fmt.Sprintf("Resolving image %s", imageRef)),
 	}
 	if platform != nil {
 		imageOpts = append(imageOpts, llb.Platform(*platform))
