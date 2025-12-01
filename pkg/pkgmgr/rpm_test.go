@@ -568,6 +568,17 @@ func Test_installUpdates_RPM(t *testing.T) {
 			expectedResult: nil,
 		},
 		{
+			name: "Zypper update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
+			rpmTools: rpmToolPaths{
+				"zypper": "/usr/bin/zypper",
+				"rpm":    "/usr/bin/rpm",
+			},
+			expectedResult: nil,
+		},
+		{
 			name: "Update specific packages",
 			mockSetup: func(mr *mocks.MockReference) {
 				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1-1.0.1\npackage2-2.0.2\n"), nil)

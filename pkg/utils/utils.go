@@ -57,6 +57,8 @@ const (
 //	amazon      -> rpm
 //	oracle      -> rpm
 //	cbl-mariner -> rpm
+//	sles		-> rpm
+//	opensuse	-> rpm
 func CanonicalPkgManagerType(raw string) string {
 	// Normalize once for matching; we still return the original raw when already canonical
 	lowered := strings.ToLower(raw)
@@ -65,7 +67,7 @@ func CanonicalPkgManagerType(raw string) string {
 		return "apk"
 	case OSTypeDebian, OSTypeUbuntu:
 		return "deb"
-	case OSTypeCBLMariner, OSTypeAzureLinux, OSTypeCentOS, OSTypeOracle, OSTypeRedHat, OSTypeRocky, OSTypeAmazon, OSTypeAlma, OSTypeAlmaLinux:
+	case OSTypeCBLMariner, OSTypeAzureLinux, OSTypeCentOS, OSTypeOracle, OSTypeRedHat, OSTypeRocky, OSTypeAmazon, OSTypeAlma, OSTypeAlmaLinux, OSTypeSLES, OSTypeOpenSUSE:
 		return "rpm"
 	default:
 		return raw

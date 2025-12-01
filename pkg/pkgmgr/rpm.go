@@ -294,7 +294,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 		return err
 	}
 
-	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
+	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm", "zypper"}
 
 	toolsInstalled := toolingBase.Run(
 		llb.Shlex(installToolsCmd),
@@ -385,7 +385,7 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 		}
 
 		var allErrors *multierror.Error
-		if rpmTools["tdnf"] == "" && rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
+		if rpmTools["tdnf"] == "" && rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" && rpmTools["zypper"] == "" {
 			err = errors.New("image contains no RPM package managers needed for patching")
 			log.Error(err)
 			allErrors = multierror.Append(allErrors, err)
@@ -413,7 +413,7 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *l
 	// packageManagersInstalled is the package manager(s) available within the tooling image
 	// RPM must be excluded from this list as it cannot connect to RPM repos
 	var packageManagersInstalled []string
-	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum"}
+	packageManagerList := []string{"tdnf", "dnf", "microdnf", "yum", "zypper"}
 
 	for _, packageManager := range packageManagerList {
 		if strings.Contains(string(applicationsList), packageManager) {
@@ -525,6 +525,16 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 
 		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
+	case rm.rpmTools["zypper"] != "":
+		if updates == nil {
+			checkUpdateTemplate := `sh -c '%[1]s ref; if [ "$(%[1]s -q list-updates | wc -l)" -gt 2 ]; then echo >> /updates.txt; fi'`
+			if !rm.checkForUpgrades(ctx, rm.rpmTools["zypper"], checkUpdateTemplate) {
+				return nil, nil, types.ErrNoUpdatesFound
+			}
+		}
+
+		const zypperInstallTemplate = `sh -c '%[1]s ref && %[1]s -n update -l --no-recommends %[2]s'`
+		installCmd = fmt.Sprintf(zypperInstallTemplate, rm.rpmTools["zypper"], pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
