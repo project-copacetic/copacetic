@@ -1,0 +1,94 @@
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# Build artifacts
+dist/
+copa
+copacetic
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files and reports
+test-*
+*_test.go
+*.test
+*.out
+coverage.txt
+coverage.html
+test-report/
+test-reports/
+test-context/
+*.json
+*.yaml
+*.yml
+
+# Documentation
+*.md
+docs/
+LICENSE
+NOTICE
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+azure-pipelines.yml
+
+# Docker files (except the one being built)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.log
+
+# Development tools
+Makefile
+.goreleaser.yml
+.golangci.yml
+
+# Node modules (if any)
+node_modules/
+
+# Python files (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+
+# Archives
+*.tar
+*.tar.gz
+*.zip
+*.gz
+*.tgz
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Build cache
+.cache/
+buildkit/
+
+# Examples and samples
+examples/
+samples/
