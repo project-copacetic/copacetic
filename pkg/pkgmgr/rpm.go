@@ -286,7 +286,9 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 	)
 
 	// List all packages installed in the tooling image
-	toolsListed := toolingBase.Run(llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`)).Root()
+	toolsListed := toolingBase.Run(
+		llb.Shlex(`sh -c 'ls /usr/bin > applications.txt'`),
+		llb.WithCustomName("Scanning tooling image")).Root()
 	installToolsCmd, err := rm.generateToolInstallCmd(ctx, &toolsListed)
 	if err != nil {
 		return err
@@ -294,7 +296,11 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 
 	packageManagers := []string{"tdnf", "dnf", "microdnf", "yum", "rpm"}
 
-	toolsInstalled := toolingBase.Run(llb.Shlex(installToolsCmd), llb.WithProxy(utils.GetProxy())).Root()
+	toolsInstalled := toolingBase.Run(
+		llb.Shlex(installToolsCmd),
+		llb.WithProxy(utils.GetProxy()),
+		llb.WithCustomName("Installing package management tools"),
+	).Root()
 	toolsApplied := imageStateCurrent.File(llb.Copy(toolsInstalled, "/usr/sbin/busybox", "/usr/sbin/busybox"))
 	mkFolders := toolsApplied.
 		File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true))).
@@ -523,12 +529,23 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
 	}
-	installed := imageStateCurrent.Run(llb.Shlex(installCmd), llb.WithProxy(utils.GetProxy()),
-		llb.WithCustomName("Installing security updates")).Root()
+	// Determine the custom name based on whether we're updating specific packages or all
+	customName := "Installing security updates"
+	if updates != nil {
+		customName = fmt.Sprintf("Installing security updates for %d packages", len(updates))
+	}
+
+	installed := imageStateCurrent.Run(
+		llb.Shlex(installCmd),
+		llb.WithProxy(utils.GetProxy()),
+		llb.WithCustomName(customName),
+	).Root()
 
 	// Validate no errors were encountered if updating all
 	if updates == nil && !ignoreErrors {
-		installed = installed.Run(buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi")).Root()
+		installed = installed.Run(
+			buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"),
+			llb.WithCustomName("Validating package updates")).Root()
 	}
 
 	// Write results.manifest to host for post-patch validation
@@ -578,7 +595,8 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	}
 
 	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
-	stateWithCheck := imageStateCurrent.Run(llb.Shlex(checkUpdate),
+	stateWithCheck := imageStateCurrent.Run(
+		llb.Shlex(checkUpdate),
 		llb.WithCustomName("Checking for available updates")).Root()
 
 	// if error in extracting file, that means updates.txt does not exist and there are no updates.
