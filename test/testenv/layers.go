@@ -155,7 +155,8 @@ func (l *LayerCountTest) ExportAndCountLayers(
 }
 
 // parseOCITar extracts an OCI tar and parses its manifest to count layers.
-func (l *LayerCountTest) parseOCITar(tarPath string, platform *specs.Platform) (*ImageLayerInfo, error) {
+// Note: platform parameter is reserved for future multi-platform OCI layout support.
+func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageLayerInfo, error) {
 	// Create temp directory for extraction
 	extractDir := filepath.Join(l.outputDir, "extract")
 	if err := os.MkdirAll(extractDir, 0o755); err != nil {
@@ -238,6 +239,12 @@ func extractTar(tarPath, destDir string) error {
 	}
 	defer f.Close()
 
+	// Get the absolute path of destDir for proper validation
+	absDestDir, err := filepath.Abs(destDir)
+	if err != nil {
+		return fmt.Errorf("failed to get absolute path of destDir: %w", err)
+	}
+
 	tr := tar.NewReader(f)
 	for {
 		header, err := tr.Next()
@@ -248,11 +255,10 @@ func extractTar(tarPath, destDir string) error {
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 
-		target := filepath.Join(destDir, header.Name)
-
-		// Ensure the target path is within destDir (prevent path traversal)
-		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(destDir)) {
-			return fmt.Errorf("invalid tar path: %s", header.Name)
+		// Sanitize the target path to prevent path traversal
+		target, err := sanitizeTarPath(absDestDir, header.Name)
+		if err != nil {
+			return fmt.Errorf("invalid tar path %q: %w", header.Name, err)
 		}
 
 		switch header.Typeflag {
@@ -265,22 +271,92 @@ func extractTar(tarPath, destDir string) error {
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("failed to create parent directory: %w", err)
 			}
-			outFile, err := os.Create(target)
-			if err != nil {
-				return fmt.Errorf("failed to create file: %w", err)
+			if err := extractFile(target, tr, header.Size); err != nil {
+				return err
 			}
-			// Use io.Copy with a LimitReader to prevent decompression bombs
-			if _, err := io.Copy(outFile, io.LimitReader(tr, header.Size)); err != nil {
-				outFile.Close()
-				return fmt.Errorf("failed to write file: %w", err)
-			}
-			outFile.Close()
 		case tar.TypeSymlink:
+			// Validate symlink target to prevent symlink attacks
+			if err := validateSymlink(absDestDir, target, header.Linkname); err != nil {
+				// Skip invalid symlinks silently - they're not critical for OCI layer inspection
+				continue
+			}
+			// Remove existing file/symlink if it exists
+			_ = os.Remove(target)
 			if err := os.Symlink(header.Linkname, target); err != nil {
 				// Ignore symlink errors as they're not critical for our use case
 				continue
 			}
 		}
+	}
+	return nil
+}
+
+// sanitizeTarPath validates and sanitizes a path from a tar archive.
+// It ensures the resulting path is within the destination directory.
+func sanitizeTarPath(destDir, name string) (string, error) {
+	// Clean the name to remove any . or .. components
+	cleanName := filepath.Clean(name)
+
+	// Reject absolute paths and paths that try to escape
+	if filepath.IsAbs(cleanName) {
+		return "", fmt.Errorf("absolute paths not allowed")
+	}
+	if strings.HasPrefix(cleanName, "..") {
+		return "", fmt.Errorf("path escapes destination directory")
+	}
+
+	// Join with destination and get absolute path
+	target := filepath.Join(destDir, cleanName)
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return "", fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	// Ensure the final path is within destDir
+	// Use filepath.Clean on destDir to normalize it, then add separator for proper prefix check
+	cleanDestDir := filepath.Clean(destDir) + string(filepath.Separator)
+	if !strings.HasPrefix(absTarget+string(filepath.Separator), cleanDestDir) && absTarget != filepath.Clean(destDir) {
+		return "", fmt.Errorf("path escapes destination directory")
+	}
+
+	return absTarget, nil
+}
+
+// validateSymlink checks that a symlink target doesn't escape the destination directory.
+func validateSymlink(destDir, symlinkPath, linkTarget string) error {
+	// If the link target is absolute, reject it
+	if filepath.IsAbs(linkTarget) {
+		return fmt.Errorf("absolute symlink targets not allowed")
+	}
+
+	// Resolve the symlink target relative to the symlink's directory
+	symlinkDir := filepath.Dir(symlinkPath)
+	resolvedTarget := filepath.Join(symlinkDir, linkTarget)
+	absTarget, err := filepath.Abs(resolvedTarget)
+	if err != nil {
+		return fmt.Errorf("failed to resolve symlink target: %w", err)
+	}
+
+	// Ensure the resolved target is within destDir
+	cleanDestDir := filepath.Clean(destDir) + string(filepath.Separator)
+	if !strings.HasPrefix(absTarget+string(filepath.Separator), cleanDestDir) && absTarget != filepath.Clean(destDir) {
+		return fmt.Errorf("symlink target escapes destination directory")
+	}
+
+	return nil
+}
+
+// extractFile extracts a single file from the tar reader to the target path.
+func extractFile(target string, tr *tar.Reader, size int64) error {
+	outFile, err := os.Create(target)
+	if err != nil {
+		return fmt.Errorf("failed to create file: %w", err)
+	}
+	defer outFile.Close()
+
+	// Use io.Copy with a LimitReader to prevent decompression bombs
+	if _, err := io.Copy(outFile, io.LimitReader(tr, size)); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return nil
 }
