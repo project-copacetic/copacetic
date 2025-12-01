@@ -17,6 +17,8 @@ const (
 	OSTypeAmazon     = "amazon"
 	OSTypeAlma       = "alma"
 	OSTypeAlmaLinux  = "almalinux"
+	OSTypeSLES       = "sles"
+	OSTypeOpenSUSE   = "opensuse"
 )
 
 // RPMDistros is a helper slice listing rpm-family OS identifiers.
@@ -30,4 +32,6 @@ var RPMDistros = []string{
 	OSTypeAmazon,
 	OSTypeAlma,
 	OSTypeAlmaLinux,
+	OSTypeSLES,
+	OSTypeOpenSUSE,
 }

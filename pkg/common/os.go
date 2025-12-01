@@ -51,6 +51,10 @@ func GetOSInfo(ctx context.Context, osreleaseBytes []byte) (*OSInfo, error) {
 		normalizedType = utils.OSTypeOracle
 	case strings.Contains(osType, utils.OSTypeAlma):
 		normalizedType = utils.OSTypeAlma
+	case strings.Contains(osType, utils.OSTypeSLES):
+		normalizedType = utils.OSTypeSLES
+	case strings.Contains(osType, utils.OSTypeOpenSUSE):
+		normalizedType = utils.OSTypeOpenSUSE
 	default:
 		log.Error("unsupported osType ", osType)
 		return nil, errors.ErrUnsupported

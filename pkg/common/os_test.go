@@ -98,6 +98,20 @@ VERSION_ID="9.1"`,
 			wantVersion: "9.1",
 		},
 		{
+			name: "SLES",
+			osRelease: `NAME="SLES"
+VERSION_ID="15.6"`,
+			wantType:    utils.OSTypeSLES,
+			wantVersion: "15.6",
+		},
+		{
+			name: "openSUSE",
+			osRelease: `NAME="openSUSE Leap"
+VERSION_ID="15.6"`,
+			wantType:    utils.OSTypeOpenSUSE,
+			wantVersion: "15.6",
+		},
+		{
 			name: "Debian Full",
 			osRelease: `PRETTY_NAME="Debian GNU/Linux 11 (bullseye)"
 NAME="Debian GNU/Linux"
@@ -317,6 +331,37 @@ REDHAT_SUPPORT_PRODUCT="AlmaLinux"
 REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`,
 			wantType:    utils.OSTypeAlma,
 			wantVersion: "9.4",
+		},
+		{
+			name: "SLES FULL",
+			osRelease: `NAME="SLES"
+VERSION="15-SP6"
+VERSION_ID="15.6"
+PRETTY_NAME="SUSE Linux Enterprise Server 15 SP6"
+ID="sles"
+ID_LIKE="suse"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:suse:sles:15:sp6"
+DOCUMENTATION_URL="https://documentation.suse.com/"`,
+			wantType:    utils.OSTypeSLES,
+			wantVersion: "15.6",
+		},
+		{
+			name: "openSUSE FULL",
+			osRelease: `NAME="openSUSE Leap"
+VERSION="15.6"
+ID="opensuse-leap"
+ID_LIKE="suse opensuse"
+VERSION_ID="15.6"
+PRETTY_NAME="openSUSE Leap 15.6"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:opensuse:leap:15.6"
+BUG_REPORT_URL="https://bugs.opensuse.org"
+HOME_URL="https://www.opensuse.org/"
+DOCUMENTATION_URL="https://en.opensuse.org/Portal:Leap"
+LOGO="distributor-logo-Leap"`,
+			wantType:    utils.OSTypeOpenSUSE,
+			wantVersion: "15.6",
 		},
 		// Minimal test cases
 		{
