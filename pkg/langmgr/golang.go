@@ -136,6 +136,12 @@ func filterGoPackages(langUpdates unversioned.LangUpdatePackages) unversioned.La
 	var goPackages unversioned.LangUpdatePackages
 	for _, pkg := range langUpdates {
 		if pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary {
+			// Skip stdlib - these are Go standard library vulnerabilities that
+			// can only be fixed by upgrading Go itself, not by updating dependencies
+			if pkg.Name == "stdlib" {
+				log.Warnf("Skipping stdlib vulnerability (requires Go version upgrade): %s → %s", pkg.InstalledVersion, pkg.FixedVersion)
+				continue
+			}
 			goPackages = append(goPackages, pkg)
 		}
 	}
