@@ -215,7 +215,6 @@ func (r *RefInspector) AssertRpmPackageVersion(t *testing.T, pkgName, expectedVe
 		"/var/lib/rpmmanifest/container-manifest-1",
 	}
 
-	var found bool
 	for _, path := range rpmManifestPaths {
 		content, err := r.ReadFile(path)
 		if err != nil {
@@ -230,8 +229,7 @@ func (r *RefInspector) AssertRpmPackageVersion(t *testing.T, pkgName, expectedVe
 			if len(fields) >= 2 && fields[0] == pkgName {
 				// Check if version matches (might include release suffix)
 				if strings.HasPrefix(fields[1], expectedVersion) || fields[1] == expectedVersion {
-					found = true
-					return
+					return // Found and version matches
 				}
 				t.Errorf("package %s version mismatch: expected %q, got %q", pkgName, expectedVersion, fields[1])
 				return
@@ -239,9 +237,7 @@ func (r *RefInspector) AssertRpmPackageVersion(t *testing.T, pkgName, expectedVe
 		}
 	}
 
-	if !found {
-		t.Errorf("package %s not found in RPM manifest files", pkgName)
-	}
+	t.Errorf("package %s not found in RPM manifest files", pkgName)
 }
 
 // AssertPackageVersion is a generic helper that detects the package manager type

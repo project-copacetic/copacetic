@@ -47,11 +47,12 @@ func TestInspectMarinerImage(t *testing.T) {
 		inspector.AssertFileContains(t, "/etc/os-release", "Mariner")
 
 		// Check for RPM database
-		if inspector.FileExists("/var/lib/rpm/rpmdb.sqlite") {
+		switch {
+		case inspector.FileExists("/var/lib/rpm/rpmdb.sqlite"):
 			t.Log("Found SQLite RPM database")
-		} else if inspector.FileExists("/var/lib/rpm/Packages") {
+		case inspector.FileExists("/var/lib/rpm/Packages"):
 			t.Log("Found Berkeley DB RPM database")
-		} else {
+		default:
 			t.Log("RPM database location may vary")
 		}
 	})
@@ -262,7 +263,6 @@ func TestPatchMarinerImage(t *testing.T) {
 		Updates:     updates,
 		IgnoreError: true,
 	})
-
 	if err != nil {
 		t.Logf("Patch returned error (may be expected): %v", err)
 		return

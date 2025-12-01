@@ -200,7 +200,6 @@ func TestPatchAlpinePackage(t *testing.T) {
 		Updates:     updates,
 		IgnoreError: true, // Continue even if package not found
 	})
-
 	if err != nil {
 		// This is expected if the package version doesn't match exactly
 		t.Logf("Patch returned error (may be expected): %v", err)
@@ -256,7 +255,6 @@ func TestPatchDebianPackage(t *testing.T) {
 		Updates:     updates,
 		IgnoreError: true, // Continue even if package not found
 	})
-
 	if err != nil {
 		t.Logf("Patch returned error (may be expected): %v", err)
 		return
@@ -316,7 +314,6 @@ func TestPatchPreservesConfig(t *testing.T) {
 
 		t.Logf("Config preserved - OS release verified")
 	})
-
 	if err != nil {
 		t.Logf("Patch returned error (may be expected): %v", err)
 	}

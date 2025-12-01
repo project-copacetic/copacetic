@@ -17,9 +17,11 @@ type TestRunnerOpt func(*TestRunnerConfig)
 
 // WithSolveOpts sets custom solve options for the test.
 // This allows tests to configure exports, cache options, etc.
-func WithSolveOpts(opts client.SolveOpt) TestRunnerOpt {
+func WithSolveOpts(opts *client.SolveOpt) TestRunnerOpt {
 	return func(cfg *TestRunnerConfig) {
-		cfg.SolveOpts = opts
+		if opts != nil {
+			cfg.SolveOpts = *opts
+		}
 	}
 }
 

@@ -115,7 +115,6 @@ func TestPatchARM64Image(t *testing.T) {
 		Updates:     updates,
 		IgnoreError: true,
 	})
-
 	if err != nil {
 		t.Logf("Patch returned error (may be expected): %v", err)
 		return

@@ -120,7 +120,6 @@ func (e *TestEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts ..
 		f(ctx, t, c)
 		return &gwclient.Result{}, nil
 	}, nil)
-
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
