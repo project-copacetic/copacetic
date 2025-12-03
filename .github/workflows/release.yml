@@ -20,7 +20,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           fetch-depth: 0
 
@@ -66,12 +66,12 @@ jobs:
             echo "Created and pushed release branch ${BRANCH_NAME}"
           fi
 
-      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:
           go-version: "1.25"
           check-latest: true
 
-      - uses: anchore/sbom-action/download-syft@8e94d75ddd33f69f691467e42275782e4bfefe84 # v0.20.9
+      - uses: anchore/sbom-action/download-syft@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
 
       - name: Run goreleaser
         uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
@@ -82,7 +82,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout copa-action repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           repository: ${{ github.repository_owner }}/copa-action
           path: copa-action
@@ -105,7 +105,7 @@ jobs:
           docker buildx build --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
 
       - name: Checkout copa-extension repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
         with:
           repository: ${{ github.repository_owner }}/copa-extension
           path: copa-extension
@@ -126,3 +126,24 @@ jobs:
           tag="${{ steps.vars.outputs.version_tag }}"
           image_owner="${{ github.repository_owner }}"
           docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
+
+      - name: Set up Docker for copa frontend
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Login to ghcr for copa frontend
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push copa frontend image with new version
+        run: |
+          tag="${{ steps.vars.outputs.version_tag }}"
+          image_owner="${{ github.repository_owner }}"
+          docker buildx build --push \
+            --platform linux/amd64,linux/arm64 \
+            -f frontend.Dockerfile \
+            -t "ghcr.io/${image_owner}/copacetic-frontend:v${tag}" \
+            -t "ghcr.io/${image_owner}/copacetic-frontend:latest" \
+            .

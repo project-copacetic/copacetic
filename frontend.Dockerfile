@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1
+
+FROM golang:1.25-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Set working directory
+WORKDIR /src
+
+# Copy go mod files
+COPY go.mod go.sum ./
+
+# Copy source code
+COPY . .
+
+# Build the frontend binary with cache mounts for faster builds
+RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=gocache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /copa-frontend ./cmd/frontend
+
+# Final image
+FROM scratch AS frontend
+
+# Copy CA certificates for HTTPS connections
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy the frontend binary
+COPY --from=builder /copa-frontend /copa-frontend
+
+# Add BuildKit frontend capability labels
+LABEL moby.buildkit.frontend.network.none="true"
+LABEL moby.buildkit.frontend.caps="moby.buildkit.frontend.inputs,moby.buildkit.frontend.contexts"
+
+# Set the entrypoint
+ENTRYPOINT ["/copa-frontend"]
