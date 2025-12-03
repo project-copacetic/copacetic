@@ -46,7 +46,8 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			osVersion:     osVersion,
 			osType:        osType,
 		}, nil
-	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux, utils.OSTypeSLES, utils.OSTypeOpenSUSE:
+	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky,
+		utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux, utils.OSTypeSLES, utils.OSTypeOpenSUSE:
 		return &rpmManager{
 			config:        config,
 			workingFolder: workingFolder,

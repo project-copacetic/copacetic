@@ -57,8 +57,8 @@ const (
 //	amazon      -> rpm
 //	oracle      -> rpm
 //	cbl-mariner -> rpm
-//	sles		-> rpm
-//	opensuse	-> rpm
+//	sles        -> rpm
+//	opensuse    -> rpm
 func CanonicalPkgManagerType(raw string) string {
 	// Normalize once for matching; we still return the original raw when already canonical
 	lowered := strings.ToLower(raw)

@@ -82,6 +82,17 @@ func TestGetPackageManager(t *testing.T) {
 		assert.IsType(t, &rpmManager{}, manager)
 	})
 
+	t.Run("should return an rpmManager for sles", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeSLES, "15.6", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
 	t.Run("should return an rpmManager for opensuse", func(t *testing.T) {
 		manager, err := GetPackageManager(utils.OSTypeOpenSUSE, "15.6", config, utils.DefaultTempWorkingFolder)
 
