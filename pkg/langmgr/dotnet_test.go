@@ -31,6 +31,21 @@ func TestIsValidDotnetVersion(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:     "valid 4-part NuGet version",
+			version:  "1.2.3.4",
+			expected: true,
+		},
+		{
+			name:     "valid 4-part version with prerelease",
+			version:  "1.0.0.0-preview",
+			expected: true,
+		},
+		{
+			name:     "valid 4-part version with build metadata",
+			version:  "1.2.3.4+build",
+			expected: true,
+		},
+		{
 			name:     "invalid version",
 			version:  "invalid-version",
 			expected: false,
@@ -38,6 +53,16 @@ func TestIsValidDotnetVersion(t *testing.T) {
 		{
 			name:     "empty version",
 			version:  "",
+			expected: false,
+		},
+		{
+			name:     "invalid 5-part version",
+			version:  "1.2.3.4.5",
+			expected: false,
+		},
+		{
+			name:     "invalid 2-part version",
+			version:  "1.2",
 			expected: false,
 		},
 	}
@@ -79,6 +104,30 @@ func TestIsLessThanDotnetVersion(t *testing.T) {
 			name:     "major version difference",
 			v1:       "1.2.3",
 			v2:       "2.0.0",
+			expected: true,
+		},
+		{
+			name:     "4-part version comparison - less than",
+			v1:       "1.0.0.0",
+			v2:       "1.0.0.1",
+			expected: true,
+		},
+		{
+			name:     "4-part version comparison - greater than",
+			v1:       "1.0.0.2",
+			v2:       "1.0.0.1",
+			expected: false,
+		},
+		{
+			name:     "4-part version comparison - equal",
+			v1:       "1.2.3.4",
+			v2:       "1.2.3.4",
+			expected: false,
+		},
+		{
+			name:     "mixed 3-part and 4-part comparison",
+			v1:       "1.0.0",
+			v2:       "1.0.0.1",
 			expected: true,
 		},
 	}

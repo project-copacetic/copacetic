@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/Masterminds/semver"
@@ -21,26 +22,129 @@ type dotnetManager struct {
 	workingFolder string
 }
 
-// isValidDotnetVersion checks if a version string is a valid semantic version.
-func isValidDotnetVersion(v string) bool {
-	_, err := semver.NewVersion(v)
-	return err == nil
+// validDotnetPackageNamePattern defines the regex pattern for valid NuGet package names.
+// Based on NuGet package naming conventions: https://learn.microsoft.com/en-us/nuget/create-packages/package-authoring-best-practices
+var validDotnetPackageNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validNuGetVersionPattern defines the regex pattern for valid NuGet versions.
+// NuGet supports SemVer 2.0 plus a 4th "Revision" segment for System.Version compatibility.
+// Format: Major.Minor.Patch[.Revision][-prerelease][+buildmetadata]
+// See: https://learn.microsoft.com/en-us/nuget/concepts/package-versioning
+var validNuGetVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+(\.\d+)?(-[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?(\+[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)*)?$`)
+
+// validateDotnetPackageName validates that a package name is safe for use in XML and shell commands.
+func validateDotnetPackageName(name string) error {
+	if name == "" {
+		return fmt.Errorf("package name cannot be empty")
+	}
+	if len(name) > 128 {
+		return fmt.Errorf("package name too long (max 128 characters): %s", name)
+	}
+	if !validDotnetPackageNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid .NET package name format: %s", name)
+	}
+	// Check for XML-unsafe characters and shell injection attempts
+	if strings.ContainsAny(name, "<>&\"'`;|$(){}[]\\") {
+		return fmt.Errorf("package name contains unsafe characters: %s", name)
+	}
+	return nil
 }
 
-// isLessThanDotnetVersion compares two semantic version strings.
+// validateDotnetVersion validates that a version string is safe for use in XML and shell commands.
+// It checks format validity, length limits, and unsafe characters.
+func validateDotnetVersion(version string) error {
+	if version == "" {
+		return fmt.Errorf("version cannot be empty")
+	}
+	if len(version) > 64 {
+		return fmt.Errorf("version too long (max 64 characters): %s", version)
+	}
+	// Check if it's a valid NuGet version (supports 3 or 4 part versions with optional prerelease/metadata)
+	if !isValidDotnetVersion(version) {
+		return fmt.Errorf("invalid .NET version format: %s", version)
+	}
+	// Check for XML-unsafe characters and shell injection attempts
+	if strings.ContainsAny(version, "<>&\"'`;|$(){}[]\\") {
+		return fmt.Errorf("version contains unsafe characters: %s", version)
+	}
+	return nil
+}
+
+// escapeXMLAttribute escapes a string for safe use in an XML attribute value.
+func escapeXMLAttribute(s string) string {
+	replacer := strings.NewReplacer(
+		"&", "&amp;",
+		"<", "&lt;",
+		">", "&gt;",
+		"\"", "&quot;",
+		"'", "&apos;",
+	)
+	return replacer.Replace(s)
+}
+
+// isValidDotnetVersion checks if a version string is a valid NuGet version.
+// NuGet supports Major.Minor.Patch[.Revision][-prerelease][+buildmetadata].
+func isValidDotnetVersion(v string) bool {
+	if v == "" {
+		return false
+	}
+	return validNuGetVersionPattern.MatchString(v)
+}
+
+// isLessThanDotnetVersion compares two NuGet version strings.
 // It returns true if v1 is less than v2.
+// For 4-part versions (Major.Minor.Patch.Revision), falls back to semver comparison
+// of the first 3 parts if semver parsing fails.
 func isLessThanDotnetVersion(v1, v2 string) bool {
+	// Try standard semver comparison first
 	ver1, err1 := semver.NewVersion(v1)
-	if err1 != nil {
-		log.Warnf("Error parsing .NET version '%s': %v", v1, err1)
-		return false
-	}
 	ver2, err2 := semver.NewVersion(v2)
-	if err2 != nil {
-		log.Warnf("Error parsing .NET version '%s': %v", v2, err2)
+	if err1 == nil && err2 == nil {
+		return ver1.LessThan(ver2)
+	}
+
+	// For 4-part NuGet versions, parse manually and compare
+	parts1 := parseNuGetVersionParts(v1)
+	parts2 := parseNuGetVersionParts(v2)
+	if parts1 == nil || parts2 == nil {
+		log.Warnf("Error parsing .NET version for comparison: '%s' vs '%s'", v1, v2)
 		return false
 	}
-	return ver1.LessThan(ver2)
+
+	// Compare each numeric part
+	for i := 0; i < 4; i++ {
+		if parts1[i] < parts2[i] {
+			return true
+		}
+		if parts1[i] > parts2[i] {
+			return false
+		}
+	}
+	return false // versions are equal
+}
+
+// parseNuGetVersionParts extracts the numeric parts from a NuGet version string.
+// Returns [Major, Minor, Patch, Revision] or nil if parsing fails.
+func parseNuGetVersionParts(v string) []int {
+	// Strip prerelease and build metadata
+	if idx := strings.IndexAny(v, "-+"); idx != -1 {
+		v = v[:idx]
+	}
+
+	parts := strings.Split(v, ".")
+	if len(parts) < 3 || len(parts) > 4 {
+		return nil
+	}
+
+	result := make([]int, 4)
+	for i, p := range parts {
+		var num int
+		if _, err := fmt.Sscanf(p, "%d", &num); err != nil {
+			return nil
+		}
+		result[i] = num
+	}
+	return result
 }
 
 func (dnm *dotnetManager) InstallUpdates(
@@ -556,11 +660,24 @@ func (dnm *dotnetManager) patchRuntimeImage(
 	)
 
 	// Create minimal project file for patching - build it as a single complete file
+	// Validate and escape all package names and versions before constructing XML
 	var packageRefs strings.Builder
 	for _, u := range updates {
 		if u.FixedVersion != "" {
+			// Validate package name and version to prevent XML injection
+			if err := validateDotnetPackageName(u.Name); err != nil {
+				log.Warnf("Skipping invalid package name: %v", err)
+				continue
+			}
+			if err := validateDotnetVersion(u.FixedVersion); err != nil {
+				log.Warnf("Skipping invalid version for package %s: %v", u.Name, err)
+				continue
+			}
+			// Escape values for safe XML attribute usage (defense in depth)
+			safeName := escapeXMLAttribute(u.Name)
+			safeVersion := escapeXMLAttribute(u.FixedVersion)
 			packageRefs.WriteString(fmt.Sprintf(`    <PackageReference Include="%s" Version="%s" />
-`, u.Name, u.FixedVersion))
+`, safeName, safeVersion))
 		}
 	}
 
