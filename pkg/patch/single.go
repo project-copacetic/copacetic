@@ -144,7 +144,8 @@ func patchSingleArchImage(
 			// If after filtering there are zero OS and zero library updates, return an error
 			// only when user explicitly requested some package types (default is OS) but none are patchable.
 			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
-				return nil, fmt.Errorf("no patchable vulnerabilities found in provided report for selected pkg-types (%s)", pkgTypes)
+				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+				return res, types.ErrNoUpdatesFound
 			}
 		}
 
