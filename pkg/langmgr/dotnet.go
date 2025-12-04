@@ -277,15 +277,7 @@ func (dnm *dotnetManager) validateDotnetPackageVersions(
 				validationIssues = append(validationIssues, fmt.Sprintf("package %s: no package list data to validate", pkgUpdate.Name))
 			}
 			if !ignoreErrors && len(failedPackages) > 0 {
-				// Create a unique list of failed packages before returning
-				uniqueFailedPkgsMap := make(map[string]bool)
-				var uniqueFailedPkgsList []string
-				for _, pkgName := range failedPackages {
-					if !uniqueFailedPkgsMap[pkgName] {
-						uniqueFailedPkgsMap[pkgName] = true
-						uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
-					}
-				}
+				uniqueFailedPkgsList := utils.DeduplicateStringSlice(failedPackages)
 				return uniqueFailedPkgsList, fmt.Errorf(
 					"failed to validate .NET packages: %s", strings.Join(validationIssues, "; "))
 			}
@@ -322,15 +314,7 @@ func (dnm *dotnetManager) validateDotnetPackageVersions(
 		for _, pkgUpdate := range expectedUpdates {
 			failedPackages = append(failedPackages, pkgUpdate.Name)
 		}
-		// Create a unique list of failed packages
-		uniqueFailedPkgsMap := make(map[string]bool)
-		var uniqueFailedPkgsList []string
-		for _, pkgName := range failedPackages {
-			if !uniqueFailedPkgsMap[pkgName] {
-				uniqueFailedPkgsMap[pkgName] = true
-				uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
-			}
-		}
+		uniqueFailedPkgsList := utils.DeduplicateStringSlice(failedPackages)
 		return uniqueFailedPkgsList, fmt.Errorf("error reading dotnet list package results: %w", err)
 	}
 
@@ -402,16 +386,7 @@ func (dnm *dotnetManager) validateDotnetPackageVersions(
 		}
 	}
 
-	uniqueFailedPkgsMap := make(map[string]bool)
-	var uniqueFailedPkgsList []string
-	if len(failedPackages) > 0 {
-		for _, pkgName := range failedPackages {
-			if !uniqueFailedPkgsMap[pkgName] {
-				uniqueFailedPkgsMap[pkgName] = true
-				uniqueFailedPkgsList = append(uniqueFailedPkgsList, pkgName)
-			}
-		}
-	}
+	uniqueFailedPkgsList := utils.DeduplicateStringSlice(failedPackages)
 
 	if len(validationIssues) > 0 {
 		summaryError := errors.New(strings.Join(validationIssues, "; "))
