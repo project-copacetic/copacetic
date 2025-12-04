@@ -628,11 +628,18 @@ func (dnm *dotnetManager) patchRuntimeImage(
 	sdkImage := fmt.Sprintf("mcr.microsoft.com/dotnet/sdk:%s", frameworkVersion)
 	log.Infof("Using SDK image: %s (detected framework: %s)", sdkImage, frameworkVersion)
 
-	// Use the SDK image for patching - start with base SDK image
-	sdkState := llb.Image(sdkImage,
+	// Build SDK image options - use target platform to ensure native deps match target architecture
+	sdkImageOpts := []llb.ImageOption{
 		llb.ResolveModePreferLocal,
 		llb.WithMetaResolver(dnm.config.Client),
-	)
+	}
+	if dnm.config.Platform != nil {
+		sdkImageOpts = append(sdkImageOpts, llb.Platform(*dnm.config.Platform))
+		log.Infof("Running SDK container with target platform: %s/%s", dnm.config.Platform.OS, dnm.config.Platform.Architecture)
+	}
+
+	// Use the SDK image for patching - runs under target architecture via QEMU if needed
+	sdkState := llb.Image(sdkImage, sdkImageOpts...)
 
 	// Create minimal project file for patching - build it as a single complete file
 	// Validate and escape all package names and versions before constructing XML
