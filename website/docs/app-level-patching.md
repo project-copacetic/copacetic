@@ -232,6 +232,83 @@ Copa uses the `--ignore-scripts` flag when installing Node.js packages to avoid 
 - Most security patches work without native rebuilds.
 - In rare cases, functionality relying on native modules might be affected.
 
-##### Node.js Testing and Validation
+###### Node.js Testing and Validation
 
 As with Python packages, it is *highly recommended* to thoroughly test your Node.js application after applying updates. Copa does not perform automated testing or validation of the patched application.
+
+### .NET
+
+Copa supports patching .NET applications for two types of docker images:
+
+- **SDK-based patching**: For images with .NET SDK and project files (`.csproj`, `.fsproj`, or `.vbproj`)
+- **Runtime patching**: For runtime-only images with compiled DLLs and `*.deps.json` files
+
+Copa automatically detects which mode to use based on the image contents.
+
+#### Usage Examples
+
+The usage is similar to the above patching for Nodejs and Python images.
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
+copa patch -i $IMAGE -r scan.json -t $IMAGE-patched --pkg-types library
+```
+
+#### How .NET Patching Works
+
+Copa uses **runtime patching** (DLL replacement) for all .NET images. If SDK and project files are present, Copa will also update the `.csproj` file before performing DLL replacement.
+
+##### With SDK and Project Files
+
+When the image contains the .NET SDK and project files (`.csproj`, `.fsproj`, or `.vbproj`):
+
+1. **Update .csproj**: Runs `dotnet remove package` and `dotnet add package` to update package references
+2. **Build**: Runs `dotnet build` to verify the changes compile successfully
+3. **DLL Replacement**: Downloads fixed NuGet packages and replaces vulnerable DLLs in-place
+4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
+
+This provides compile-time checks while ensuring DLLs are placed in the correct location.
+
+##### Without SDK (Runtime-Only Images)
+
+When the image only contains the .NET runtime:
+
+1. **Discovery**: Scans for `*.deps.json` files and detects the .NET framework version
+2. **SDK Container**: Creates a temporary SDK container matching your framework (e.g., `net6.0`) to download fixed NuGet packages
+3. **DLL Replacement**: Replaces vulnerable DLLs in the runtime image with patched versions
+4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
+
+##### Why DLL Replacement Works
+
+NuGet packages contain pre-compiled DLLs (IL bytecode, not native machine code). The .NET runtime JIT-compiles these DLLs at load time, so you can swap DLL files without recompiling your application.
+
+##### Important Considerations
+
+**Patch Level**: Many .NET security fixes involve major version changes (e.g., `12.0.1 → 13.0.1`). Use `--library-patch-level major` to allow these updates.
+
+**Multi-Application Containers**: If multiple `*.deps.json` files are detected, Copa patches only the first application found and logs a warning. Multi-application containers should be split into separate images for proper patching.
+
+:::danger No Compile-Time Checks
+Runtime patching bypasses compilation. API incompatibilities won't surface until runtime. Always test in staging before production.
+:::
+
+#### .NET Limitations
+
+##### Microsoft.Build.* Packages
+
+Copa automatically filters out `Microsoft.Build.*` packages from patching. These are SDK/build-time dependencies that:
+- Are not part of the runtime application
+- Often have version constraints incompatible with patching
+- Don't represent actual security vulnerabilities in the deployed application
+
+##### Dependency Resolution
+
+Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:
+- Use `--ignore-errors` to continue patching other packages
+- Manually resolve version conflicts in your `.csproj` file
+
+##### Testing After Patching
+
+Always test your .NET application after patching. Copa does not perform automated testing or validation.
