@@ -429,14 +429,24 @@ func (dnm *dotnetManager) upgradePackages(
 	hasSdk := dnm.checkForSDK(ctx, &projectDiscoveryState)
 	hasProjectFile := dnm.checkForProjectFile(ctx, &projectDiscoveryState)
 
+	// If SDK and project files exist, update the .csproj first (for consistency and compile-time checks)
+	currentImageState := imageState
 	if hasSdk && hasProjectFile {
-		log.Info("SDK and project files detected - using SDK-based patching approach")
-		return dnm.patchSDKImage(ctx, imageState, &projectDiscoveryState, updates, ignoreErrors)
+		log.Info("SDK and project files detected - updating .csproj before runtime patching")
+		updatedState, err := dnm.updateProjectFile(ctx, imageState, &projectDiscoveryState, updates, ignoreErrors)
+		if err != nil {
+			if !ignoreErrors {
+				return nil, nil, fmt.Errorf("failed to update project file: %w", err)
+			}
+			log.Warnf("Failed to update project file (continuing with runtime patching): %v", err)
+		} else {
+			currentImageState = updatedState
+		}
 	}
 
-	// Default to runtime patching for runtime-only images or SDK images without project files
-	log.Info("Using runtime patching approach (no SDK or no project files)")
-	return dnm.patchRuntimeImage(ctx, imageState, &projectDiscoveryState, updates, ignoreErrors)
+	// Always use runtime patching to replace DLLs in-place
+	log.Info("Applying runtime patching to replace DLLs in-place")
+	return dnm.patchRuntimeImage(ctx, currentImageState, &projectDiscoveryState, updates, ignoreErrors)
 }
 
 // checkForSDK checks if the image has the .NET SDK installed by checking if dotnet --list-sdks returns any SDKs.
@@ -475,20 +485,22 @@ func (dnm *dotnetManager) checkForProjectFile(ctx context.Context, discoveryStat
 	return hasProject
 }
 
-// patchSDKImage patches a .NET SDK image by modifying project files and rebuilding.
-func (dnm *dotnetManager) patchSDKImage(
+// updateProjectFile updates the .csproj file with new package versions and rebuilds.
+// This is called before runtime patching when SDK and project files are available.
+// Returns the updated image state with the modified .csproj.
+func (dnm *dotnetManager) updateProjectFile(
 	ctx context.Context,
 	imageState *llb.State,
 	discoveryState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
-) (*llb.State, []byte, error) {
-	log.Info("Patching SDK image using dotnet build/publish workflow")
+) (*llb.State, error) {
+	log.Info("Updating proj file with new package versions")
 
 	// Find the project file directory (where .csproj is located)
 	projectFileBytes, err := buildkit.ExtractFileFromState(ctx, dnm.config.Client, discoveryState, "/tmp/project_file")
 	if err != nil {
-		return nil, nil, fmt.Errorf("could not find project file in SDK image: %w", err)
+		return nil, fmt.Errorf("could not find project file in SDK image: %w", err)
 	}
 
 	projectFilePath := strings.TrimSpace(string(projectFileBytes))
@@ -498,74 +510,33 @@ func (dnm *dotnetManager) patchSDKImage(
 	// Start with merged state (original image + discovery results)
 	mergedState := llb.Merge([]llb.State{*imageState, *discoveryState})
 
-	// Clean the project first
-	cleanCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet clean'`, workDir)
-	cleanedState := mergedState.Run(
-		llb.Shlex(cleanCmd),
-		llb.WithProxy(utils.GetProxy()),
-	).Root()
-
 	// Apply package updates by modifying project file
-	currentState := cleanedState
+	currentState := mergedState
 	for _, u := range updates {
 		if u.FixedVersion == "" {
 			continue
 		}
 
-		// Remove old version
-		removeCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet remove package %s || true'`, workDir, u.Name)
+		// Remove old version and add new version
+		updateCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet remove package %s 2>/dev/null || true && dotnet add package %s --version %s'`,
+			workDir, u.Name, u.Name, u.FixedVersion)
 		currentState = currentState.Run(
-			llb.Shlex(removeCmd),
+			llb.Shlex(updateCmd),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 
-		// Add new version
-		addCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet add package %s --version %s'`, workDir, u.Name, u.FixedVersion)
-		currentState = currentState.Run(
-			llb.Shlex(addCmd),
-			llb.WithProxy(utils.GetProxy()),
-		).Root()
-
-		log.Infof("Updated %s: %s -> %s", u.Name, u.InstalledVersion, u.FixedVersion)
+		log.Infof("Updated .csproj: %s -> %s", u.Name, u.FixedVersion)
 	}
 
-	// Build to verify changes
+	// Build to verify changes compile successfully
 	buildCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet build -c Release'`, workDir)
 	builtState := currentState.Run(
 		llb.Shlex(buildCmd),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Publish to update deps.json and output artifacts
-	publishCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet publish -c Release --no-build'`, workDir)
-	publishedState := builtState.Run(
-		llb.Shlex(publishCmd),
-		llb.WithProxy(utils.GetProxy()),
-	).Root()
-
-	// Run dotnet list package to get validation output
-	listPackagesCmd := fmt.Sprintf(`sh -c 'cd %s && dotnet list package > /tmp/dotnet_packages.txt 2>&1; cat /tmp/dotnet_packages.txt'`, workDir)
-	validatedState := publishedState.Run(
-		llb.Shlex(listPackagesCmd),
-		llb.WithProxy(utils.GetProxy()),
-	).Root()
-
-	// Extract the package list output for validation
-	mkFolders := validatedState.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
-	resultsWriteCmd := fmt.Sprintf(`sh -c 'cp /tmp/dotnet_packages.txt %s/dotnet_packages.txt'`, resultsPath)
-	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(resultsWriteCmd)).Root()
-	resultsDiff := llb.Diff(validatedState, resultsWritten)
-
-	resultsBytes, err := buildkit.ExtractFileFromState(
-		ctx, dnm.config.Client, &resultsDiff, filepath.Join(resultsPath, "dotnet_packages.txt"))
-	if err != nil {
-		log.Warnf("Could not extract dotnet list package results: %v", err)
-		resultsMsg := fmt.Sprintf("SDK patching completed: updated %d packages (validation unavailable)", len(updates))
-		return &publishedState, []byte(resultsMsg), nil
-	}
-
-	log.Debugf("dotnet list package output:\n%s", string(resultsBytes))
-	return &validatedState, resultsBytes, nil
+	log.Info(".csproj updated and build verified successfully")
+	return &builtState, nil
 }
 
 // patchRuntimeImage patches a .NET image by extracting DLLs from NuGet packages.
@@ -663,18 +634,27 @@ func (dnm *dotnetManager) patchRuntimeImage(
 		}
 	}
 
+	// Convert framework version (e.g., "8.0.11") to TFM format (e.g., "net8.0")
+	// Extract major.minor from the detected version for the TargetFramework
+	tfmVersion := frameworkVersion
+	parts := strings.Split(frameworkVersion, ".")
+	if len(parts) >= 2 {
+		tfmVersion = parts[0] + "." + parts[1]
+	}
+	targetFramework := fmt.Sprintf("net%s", tfmVersion)
+
 	// Create complete project file in one command
 	createProjectCmd := fmt.Sprintf(`sh -c 'mkdir -p /patch && cat > /patch/patch.csproj << "EOF"
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>%s</TargetFramework>
     <OutputType>Library</OutputType>
   </PropertyGroup>
   <ItemGroup>
 %s  </ItemGroup>
 </Project>
 EOF
-cat /patch/patch.csproj'`, packageRefs.String())
+cat /patch/patch.csproj'`, targetFramework, packageRefs.String())
 
 	projectCreated := sdkState.Run(
 		llb.Shlex(createProjectCmd),

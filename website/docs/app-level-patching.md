@@ -256,6 +256,44 @@ trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
 copa patch -i $IMAGE -r scan.json -t $IMAGE-patched --pkg-types library
 ```
 
+#### How .NET Patching Works
+
+Copa uses **runtime patching** (DLL replacement) for all .NET images. If SDK and project files are present, Copa will also update the `.csproj` file before performing DLL replacement.
+
+##### With SDK and Project Files
+
+When the image contains the .NET SDK and project files (`.csproj`, `.fsproj`, or `.vbproj`):
+
+1. **Update .csproj**: Runs `dotnet remove package` and `dotnet add package` to update package references
+2. **Build**: Runs `dotnet build` to verify the changes compile successfully
+3. **DLL Replacement**: Downloads fixed NuGet packages and replaces vulnerable DLLs in-place
+4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
+
+This provides compile-time checks while ensuring DLLs are placed in the correct location.
+
+##### Without SDK (Runtime-Only Images)
+
+When the image only contains the .NET runtime:
+
+1. **Discovery**: Scans for `*.deps.json` files and detects the .NET framework version
+2. **SDK Container**: Creates a temporary SDK container matching your framework (e.g., `net6.0`) to download fixed NuGet packages
+3. **DLL Replacement**: Replaces vulnerable DLLs in the runtime image with patched versions
+4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
+
+##### Why DLL Replacement Works
+
+NuGet packages contain pre-compiled DLLs (IL bytecode, not native machine code). The .NET runtime JIT-compiles these DLLs at load time, so you can swap DLL files without recompiling your application.
+
+##### Important Considerations
+
+**Patch Level**: Many .NET security fixes involve major version changes (e.g., `12.0.1 → 13.0.1`). Use `--library-patch-level major` to allow these updates.
+
+**Multi-Application Containers**: If multiple `*.deps.json` files are detected, Copa patches only the first application found and logs a warning. Multi-application containers should be split into separate images for proper patching.
+
+:::danger No Compile-Time Checks
+Runtime patching bypasses compilation. API incompatibilities won't surface until runtime. Always test in staging before production.
+:::
+
 #### .NET Limitations
 
 ##### Microsoft.Build.* Packages
@@ -267,65 +305,10 @@ Copa automatically filters out `Microsoft.Build.*` packages from patching. These
 
 ##### Dependency Resolution
 
-Like Python and Node.js, Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:
+Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:
 - Use `--ignore-errors` to continue patching other packages
 - Manually resolve version conflicts in your `.csproj` file
-- Test thoroughly after patching
 
-##### .NET Version Compatibility
+##### Testing After Patching
 
-Copa does not verify that updated package versions are compatible with your target framework (e.g., `net6.0`, `net8.0`). Ensure that:
-- The fixed package version supports your target framework
-- You test the application after patching
-- You check for runtime errors related to missing APIs
-
-###### Testing and Validation
-
-As with other language ecosystems, it is **highly recommended** to thoroughly test your .NET application after applying updates. Copa does not perform automated testing or validation of the patched application.
-
-#### Runtime Patching Mode
-
-Runtime patching is automatically used for .NET applications that lack SDK or project files (runtime-only images). This mode works by extracting pre-compiled DLLs from NuGet packages and replacing vulnerable ones.
-
-##### How Runtime Patching Works
-
-1. **Discovery**: Scans for `*.deps.json` files and detects the .NET framework version
-2. **SDK Build**: Creates a temporary SDK container to download fixed NuGet packages
-3. **DLL Replacement**: Replaces vulnerable DLLs in the runtime image with patched versions
-4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
-5. **Logging**: Lists patched DLLs with timestamps for troubleshooting
-
-##### Why Runtime Patching Works
-
-**NuGet packages contain pre-compiled DLLs**: When a package like `Newtonsoft.Json 13.0.1` is published, everyone downloading it gets identical DLL binaries. Copa uses a minimal `.csproj` as a download manifest to fetch these same pre-compiled DLLs.
-
-**.NET uses JIT compilation**: DLL files contain IL (Intermediate Language) bytecode, not native machine code. The .NET runtime loads and JIT-compiles these DLLs at runtime, which means you can swap DLL files without recompiling your application.
-
-:::info Why This Works for .NET
-Unlike compiled languages (Go, Rust, C++), .NET doesn't produce native binaries. The runtime loads DLLs dynamically and JIT-compiles them on-demand, enabling DLL replacement without recompilation.
-:::
-
-##### Important Considerations
-
-**Patch Level Requirement**: Many .NET package updates involve major version changes (e.g., Newtonsoft.Json 12.0.1 → 13.0.1). You would need to specify `--library-patch-level major` to allow these updates, as the default `patch` level will skip them.
-
-**Multi-Application Containers**: If multiple `*.deps.json` files are detected, Copa will log a warning and only patch the first application found. Multi-application containers should be split into separate images for proper patching.
-
-##### Runtime Patching Considerations
-
-:::danger Key Insight
-Runtime patching bypasses compilation checks. DLLs are replaced, but API incompatibilities won't be caught until runtime. Always test thoroughly in staging before production.
-:::
-
-**Limitations**:
-- SDK version detection falls back to 8.0 if `*.deps.json` doesn't contain framework version hints
-- No verification that updated packages are API-compatible with your application code
-- Native dependencies are copied but not validated for compatibility
-- Assumes standard .NET deps.json structure; custom formats may fail
-- No functional testing performed
-
-**Risk levels**:
-- **Lower risk**: Patch/minor version updates, simple libraries (e.g., Newtonsoft.Json), few dependencies
-- **Higher risk**: Major version jumps, complex dependency graphs, packages with native dependencies, breaking API changes
-
-**Best practice**: Prefer rebuilding from source through CI/CD. Use runtime patching as emergency mitigation when rebuilding isn't immediately feasible.
+Always test your .NET application after patching. Copa does not perform automated testing or validation.
