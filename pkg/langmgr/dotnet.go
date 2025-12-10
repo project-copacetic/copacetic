@@ -253,9 +253,9 @@ func (dnm *dotnetManager) upgradePackages(
 // 8. Squash and merge as single layer
 //
 // ignoreErrors behavior:
-// - When true: Continue patching even if some DLLs fail to download or copy.
-//   The operation will succeed if at least some packages were patched.
-// - When false: Fail the entire operation if any package fails to patch.
+//   - When true: Continue patching even if some DLLs fail to download or copy.
+//     The operation will succeed if at least some packages were patched.
+//   - When false: Fail the entire operation if any package fails to patch.
 //
 // Note: Currently ignoreErrors only affects error handling at the InstallUpdates level.
 // The patchRuntimeImage function uses BuildKit's LLB which executes atomically -
