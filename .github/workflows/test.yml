@@ -74,6 +74,9 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Run all gateway integration tests
@@ -109,6 +112,9 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Run Alpine tests
@@ -144,6 +150,9 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Run Debian tests
@@ -179,6 +188,9 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Run RPM-based distro tests
@@ -214,6 +226,9 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Run cross-architecture tests
@@ -249,6 +264,9 @@ jobs:
         with:
           go-version: "1.25"
           check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
       - name: Run layer and config tests
