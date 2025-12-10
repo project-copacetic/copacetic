@@ -277,17 +277,10 @@ func extractTar(tarPath, destDir string) error {
 				return err
 			}
 		case tar.TypeSymlink:
-			// For symlinks, validate the link target doesn't escape destDir
-			if err := validateSymlinkTarget(absDestDir, target, header.Linkname); err != nil {
-				// Skip invalid symlinks silently - they're not critical for OCI layer inspection
-				continue
-			}
-			// Remove existing file/symlink if it exists
-			_ = os.Remove(target)
-			if err := os.Symlink(header.Linkname, target); err != nil {
-				// Ignore symlink errors as they're not critical for our use case
-				continue
-			}
+			// Skip symlinks entirely - they're not needed for OCI layer inspection
+			// which only reads JSON metadata files (index.json, manifests, configs).
+			// This also avoids CodeQL's "Zip Slip via symlink" warnings.
+			continue
 		}
 	}
 	return nil
@@ -342,26 +335,6 @@ func isSubPath(parent, child string) bool {
 
 	parentWithSep := parent + string(filepath.Separator)
 	return strings.HasPrefix(child, parentWithSep)
-}
-
-// validateSymlinkTarget validates that a symlink's target doesn't escape the destination directory.
-func validateSymlinkTarget(destDir, symlinkPath, linkTarget string) error {
-	// Reject absolute symlink targets
-	if filepath.IsAbs(linkTarget) {
-		return fmt.Errorf("absolute symlink targets not allowed")
-	}
-
-	// Resolve the symlink target relative to the symlink's directory
-	symlinkDir := filepath.Dir(symlinkPath)
-	resolvedTarget := filepath.Join(symlinkDir, linkTarget)
-	resolvedTarget = filepath.Clean(resolvedTarget)
-
-	// Verify the resolved target is within destDir
-	if !isSubPath(destDir, resolvedTarget) {
-		return fmt.Errorf("symlink target escapes destination directory")
-	}
-
-	return nil
 }
 
 // extractFile extracts a single file from the tar reader to the target path.
