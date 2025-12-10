@@ -6,6 +6,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Vulnerable package - should be patched -->
     <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
+    <!-- Non-vulnerable package - should remain unchanged -->
+    <PackageReference Include="Humanizer" Version="2.14.1" />
   </ItemGroup>
 </Project>

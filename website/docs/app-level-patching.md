@@ -238,60 +238,72 @@ As with Python packages, it is *highly recommended* to thoroughly test your Node
 
 ### .NET
 
-Copa supports patching .NET applications for two types of docker images:
+Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images.
 
-- **SDK-based patching**: For images with .NET SDK and project files (`.csproj`, `.fsproj`, or `.vbproj`)
-- **Runtime patching**: For runtime-only images with compiled DLLs and `*.deps.json` files
-
-Copa automatically detects which mode to use based on the image contents.
-
-#### Usage Examples
-
-The usage is similar to the above patching for Nodejs and Python images.
+#### Usage Example
 
 ```bash
 export COPA_EXPERIMENTAL=1
 
 trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
-copa patch -i $IMAGE -r scan.json -t $IMAGE-patched --pkg-types library
+copa patch -i $IMAGE -r scan.json -t $IMAGE-patched --pkg-types library --library-patch-level major
 ```
 
 #### How .NET Patching Works
 
-Copa uses **runtime patching** (DLL replacement) for all .NET images. If SDK and project files are present, Copa will also update the `.csproj` file before performing DLL replacement.
+##### Application Discovery
 
-##### With SDK and Project Files
+Copa automatically locates your application by searching for `*.deps.json` files across the entire filesystem, excluding system paths that contain SDK tooling and cached packages:
 
-When the image contains the .NET SDK and project files (`.csproj`, `.fsproj`, or `.vbproj`):
+```
+find / -name "*.deps.json" | grep -v "^/usr/share/" | grep -v "^/usr/local/share/" | grep -v "^/root/.nuget" | grep -v "^/tmp/"
+```
 
-1. **Update .csproj**: Runs `dotnet remove package` and `dotnet add package` to update package references
-2. **Build**: Runs `dotnet build` to verify the changes compile successfully
-3. **DLL Replacement**: Downloads fixed NuGet packages and replaces vulnerable DLLs in-place
-4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
+This approach:
+- Works for any deployment location (including custom `-o` output paths)
+- Automatically handles images where apps are deployed to `/app`, `/home`, `/opt`, or any other directory
+- Excludes SDK tools, NuGet cache, and temporary files from discovery
 
-This provides compile-time checks while ensuring DLLs are placed in the correct location.
+##### Patching Process
 
-##### Without SDK (Runtime-Only Images)
-
-When the image only contains the .NET runtime:
-
-1. **Discovery**: Scans for `*.deps.json` files and detects the .NET framework version
-2. **SDK Container**: Creates a temporary SDK container matching your framework (e.g., `net6.0`) to download fixed NuGet packages
-3. **DLL Replacement**: Replaces vulnerable DLLs in the runtime image with patched versions
-4. **Metadata Update**: Updates `*.deps.json` to reflect new package versions
+1. **Discovery**: Searches filesystem for `*.deps.json`, extracts framework version (e.g., `8.0.11`)
+2. **SDK Container**: Creates temporary SDK container with matching framework version, with a default of `8.0` (e.g., `mcr.microsoft.com/dotnet/sdk:8.0.11`)
+3. **Build Fixed Packages**: Creates temp project with `PackageReference` entries for fixed versions, runs `dotnet publish` to download and compile
+4. **DLL Replacement**: Copies patched DLLs to app directory, only replacing files that already exist (won't add new DLLs)
+5. **Metadata Update**: Uses `jq` to merge package entries from the generated `deps.json` into the original, preserving correct `sha512`, `hashPath`, `assemblyVersion`, and `fileVersion` metadata
+6. **Layer Optimization**: Diffs from original image to capture only actual changes, then squashes into a single patch layer
 
 ##### Why DLL Replacement Works
 
-NuGet packages contain pre-compiled DLLs (IL bytecode, not native machine code). The .NET runtime JIT-compiles these DLLs at load time, so you can swap DLL files without recompiling your application.
+NuGet packages contain pre-compiled IL bytecode (not native code). The .NET runtime JIT-compiles at load time, so DLLs can be swapped without recompilation.
 
-##### Important Considerations
+##### deps.json Metadata
+
+The `deps.json` file contains critical metadata for each package:
+- **sha512**: Hash of the package for integrity verification
+- **hashPath**: Path to the `.nupkg.sha512` file
+- **assemblyVersion**: CLR assembly version
+- **fileVersion**: File version for native image binding
+
+Copa generates correct metadata by using `dotnet publish` in an SDK container and extracting the package entries with `jq`.
+
+#### Important Considerations
 
 **Patch Level**: Many .NET security fixes involve major version changes (e.g., `12.0.1 → 13.0.1`). Use `--library-patch-level major` to allow these updates.
 
-**Multi-Application Containers**: If multiple `*.deps.json` files are detected, Copa patches only the first application found and logs a warning. Multi-application containers should be split into separate images for proper patching.
+**Validation**: Copa verifies that patched DLLs are successfully copied to the app directory. The updated `deps.json` is verified to contain the new package versions. However, runtime compatibility is not tested.
 
-:::danger No Compile-Time Checks
-Runtime patching bypasses compilation. API incompatibilities won't surface until runtime. Always test in staging before production.
+**Multi-Application Containers**: Only the first discovered application is patched. Split multi-app containers for proper patching.
+
+**Non-Vulnerable Packages**: Packages that are not in the vulnerability report remain unchanged. Only vulnerable packages are updated.
+
+**Ignore Errors**: Use `--ignore-errors` to continue patching even if some packages fail. This is useful when:
+- Some packages have dependency conflicts
+- A package version is unavailable on NuGet
+- You want to patch as many vulnerabilities as possible
+
+:::danger DLL Replacement Bypasses Compilation
+API incompatibilities won't surface until runtime. Always test in staging before production.
 :::
 
 #### .NET Limitations

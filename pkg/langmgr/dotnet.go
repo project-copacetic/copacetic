@@ -3,7 +3,6 @@ package langmgr
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -242,6 +241,26 @@ func (dnm *dotnetManager) upgradePackages(
 
 // patchRuntimeImage patches a .NET image by extracting DLLs from NuGet packages.
 // This works for both SDK images and runtime-only images.
+//
+// Flow:
+// 1. Discovery: Find deps.json anywhere in the image (excluding system paths)
+// 2. Extract framework version from deps.json to select matching SDK image
+// 3. Create temp project with PackageReference for fixed versions
+// 4. dotnet publish to get patched DLLs with correct metadata
+// 5. Copy DLLs to app directory (only replacing existing ones)
+// 6. Update deps.json with correct metadata (sha512, hashPath, etc.) using jq
+// 7. Diff from original image to capture only actual changes
+// 8. Squash and merge as single layer
+//
+// ignoreErrors behavior:
+// - When true: Continue patching even if some DLLs fail to download or copy.
+//   The operation will succeed if at least some packages were patched.
+// - When false: Fail the entire operation if any package fails to patch.
+//
+// Note: Currently ignoreErrors only affects error handling at the InstallUpdates level.
+// The patchRuntimeImage function uses BuildKit's LLB which executes atomically -
+// if any command fails, the entire build fails. To implement per-package error
+// handling, we would need to split packages into individual operations.
 func (dnm *dotnetManager) patchRuntimeImage(
 	ctx context.Context,
 	imageState *llb.State,
@@ -249,6 +268,9 @@ func (dnm *dotnetManager) patchRuntimeImage(
 	ignoreErrors bool,
 ) (*llb.State, []byte, error) {
 	log.Info("[EXPERIMENTAL] Runtime patching enabled - replacing DLLs in-place")
+	if ignoreErrors {
+		log.Debug("ignoreErrors=true: Will attempt to continue if individual package operations fail")
+	}
 
 	// Find deps.json to determine app directory and framework version
 	// Search entire filesystem excluding system directories (SDK tools, NuGet cache, etc.)
@@ -450,59 +472,25 @@ fi
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Clean up ALL temporary files from /tmp that were created during patching
-	// This ensures the diff only contains the actual patched files
+	// Clean up temporary files from /tmp that were created during patching
+	// The llb.Diff captures NEW files too, so we must remove temp files
+	// to prevent them from appearing in the final patched image
 	cleanupScript := `sh -c '
 rm -f /tmp/original.deps.json
 rm -f /tmp/deps_file_path
 rm -f /tmp/deps_file
 rm -f /tmp/app_dir
 rm -f /tmp/framework_version
-rm -f /tmp/validation.txt
 '`
 	cleanedState := depsUpdatedState.Run(
 		llb.Shlex(cleanupScript),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Extract validation/results before cleanup for logging purposes
-	// We do this by looking at the depsUpdatedState before cleanup
-	validateCmd := `sh -c '
-APP_DIR=$(cat /tmp/app_dir 2>/dev/null || echo "/app")
-DEPS_FILE=$(cat /tmp/deps_file_path 2>/dev/null)
-echo "Runtime patching completed"
-echo "Patched DLLs in $APP_DIR:"
-ls -lh "$APP_DIR"/*.dll 2>&1 || echo "No DLLs found"
-echo "deps.json verification:"
-if [ -n "$DEPS_FILE" ] && [ -f "$DEPS_FILE" ]; then
-	grep -o "Newtonsoft.Json/[0-9.]*" "$DEPS_FILE" | head -1
-fi
-'`
-	// Run validation just for logging, we don't need to capture output in the final image
-	validationRun := depsUpdatedState.Run(
-		llb.Shlex(validateCmd),
-		llb.WithProxy(utils.GetProxy()),
-	)
-
-	// Extract validation results for logging
-	validatedForResults := validationRun.Root()
-	mkFolders := validatedForResults.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
-	resultsWriteCmd := fmt.Sprintf(`sh -c 'echo "Runtime patching completed" > %s/runtime_patch_results.txt'`, resultsPath)
-	resultsWritten := mkFolders.Dir(resultsPath).Run(llb.Shlex(resultsWriteCmd)).Root()
-	resultsDiff := llb.Diff(validatedForResults, resultsWritten)
-
-	resultsBytes, err := buildkit.ExtractFileFromState(
-		ctx, dnm.config.Client, &resultsDiff, filepath.Join(resultsPath, "runtime_patch_results.txt"))
-	if err != nil {
-		log.Warnf("Could not extract runtime patch results: %v", err)
-		resultsBytes = []byte("Runtime patching completed (validation unavailable)")
-	}
-
-	log.Infof("Runtime patching completed - results bytes length: %d", len(resultsBytes))
+	log.Info("Runtime patching completed")
 
 	// Get the diff from the ORIGINAL image state to the cleaned patched state
 	// This captures ONLY the actual changes: updated DLLs and deps.json
-	// The temp files in /tmp have been cleaned up, so they won't be in the diff
 	patchDiff := llb.Diff(*imageState, cleanedState)
 
 	// Squash the patch diff into a single layer using llb.Copy
@@ -512,7 +500,7 @@ fi
 	// Merge the squashed patch into the original image
 	finalState := llb.Merge([]llb.State{*imageState, squashedPatch})
 
-	return &finalState, resultsBytes, nil
+	return &finalState, []byte("Runtime patching completed"), nil
 }
 
 // buildUpdateDepsJsonScript creates a shell script to update deps.json with patched package versions.
@@ -590,10 +578,7 @@ if [ -n "$NEW_TARGET" ] && [ "$NEW_TARGET" != "null" ] && [ -n "$NEW_LIBRARY" ] 
 	
 	echo "  Updated %s to %s with correct metadata (sha512, hashPath, assemblyVersion, fileVersion)"
 else
-	echo "  WARNING: Could not extract package metadata, using sed fallback"
-	# Fallback to sed replacement (only updates version strings, not sha512/hashPath)
-	sed -i 's|"%s/%s"|"%s/%s"|g' "$UPDATED_DEPS"
-	sed -i 's|"%s/%s"|"%s/%s"|g' "$UPDATED_DEPS"
+	echo "  ERROR: Could not extract package metadata for %s/%s from generated deps.json"
 fi
 `, packageName, oldVersion, newVersion, packageName, oldVersion, newVersion,
 			packageName, newVersion, // NEW_TARGET extraction
@@ -602,8 +587,7 @@ fi
 			packageName, oldVersion, packageName, newVersion, // libraries update
 			packageName, newVersion, // dependency update
 			packageName, newVersion, // success message
-			packageName, oldVersion, packageName, newVersion, // sed fallback 1
-			strings.ToLower(packageName), oldVersion, strings.ToLower(packageName), newVersion)) // sed fallback 2
+			packageName, newVersion)) // error message
 	}
 
 	script.WriteString(`
