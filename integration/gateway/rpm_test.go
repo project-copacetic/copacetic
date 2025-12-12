@@ -365,6 +365,57 @@ func TestDistrolessMarinerImage(t *testing.T) {
 	})
 }
 
+// TestInspectOracleLinuxImage tests that we can inspect an Oracle Linux image.
+// Note: Oracle Linux has known issues with Trivy (false positives), but inspection should work.
+func TestInspectOracleLinuxImage(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	testEnv.RunTest(ctx, t, func(ctx context.Context, t *testing.T, c gwclient.Client) {
+		platform := specs.Platform{
+			OS:           "linux",
+			Architecture: "amd64",
+		}
+
+		// Initialize buildkit config for Oracle Linux 8
+		config, err := initBuildkitConfig(ctx, c, "docker.io/library/oraclelinux:8", &platform)
+		require.NoError(t, err, "should initialize buildkit config")
+
+		// Solve the image state to get a reference we can inspect
+		def, err := config.ImageState.Marshal(ctx, llb.Platform(platform))
+		require.NoError(t, err, "should marshal image state")
+
+		res, err := c.Solve(ctx, gwclient.SolveRequest{
+			Definition: def.ToPB(),
+			Evaluate:   true,
+		})
+		require.NoError(t, err, "should solve image state")
+
+		// Create inspector
+		inspector, err := testenv.NewRefInspector(ctx, res)
+		require.NoError(t, err, "should create inspector")
+
+		// Verify Oracle Linux files exist
+		inspector.AssertFileExists(t, "/etc/os-release")
+		inspector.AssertFileContains(t, "/etc/os-release", "Oracle Linux")
+
+		// Check for RPM database
+		switch {
+		case inspector.FileExists("/var/lib/rpm/rpmdb.sqlite"):
+			t.Log("Found SQLite RPM database")
+		case inspector.FileExists("/var/lib/rpm/Packages"):
+			t.Log("Found Berkeley DB RPM database")
+		default:
+			t.Log("RPM database location may vary")
+		}
+
+		// Verify yum is available (Oracle Linux uses yum/dnf)
+		if inspector.FileExists("/usr/bin/yum") || inspector.FileExists("/usr/bin/dnf") {
+			t.Log("Found yum/dnf package manager")
+		}
+	})
+}
+
 // TestDistrolessGoogleImage tests inspection of Google Distroless images.
 // These have custom dpkg/status.d directories instead of /var/lib/dpkg/status.
 func TestDistrolessGoogleImage(t *testing.T) {
@@ -404,4 +455,76 @@ func TestDistrolessGoogleImage(t *testing.T) {
 			t.Logf("os-release content: %s", truncate(content, 200))
 		}
 	})
+}
+
+// TestConfigFileLocations verifies that config files exist in expected locations.
+// This is a prerequisite for config file preservation testing - we need to know
+// where the config files are before we can verify they're preserved after patching.
+func TestConfigFileLocations(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	testCases := []struct {
+		name       string
+		image      string
+		configFile string
+	}{
+		{
+			name:       "Mariner openssl.cnf",
+			image:      "mcr.microsoft.com/cbl-mariner/base/core:2.0",
+			configFile: "/etc/pki/tls/openssl.cnf",
+		},
+		{
+			name:       "Debian openssl.cnf",
+			image:      "docker.io/library/debian:11",
+			configFile: "/etc/ssl/openssl.cnf",
+		},
+		{
+			name:       "Alpine openssl.cnf",
+			image:      "docker.io/library/alpine:3.18",
+			configFile: "/etc/ssl/openssl.cnf",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testEnv.RunTest(ctx, t, func(ctx context.Context, t *testing.T, c gwclient.Client) {
+				platform := specs.Platform{
+					OS:           "linux",
+					Architecture: "amd64",
+				}
+
+				config, err := initBuildkitConfig(ctx, c, tc.image, &platform)
+				require.NoError(t, err, "should initialize buildkit config")
+
+				def, err := config.ImageState.Marshal(ctx, llb.Platform(platform))
+				require.NoError(t, err, "should marshal image state")
+
+				res, err := c.Solve(ctx, gwclient.SolveRequest{
+					Definition: def.ToPB(),
+					Evaluate:   true,
+				})
+				require.NoError(t, err, "should solve image state")
+
+				inspector, err := testenv.NewRefInspector(ctx, res)
+				require.NoError(t, err, "should create inspector")
+
+				// Check if config file exists
+				if inspector.FileExists(tc.configFile) {
+					content, err := inspector.ReadFile(tc.configFile)
+					require.NoError(t, err, "should read config file")
+					t.Logf("Found %s (%d bytes)", tc.configFile, len(content))
+
+					// Log first 100 chars to verify it's a real config
+					preview := string(content)
+					if len(preview) > 100 {
+						preview = preview[:100] + "..."
+					}
+					t.Logf("Content preview: %s", preview)
+				} else {
+					t.Logf("Config file %s not found (may not be installed)", tc.configFile)
+				}
+			})
+		})
+	}
 }

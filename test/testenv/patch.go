@@ -51,10 +51,19 @@ type PatchTestResult struct {
 	ErroredPackages []string
 }
 
-// RunPatchTest executes a patch operation and returns inspectable results.
+// RunPatchTest executes a patch operation and returns results.
 // This is a convenience wrapper around RunTest and ExecutePatchCore.
 //
-// Example usage:
+// WARNING: The Inspector field in the returned PatchTestResult will have an
+// invalid reference after this function returns, because the BuildKit job
+// is cleaned up when the Build callback completes. If you need to inspect
+// the patched filesystem, use RunPatchTestWithInspection instead, which
+// performs inspection inside the Build callback where the reference is valid.
+//
+// This function is still useful for tests that only need to check metadata
+// like PackageType and ErroredPackages, but NOT for filesystem inspection.
+//
+// Example usage (metadata only - DO NOT use Inspector):
 //
 //	result, err := env.RunPatchTest(ctx, t, testenv.PatchTestConfig{
 //	    ImageName: "alpine:3.18",
@@ -62,8 +71,8 @@ type PatchTestResult struct {
 //	    Updates:   updates,
 //	})
 //	require.NoError(t, err)
-//	result.Inspector.AssertFileExists(t, "/etc/os-release")
-//	result.Inspector.AssertApkPackageVersion(t, "openssl", "1.1.1w-r1")
+//	t.Logf("Package type: %s", result.PackageType)
+//	// NOTE: result.Inspector methods will fail with "no such job" error!
 func (e *TestEnv) RunPatchTest(ctx context.Context, t *testing.T, cfg PatchTestConfig) (*PatchTestResult, error) {
 	t.Helper()
 

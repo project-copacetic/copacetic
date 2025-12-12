@@ -169,7 +169,7 @@ func TestPatchConfigPreserved(t *testing.T) {
 }
 
 // TestPatchAlpinePackage tests patching a real Alpine package.
-// This test uses RunPatchTest to execute ExecutePatchCore and inspect the result.
+// This test uses RunPatchTestWithInspection to execute ExecutePatchCore and inspect the result.
 func TestPatchAlpinePackage(t *testing.T) {
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided (set COPA_BUILDKIT_ADDR or -addr flag)")
@@ -194,34 +194,38 @@ func TestPatchAlpinePackage(t *testing.T) {
 		},
 	})
 
-	result, err := testEnv.RunPatchTest(ctx, t, testenv.PatchTestConfig{
+	// Use RunPatchTestWithInspection to perform assertions inside the Build callback
+	// where the reference is still valid
+	err := testEnv.RunPatchTestWithInspection(ctx, t, testenv.PatchTestConfig{
 		ImageName:   "alpine:3.18",
 		Platform:    platform,
 		Updates:     updates,
 		IgnoreError: true, // Continue even if package not found
+	}, func(ctx context.Context, t *testing.T, c gwclient.Client, result *patch.Result) {
+		require.NotNil(t, result, "should have patch result")
+
+		// Log the package type detected
+		t.Logf("Detected package type: %s", result.PackageType)
+		t.Logf("Errored packages: %v", result.ErroredPackages)
+
+		// Only inspect if we have no errored packages (patching may fail but still return partial results)
+		if len(result.ErroredPackages) == 0 {
+			// Create inspector inside the callback where reference is valid
+			inspector, err := testenv.NewRefInspector(ctx, result.Result)
+			require.NoError(t, err, "should create inspector")
+
+			// Verify Alpine-specific files still exist after patching
+			inspector.AssertFileExists(t, "/etc/os-release")
+			inspector.AssertFileExists(t, "/lib/apk/db/installed")
+		} else {
+			// Even with errored packages, the image structure should be preserved
+			// But we skip file assertions since the inspector may not work if the solve failed
+			t.Logf("Skipping file assertions due to errored packages")
+		}
 	})
 	if err != nil {
 		// This is expected if the package version doesn't match exactly
 		t.Logf("Patch returned error (may be expected): %v", err)
-		return
-	}
-
-	// Verify we got a result
-	require.NotNil(t, result, "should have patch result")
-
-	// Log the package type detected
-	t.Logf("Detected package type: %s", result.PackageType)
-	t.Logf("Errored packages: %v", result.ErroredPackages)
-
-	// Only inspect if we have a valid inspector (patching may fail but still return partial results)
-	if result.Inspector != nil && len(result.ErroredPackages) == 0 {
-		// Verify Alpine-specific files still exist after patching
-		result.Inspector.AssertFileExists(t, "/etc/os-release")
-		result.Inspector.AssertFileExists(t, "/lib/apk/db/installed")
-	} else if result.Inspector != nil {
-		// Even with errored packages, the image structure should be preserved
-		// But the inspector may not work if the solve failed
-		t.Logf("Skipping file assertions due to errored packages")
 	}
 }
 
@@ -249,26 +253,30 @@ func TestPatchDebianPackage(t *testing.T) {
 		},
 	})
 
-	result, err := testEnv.RunPatchTest(ctx, t, testenv.PatchTestConfig{
+	// Use RunPatchTestWithInspection to perform assertions inside the Build callback
+	// where the reference is still valid
+	err := testEnv.RunPatchTestWithInspection(ctx, t, testenv.PatchTestConfig{
 		ImageName:   "debian:11",
 		Platform:    platform,
 		Updates:     updates,
 		IgnoreError: true, // Continue even if package not found
+	}, func(ctx context.Context, t *testing.T, c gwclient.Client, result *patch.Result) {
+		require.NotNil(t, result, "should have patch result")
+
+		// Create inspector inside the callback where reference is valid
+		inspector, err := testenv.NewRefInspector(ctx, result.Result)
+		require.NoError(t, err, "should create inspector")
+
+		// Verify Debian-specific files still exist
+		inspector.AssertFileExists(t, "/etc/os-release")
+		inspector.AssertFileExists(t, "/var/lib/dpkg/status")
+
+		t.Logf("Detected package type: %s", result.PackageType)
+		t.Logf("Errored packages: %v", result.ErroredPackages)
 	})
 	if err != nil {
 		t.Logf("Patch returned error (may be expected): %v", err)
-		return
 	}
-
-	require.NotNil(t, result, "should have patch result")
-	require.NotNil(t, result.Inspector, "should have inspector")
-
-	// Verify Debian-specific files still exist
-	result.Inspector.AssertFileExists(t, "/etc/os-release")
-	result.Inspector.AssertFileExists(t, "/var/lib/dpkg/status")
-
-	t.Logf("Detected package type: %s", result.PackageType)
-	t.Logf("Errored packages: %v", result.ErroredPackages)
 }
 
 // TestPatchPreservesConfig verifies that image config is preserved after patching.
