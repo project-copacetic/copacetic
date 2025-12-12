@@ -6,13 +6,28 @@ title: FAQ
 
 Copa patches "OS level" vulnerabilities (e.g. `openssl`, `glibc`) managed by system package managers (`apt`, `yum/dnf`, `apk`, etc.).
 
-Additionally, Copa now supports (experimental) patching of Python packages installed via `pip` when they are present in the image filesystem. For more information, please see [application-level patching](app-level-patching).
+Additionally, Copa now supports (experimental) patching of:
+- **Python packages** installed via `pip` when they are present in the image filesystem
+- **Node.js packages** managed by `npm` in application directories
+- **Go modules** defined in `go.mod` files
+
+For more information, please see [application-level patching](app-level-patching).
 
 ## What kind of vulnerabilities can Copa not patch?
 
-Copa does not patch arbitrary application or source-level dependencies that require a project build context (e.g. Go modules, or compiled binaries built from source). If your application embeds a vulnerable Go module like `golang.org/x/net`, Copa cannot currently rebuild the application with a fixed dependency version.
+Copa has limited support for compiled binaries built from source. While Copa can update Go module dependencies in `go.mod` files, it **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa will update the `go.mod` file but the running binary will still contain the vulnerable code until it is rebuilt.
 
-To patch such application vulnerabilities, package the application itself into a system package (e.g. a `.deb` or `.rpm`) or ensure the base image provides updated language runtime packages that scanners recognize. Copa can then patch the packaged artifact at the OS package layer.
+For applications that are compiled binaries:
+- Copa updates `go.mod` and `go.sum` files with fixed dependency versions
+- The updated module files can be used for subsequent builds
+- The compiled binary itself is not automatically patched
+
+To fully patch compiled binary vulnerabilities:
+1. Use Copa to update the module dependencies
+2. Rebuild the application with the updated dependencies
+3. Replace the old binary with the newly built one
+
+Alternatively, package the application into a system package (e.g. a `.deb` or `.rpm`) so Copa can patch it at the OS package layer.
 
 ## My disk space is being filled up after using Copa. How can I fix this?
 
@@ -57,6 +72,21 @@ When updating Python packages:
     - Detect an existing `site-packages` path by scanning common locations.
     - Infer the Python version from the path (e.g. `python3.12`) and choose a matching tooling image: `docker.io/library/python:<major.minor>-slim` (e.g. `python:3.12-slim`).
     - Fallback to `docker.io/library/python:3-slim` if a version cannot be inferred.
+
+### Go
+
+When updating Go modules:
+
+1. If the target image already contains the Go toolchain (`go` command on PATH), Copa updates modules directly inside the image layer without pulling a separate tooling image.
+2. If the Go toolchain is absent (e.g., distroless images), Copa will:
+    - Detect the Go version using `go version` command or extract from image metadata
+    - Use a matching tooling image: `docker.io/library/golang:<version>-alpine` (e.g. `golang:1.23-alpine`)
+    - Fallback to `docker.io/library/golang:1.23-alpine` if a version cannot be detected
+    - Copy `go.mod`, `go.sum`, and `go.work` (if present) to the tooling container
+    - Perform module updates in the tooling container
+    - Copy updated files back to the target image
+
+**Note**: Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. See [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
 
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 
