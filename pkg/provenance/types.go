@@ -12,8 +12,6 @@ const (
 	RebuildStrategyAuto RebuildStrategy = iota
 	// RebuildStrategyProvenance uses SLSA provenance for rebuild.
 	RebuildStrategyProvenance
-	// RebuildStrategyHeuristic uses detected binary information for rebuild.
-	RebuildStrategyHeuristic
 	// RebuildStrategyNone only updates go.mod/go.sum (current default behavior).
 	RebuildStrategyNone
 )
@@ -62,38 +60,6 @@ type BuildInfo struct {
 	Dependencies map[string]string
 }
 
-// BinaryInfo contains information extracted from a Go binary using buildinfo.
-type BinaryInfo struct {
-	// Path is the filesystem path to the binary.
-	Path string
-	// ModulePath is the main module path.
-	ModulePath string
-	// MainModule is the main module name.
-	MainModule string
-	// MainModuleVersion is the main module version.
-	MainModuleVersion string
-	// GoVersion is the Go version used to build the binary.
-	GoVersion string
-	// Dependencies maps module names to versions.
-	Dependencies map[string]string
-	// BuildSettings contains build settings (CGO_ENABLED, GOARCH, etc.).
-	BuildSettings map[string]string
-	// VCSRevision is the VCS commit hash (if available).
-	VCSRevision string
-	// VCSTime is the VCS commit timestamp (if available).
-	VCSTime string
-	// VCS is the version control system (git, etc.).
-	VCS string
-	// VCSModified indicates if the working tree was modified.
-	VCSModified bool
-	// GOOS is the target operating system.
-	GOOS string
-	// GOARCH is the target architecture.
-	GOARCH string
-	// CGOEnabled indicates if CGO was enabled.
-	CGOEnabled bool
-}
-
 // ProvenanceCompleteness assesses how complete the provenance information is.
 type ProvenanceCompleteness struct {
 	// HasDockerfile indicates if the Dockerfile is present in provenance.
@@ -116,8 +82,6 @@ type RebuildContext struct {
 	Strategy RebuildStrategy
 	// Provenance is the SLSA attestation (if available).
 	Provenance *Attestation
-	// BinaryInfo is information from detected binaries (if available).
-	BinaryInfo []*BinaryInfo
 	// BuildInfo is information extracted from provenance (if available).
 	BuildInfo *BuildInfo
 	// Completeness assesses the quality of available information.

@@ -43,7 +43,6 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(patch.NewPatchCmd())
 	rootCmd.AddCommand(generate.NewGenerateCmd())
 	rootCmd.AddCommand(testprovenance.NewTestProvenanceCmd())
-	rootCmd.AddCommand(testprovenance.NewDetectBinaryCmd())
 	return rootCmd
 }
 

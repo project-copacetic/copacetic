@@ -10,19 +10,17 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Rebuilder orchestrates the binary rebuild process using provenance and/or binary detection.
+// Rebuilder orchestrates the binary rebuild process using SLSA provenance.
 type Rebuilder struct {
-	fetcher  *Fetcher
-	parser   *Parser
-	detector *Detector
+	fetcher *Fetcher
+	parser  *Parser
 }
 
 // NewRebuilder creates a new binary rebuilder.
 func NewRebuilder() *Rebuilder {
 	return &Rebuilder{
-		fetcher:  NewFetcher(),
-		parser:   NewParser(),
-		detector: NewDetector(),
+		fetcher: NewFetcher(),
+		parser:  NewParser(),
 	}
 }
 
@@ -62,37 +60,16 @@ func (r *Rebuilder) AnalyzeImage(ctx context.Context, imageRef string, imageRoot
 				return rebuildCtx, nil
 			}
 
-			log.Infof("SLSA provenance incomplete (missing: %v), will try binary detection",
+			log.Infof("SLSA provenance incomplete (missing: %v), binary rebuild not possible",
 				rebuildCtx.Completeness.MissingInfo)
 		}
 	}
 
-	// Step 2: Try binary detection as fallback
-	if imageRoot != "" {
-		binaryInfos, err := r.detectBinariesInImage(imageRoot)
-		if err != nil {
-			log.Warnf("Binary detection failed: %v", err)
-		} else if len(binaryInfos) > 0 {
-			rebuildCtx.BinaryInfo = binaryInfos
-			rebuildCtx.Strategy = RebuildStrategyHeuristic
+	// Note: Heuristic binary detection has been removed for v1.
+	// Only SLSA provenance-based rebuild is supported.
+	// See: https://github.com/project-copacetic/copacetic/pull/1388
 
-			// If we have both provenance and binary info, merge them
-			if rebuildCtx.BuildInfo != nil {
-				r.mergeBuildInfo(rebuildCtx)
-			} else {
-				// Convert binary info to build info
-				rebuildCtx.BuildInfo = r.detector.ConvertBinaryInfoToBuildInfo(binaryInfos[0])
-			}
-
-			// Re-assess completeness with merged info
-			rebuildCtx.Completeness = r.parser.AssessCompleteness(rebuildCtx.BuildInfo)
-
-			log.Infof("Binary detection found %d Go binaries", len(binaryInfos))
-			return rebuildCtx, nil
-		}
-	}
-
-	log.Info("No rebuild strategy available, will only update go.mod/go.sum")
+	log.Info("No rebuild strategy available (SLSA provenance required), will only update go.mod/go.sum")
 	return rebuildCtx, nil
 }
 
@@ -130,73 +107,6 @@ func (r *Rebuilder) enrichFromGitHub(ctx context.Context, rebuildCtx *RebuildCon
 	}
 }
 
-// detectBinariesInImage finds and analyzes Go binaries in an extracted image.
-func (r *Rebuilder) detectBinariesInImage(imageRoot string) ([]*BinaryInfo, error) {
-	// Find potential binaries
-	candidates, err := r.detector.FindBinariesInImage(imageRoot)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find binaries: %w", err)
-	}
-
-	// Filter to only Go binaries and detect their info
-	var binaryInfos []*BinaryInfo
-
-	for _, candidate := range candidates {
-		if !r.detector.IsGoBinary(candidate) {
-			continue
-		}
-
-		info, err := r.detector.DetectBinaryInfo(candidate)
-		if err != nil {
-			log.Debugf("Failed to detect info for %s: %v", candidate, err)
-			continue
-		}
-
-		binaryInfos = append(binaryInfos, info)
-	}
-
-	return binaryInfos, nil
-}
-
-// mergeBuildInfo merges information from provenance and binary detection.
-func (r *Rebuilder) mergeBuildInfo(ctx *RebuildContext) {
-	if ctx.BuildInfo == nil || len(ctx.BinaryInfo) == 0 {
-		return
-	}
-
-	buildInfo := ctx.BuildInfo
-	binaryInfo := ctx.BinaryInfo[0] // Use first binary as primary source
-
-	// Fill in missing fields from binary detection
-	if buildInfo.GoVersion == "" {
-		buildInfo.GoVersion = binaryInfo.GoVersion
-	}
-	if buildInfo.ModulePath == "" {
-		buildInfo.ModulePath = binaryInfo.ModulePath
-	}
-
-	// Add dependencies from binary
-	if buildInfo.Dependencies == nil {
-		buildInfo.Dependencies = make(map[string]string)
-	}
-	for module, version := range binaryInfo.Dependencies {
-		if _, exists := buildInfo.Dependencies[module]; !exists {
-			buildInfo.Dependencies[module] = version
-		}
-	}
-
-	// Merge build args
-	if buildInfo.BuildArgs == nil {
-		buildInfo.BuildArgs = make(map[string]string)
-	}
-	for key, value := range binaryInfo.BuildSettings {
-		if _, exists := buildInfo.BuildArgs[key]; !exists {
-			buildInfo.BuildArgs[key] = value
-		}
-	}
-
-	log.Debug("Merged provenance and binary detection information")
-}
 
 // RebuildBinary rebuilds a Go binary with updated dependencies.
 func (r *Rebuilder) RebuildBinary(
@@ -436,31 +346,11 @@ func (s RebuildStrategy) String() string {
 		return "auto"
 	case RebuildStrategyProvenance:
 		return "provenance"
-	case RebuildStrategyHeuristic:
-		return "heuristic"
 	case RebuildStrategyNone:
 		return "none"
 	default:
 		return "unknown"
 	}
-}
-
-// CopyBinaryToTarget copies the rebuilt binary to its target location in the image.
-func (r *Rebuilder) CopyBinaryToTarget(
-	state *llb.State,
-	binaryInfo *BinaryInfo,
-	buildDir string,
-) llb.State {
-	// Determine source binary path (where it was built)
-	sourcePath := filepath.Join(buildDir, filepath.Base(binaryInfo.Path))
-
-	// Determine target path (where it should be in the final image)
-	targetPath := binaryInfo.Path
-
-	// Copy the binary to the target location
-	return state.File(
-		llb.Copy(*state, sourcePath, targetPath),
-	)
 }
 
 // RebuildError represents an error during the rebuild process with detailed context.
@@ -494,8 +384,8 @@ func newRebuildError(phase, message string, underlying error, recoverable bool, 
 	}
 }
 
-// RebuildWithFallback attempts to rebuild with automatic fallback to simpler strategies.
-// It tries strategies in order: provenance -> heuristic -> none (go.mod only).
+// RebuildWithFallback attempts to rebuild using SLSA provenance.
+// Note: Heuristic binary detection has been removed for v1 - only SLSA provenance is supported.
 func (r *Rebuilder) RebuildWithFallback(
 	ctx context.Context,
 	rebuildCtx *RebuildContext,
@@ -506,13 +396,8 @@ func (r *Rebuilder) RebuildWithFallback(
 		Strategy: rebuildCtx.Strategy.String(),
 	}
 
-	// Track all attempted strategies
-	var attemptedStrategies []string
-	var lastError error
-
-	// Strategy 1: Full provenance-based rebuild
+	// Only provenance-based rebuild is supported
 	if rebuildCtx.Strategy == RebuildStrategyProvenance && rebuildCtx.BuildInfo != nil {
-		attemptedStrategies = append(attemptedStrategies, "provenance")
 		log.Info("Attempting provenance-based rebuild...")
 
 		newState, rebuildResult, err := r.RebuildBinary(ctx, rebuildCtx, baseState, updates)
@@ -520,45 +405,31 @@ func (r *Rebuilder) RebuildWithFallback(
 			return newState, rebuildResult, nil
 		}
 
-		lastError = err
 		result.Warnings = append(result.Warnings, fmt.Sprintf("Provenance rebuild failed: %v", err))
 		log.Warnf("Provenance-based rebuild failed: %v", err)
+
+		result.Success = false
+		result.Error = newRebuildError(
+			"rebuild",
+			"provenance-based rebuild failed",
+			err,
+			true, // Recoverable - can fall back to go.mod update
+			"Ensure the image has SLSA provenance with BuildKit metadata (provenance=max)",
+			"Check that provenance includes Dockerfile and build commands",
+		)
+		return baseState, result, result.Error
 	}
 
-	// Strategy 2: Heuristic rebuild using binary detection
-	if len(rebuildCtx.BinaryInfo) > 0 {
-		attemptedStrategies = append(attemptedStrategies, "heuristic")
-		log.Info("Attempting heuristic rebuild using binary detection...")
-
-		// Create a heuristic context if we don't have one
-		heuristicCtx := &RebuildContext{
-			Strategy:   RebuildStrategyHeuristic,
-			BinaryInfo: rebuildCtx.BinaryInfo,
-			BuildInfo:  r.detector.ConvertBinaryInfoToBuildInfo(rebuildCtx.BinaryInfo[0]),
-		}
-
-		newState, rebuildResult, err := r.RebuildBinary(ctx, heuristicCtx, baseState, updates)
-		if err == nil && rebuildResult.Success {
-			rebuildResult.Strategy = "heuristic (fallback)"
-			rebuildResult.Warnings = append(rebuildResult.Warnings, result.Warnings...)
-			return newState, rebuildResult, nil
-		}
-
-		lastError = err
-		result.Warnings = append(result.Warnings, fmt.Sprintf("Heuristic rebuild failed: %v", err))
-		log.Warnf("Heuristic rebuild failed: %v", err)
-	}
-
-	// All strategies failed
+	// No valid strategy available
 	result.Success = false
 	result.Error = newRebuildError(
 		"rebuild",
-		fmt.Sprintf("all rebuild strategies failed (tried: %v)", attemptedStrategies),
-		lastError,
+		"no rebuild strategy available (SLSA provenance required)",
+		nil,
 		true, // Recoverable - can fall back to go.mod update
-		"Ensure the image has SLSA provenance with BuildKit metadata",
-		"Check that the image contains Go binaries with embedded build info",
-		"The image may need to be rebuilt with 'go build -buildinfo' flags",
+		"Binary rebuild requires SLSA provenance with BuildKit metadata",
+		"Build images with: docker buildx build --provenance=max",
+		"Or use slsa-github-generator for GitHub Actions builds",
 	)
 
 	return baseState, result, result.Error
@@ -595,11 +466,6 @@ func (r *Rebuilder) DiagnoseRebuildIssue(rebuildCtx *RebuildContext) []string {
 		}
 	}
 
-	// Check binary info
-	if len(rebuildCtx.BinaryInfo) == 0 {
-		issues = append(issues, "No Go binaries detected in image - binary detection requires executable files")
-	}
-
 	if len(issues) == 0 {
 		issues = append(issues, "Build information appears complete - rebuild should be possible")
 	}
@@ -627,14 +493,6 @@ func (r *Rebuilder) FormatRebuildSummary(rebuildCtx *RebuildContext, result *Reb
 			sb.WriteString("  Dockerfile: Available\n")
 		} else {
 			sb.WriteString("  Dockerfile: Not available\n")
-		}
-	}
-
-	// Binary info if available
-	if rebuildCtx != nil && len(rebuildCtx.BinaryInfo) > 0 {
-		sb.WriteString(fmt.Sprintf("\nDetected Binaries: %d\n", len(rebuildCtx.BinaryInfo)))
-		for _, bi := range rebuildCtx.BinaryInfo {
-			sb.WriteString(fmt.Sprintf("  - %s (Go %s)\n", bi.Path, bi.GoVersion))
 		}
 	}
 

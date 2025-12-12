@@ -226,7 +226,6 @@ func TestRebuildStrategy_String(t *testing.T) {
 	}{
 		{RebuildStrategyAuto, "auto"},
 		{RebuildStrategyProvenance, "provenance"},
-		{RebuildStrategyHeuristic, "heuristic"},
 		{RebuildStrategyNone, "none"},
 		{RebuildStrategy(999), "unknown"},
 	}
@@ -272,19 +271,6 @@ func TestDiagnoseRebuildIssue(t *testing.T) {
 			},
 		},
 		{
-			name: "no binaries detected",
-			rebuildCtx: &RebuildContext{
-				Provenance: &Attestation{},
-				BuildInfo: &BuildInfo{
-					GoVersion:  "1.21",
-					ModulePath: "github.com/example/app",
-					Dockerfile: "FROM golang:1.21",
-				},
-				BinaryInfo: nil,
-			},
-			wantIssues: []string{"No Go binaries detected"},
-		},
-		{
 			name: "complete context",
 			rebuildCtx: &RebuildContext{
 				Provenance: &Attestation{},
@@ -292,9 +278,6 @@ func TestDiagnoseRebuildIssue(t *testing.T) {
 					GoVersion:  "1.21",
 					ModulePath: "github.com/example/app",
 					Dockerfile: "FROM golang:1.21",
-				},
-				BinaryInfo: []*BinaryInfo{
-					{Path: "/app/bin"},
 				},
 			},
 			wantIssues: []string{"Build information appears complete"},
@@ -366,9 +349,6 @@ func TestFormatRebuildSummary(t *testing.T) {
 			CGOEnabled: false,
 			Dockerfile: "FROM golang:1.21",
 		},
-		BinaryInfo: []*BinaryInfo{
-			{Path: "/app/bin", GoVersion: "1.21"},
-		},
 	}
 
 	result := &RebuildResult{
@@ -386,5 +366,4 @@ func TestFormatRebuildSummary(t *testing.T) {
 	assert.Contains(t, summary, "Go Version: 1.21")
 	assert.Contains(t, summary, "Module: github.com/example/app")
 	assert.Contains(t, summary, "Dockerfile: Available")
-	assert.Contains(t, summary, "Detected Binaries: 1")
 }

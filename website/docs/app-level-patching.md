@@ -430,13 +430,12 @@ copa patch \
 trivy image patched --vuln-type library
 ```
 
-##### Rebuild Strategy Fallback
+##### Rebuild Strategy
 
-Copa uses a fallback chain for binary rebuilding:
+Copa requires SLSA provenance for binary rebuilding:
 
-1. **Provenance Strategy**: Uses SLSA provenance with GitHub-enriched Dockerfile
-2. **Heuristic Strategy**: Uses embedded binary info when provenance is incomplete
-3. **go.mod Only**: Falls back to updating module files only (default behavior)
+1. **Provenance Strategy**: Uses SLSA provenance with GitHub-enriched Dockerfile (requires `--provenance=max`)
+2. **go.mod Only**: Falls back to updating module files only if provenance is not available
 
 The strategy used is logged during patching:
 
@@ -445,9 +444,10 @@ INFO Using rebuild strategy: provenance
 INFO Binary rebuild successful: 1 binaries rebuilt
 ```
 
-Or for fallback:
+Or when provenance is not available:
 
 ```text
-WARN Provenance-based rebuild failed, falling back to go.mod updates
-INFO Note: Go binaries are not automatically rebuilt. Updated go.mod/go.sum only.
+INFO No rebuild strategy available (SLSA provenance required), will only update go.mod/go.sum
 ```
+
+> **Note**: Binary rebuild requires images built with SLSA provenance (`docker buildx build --provenance=max`). Images without provenance will only have their go.mod/go.sum files updated.
