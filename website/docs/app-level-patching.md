@@ -238,16 +238,7 @@ As with Python packages, it is *highly recommended* to thoroughly test your Node
 
 ### .NET
 
-Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images.
-
-#### Usage Example
-
-```bash
-export COPA_EXPERIMENTAL=1
-
-trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
-copa patch -i $IMAGE -r scan.json -t $IMAGE-patched --pkg-types library --library-patch-level major
-```
+Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images using the same flags as noted above.
 
 #### How .NET Patching Works
 
@@ -320,7 +311,3 @@ Copa automatically filters out `Microsoft.Build.*` packages from patching. These
 Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:
 - Use `--ignore-errors` to continue patching other packages
 - Manually resolve version conflicts in your `.csproj` file
-
-##### Testing After Patching
-
-Always test your .NET application after patching. Copa does not perform automated testing or validation.
