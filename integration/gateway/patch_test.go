@@ -230,7 +230,8 @@ func runPatchTests(t *testing.T, testCases []patchTestCase) {
 		Architecture: "amd64",
 	}
 
-	for _, tc := range testCases {
+	for i := range testCases {
+		tc := &testCases[i]
 		t.Run(tc.name, func(t *testing.T) {
 			var updates *unversioned.UpdateManifest
 			if tc.packages != nil {
