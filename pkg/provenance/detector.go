@@ -254,9 +254,10 @@ func (d *Detector) DetectBinaryInfoInBuildKit(
 	// 1. Copies the binary from the target image to the tooling container
 	// 2. Runs "go version -m" on it
 	// 3. Outputs to a file we can extract
+	// Include error details in output for debugging
 	extractCmd := fmt.Sprintf(
-		`cp /target%s /tmp/binary && go version -m /tmp/binary > %s 2>&1 || echo "FAILED" > %s`,
-		binaryPath, goBuildInfoOutputFile, goBuildInfoOutputFile,
+		`cp /target%s /tmp/binary 2>&1 && go version -m /tmp/binary > %s 2>&1 || (echo "FAILED: cp_or_go_version_error"; ls -la /target%s 2>&1; cat %s 2>&1) > %s`,
+		binaryPath, goBuildInfoOutputFile, binaryPath, goBuildInfoOutputFile, goBuildInfoOutputFile,
 	)
 
 	// Mount target image filesystem and run extraction
@@ -274,6 +275,7 @@ func (d *Detector) DetectBinaryInfoInBuildKit(
 
 	outputStr := string(output)
 	if strings.Contains(outputStr, "FAILED") || outputStr == "" {
+		log.Debugf("go version -m output for %s: %q", binaryPath, outputStr)
 		return nil, fmt.Errorf("go version -m failed for %s", binaryPath)
 	}
 
@@ -347,13 +349,14 @@ func (d *Detector) findBinariesInDistroless(
 	toolingImage := llb.Image("docker.io/library/busybox:latest")
 
 	// Search common binary locations in the mounted target
+	// Use double quotes for sed to avoid quoting issues with sh -c
 	findCmd := fmt.Sprintf(
-		`find /target/usr/local/bin /target/usr/bin /target/bin /target/app /target -maxdepth 3 -type f -executable 2>/dev/null | sed 's|^/target||' | head -50 > %s || true`,
+		`find /target/usr/local/bin /target/usr/bin /target/bin /target/app /target -maxdepth 3 -type f -executable 2>/dev/null | sed "s|^/target||" | head -50 > %s || true`,
 		goFindBinariesFile,
 	)
 
 	execState := toolingImage.Run(
-		llb.Shlex(fmt.Sprintf("sh -c '%s'", findCmd)),
+		llb.Shlex(fmt.Sprintf(`sh -c "%s"`, strings.ReplaceAll(findCmd, `"`, `\"`))),
 		llb.AddMount("/target", *state, llb.Readonly),
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
