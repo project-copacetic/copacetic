@@ -8,9 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
+	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -232,19 +232,13 @@ func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageL
 }
 
 // extractTar extracts a tar file to a directory.
-// It validates all paths to prevent Zip Slip (path traversal) attacks.
+// It uses securejoin to prevent Zip Slip (path traversal) attacks.
 func extractTar(tarPath, destDir string) error {
 	f, err := os.Open(tarPath)
 	if err != nil {
 		return fmt.Errorf("failed to open tar file: %w", err)
 	}
 	defer f.Close()
-
-	// Get the absolute path of destDir for proper validation
-	absDestDir, err := filepath.Abs(destDir)
-	if err != nil {
-		return fmt.Errorf("failed to get absolute path of destDir: %w", err)
-	}
 
 	tr := tar.NewReader(f)
 	for {
@@ -256,9 +250,9 @@ func extractTar(tarPath, destDir string) error {
 			return fmt.Errorf("failed to read tar header: %w", err)
 		}
 
-		// Sanitize the target path to prevent path traversal (Zip Slip)
-		// CodeQL: This is intentionally safe - sanitizeArchivePath validates the path
-		target, err := sanitizeArchivePath(absDestDir, header.Name)
+		// Use securejoin to safely join paths and prevent Zip Slip attacks.
+		// This is the CodeQL-recognized solution for path traversal prevention.
+		target, err := securejoin.SecureJoin(destDir, header.Name)
 		if err != nil {
 			return fmt.Errorf("invalid tar path %q: %w", header.Name, err)
 		}
@@ -279,68 +273,17 @@ func extractTar(tarPath, destDir string) error {
 		case tar.TypeSymlink:
 			// Skip symlinks entirely - they're not needed for OCI layer inspection
 			// which only reads JSON metadata files (index.json, manifests, configs).
-			// This also avoids CodeQL's "Zip Slip via symlink" warnings.
+			// This also avoids potential symlink-based path traversal attacks.
 			continue
 		}
 	}
 	return nil
 }
 
-// sanitizeArchivePath validates and sanitizes a path from an archive.
-// It ensures the resulting path is within the destination directory,
-// preventing Zip Slip / path traversal attacks.
-//
-// This function:
-// 1. Cleans the entry name to normalize path separators and remove redundant elements
-// 2. Rejects absolute paths
-// 3. Rejects paths that start with ".." (attempt to escape)
-// 4. Joins safely with destDir and verifies the result is still within destDir.
-func sanitizeArchivePath(destDir, entryName string) (string, error) {
-	// Clean the entry name to remove any . or .. components and normalize separators
-	cleanName := filepath.Clean(entryName)
-
-	// Reject absolute paths
-	if filepath.IsAbs(cleanName) {
-		return "", fmt.Errorf("absolute paths not allowed")
-	}
-
-	// Reject paths that try to escape with ..
-	if strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) || cleanName == ".." {
-		return "", fmt.Errorf("path attempts to escape destination directory")
-	}
-
-	// Join with destination directory
-	// filepath.Join also cleans the result
-	target := filepath.Join(destDir, cleanName)
-
-	// Final safety check: ensure the target is within destDir
-	// This catches any edge cases the above checks might miss
-	if !isSubPath(destDir, target) {
-		return "", fmt.Errorf("path escapes destination directory")
-	}
-
-	return target, nil
-}
-
-// isSubPath checks if child is a subpath of parent.
-// Both paths should be absolute and clean.
-func isSubPath(parent, child string) bool {
-	parent = filepath.Clean(parent)
-	child = filepath.Clean(child)
-
-	// The child must either equal the parent or start with parent + separator
-	if child == parent {
-		return true
-	}
-
-	parentWithSep := parent + string(filepath.Separator)
-	return strings.HasPrefix(child, parentWithSep)
-}
-
 // extractFile extracts a single file from the tar reader to the target path.
-// The target path must have been validated by sanitizeArchivePath before calling this.
+// The target path must have been validated by securejoin.SecureJoin before calling this.
 func extractFile(target string, tr *tar.Reader, size int64) error {
-	outFile, err := os.Create(target) // #nosec G304 -- path is validated by sanitizeArchivePath
+	outFile, err := os.Create(target) // #nosec G304 -- path is validated by securejoin.SecureJoin
 	if err != nil {
 		return fmt.Errorf("failed to create file: %w", err)
 	}
