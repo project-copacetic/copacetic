@@ -53,6 +53,13 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			osType:        osType,
 			osVersion:     osVersion,
 		}, nil
+	case utils.OSTypeSLES, utils.OSTypeOpenSUSELeap, utils.OSTypeOpenSUSETW:
+		return &rpmManager{
+			config:        config,
+			workingFolder: workingFolder,
+			osType:        osType,
+			osVersion:     osVersion,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported osType %s specified", osType)
 	}
