@@ -84,7 +84,7 @@ func InitializeBuildkitConfig(
 		},
 	}
 	if platform != nil {
-		resolveOpt.Platform = platform
+		resolveOpt.ImageOpt.Platform = platform
 	}
 	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, resolveOpt)
 	if err != nil {
