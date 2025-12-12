@@ -799,8 +799,9 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 20m
       - name: Test Summary
+        if: always()
         uses: test-summary/action@v2
         with:
           paths: "test-results.xml"

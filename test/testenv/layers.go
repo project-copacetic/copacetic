@@ -194,12 +194,23 @@ func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageL
 
 	// Read the manifest blob
 	manifestDigest := index.Manifests[0].Digest
-	// Convert digest (sha256:abc123...) to blob path (blobs/sha256/abc123...)
-	blobPath := filepath.Join(extractDir, "blobs", manifestDigest[7:9], manifestDigest[10:])
+	manifestHashPath, err := digestToPath(manifestDigest)
+	if err != nil {
+		return nil, fmt.Errorf("invalid manifest digest: %w", err)
+	}
 
-	// Try alternate path structure (blobs/sha256/abc123)
+	// Try standard OCI blob path structure (blobs/sha256/abc123...)
+	blobPath := filepath.Join(extractDir, "blobs", manifestHashPath)
+
+	// Try alternate path structure with nested directories (blobs/sha256/ab/c123...)
 	if _, err := os.Stat(blobPath); os.IsNotExist(err) {
-		blobPath = filepath.Join(extractDir, "blobs", "sha256", manifestDigest[7:])
+		algo, hash, _ := parseDigest(manifestDigest)
+		if len(hash) >= 2 {
+			altPath := filepath.Join(extractDir, "blobs", algo, hash[:2], hash[2:])
+			if _, err := os.Stat(altPath); err == nil {
+				blobPath = altPath
+			}
+		}
 	}
 
 	manifestData, err := os.ReadFile(blobPath)
@@ -222,7 +233,11 @@ func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageL
 
 	// Read config blob to get diff_ids
 	configDigest := manifest.Config.Digest
-	configBlobPath := filepath.Join(extractDir, "blobs", "sha256", configDigest[7:])
+	configHashPath, err := digestToPath(configDigest)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config digest: %w", err)
+	}
+	configBlobPath := filepath.Join(extractDir, "blobs", configHashPath)
 	configData, err := os.ReadFile(configBlobPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config blob: %w", err)
@@ -294,6 +309,44 @@ func extractFile(target string, tr *tar.Reader, size int64) error {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return nil
+}
+
+// parseDigest parses a digest string (e.g., "sha256:abc123...") into algorithm and hash.
+// Returns an error if the format is invalid.
+func parseDigest(digest string) (algo, hash string, err error) {
+	parts := splitDigest(digest)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("invalid digest format: expected 'algorithm:hash', got %q", digest)
+	}
+	algo, hash = parts[0], parts[1]
+	if algo == "" || hash == "" {
+		return "", "", fmt.Errorf("invalid digest format: empty algorithm or hash in %q", digest)
+	}
+	return algo, hash, nil
+}
+
+// splitDigest splits a digest at the first colon.
+func splitDigest(digest string) []string {
+	idx := -1
+	for i, c := range digest {
+		if c == ':' {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return []string{digest}
+	}
+	return []string{digest[:idx], digest[idx+1:]}
+}
+
+// digestToPath converts a digest to a blob path (e.g., "sha256:abc123" -> "sha256/abc123").
+func digestToPath(digest string) (string, error) {
+	algo, hash, err := parseDigest(digest)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(algo, hash), nil
 }
 
 // AssertLayerCount asserts that the patched image has the expected number of layers.
