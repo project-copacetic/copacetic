@@ -232,6 +232,82 @@ Copa uses the `--ignore-scripts` flag when installing Node.js packages to avoid 
 - Most security patches work without native rebuilds.
 - In rare cases, functionality relying on native modules might be affected.
 
-##### Node.js Testing and Validation
+###### Node.js Testing and Validation
 
 As with Python packages, it is *highly recommended* to thoroughly test your Node.js application after applying updates. Copa does not perform automated testing or validation of the patched application.
+
+### .NET
+
+Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images using the same flags as noted above.
+
+#### How .NET Patching Works
+
+##### Application Discovery
+
+Copa automatically locates your application by searching for `*.deps.json` files across the entire filesystem, excluding system paths that contain SDK tooling and cached packages:
+
+```
+find / -name "*.deps.json" | grep -v "^/usr/share/" | grep -v "^/usr/local/share/" | grep -v "^/root/.nuget" | grep -v "^/tmp/"
+```
+
+This approach:
+- Works for any deployment location (including custom `-o` output paths)
+- Automatically handles images where apps are deployed to `/app`, `/home`, `/opt`, or any other directory
+- Excludes SDK tools, NuGet cache, and temporary files from discovery
+
+##### Patching Process
+
+1. **Discovery**: Searches filesystem for `*.deps.json`, extracts framework version (e.g., `8.0.11`)
+2. **SDK Container**: Creates temporary SDK container with matching framework version, with a default of `8.0` (e.g., `mcr.microsoft.com/dotnet/sdk:8.0.11`)
+3. **Build Fixed Packages**: Creates temp project with `PackageReference` entries for fixed versions, runs `dotnet publish` to download and compile
+4. **DLL Replacement**: Copies patched DLLs to app directory, only replacing files that already exist (won't add new DLLs)
+5. **Metadata Update**: Uses `jq` to merge package entries from the generated `deps.json` into the original, preserving correct `sha512`, `hashPath`, `assemblyVersion`, and `fileVersion` metadata
+6. **Layer Optimization**: Diffs from original image to capture only actual changes, then squashes into a single patch layer
+
+##### Why DLL Replacement Works
+
+NuGet packages contain pre-compiled IL bytecode (not native code). The .NET runtime JIT-compiles at load time, so DLLs can be swapped without recompilation.
+
+##### deps.json Metadata
+
+The `deps.json` file contains critical metadata for each package:
+- **sha512**: Hash of the package for integrity verification
+- **hashPath**: Path to the `.nupkg.sha512` file
+- **assemblyVersion**: CLR assembly version
+- **fileVersion**: File version for native image binding
+
+Copa generates correct metadata by using `dotnet publish` in an SDK container and extracting the package entries with `jq`.
+
+#### Important Considerations
+
+**Patch Level**: Many .NET security fixes involve major version changes (e.g., `12.0.1 → 13.0.1`). Use `--library-patch-level major` to allow these updates.
+
+**Validation**: Copa verifies that patched DLLs are successfully copied to the app directory. The updated `deps.json` is verified to contain the new package versions. However, runtime compatibility is not tested.
+
+**Multi-Application Containers**: Only the first discovered application is patched. Split multi-app containers for proper patching.
+
+**Non-Vulnerable Packages**: Packages that are not in the vulnerability report remain unchanged. Only vulnerable packages are updated.
+
+**Ignore Errors**: Use `--ignore-errors` to continue patching even if some packages fail. This is useful when:
+- Some packages have dependency conflicts
+- A package version is unavailable on NuGet
+- You want to patch as many vulnerabilities as possible
+
+:::danger DLL Replacement Bypasses Compilation
+API incompatibilities won't surface until runtime. Always test in staging before production.
+:::
+
+#### .NET Limitations
+
+##### Microsoft.Build.* Packages
+
+Copa automatically filters out `Microsoft.Build.*` packages from patching. These are SDK/build-time dependencies that:
+- Are not part of the runtime application
+- Often have version constraints incompatible with patching
+- Don't represent actual security vulnerabilities in the deployed application
+
+##### Dependency Resolution
+
+Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:
+- Use `--ignore-errors` to continue patching other packages
+- Manually resolve version conflicts in your `.csproj` file

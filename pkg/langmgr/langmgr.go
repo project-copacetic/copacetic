@@ -45,6 +45,8 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
 		case utils.NodePackages:
 			managers = append(managers, &nodejsManager{config: config, workingFolder: workingFolder})
+		case utils.DotNetPackages:
+			managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
 		default:
 			log.Warnf("Unknown package type '%s' found in language updates", packageType)
 		}
@@ -82,10 +84,12 @@ func GetUniqueLatestUpdates(
 
 	// Track the highest version and collect metadata for each package
 	type packageInfo struct {
-		version  string
-		pkgPaths map[string]bool // Track all unique PkgPaths for this package
-		pkgType  string
-		pkgClass string
+		installedVersion string
+		version          string
+		pkgPaths         map[string]bool // Track all unique PkgPaths for this package
+		pkgType          string
+		pkgClass         string
+		vulnerabilityID  string
 	}
 	dict := make(map[string]*packageInfo)
 	var allErrors *multierror.Error
@@ -101,10 +105,12 @@ func GetUniqueLatestUpdates(
 			if !ok {
 				// First time seeing this package
 				dict[u.Name] = &packageInfo{
-					version:  u.FixedVersion,
-					pkgPaths: map[string]bool{u.PkgPath: true},
-					pkgType:  u.Type,
-					pkgClass: u.Class,
+					installedVersion: u.InstalledVersion,
+					version:          u.FixedVersion,
+					pkgPaths:         map[string]bool{u.PkgPath: true},
+					pkgType:          u.Type,
+					pkgClass:         u.Class,
+					vulnerabilityID:  u.VulnerabilityID,
 				}
 			} else {
 				// Package already exists, update version if higher and track PkgPath
@@ -113,6 +119,13 @@ func GetUniqueLatestUpdates(
 				}
 				if u.PkgPath != "" {
 					info.pkgPaths[u.PkgPath] = true
+				}
+				// Keep the installed version and vulnerability ID from first occurrence
+				if info.installedVersion == "" && u.InstalledVersion != "" {
+					info.installedVersion = u.InstalledVersion
+				}
+				if info.vulnerabilityID == "" && u.VulnerabilityID != "" {
+					info.vulnerabilityID = u.VulnerabilityID
 				}
 			}
 		default:
@@ -138,11 +151,13 @@ func GetUniqueLatestUpdates(
 		}
 
 		out = append(out, unversioned.UpdatePackage{
-			Name:         pkgName,
-			FixedVersion: info.version,
-			PkgPath:      pkgPath,
-			Type:         info.pkgType,
-			Class:        info.pkgClass,
+			Name:             pkgName,
+			InstalledVersion: info.installedVersion,
+			FixedVersion:     info.version,
+			VulnerabilityID:  info.vulnerabilityID,
+			Type:             info.pkgType,
+			Class:            info.pkgClass,
+			PkgPath:          pkgPath,
 		})
 	}
 	return out, nil
