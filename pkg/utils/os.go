@@ -43,34 +43,36 @@ var RPMDistros = []string{
 }
 
 func CanonicalOSType(osType string) string {
+	os := strings.ToLower(osType)
+
 	switch {
-	case strings.Contains(osType, OSTypeAlpine):
+	case strings.Contains(os, OSTypeAlpine):
 		return OSTypeAlpine
-	case strings.Contains(osType, OSTypeDebian):
+	case strings.Contains(os, OSTypeDebian):
 		return OSTypeDebian
-	case strings.Contains(osType, OSTypeUbuntu):
+	case strings.Contains(os, OSTypeUbuntu):
 		return OSTypeUbuntu
-	case strings.Contains(osType, OSTypeAmazon):
+	case strings.Contains(os, OSTypeAmazon):
 		return OSTypeAmazon
-	case strings.Contains(osType, OSTypeCentOS):
+	case strings.Contains(os, OSTypeCentOS):
 		return OSTypeCentOS
-	case strings.Contains(osType, OSTypeCBLMariner), strings.Contains(osType, "mariner"):
+	case strings.Contains(os, OSTypeCBLMariner), strings.Contains(os, "mariner"):
 		return OSTypeCBLMariner
-	case strings.Contains(osType, OSTypeAzureLinux), strings.Contains(osType, "azure linux"):
+	case strings.Contains(os, OSTypeAzureLinux), strings.Contains(os, "azure linux"):
 		return OSTypeAzureLinux
-	case strings.Contains(osType, OSTypeRedHat), strings.Contains(osType, "red hat"):
+	case strings.Contains(os, OSTypeRedHat), strings.Contains(os, "red hat"):
 		return OSTypeRedHat
-	case strings.Contains(osType, OSTypeRocky):
+	case strings.Contains(os, OSTypeRocky):
 		return OSTypeRocky
-	case strings.Contains(osType, OSTypeOracle):
+	case strings.Contains(os, OSTypeOracle):
 		return OSTypeOracle
-	case strings.Contains(osType, OSTypeAlma):
+	case strings.Contains(os, OSTypeAlma):
 		return OSTypeAlma
-	case strings.Contains(osType, OSTypeSLES), strings.Contains(osType, "suse linux enterprise server"):
+	case strings.Contains(os, OSTypeSLES), strings.Contains(os, "suse linux enterprise server"):
 		return OSTypeSLES
-	case strings.Contains(osType, OSTypeOpenSUSELeap), strings.Contains(osType, "opensuse leap"), strings.Contains(osType, "opensuse.leap"):
+	case strings.Contains(os, OSTypeOpenSUSELeap), strings.Contains(os, "opensuse leap"), strings.Contains(os, "opensuse.leap"):
 		return OSTypeOpenSUSELeap
-	case strings.Contains(osType, OSTypeOpenSUSETW), strings.Contains(osType, "opensuse tumbleweed"), strings.Contains(osType, "opensuse.tumbleweed"):
+	case strings.Contains(os, OSTypeOpenSUSETW), strings.Contains(os, "opensuse tumbleweed"), strings.Contains(os, "opensuse.tumbleweed"):
 		return OSTypeOpenSUSETW
 	default:
 		return ""

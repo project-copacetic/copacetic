@@ -756,6 +756,7 @@ func Test_zypperChrootInstallUpdates(t *testing.T) {
 		updates        unversioned.UpdatePackages
 		mockSetup      func(reference *mocks.MockReference)
 		toolImage      string
+		ignoreErrors   bool
 		expectedError  bool
 		expectedResult []byte
 	}{
@@ -769,6 +770,7 @@ func Test_zypperChrootInstallUpdates(t *testing.T) {
 				{Name: "package2", FixedVersion: "2.3.4"},
 			},
 			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   false,
 			expectedError:  false,
 			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\n"),
 		},
@@ -779,6 +781,7 @@ func Test_zypperChrootInstallUpdates(t *testing.T) {
 			},
 			updates:        nil,
 			toolImage:      "test-tool-image:latest",
+			ignoreErrors:   false,
 			expectedResult: []byte(""),
 			expectedError:  false,
 		},
@@ -811,7 +814,7 @@ func Test_zypperChrootInstallUpdates(t *testing.T) {
 				Architecture: "amd64",
 			}
 
-			result, resultBytes, err := rm.zypperChrootInstallUpdates(context.TODO(), tt.updates, tt.toolImage, testPlatform)
+			result, resultBytes, err := rm.zypperChrootInstallUpdates(context.TODO(), tt.updates, tt.toolImage, testPlatform, tt.ignoreErrors)
 
 			// Assert
 			if tt.expectedError {

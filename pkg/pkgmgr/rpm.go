@@ -270,7 +270,7 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 			return nil, nil, err
 		}
 	case utils.IsSUSEImage(rm.osType):
-		updatedImageState, resultManifestBytes, err = rm.zypperChrootInstallUpdates(ctx, updates, toolImageName, imagePlatform)
+		updatedImageState, resultManifestBytes, err = rm.zypperChrootInstallUpdates(ctx, updates, toolImageName, imagePlatform, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -851,8 +851,10 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	return &merged, resultBytes, nil
 }
 
-func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform) (*llb.State, []byte, error) {
+func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) { // nolint:lll
 	pkgs := ""
+	// ignoreErrors is unused, but kept to maintain consistency with
+	// similar functions
 
 	// Spin up a build tooling container to fetch and install packages
 	// inside a chroot directory to create the patch layer.
@@ -869,7 +871,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
 	}
 
-	// If specific updates, provided, parse into pkg names, else will update all
+	// If specific updates provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
 		pkgStrings := []string{}
