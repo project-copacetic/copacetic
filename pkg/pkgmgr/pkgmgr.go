@@ -33,7 +33,8 @@ type PackageManager interface {
 }
 
 func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
-	switch osType {
+	canonicalOSType := utils.CanonicalOSType(osType)
+	switch canonicalOSType {
 	case utils.OSTypeAlpine:
 		return &apkManager{
 			config:        config,
@@ -44,20 +45,20 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			config:        config,
 			workingFolder: workingFolder,
 			osVersion:     osVersion,
-			osType:        osType,
+			osType:        canonicalOSType,
 		}, nil
 	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
 		return &rpmManager{
 			config:        config,
 			workingFolder: workingFolder,
-			osType:        osType,
+			osType:        canonicalOSType,
 			osVersion:     osVersion,
 		}, nil
 	case utils.OSTypeSLES, utils.OSTypeOpenSUSELeap, utils.OSTypeOpenSUSETW:
 		return &rpmManager{
 			config:        config,
 			workingFolder: workingFolder,
-			osType:        osType,
+			osType:        canonicalOSType,
 			osVersion:     osVersion,
 		}, nil
 	default:

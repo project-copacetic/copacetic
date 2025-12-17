@@ -503,7 +503,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		imageStateCurrent = rm.config.PatchedImageState
 	}
 
-	// If specific updates, provided, parse into pkg names, else will update all
+	// If specific updates provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
 		pkgStrings := []string{}
