@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.cc765d86.css">
-<script src="/copacetic/website/assets/js/runtime~main.525fa59e.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.130af76b.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.5e7ccdfb.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -129,7 +129,65 @@
 <li class="">Most security patches work without native rebuilds.</li>
 <li class="">In rare cases, functionality relying on native modules might be affected.</li>
 </ul>
-<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="nodejs-testing-and-validation">Node.js Testing and Validation<a href="#nodejs-testing-and-validation" class="hash-link" aria-label="Direct link to Node.js Testing and Validation" title="Direct link to Node.js Testing and Validation" translate="no">​</a></h5>
-<p>As with Python packages, it is <em>highly recommended</em> to thoroughly test your Node.js application after applying updates. Copa does not perform automated testing or validation of the patched application.</p></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/next/faq"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">FAQ</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/next/docker-build"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Docker Build Integration</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#overview" class="table-of-contents__link toc-highlight">Overview</a></li><li><a href="#package-type-filtering" class="table-of-contents__link toc-highlight">Package Type Filtering</a><ul><li><a href="#package-type-options" class="table-of-contents__link toc-highlight">Package Type Options</a></li></ul></li><li><a href="#patch-level-control" class="table-of-contents__link toc-highlight">Patch Level Control</a><ul><li><a href="#patch-level-behavior" class="table-of-contents__link toc-highlight">Patch Level Behavior</a></li><li><a href="#special-package-handling" class="table-of-contents__link toc-highlight">Special Package Handling</a></li></ul></li><li><a href="#usage-examples" class="table-of-contents__link toc-highlight">Usage Examples</a><ul><li><a href="#basic-usage" class="table-of-contents__link toc-highlight">Basic Usage</a></li><li><a href="#ignoring-errors" class="table-of-contents__link toc-highlight">Ignoring Errors</a></li></ul></li><li><a href="#limitations" class="table-of-contents__link toc-highlight">Limitations</a><ul><li><a href="#python" class="table-of-contents__link toc-highlight">Python</a></li><li><a href="#nodejs" class="table-of-contents__link toc-highlight">Node.js</a></li></ul></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
+<h6 class="anchor anchorTargetStickyNavbar_Vzrq" id="nodejs-testing-and-validation">Node.js Testing and Validation<a href="#nodejs-testing-and-validation" class="hash-link" aria-label="Direct link to Node.js Testing and Validation" title="Direct link to Node.js Testing and Validation" translate="no">​</a></h6>
+<p>As with Python packages, it is <em>highly recommended</em> to thoroughly test your Node.js application after applying updates. Copa does not perform automated testing or validation of the patched application.</p>
+<h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="net">.NET<a href="#net" class="hash-link" aria-label="Direct link to .NET" title="Direct link to .NET" translate="no">​</a></h3>
+<p>Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images using the same flags as noted above.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="how-net-patching-works">How .NET Patching Works<a href="#how-net-patching-works" class="hash-link" aria-label="Direct link to How .NET Patching Works" title="Direct link to How .NET Patching Works" translate="no">​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="application-discovery">Application Discovery<a href="#application-discovery" class="hash-link" aria-label="Direct link to Application Discovery" title="Direct link to Application Discovery" translate="no">​</a></h5>
+<p>Copa automatically locates your application by searching for <code>*.deps.json</code> files across the entire filesystem, excluding system paths that contain SDK tooling and cached packages:</p>
+<div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">find / -name &quot;*.deps.json&quot; | grep -v &quot;^/usr/share/&quot; | grep -v &quot;^/usr/local/share/&quot; | grep -v &quot;^/root/.nuget&quot; | grep -v &quot;^/tmp/&quot;</span><br></span></code></pre></div></div>
+<p>This approach:</p>
+<ul>
+<li class="">Works for any deployment location (including custom <code>-o</code> output paths)</li>
+<li class="">Automatically handles images where apps are deployed to <code>/app</code>, <code>/home</code>, <code>/opt</code>, or any other directory</li>
+<li class="">Excludes SDK tools, NuGet cache, and temporary files from discovery</li>
+</ul>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="patching-process">Patching Process<a href="#patching-process" class="hash-link" aria-label="Direct link to Patching Process" title="Direct link to Patching Process" translate="no">​</a></h5>
+<ol>
+<li class=""><strong>Discovery</strong>: Searches filesystem for <code>*.deps.json</code>, extracts framework version (e.g., <code>8.0.11</code>)</li>
+<li class=""><strong>SDK Container</strong>: Creates temporary SDK container with matching framework version, with a default of <code>8.0</code> (e.g., <code>mcr.microsoft.com/dotnet/sdk:8.0.11</code>)</li>
+<li class=""><strong>Build Fixed Packages</strong>: Creates temp project with <code>PackageReference</code> entries for fixed versions, runs <code>dotnet publish</code> to download and compile</li>
+<li class=""><strong>DLL Replacement</strong>: Copies patched DLLs to app directory, only replacing files that already exist (won&#x27;t add new DLLs)</li>
+<li class=""><strong>Metadata Update</strong>: Uses <code>jq</code> to merge package entries from the generated <code>deps.json</code> into the original, preserving correct <code>sha512</code>, <code>hashPath</code>, <code>assemblyVersion</code>, and <code>fileVersion</code> metadata</li>
+<li class=""><strong>Layer Optimization</strong>: Diffs from original image to capture only actual changes, then squashes into a single patch layer</li>
+</ol>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-dll-replacement-works">Why DLL Replacement Works<a href="#why-dll-replacement-works" class="hash-link" aria-label="Direct link to Why DLL Replacement Works" title="Direct link to Why DLL Replacement Works" translate="no">​</a></h5>
+<p>NuGet packages contain pre-compiled IL bytecode (not native code). The .NET runtime JIT-compiles at load time, so DLLs can be swapped without recompilation.</p>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="depsjson-metadata">deps.json Metadata<a href="#depsjson-metadata" class="hash-link" aria-label="Direct link to deps.json Metadata" title="Direct link to deps.json Metadata" translate="no">​</a></h5>
+<p>The <code>deps.json</code> file contains critical metadata for each package:</p>
+<ul>
+<li class=""><strong>sha512</strong>: Hash of the package for integrity verification</li>
+<li class=""><strong>hashPath</strong>: Path to the <code>.nupkg.sha512</code> file</li>
+<li class=""><strong>assemblyVersion</strong>: CLR assembly version</li>
+<li class=""><strong>fileVersion</strong>: File version for native image binding</li>
+</ul>
+<p>Copa generates correct metadata by using <code>dotnet publish</code> in an SDK container and extracting the package entries with <code>jq</code>.</p>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="important-considerations">Important Considerations<a href="#important-considerations" class="hash-link" aria-label="Direct link to Important Considerations" title="Direct link to Important Considerations" translate="no">​</a></h4>
+<p><strong>Patch Level</strong>: Many .NET security fixes involve major version changes (e.g., <code>12.0.1 → 13.0.1</code>). Use <code>--library-patch-level major</code> to allow these updates.</p>
+<p><strong>Validation</strong>: Copa verifies that patched DLLs are successfully copied to the app directory. The updated <code>deps.json</code> is verified to contain the new package versions. However, runtime compatibility is not tested.</p>
+<p><strong>Multi-Application Containers</strong>: Only the first discovered application is patched. Split multi-app containers for proper patching.</p>
+<p><strong>Non-Vulnerable Packages</strong>: Packages that are not in the vulnerability report remain unchanged. Only vulnerable packages are updated.</p>
+<p><strong>Ignore Errors</strong>: Use <code>--ignore-errors</code> to continue patching even if some packages fail. This is useful when:</p>
+<ul>
+<li class="">Some packages have dependency conflicts</li>
+<li class="">A package version is unavailable on NuGet</li>
+<li class="">You want to patch as many vulnerabilities as possible</li>
+</ul>
+<div class="theme-admonition theme-admonition-danger admonition_xJq3 alert alert--danger"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 12 16"><path fill-rule="evenodd" d="M5.05.31c.81 2.17.41 3.38-.52 4.31C3.55 5.67 1.98 6.45.9 7.98c-1.45 2.05-1.7 6.53 3.53 7.7-2.2-1.16-2.67-4.52-.3-6.61-.61 2.03.53 3.33 1.94 2.86 1.39-.47 2.3.53 2.27 1.67-.02.78-.31 1.44-1.13 1.81 3.42-.59 4.78-3.42 4.78-5.56 0-2.84-2.53-3.22-1.25-5.61-1.52.13-2.03 1.13-1.89 2.75.09 1.08-1.02 1.8-1.86 1.33-.67-.41-.66-1.19-.06-1.78C8.18 5.31 8.68 2.45 5.05.32L5.03.3l.02.01z"></path></svg></span>DLL Replacement Bypasses Compilation</div><div class="admonitionContent_BuS1"><p>API incompatibilities won&#x27;t surface until runtime. Always test in staging before production.</p></div></div>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="net-limitations">.NET Limitations<a href="#net-limitations" class="hash-link" aria-label="Direct link to .NET Limitations" title="Direct link to .NET Limitations" translate="no">​</a></h4>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="microsoftbuild-packages">Microsoft.Build.* Packages<a href="#microsoftbuild-packages" class="hash-link" aria-label="Direct link to Microsoft.Build.* Packages" title="Direct link to Microsoft.Build.* Packages" translate="no">​</a></h5>
+<p>Copa automatically filters out <code>Microsoft.Build.*</code> packages from patching. These are SDK/build-time dependencies that:</p>
+<ul>
+<li class="">Are not part of the runtime application</li>
+<li class="">Often have version constraints incompatible with patching</li>
+<li class="">Don&#x27;t represent actual security vulnerabilities in the deployed application</li>
+</ul>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="dependency-resolution-1">Dependency Resolution<a href="#dependency-resolution-1" class="hash-link" aria-label="Direct link to Dependency Resolution" title="Direct link to Dependency Resolution" translate="no">​</a></h5>
+<p>Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:</p>
+<ul>
+<li class="">Use <code>--ignore-errors</code> to continue patching other packages</li>
+<li class="">Manually resolve version conflicts in your <code>.csproj</code> file</li>
+</ul></div></article><nav class="docusaurus-mt-lg pagination-nav" aria-label="Docs pages"><a class="pagination-nav__link pagination-nav__link--prev" href="/copacetic/website/next/faq"><div class="pagination-nav__sublabel">Previous</div><div class="pagination-nav__label">FAQ</div></a><a class="pagination-nav__link pagination-nav__link--next" href="/copacetic/website/next/docker-build"><div class="pagination-nav__sublabel">Next</div><div class="pagination-nav__label">Docker Build Integration</div></a></nav></div></div><div class="col col--3"><div class="tableOfContents_bqdL thin-scrollbar theme-doc-toc-desktop"><ul class="table-of-contents table-of-contents__left-border"><li><a href="#overview" class="table-of-contents__link toc-highlight">Overview</a></li><li><a href="#package-type-filtering" class="table-of-contents__link toc-highlight">Package Type Filtering</a><ul><li><a href="#package-type-options" class="table-of-contents__link toc-highlight">Package Type Options</a></li></ul></li><li><a href="#patch-level-control" class="table-of-contents__link toc-highlight">Patch Level Control</a><ul><li><a href="#patch-level-behavior" class="table-of-contents__link toc-highlight">Patch Level Behavior</a></li><li><a href="#special-package-handling" class="table-of-contents__link toc-highlight">Special Package Handling</a></li></ul></li><li><a href="#usage-examples" class="table-of-contents__link toc-highlight">Usage Examples</a><ul><li><a href="#basic-usage" class="table-of-contents__link toc-highlight">Basic Usage</a></li><li><a href="#ignoring-errors" class="table-of-contents__link toc-highlight">Ignoring Errors</a></li></ul></li><li><a href="#limitations" class="table-of-contents__link toc-highlight">Limitations</a><ul><li><a href="#python" class="table-of-contents__link toc-highlight">Python</a></li><li><a href="#nodejs" class="table-of-contents__link toc-highlight">Node.js</a></li><li><a href="#net" class="table-of-contents__link toc-highlight">.NET</a></li></ul></li></ul></div></div></div></div></main></div></div></div><footer class="theme-layout-footer footer footer--dark"><div class="container container-fluid"><div class="footer__bottom text--center"><div class="footer__copyright">Copyright © 2025 Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.</div></div></div></footer></div>
 </body>
 </html>
