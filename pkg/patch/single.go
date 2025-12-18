@@ -207,6 +207,7 @@ func patchSingleArchImage(
 			return err
 		}
 		patchResult = result
+		log.Debugf("BuildKit build completed for %s", patchedImageName)
 		return nil
 	})
 
@@ -232,6 +233,8 @@ func patchSingleArchImage(
 		}
 		return nil, err
 	}
+
+	log.Infof("Patch build complete, finalizing %s...", targetPlatform.String())
 
 	// Get patched descriptor and add annotations, including preserved states
 	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
@@ -378,10 +381,14 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	// Use a fresh context for descriptor lookup to avoid cancellation issues
 	// The original context might be canceled after the patching operation completes
 	descriptorCtx := context.Background()
+
+	log.Debugf("Getting image descriptor for %s...", patchedImageName)
 	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
 	if err != nil {
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
+	} else {
+		log.Debugf("Got image descriptor for %s", patchedImageName)
 	}
 
 	// Add original manifest annotations if we have a patched descriptor

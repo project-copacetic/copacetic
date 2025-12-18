@@ -11,6 +11,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -46,13 +47,21 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 	select {
 	case err := <-ch:
+		if err != nil {
+			// Display styled error
+			fmt.Println(tui.RenderError(getErrorInfo(err)))
+		}
 		return err
 	case <-timeoutCtx.Done():
 		// add a grace period for long running deferred cleanup functions to complete
 		<-time.After(1 * time.Second)
 
 		err := fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
-		log.Error(err)
+		fmt.Println(tui.RenderError(tui.ErrorInfo{
+			Title:   "Operation Timed Out",
+			Message: fmt.Sprintf("Patch exceeded timeout of %v", opts.Timeout),
+			Hint:    "Try increasing timeout with --timeout flag (e.g., --timeout 10m)",
+		}))
 		return err
 	}
 }
@@ -175,4 +184,84 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
+}
+
+// getErrorInfo maps common errors to styled error info.
+func getErrorInfo(err error) tui.ErrorInfo {
+	errStr := err.Error()
+
+	// Check for common error patterns and provide helpful hints
+	switch {
+	case contains(errStr, "no updates found"):
+		return tui.ErrorInfo{
+			Title:   "No Updates Available",
+			Message: "No package updates were found for the specified vulnerabilities",
+			Hint:    "The image may already be up-to-date or the vulnerabilities may not have fixes available",
+		}
+	case contains(errStr, "failed to connect") || contains(errStr, "connection refused"):
+		return tui.ErrorInfo{
+			Title:   "Connection Failed",
+			Message: errStr,
+			Hint:    "Check that BuildKit is running (docker buildx create --use) and accessible",
+		}
+	case contains(errStr, "not found") || contains(errStr, "404"):
+		return tui.ErrorInfo{
+			Title:   "Resource Not Found",
+			Message: errStr,
+			Hint:    "Check that the image name is correct and accessible",
+		}
+	case contains(errStr, "unauthorized") || contains(errStr, "401"):
+		return tui.ErrorInfo{
+			Title:   "Authentication Failed",
+			Message: errStr,
+			Hint:    "Try logging in with 'docker login' first",
+		}
+	case contains(errStr, "EOL") || contains(errStr, "end of life"):
+		return tui.ErrorInfo{
+			Title:   "End of Life OS Detected",
+			Message: errStr,
+			Hint:    "Consider upgrading to a supported OS version",
+		}
+	default:
+		return tui.ErrorInfo{
+			Title:   "Patch Failed",
+			Message: errStr,
+			Hint:    "",
+		}
+	}
+}
+
+// contains checks if s contains substr (case-insensitive).
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		len(substr) == 0 ||
+		(len(s) > 0 && containsLower(s, substr)))
+}
+
+func containsLower(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if matchLower(s[i:i+len(substr)], substr) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchLower(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range len(a) {
+		ca, cb := a[i], b[i]
+		if ca >= 'A' && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if cb >= 'A' && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
+	}
+	return true
 }
