@@ -1,0 +1,108 @@
+name: "[Blocking] Private Registry E2E Test"
+
+# This workflow tests Copa's ability to work with private container registries.
+# It runs only on merge to main (not on PRs) because it requires access to
+# private images in GHCR using the repository's GITHUB_TOKEN.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - "website/**"
+      - "docs/**"
+      - "demo/**"
+  workflow_dispatch:
+
+env:
+  TRIVY_VERSION: 0.59.1
+  BUILDKIT_VERSION: 0.19.0
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  build:
+    name: Build Copa
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.3.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Build copa
+        shell: bash
+        run: |
+          make build
+          make archive
+      - name: Upload copa to build artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+          path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
+
+  test-private-registry:
+    needs: build
+    name: Test Private Registry Authentication
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.3.1
+        with:
+          egress-policy: audit
+
+      - name: Check out code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+
+      - name: Add containerd-snapshotter to docker daemon
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run private registry e2e tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          go test -v ./test/e2e/private-registry --addr="docker://" --copa="$(pwd)/copa" -timeout 0
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "## Private Registry Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "This test validates that Copa can authenticate to private registries" >> $GITHUB_STEP_SUMMARY
+          echo "using credentials from Docker config (via docker login)." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Test image: \`ghcr.io/project-copacetic/copa-action/test/docker.io/library/nginx-private:1.21.0\`" >> $GITHUB_STEP_SUMMARY
