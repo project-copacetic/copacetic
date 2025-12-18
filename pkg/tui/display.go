@@ -61,6 +61,7 @@ func NewProgrockDisplay(output *os.File) (Display, error) {
 // UpdateFrom bridges buildkit progress to progrock.
 func (d *progrockDisplay) UpdateFrom(ctx context.Context, ch chan *client.SolveStatus) ([]client.VertexWarning, error) {
 	var warnings []client.VertexWarning
+	var processErr error
 
 	// Save terminal state before running progrock UI
 	fd := int(d.output.Fd())
@@ -72,14 +73,49 @@ func (d *progrockDisplay) UpdateFrom(ctx context.Context, ch chan *client.SolveS
 		}()
 	}
 
-	// Run the progrock UI
-	err := d.ui.Run(ctx, d.tape, func(ctx context.Context, _ progrock.UIClient) error {
-		return d.processBuildkitProgress(ctx, ch, &warnings)
+	// Create a cancelable context for the UI.
+	// We cancel this when progress processing is done.
+	uiCtx, cancelUI := context.WithCancel(ctx)
+	defer cancelUI()
+
+	// Run the progrock UI.
+	// IMPORTANT:
+	// - Ctrl+C is handled by bubbletea/progrock by canceling the callback ctx (runCtx).
+	// - We must still cancel uiCtx to force ui.Run() to exit immediately after progress processing ends.
+	err := d.ui.Run(uiCtx, d.tape, func(runCtx context.Context, _ progrock.UIClient) error {
+		// procCtx cancels when either uiCtx is canceled (normal completion) or runCtx is
+		// canceled (Ctrl+C handled by bubbletea).
+		procCtx, cancelProc := context.WithCancel(uiCtx)
+		defer cancelProc()
+		go func() {
+			select {
+			case <-runCtx.Done():
+				cancelProc()
+			case <-procCtx.Done():
+			}
+		}()
+
+		processErr = d.processBuildkitProgress(procCtx, ch, &warnings)
+
+		// Ensure progrock exits promptly on both completion and Ctrl+C.
+		d.tape.Close()
+		cancelUI()
+		return nil
 	})
 
 	// Close the recorder
 	if closeErr := d.rec.Close(); closeErr != nil && err == nil {
 		err = closeErr
+	}
+
+	// Return process error if UI exited cleanly but processing failed
+	if err == nil && processErr != nil && processErr != context.Canceled {
+		return warnings, processErr
+	}
+
+	// If canceled (Ctrl+C), return the process error
+	if err == context.Canceled || processErr == context.Canceled {
+		return warnings, context.Canceled
 	}
 
 	return warnings, err
@@ -175,7 +211,7 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 			}
 
 		case <-ctx.Done():
-			// Context canceled, mark remaining vertices as done
+			// Context canceled (Ctrl+C), mark remaining vertices as done
 			for _, vtx := range vertices {
 				vtx.Done(nil)
 			}
@@ -183,3 +219,5 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 		}
 	}
 }
+
+

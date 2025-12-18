@@ -49,7 +49,7 @@ func Patch(ctx context.Context, opts *types.Options) error {
 	case err := <-ch:
 		if err != nil {
 			// Display styled error
-			fmt.Println(tui.RenderError(getErrorInfo(err)))
+			fmt.Fprintln(os.Stderr, tui.RenderError(getErrorInfo(err)))
 		}
 		return err
 	case <-timeoutCtx.Done():
@@ -57,7 +57,7 @@ func Patch(ctx context.Context, opts *types.Options) error {
 		<-time.After(1 * time.Second)
 
 		err := fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
-		fmt.Println(tui.RenderError(tui.ErrorInfo{
+		fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
 			Title:   "Operation Timed Out",
 			Message: fmt.Sprintf("Patch exceeded timeout of %v", opts.Timeout),
 			Hint:    "Try increasing timeout with --timeout flag (e.g., --timeout 10m)",
@@ -110,6 +110,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 				ShouldPreserve: false,
 			}
 
+			displaySingleArchPlan(opts, patchPlatform)
 			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
@@ -139,6 +140,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 				}
 			}
 
+			displaySingleArchPlan(opts, patchPlatform)
 			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
@@ -179,11 +181,27 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	if patchPlatform.OS != LINUX {
 		patchPlatform.OS = LINUX
 	}
+	displaySingleArchPlan(opts, patchPlatform)
 	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
+}
+
+// displaySingleArchPlan shows a patching plan for single-arch images.
+func displaySingleArchPlan(opts *types.Options, platform types.PatchPlatform) {
+	patchedName := opts.PatchedTag
+	if patchedName == "" {
+		patchedName = opts.Image + "-patched"
+	}
+
+	plan := tui.PatchingPlan{
+		TargetPlatform:     platform.String(),
+		PatchedImageName:   patchedName,
+		PreservedPlatforms: nil,
+	}
+	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
 }
 
 // getErrorInfo maps common errors to styled error info.

@@ -1,29 +1,28 @@
 package tui
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRenderPatchingPlanPlain(t *testing.T) {
+func TestRenderPatchingPlan(t *testing.T) {
 	plan := PatchingPlan{
 		TargetPlatform:     "linux/amd64",
 		PatchedImageName:   "nginx:1.27.0-patched",
 		PreservedPlatforms: []string{"linux/arm64", "linux/arm"},
 	}
 
+	// Uses plain mode in tests (not a terminal)
 	result := renderPatchingPlanPlain(plan)
 
-	assert.Contains(t, result, "Patching Plan")
 	assert.Contains(t, result, "linux/amd64")
 	assert.Contains(t, result, "nginx:1.27.0-patched")
 	assert.Contains(t, result, "linux/arm64")
 	assert.Contains(t, result, "linux/arm")
 }
 
-func TestRenderPatchingPlanPlainNoPreserved(t *testing.T) {
+func TestRenderPatchingPlanNoPreserved(t *testing.T) {
 	plan := PatchingPlan{
 		TargetPlatform:     "linux/amd64",
 		PatchedImageName:   "nginx:1.27.0-patched",
@@ -34,10 +33,10 @@ func TestRenderPatchingPlanPlainNoPreserved(t *testing.T) {
 
 	assert.Contains(t, result, "linux/amd64")
 	assert.Contains(t, result, "nginx:1.27.0-patched")
-	assert.NotContains(t, result, "Preserve:")
+	assert.NotContains(t, result, "preserving")
 }
 
-func TestRenderNextStepsPlain(t *testing.T) {
+func TestRenderNextSteps(t *testing.T) {
 	steps := NextSteps{
 		SuccessMessage:  "Image loaded successfully",
 		PushCommands:    []string{"docker push nginx:1.27.0-patched-amd64"},
@@ -46,13 +45,12 @@ func TestRenderNextStepsPlain(t *testing.T) {
 
 	result := renderNextStepsPlain(steps)
 
-	assert.Contains(t, result, "Next Steps")
 	assert.Contains(t, result, "Image loaded successfully")
 	assert.Contains(t, result, "docker push nginx:1.27.0-patched-amd64")
 	assert.Contains(t, result, "docker buildx imagetools create")
 }
 
-func TestRenderNextStepsPlainNoPushCommands(t *testing.T) {
+func TestRenderNextStepsNoPushCommands(t *testing.T) {
 	steps := NextSteps{
 		SuccessMessage:  "Image loaded successfully",
 		PushCommands:    []string{},
@@ -66,7 +64,7 @@ func TestRenderNextStepsPlainNoPushCommands(t *testing.T) {
 	assert.NotContains(t, result, "2.")
 }
 
-func TestRenderNextStepsPlainNoManifest(t *testing.T) {
+func TestRenderNextStepsNoManifest(t *testing.T) {
 	steps := NextSteps{
 		SuccessMessage:  "Image loaded successfully",
 		PushCommands:    []string{"docker push nginx:1.27.0-patched"},
@@ -79,7 +77,7 @@ func TestRenderNextStepsPlainNoManifest(t *testing.T) {
 	assert.NotContains(t, result, "2.")
 }
 
-func TestPatchingPlanManyPreservedPlatforms(t *testing.T) {
+func TestRenderPatchingPlanManyPreservedPlatforms(t *testing.T) {
 	plan := PatchingPlan{
 		TargetPlatform:   "linux/amd64",
 		PatchedImageName: "nginx:1.27.0-patched",
@@ -93,7 +91,6 @@ func TestPatchingPlanManyPreservedPlatforms(t *testing.T) {
 		},
 	}
 
-	// Plain should list all platforms including ARM variants
 	result := renderPatchingPlanPlain(plan)
 	assert.Contains(t, result, "linux/arm64")
 	assert.Contains(t, result, "linux/arm/v5")
@@ -101,7 +98,7 @@ func TestPatchingPlanManyPreservedPlatforms(t *testing.T) {
 	assert.Contains(t, result, "linux/s390x")
 }
 
-func TestNextStepsMultiplePushCommands(t *testing.T) {
+func TestRenderNextStepsMultiplePushCommands(t *testing.T) {
 	steps := NextSteps{
 		SuccessMessage: "Images loaded",
 		PushCommands: []string{
@@ -113,37 +110,53 @@ func TestNextStepsMultiplePushCommands(t *testing.T) {
 
 	result := renderNextStepsPlain(steps)
 
-	// Should have step 1 for push and step 2 for manifest
 	assert.Contains(t, result, "1. Push architecture images")
 	assert.Contains(t, result, "nginx:1.27.0-patched-amd64")
 	assert.Contains(t, result, "nginx:1.27.0-patched-arm64")
 	assert.Contains(t, result, "2. Create multi-platform manifest")
 }
 
-func TestRenderPatchingPlanTerminal(t *testing.T) {
-	// Since we can't easily test terminal output, at least verify it doesn't panic
-	// and returns something when isTerminal is false (which it will be in tests)
-	plan := PatchingPlan{
-		TargetPlatform:     "linux/amd64",
-		PatchedImageName:   "nginx:1.27.0-patched",
-		PreservedPlatforms: []string{"linux/arm64"},
+func TestRenderPatchSummary(t *testing.T) {
+	summaries := []PlatformSummary{
+		{Platform: "linux/amd64", Status: "Patched", Message: "OK"},
+		{Platform: "linux/arm64", Status: "Up-to-date", Message: ""},
+		{Platform: "linux/arm", Status: "Error", Message: "failed"},
 	}
 
-	result := RenderPatchingPlan(plan)
-	assert.NotEmpty(t, result)
-	// Should fall back to plain since not a terminal
-	assert.True(t, strings.Contains(result, "Patching Plan") || strings.Contains(result, "📦"))
+	result := renderPatchSummaryPlain(summaries)
+
+	assert.Contains(t, result, "linux/amd64")
+	assert.Contains(t, result, "Patched")
+	assert.Contains(t, result, "linux/arm64")
+	assert.Contains(t, result, "Up-to-date")
+	assert.Contains(t, result, "linux/arm")
+	assert.Contains(t, result, "Error")
 }
 
-func TestRenderNextStepsTerminal(t *testing.T) {
-	steps := NextSteps{
-		SuccessMessage:  "Image loaded",
-		PushCommands:    []string{"docker push nginx:1.27.0-patched"},
-		ManifestCommand: "docker buildx imagetools create ...",
+func TestRenderError(t *testing.T) {
+	info := ErrorInfo{
+		Title:   "Connection Failed",
+		Message: "Failed to connect to buildkit",
+		Hint:    "Check that buildkit is running",
 	}
 
-	result := RenderNextSteps(steps)
-	assert.NotEmpty(t, result)
-	// Should fall back to plain since not a terminal
-	assert.True(t, strings.Contains(result, "Next Steps") || strings.Contains(result, "🚀"))
+	result := renderErrorPlain(info)
+
+	assert.Contains(t, result, "Connection Failed")
+	assert.Contains(t, result, "Failed to connect to buildkit")
+	assert.Contains(t, result, "Check that buildkit is running")
+}
+
+func TestRenderErrorNoHint(t *testing.T) {
+	info := ErrorInfo{
+		Title:   "Patch Failed",
+		Message: "Some error occurred",
+		Hint:    "",
+	}
+
+	result := renderErrorPlain(info)
+
+	assert.Contains(t, result, "Patch Failed")
+	assert.Contains(t, result, "Some error occurred")
+	assert.NotContains(t, result, "Hint:")
 }

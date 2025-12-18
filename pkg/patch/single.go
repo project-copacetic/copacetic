@@ -103,7 +103,6 @@ func patchSingleArchImage(
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", patchImage, patchedTag)
-	log.Infof("Patched image name: %s", patchedImageName)
 
 	// Setup working folder
 	workingFolder, cleanup, err := setupWorkingFolder(workingFolder)
@@ -233,8 +232,6 @@ func patchSingleArchImage(
 		}
 		return nil, err
 	}
-
-	log.Infof("Patch build complete, finalizing %s...", targetPlatform.String())
 
 	// Get patched descriptor and add annotations, including preserved states
 	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -74,10 +75,6 @@ func patchMultiPlatformImage(
 				}
 				platforms = append(platforms, platformCopy)
 			}
-
-			// Display styled patching plan
-			plan := buildPatchingPlan(opts, platforms)
-			fmt.Println(tui.RenderPatchingPlan(plan))
 		} else {
 			// Patch all available platforms since no specific platforms were requested
 			for _, p := range discoveredPlatforms {
@@ -89,6 +86,10 @@ func patchMultiPlatformImage(
 			log.Infof("Patching all available platforms")
 		}
 	}
+
+	// Display styled patching plan before starting
+	plan := buildPatchingPlan(opts, platforms)
+	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
 
 	sem := make(chan struct{}, runtime.NumCPU())
 	g, gctx := errgroup.WithContext(ctx)
@@ -343,7 +344,7 @@ func patchMultiPlatformImage(
 				PushCommands:    pushCommands,
 				ManifestCommand: manifestCmd,
 			}
-			fmt.Println(tui.RenderNextSteps(nextSteps))
+			fmt.Fprintln(os.Stderr, tui.RenderNextSteps(nextSteps))
 		}
 		// If no patches were needed (all up-to-date), that's fine - don't return an error
 	}
@@ -366,7 +367,7 @@ func patchMultiPlatformImage(
 			})
 		}
 	}
-	fmt.Println(tui.RenderPatchSummary(summaries))
+	fmt.Fprintln(os.Stderr, tui.RenderPatchSummary(summaries))
 
 	anySuccesses := false
 	for _, summary := range summaryMap {
