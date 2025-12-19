@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -56,6 +58,23 @@ func NewPatchCmd() *cobra.Command {
 				return err
 			}
 
+			// Create a context that is canceled on SIGINT/SIGTERM.
+			// This ensures BuildKit and all child operations stop promptly on Ctrl+C.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			// Set up force-quit handler for multiple Ctrl+C presses.
+			// If the user presses Ctrl+C again while we're shutting down, exit immediately.
+			forceQuitCh := make(chan os.Signal, 1)
+			signal.Notify(forceQuitCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-forceQuitCh // First signal is handled by NotifyContext above
+				<-forceQuitCh // Second signal: force quit
+				fmt.Fprintln(os.Stderr, "\nForce quit")
+				os.Exit(1)
+			}()
+			defer signal.Stop(forceQuitCh)
+
 			opts := &types.Options{
 				Image:             ua.appImage,
 				Report:            ua.report,
@@ -81,7 +100,7 @@ func NewPatchCmd() *cobra.Command {
 				EOLAPIBaseURL:     ua.eolAPIBaseURL,
 				ExitOnEOL:         ua.exitOnEOL,
 			}
-			return Patch(context.Background(), opts)
+			return Patch(ctx, opts)
 		},
 	}
 	flags := patchCmd.Flags()
