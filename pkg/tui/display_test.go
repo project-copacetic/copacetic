@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/util/progress/progressui"
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,7 @@ func TestNewDisplay(t *testing.T) {
 			defer os.Remove(tmpFile.Name())
 			defer tmpFile.Close()
 
-			display, err := NewDisplay(tmpFile, tt.debugMode)
+			display, err := NewDisplay(tmpFile, tt.debugMode, progressui.AutoMode)
 			if err != nil {
 				t.Fatalf("NewDisplay() error = %v", err)
 			}
@@ -93,7 +94,7 @@ func TestNewDisplayNonTTY(t *testing.T) {
 	_ = buf // unused but shows intent
 
 	// Non-TTY should fall back to progressui
-	display, err := NewDisplay(tmpFile, false)
+	display, err := NewDisplay(tmpFile, false, progressui.AutoMode)
 	if err != nil {
 		t.Fatalf("NewDisplay() error = %v", err)
 	}

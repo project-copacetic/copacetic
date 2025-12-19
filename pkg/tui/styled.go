@@ -238,3 +238,50 @@ func isTerminal() bool {
 	// when e.g. stdout is redirected but stderr is still interactive.
 	return term.IsTerminal(int(os.Stdout.Fd())) || term.IsTerminal(int(os.Stderr.Fd()))
 }
+
+// FormatEmulationPrefix formats a platform prefix showing host→target when using QEMU emulation.
+// Returns "arm64" for native builds, or "amd64 → arm64" (unicode) / "amd64 -> arm64" (ASCII) for emulated builds.
+func FormatEmulationPrefix(hostArch, targetArch, targetVariant string) string {
+	prefix := targetArch
+	if targetVariant != "" {
+		prefix += "/" + targetVariant
+	}
+
+	// Check if this is a native or compatible execution (no QEMU needed)
+	if !requiresEmulation(hostArch, targetArch) {
+		return prefix
+	}
+
+	// Cross-architecture with QEMU: show host → target
+	if isTerminal() {
+		return fmt.Sprintf("%s → %s", hostArch, prefix)
+	}
+	return fmt.Sprintf("%s -> %s", hostArch, prefix)
+}
+
+// requiresEmulation checks if running targetArch on hostArch requires QEMU emulation.
+// Some architectures can run natively without emulation (e.g., 386 on amd64).
+func requiresEmulation(hostArch, targetArch string) bool {
+	if hostArch == targetArch {
+		return false
+	}
+
+	// Define which architectures can run which targets natively (without QEMU)
+	// Map: host -> list of compatible targets
+	nativeCompat := map[string][]string{
+		// amd64 can run 386 natively (32-bit compatibility mode)
+		"amd64": {"386"},
+		// arm64 can run 32-bit arm natively (with kernel support for AArch32)
+		"arm64": {"arm"},
+	}
+
+	if compatTargets, ok := nativeCompat[hostArch]; ok {
+		for _, compat := range compatTargets {
+			if targetArch == compat {
+				return false
+			}
+		}
+	}
+
+	return true
+}

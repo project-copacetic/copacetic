@@ -24,6 +24,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -47,6 +48,7 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 // patchSingleArchImage patches a single architecture image.
+// If sharedProgressCh is non-nil, progress is forwarded to it with platform prefix instead of displaying locally.
 func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
@@ -54,6 +56,7 @@ func patchSingleArchImage(
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
 ) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
@@ -210,8 +213,20 @@ func patchSingleArchImage(
 		return nil
 	})
 
-	// Display progress
-	common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+	// Display progress - either forward to shared channel or display locally
+	if sharedProgressCh != nil {
+		// Forward progress to shared channel with platform prefix
+		// Show host→target when using QEMU emulation
+		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
+		platformPrefix := tui.FormatEmulationPrefix(hostPlatform.Architecture, targetPlatform.Architecture, targetPlatform.Variant)
+		eg.Go(func() error {
+			common.ForwardProgressWithPrefix(ctx, buildChannel, sharedProgressCh, platformPrefix)
+			return nil
+		})
+	} else {
+		// Display progress locally (single-arch mode)
+		common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+	}
 
 	// Handle image loading if not pushing
 	if !push {
@@ -536,7 +551,7 @@ func executePatchBuild(
 		// vex document must contain at least one statement
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-				ch <- err
+				trySendError(ch, err)
 				return nil, err
 			}
 		}

@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -19,29 +20,41 @@ type Display interface {
 }
 
 // NewDisplay creates a new display interface.
-// Uses progrock TUI when not in debug mode, falls back to progressui in debug mode.
-func NewDisplay(output *os.File, debugMode bool) (Display, error) {
+// Uses progrock TUI when progress mode is auto/tty and we have a TTY.
+// Falls back to BuildKit's progressui for explicit modes (plain, quiet, rawjson) or debug mode.
+func NewDisplay(output *os.File, debugMode bool, progress progressui.DisplayMode) (Display, error) {
+	// Debug mode always uses plain text for easier log reading
 	if debugMode {
-		// Use plain text mode for debug (existing behavior)
 		return progressui.NewDisplay(output, progressui.PlainMode)
 	}
 
-	// Check if we have a TTY for interactive display
-	if !term.IsTerminal(int(output.Fd())) {
-		// No TTY, use plain mode
+	// Respect explicit user-specified modes (not auto/tty)
+	switch progress {
+	case progressui.PlainMode, progressui.QuietMode, progressui.RawJSONMode:
+		// User explicitly requested a non-interactive mode
+		return progressui.NewDisplay(output, progress)
+	case progressui.AutoMode, progressui.TtyMode:
+		// Auto or TTY mode: use progrock if we have a TTY
+		if term.IsTerminal(int(output.Fd())) {
+			return NewProgrockDisplay(output)
+		}
+		// No TTY available, fall back to plain mode
+		return progressui.NewDisplay(output, progressui.PlainMode)
+	default:
+		// Unknown mode, default to auto behavior
+		if term.IsTerminal(int(output.Fd())) {
+			return NewProgrockDisplay(output)
+		}
 		return progressui.NewDisplay(output, progressui.PlainMode)
 	}
-
-	// Use progrock for improved TUI experience
-	return NewProgrockDisplay(output)
 }
 
 // progrockDisplay implements Display interface using progrock.
 type progrockDisplay struct {
-	output *os.File
-	tape   *progrock.Tape
-	ui     *progrock.UI
-	rec    *progrock.Recorder
+	fd   int // file descriptor for terminal operations
+	tape *progrock.Tape
+	ui   *progrock.UI
+	rec  *progrock.Recorder
 }
 
 // NewProgrockDisplay creates a progrock-based display.
@@ -51,10 +64,10 @@ func NewProgrockDisplay(output *os.File) (Display, error) {
 	tape.ShowInternal(false) // Hide internal vertices by default
 
 	return &progrockDisplay{
-		output: output,
-		tape:   tape,
-		ui:     progrock.DefaultUI(),
-		rec:    progrock.NewRecorder(tape),
+		fd:   int(output.Fd()),
+		tape: tape,
+		ui:   progrock.DefaultUI(),
+		rec:  progrock.NewRecorder(tape),
 	}, nil
 }
 
@@ -64,12 +77,11 @@ func (d *progrockDisplay) UpdateFrom(ctx context.Context, ch chan *client.SolveS
 	var processErr error
 
 	// Save terminal state before running progrock UI
-	fd := int(d.output.Fd())
-	oldState, stateErr := term.GetState(fd)
+	oldState, stateErr := term.GetState(d.fd)
 	if stateErr == nil {
 		// Ensure terminal is restored no matter what happens
 		defer func() {
-			_ = term.Restore(fd, oldState)
+			_ = term.Restore(d.fd, oldState)
 		}()
 	}
 
@@ -124,6 +136,20 @@ func (d *progrockDisplay) UpdateFrom(ctx context.Context, ch chan *client.SolveS
 // processBuildkitProgress processes buildkit progress events and translates them to progrock.
 func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *client.SolveStatus, warnings *[]client.VertexWarning) error {
 	vertices := make(map[string]*progrock.VertexRecorder)
+	progressTasks := make(map[string]progrockTask)
+
+	typeStatusKey := func(vtxID string, statusName string) string {
+		// BuildKit status updates don't always include a stable ID; vertex+name is good enough
+		// to dedupe task creation and reduce flicker.
+		return vtxID + ":" + statusName
+	}
+	cleanupVertexTasks := func(vtxID string) {
+		for k := range progressTasks {
+			if strings.HasPrefix(k, vtxID+":") {
+				delete(progressTasks, k)
+			}
+		}
+	}
 
 	for {
 		select {
@@ -163,11 +189,12 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 				if vertex.Completed != nil {
 					// Vertex completed
 					if vertex.Error != "" {
-						vtx.Done(fmt.Errorf("%s", vertex.Error))
+						vtx.Done(errors.New(vertex.Error))
 					} else {
 						vtx.Done(nil)
 					}
 					delete(vertices, vtxID)
+					cleanupVertexTasks(vtxID)
 				}
 			}
 
@@ -175,12 +202,22 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 			for _, statusUpdate := range status.Statuses {
 				vtxID := statusUpdate.Vertex.String()
 				if vtx, exists := vertices[vtxID]; exists {
-					// Create progress task if we have total progress
+					// Create/update progress task if we have total progress.
+					// Dedupe by vertex+name so we don't spam new tasks on every update.
 					if statusUpdate.Total > 0 {
-						progressTask := vtx.ProgressTask(statusUpdate.Total, "%s", statusUpdate.Name)
-						progressTask.Current(statusUpdate.Current)
+						key := typeStatusKey(vtxID, statusUpdate.Name)
+						task, ok := progressTasks[key]
+						if !ok || task.total != statusUpdate.Total {
+							task = progrockTask{
+								rec:   vtx.ProgressTask(statusUpdate.Total, "%s", statusUpdate.Name),
+								total: statusUpdate.Total,
+							}
+							progressTasks[key] = task
+						}
+						task.rec.Current(statusUpdate.Current)
 						if statusUpdate.Completed != nil {
-							progressTask.Done(nil)
+							task.rec.Done(nil)
+							delete(progressTasks, key)
 						}
 					}
 				}
@@ -207,7 +244,9 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 
 			// Collect warnings
 			for _, w := range status.Warnings {
-				*warnings = append(*warnings, *w)
+				if w != nil {
+					*warnings = append(*warnings, *w)
+				}
 			}
 
 		case <-ctx.Done():
@@ -218,6 +257,11 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 			return ctx.Err()
 		}
 	}
+}
+
+type progrockTask struct {
+	rec   *progrock.TaskRecorder
+	total int64
 }
 
 

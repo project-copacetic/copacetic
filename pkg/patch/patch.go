@@ -56,6 +56,18 @@ func Patch(ctx context.Context, opts *types.Options) error {
 		// add a grace period for long running deferred cleanup functions to complete
 		<-time.After(1 * time.Second)
 
+		// Check if this was a cancellation (Ctrl+C) or actual timeout
+		if ctx.Err() == context.Canceled {
+			// Parent context was cancelled (user pressed Ctrl+C)
+			fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
+				Title:   "Operation Cancelled",
+				Message: "Patch was cancelled by user",
+				Hint:    "",
+			}))
+			return context.Canceled
+		}
+
+		// Actual timeout
 		err := fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
 		fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
 			Title:   "Operation Timed Out",
@@ -111,7 +123,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 			}
 
 			displaySingleArchPlan(opts, patchPlatform)
-			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
+			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -141,7 +153,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 			}
 
 			displaySingleArchPlan(opts, patchPlatform)
-			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
+			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -182,7 +194,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		patchPlatform.OS = LINUX
 	}
 	displaySingleArchPlan(opts, patchPlatform)
-	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
+	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}

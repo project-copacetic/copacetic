@@ -8,8 +8,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/tui"
@@ -91,8 +93,24 @@ func patchMultiPlatformImage(
 	plan := buildPatchingPlan(opts, platforms)
 	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
 
+	// Create a shared progress channel for unified TUI display
+	sharedProgressCh := make(chan *client.SolveStatus)
+
+	// Count how many platforms will be patched (not preserved) to know when to close the channel
+	var patchingPlatformCount int32
+	for _, p := range platforms {
+		if !p.ShouldPreserve {
+			patchingPlatformCount++
+		}
+	}
+	var completedCount atomic.Int32
+
 	sem := make(chan struct{}, runtime.NumCPU())
 	g, gctx := errgroup.WithContext(ctx)
+
+	// Start the unified progress display
+	displayEg, displayCtx := errgroup.WithContext(ctx)
+	common.DisplayProgress(displayCtx, displayEg, sharedProgressCh, opts.Progress)
 
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
@@ -206,7 +224,13 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImage(gctx, ch, &patchOpts, p, true)
+			res, err := patchSingleArchImage(gctx, ch, &patchOpts, p, true, sharedProgressCh)
+
+			// Track completion to know when to close shared channel
+			if completedCount.Add(1) == patchingPlatformCount {
+				close(sharedProgressCh)
+			}
+
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -264,8 +288,18 @@ func patchMultiPlatformImage(
 		// g.Wait() will return the first non-nil error from any goroutine
 		// But since we're now returning nil from all goroutines, this should only
 		// happen if context is canceled
+		// Ensure the progress channel is closed on early exit
+		select {
+		case <-sharedProgressCh:
+		default:
+			close(sharedProgressCh)
+		}
+		_ = displayEg.Wait()
 		return err
 	}
+
+	// Wait for the progress display to finish
+	_ = displayEg.Wait()
 
 	// Check if we should fail based on the results:
 	// Only consider real patch attempts (exclude preserved).
