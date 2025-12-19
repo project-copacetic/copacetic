@@ -1,0 +1,14 @@
+[
+  {
+    "image": "docker.io/ashnam/dotnet-sdk-vuln",
+    "tag": "v1",
+    "digest": "",
+    "description": ".NET 8.0 SDK image with project files and vulnerable Newtonsoft.Json 12.0.1 (build tooling/sdk included)"
+  },
+  {
+    "image": "docker.io/ashnam/dotnet-runtime-vuln",
+    "tag": "v2",
+    "digest": "",
+    "description": "Runtime-only .NET 8.0 image with vulnerable Newtonsoft.Json 12.0.1 (SDK removed)"
+  }
+]
