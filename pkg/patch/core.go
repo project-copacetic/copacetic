@@ -105,11 +105,23 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
-	// Apply patches and get the patched image state
-	patchedImageState, errPkgs, err := manager.InstallUpdates(ctx, opts.Updates, opts.IgnoreError)
-	if err != nil {
-		trySendError(opts.ErrorChannel, err)
-		return nil, err
+	// Apply OS package patches only if there are OS updates to apply. For library-only
+	// patch operations (LangUpdates present, OSUpdates empty) we skip invoking the
+	// OS package manager
+	var patchedImageState *llb.State
+	var errPkgs []string
+	if updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) > 0 {
+		log.Debug("No OS package updates found; skipping OS package manager step and proceeding with language updates only.")
+		// Start from the original image state
+		st := config.ImageState
+		patchedImageState = &st
+	} else {
+		var installErr error
+		patchedImageState, errPkgs, installErr = manager.InstallUpdates(ctx, opts.Updates, opts.IgnoreError)
+		if installErr != nil {
+			trySendError(opts.ErrorChannel, installErr)
+			return nil, installErr
+		}
 	}
 
 	// For normal Docker export, continue with solving but preserve states

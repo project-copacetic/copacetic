@@ -35,6 +35,7 @@ const (
 	LangPackages   = "lang-pkgs"
 	PythonPackages = "python-pkg"
 	NodePackages   = "node-pkg"
+	DotNetPackages = "dotnet-core"
 
 	DefaultTempWorkingFolder = "/tmp"
 )
