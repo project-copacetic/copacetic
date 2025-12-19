@@ -160,3 +160,162 @@ func TestRenderErrorNoHint(t *testing.T) {
 	assert.Contains(t, result, "Some error occurred")
 	assert.NotContains(t, result, "Hint:")
 }
+
+func TestRequiresEmulation(t *testing.T) {
+	tests := []struct {
+		name       string
+		hostArch   string
+		targetArch string
+		want       bool
+	}{
+		// Same architecture - no emulation
+		{name: "amd64 to amd64", hostArch: "amd64", targetArch: "amd64", want: false},
+		{name: "arm64 to arm64", hostArch: "arm64", targetArch: "arm64", want: false},
+		{name: "386 to 386", hostArch: "386", targetArch: "386", want: false},
+		{name: "arm to arm", hostArch: "arm", targetArch: "arm", want: false},
+
+		// Native compatibility - no emulation
+		{name: "amd64 to 386 (32-bit compat)", hostArch: "amd64", targetArch: "386", want: false},
+		{name: "arm64 to arm (AArch32 compat)", hostArch: "arm64", targetArch: "arm", want: false},
+
+		// Cross-architecture - requires emulation
+		{name: "amd64 to arm64", hostArch: "amd64", targetArch: "arm64", want: true},
+		{name: "amd64 to arm", hostArch: "amd64", targetArch: "arm", want: true},
+		{name: "amd64 to mips64le", hostArch: "amd64", targetArch: "mips64le", want: true},
+		{name: "amd64 to ppc64le", hostArch: "amd64", targetArch: "ppc64le", want: true},
+		{name: "amd64 to s390x", hostArch: "amd64", targetArch: "s390x", want: true},
+		{name: "amd64 to riscv64", hostArch: "amd64", targetArch: "riscv64", want: true},
+
+		// arm64 host cross-compilation
+		{name: "arm64 to amd64", hostArch: "arm64", targetArch: "amd64", want: true},
+		{name: "arm64 to 386", hostArch: "arm64", targetArch: "386", want: true},
+
+		// Other hosts
+		{name: "386 to amd64", hostArch: "386", targetArch: "amd64", want: true},
+		{name: "arm to arm64", hostArch: "arm", targetArch: "arm64", want: true},
+		{name: "ppc64le to amd64", hostArch: "ppc64le", targetArch: "amd64", want: true},
+		{name: "s390x to amd64", hostArch: "s390x", targetArch: "amd64", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := requiresEmulation(tt.hostArch, tt.targetArch)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestFormatEmulationPrefix(t *testing.T) {
+	tests := []struct {
+		name          string
+		hostArch      string
+		targetArch    string
+		targetVariant string
+		wantContains  string
+		wantNoArrow   bool
+	}{
+		// Same architecture - no arrow
+		{
+			name:         "amd64 native",
+			hostArch:     "amd64",
+			targetArch:   "amd64",
+			wantContains: "amd64",
+			wantNoArrow:  true,
+		},
+		{
+			name:         "arm64 native",
+			hostArch:     "arm64",
+			targetArch:   "arm64",
+			wantContains: "arm64",
+			wantNoArrow:  true,
+		},
+		// Native compat - no arrow
+		{
+			name:         "amd64 to 386 compat",
+			hostArch:     "amd64",
+			targetArch:   "386",
+			wantContains: "386",
+			wantNoArrow:  true,
+		},
+		{
+			name:         "arm64 to arm compat",
+			hostArch:     "arm64",
+			targetArch:   "arm",
+			wantContains: "arm",
+			wantNoArrow:  true,
+		},
+		// With variant - no arrow for compat
+		{
+			name:          "arm64 to arm/v7 compat",
+			hostArch:      "arm64",
+			targetArch:    "arm",
+			targetVariant: "v7",
+			wantContains:  "arm/v7",
+			wantNoArrow:   true,
+		},
+		// Cross-architecture - arrow shown (uses ASCII in tests since not TTY)
+		{
+			name:         "amd64 to arm64 emulated",
+			hostArch:     "amd64",
+			targetArch:   "arm64",
+			wantContains: "amd64 -> arm64",
+			wantNoArrow:  false,
+		},
+		{
+			name:         "amd64 to mips64le emulated",
+			hostArch:     "amd64",
+			targetArch:   "mips64le",
+			wantContains: "amd64 -> mips64le",
+			wantNoArrow:  false,
+		},
+		{
+			name:          "amd64 to arm/v7 emulated",
+			hostArch:      "amd64",
+			targetArch:    "arm",
+			targetVariant: "v7",
+			wantContains:  "amd64 -> arm/v7",
+			wantNoArrow:   false,
+		},
+		// arm64 host emulation
+		{
+			name:         "arm64 to amd64 emulated",
+			hostArch:     "arm64",
+			targetArch:   "amd64",
+			wantContains: "arm64 -> amd64",
+			wantNoArrow:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FormatEmulationPrefix(tt.hostArch, tt.targetArch, tt.targetVariant)
+			assert.Contains(t, got, tt.wantContains)
+			if tt.wantNoArrow {
+				assert.NotContains(t, got, "->")
+				assert.NotContains(t, got, "→")
+			}
+		})
+	}
+}
+
+func TestGetStatusIcon(t *testing.T) {
+	tests := []struct {
+		status string
+		want   string
+	}{
+		{"Patched", "✓"},
+		{"Not Patched", "○"},
+		{"Up-to-date", "✓"},
+		{"Error", "✗"},
+		{"Ignored", "⊘"},
+		{"Unknown", " "},
+		{"", " "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			got := getStatusIcon(tt.status)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

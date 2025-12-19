@@ -104,6 +104,7 @@ func patchMultiPlatformImage(
 		}
 	}
 	var completedCount atomic.Int32
+	var closeProgressOnce sync.Once
 
 	sem := make(chan struct{}, runtime.NumCPU())
 	g, gctx := errgroup.WithContext(ctx)
@@ -228,7 +229,7 @@ func patchMultiPlatformImage(
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {
-				close(sharedProgressCh)
+				closeProgressOnce.Do(func() { close(sharedProgressCh) })
 			}
 
 			mu.Lock()
@@ -289,11 +290,7 @@ func patchMultiPlatformImage(
 		// But since we're now returning nil from all goroutines, this should only
 		// happen if context is canceled
 		// Ensure the progress channel is closed on early exit
-		select {
-		case <-sharedProgressCh:
-		default:
-			close(sharedProgressCh)
-		}
+		closeProgressOnce.Do(func() { close(sharedProgressCh) })
 		_ = displayEg.Wait()
 		return err
 	}
@@ -443,10 +440,12 @@ func buildPatchingPlan(opts *types.Options, platforms []types.PatchPlatform) tui
 		targetStr = "all platforms"
 	}
 
-	// Determine patched image name
-	patchedName := opts.PatchedTag
-	if patchedName == "" {
-		patchedName = opts.Image + "-patched"
+	// Use the same resolution logic as the actual patching to get accurate name
+	patchedName := opts.Image + "-patched" // fallback
+	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
+		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
+			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
+		}
 	}
 
 	return tui.PatchingPlan{

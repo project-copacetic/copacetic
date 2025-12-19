@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
 
@@ -38,11 +39,11 @@ func Patch(ctx context.Context, opts *types.Options) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, opts.Timeout)
 	defer cancel()
 
-	ch := make(chan error)
-	defer close(ch)
+	ch := make(chan error, 1)
 
 	go func() {
 		ch <- patchWithContext(timeoutCtx, ch, opts)
+		close(ch)
 	}()
 
 	select {
@@ -58,10 +59,10 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 		// Check if this was a cancellation (Ctrl+C) or actual timeout
 		if ctx.Err() == context.Canceled {
-			// Parent context was cancelled (user pressed Ctrl+C)
+			// Parent context was canceled (user pressed Ctrl+C)
 			fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
-				Title:   "Operation Cancelled",
-				Message: "Patch was cancelled by user",
+				Title:   "Operation Canceled",
+				Message: "Patch was canceled by user",
 				Hint:    "",
 			}))
 			return context.Canceled
@@ -122,7 +123,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 				ShouldPreserve: false,
 			}
 
-			displaySingleArchPlan(opts, patchPlatform)
+			displaySingleArchPlan(opts, &patchPlatform)
 			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
@@ -152,7 +153,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 				}
 			}
 
-			displaySingleArchPlan(opts, patchPlatform)
+			displaySingleArchPlan(opts, &patchPlatform)
 			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
@@ -193,7 +194,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	if patchPlatform.OS != LINUX {
 		patchPlatform.OS = LINUX
 	}
-	displaySingleArchPlan(opts, patchPlatform)
+	displaySingleArchPlan(opts, &patchPlatform)
 	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
@@ -202,10 +203,13 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 }
 
 // displaySingleArchPlan shows a patching plan for single-arch images.
-func displaySingleArchPlan(opts *types.Options, platform types.PatchPlatform) {
-	patchedName := opts.PatchedTag
-	if patchedName == "" {
-		patchedName = opts.Image + "-patched"
+func displaySingleArchPlan(opts *types.Options, platform *types.PatchPlatform) {
+	// Use the same resolution logic as the actual patching to get accurate name
+	patchedName := opts.Image + "-patched" // fallback
+	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
+		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
+			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
+		}
 	}
 
 	plan := tui.PatchingPlan{

@@ -263,5 +263,3 @@ type progrockTask struct {
 	rec   *progrock.TaskRecorder
 	total int64
 }
-
-

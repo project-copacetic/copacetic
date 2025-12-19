@@ -10,14 +10,14 @@ import (
 )
 
 var (
-	// Style colors
+	// Style colors.
 	highlight = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
 	success   = lipgloss.AdaptiveColor{Light: "#43BF6D", Dark: "#73F59F"}
 	warning   = lipgloss.AdaptiveColor{Light: "#FFA500", Dark: "#FFB347"}
 	errorClr  = lipgloss.AdaptiveColor{Light: "#FF5555", Dark: "#FF6666"}
 	dim       = lipgloss.AdaptiveColor{Light: "#666666", Dark: "#888888"}
 
-	// Text styles (no boxes)
+	// Text styles (no boxes).
 	titleStyle   = lipgloss.NewStyle().Bold(true).Foreground(highlight)
 	successStyle = lipgloss.NewStyle().Foreground(success)
 	warningStyle = lipgloss.NewStyle().Foreground(warning)
