@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/distribution/reference"
@@ -226,31 +227,31 @@ func getErrorInfo(err error) tui.ErrorInfo {
 
 	// Check for common error patterns and provide helpful hints
 	switch {
-	case contains(errStr, "no updates found"):
+	case containsIgnoreCase(errStr, "no updates found"):
 		return tui.ErrorInfo{
 			Title:   "No Updates Available",
 			Message: "No package updates were found for the specified vulnerabilities",
 			Hint:    "The image may already be up-to-date or the vulnerabilities may not have fixes available",
 		}
-	case contains(errStr, "failed to connect") || contains(errStr, "connection refused"):
+	case containsIgnoreCase(errStr, "failed to connect") || containsIgnoreCase(errStr, "connection refused"):
 		return tui.ErrorInfo{
 			Title:   "Connection Failed",
 			Message: errStr,
 			Hint:    "Check that BuildKit is running (docker buildx create --use) and accessible",
 		}
-	case contains(errStr, "not found") || contains(errStr, "404"):
+	case containsIgnoreCase(errStr, "not found") || containsIgnoreCase(errStr, "404"):
 		return tui.ErrorInfo{
 			Title:   "Resource Not Found",
 			Message: errStr,
 			Hint:    "Check that the image name is correct and accessible",
 		}
-	case contains(errStr, "unauthorized") || contains(errStr, "401"):
+	case containsIgnoreCase(errStr, "unauthorized") || containsIgnoreCase(errStr, "401"):
 		return tui.ErrorInfo{
 			Title:   "Authentication Failed",
 			Message: errStr,
 			Hint:    "Try logging in with 'docker login' first",
 		}
-	case contains(errStr, "EOL") || contains(errStr, "end of life"):
+	case containsIgnoreCase(errStr, "EOL") || containsIgnoreCase(errStr, "end of life"):
 		return tui.ErrorInfo{
 			Title:   "End of Life OS Detected",
 			Message: errStr,
@@ -265,37 +266,7 @@ func getErrorInfo(err error) tui.ErrorInfo {
 	}
 }
 
-// contains checks if s contains substr (case-insensitive).
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		len(substr) == 0 ||
-		(len(s) > 0 && containsLower(s, substr)))
-}
-
-func containsLower(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if matchLower(s[i:i+len(substr)], substr) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchLower(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range len(a) {
-		ca, cb := a[i], b[i]
-		if ca >= 'A' && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if cb >= 'A' && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
+// containsIgnoreCase checks if s contains substr (case-insensitive).
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
