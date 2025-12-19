@@ -35,6 +35,7 @@ const (
 	LangPackages   = "lang-pkgs"
 	PythonPackages = "python-pkg"
 	NodePackages   = "node-pkg"
+	DotNetPackages = "dotnet-core"
 
 	DefaultTempWorkingFolder = "/tmp"
 )
@@ -271,7 +272,7 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 	}
 
 	if localErr == nil {
-		log.Infof("found local image descriptor for %s via %s", imageRef, runtime)
+		log.Debugf("found local image descriptor for %s via %s", imageRef, runtime)
 		return localDesc, nil
 	}
 

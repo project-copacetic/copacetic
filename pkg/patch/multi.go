@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
-	"text/tabwriter"
+	"sync/atomic"
 
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
-
-	"github.com/project-copacetic/copacetic/pkg/buildkit"
 )
 
 // patchMultiPlatformImage patches a multi-platform image across all discovered platforms.
@@ -75,8 +77,6 @@ func patchMultiPlatformImage(
 				}
 				platforms = append(platforms, platformCopy)
 			}
-
-			log.Infof("Patching specified platforms, preserving others")
 		} else {
 			// Patch all available platforms since no specific platforms were requested
 			for _, p := range discoveredPlatforms {
@@ -89,8 +89,29 @@ func patchMultiPlatformImage(
 		}
 	}
 
+	// Display styled patching plan before starting
+	plan := buildPatchingPlan(opts, platforms)
+	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
+
+	// Create a shared progress channel for unified TUI display
+	sharedProgressCh := make(chan *client.SolveStatus)
+
+	// Count how many platforms will be patched (not preserved) to know when to close the channel
+	var patchingPlatformCount int32
+	for _, p := range platforms {
+		if !p.ShouldPreserve {
+			patchingPlatformCount++
+		}
+	}
+	var completedCount atomic.Int32
+	var closeProgressOnce sync.Once
+
 	sem := make(chan struct{}, runtime.NumCPU())
 	g, gctx := errgroup.WithContext(ctx)
+
+	// Start the unified progress display
+	displayEg, displayCtx := errgroup.WithContext(ctx)
+	common.DisplayProgress(displayCtx, displayEg, sharedProgressCh, opts.Progress)
 
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
@@ -116,7 +137,7 @@ func patchMultiPlatformImage(
 
 			if p.ShouldPreserve {
 				// Platform marked for preservation - preserve original
-				log.Infof("Platform %s marked for preservation, preserving original in manifest", p.OS+"/"+p.Architecture)
+				log.Debugf("Platform %s marked for preservation, preserving original in manifest", p.OS+"/"+p.Architecture)
 
 				// Parse the original image reference for the result
 				originalRef, err := reference.ParseNormalizedNamed(image)
@@ -175,9 +196,9 @@ func patchMultiPlatformImage(
 				patchResults = append(patchResults, result)
 				var preserveReason string
 				if reportDir != "" && p.ReportFile == "" {
-					preserveReason = "Preserved original image (No Scan Report provided for platform)"
+					preserveReason = "No scan report for platform"
 				} else {
-					preserveReason = "Preserved original image (Platform not provided via --platform)"
+					preserveReason = "Not in --platform list"
 				}
 				// Add summary entry for unpatched platform
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -204,7 +225,13 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImage(gctx, ch, &patchOpts, p, true)
+			res, err := patchSingleArchImage(gctx, ch, &patchOpts, p, true, sharedProgressCh)
+
+			// Track completion to know when to close shared channel
+			if completedCount.Add(1) == patchingPlatformCount {
+				closeProgressOnce.Do(func() { close(sharedProgressCh) })
+			}
+
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -214,7 +241,7 @@ func patchMultiPlatformImage(
 						Platform: platformKey,
 						Status:   "Up-to-date",
 						Ref:      res.OriginalRef.String() + " (original)",
-						Message:  "Image is already up-to-date",
+						Message:  "Already up-to-date",
 					}
 					patchedSuccesses++ // Count up-to-date as success
 					return nil
@@ -250,7 +277,7 @@ func patchMultiPlatformImage(
 				Platform: platformKey,
 				Status:   "Patched",
 				Ref:      res.PatchedRef.String(),
-				Message:  fmt.Sprintf("Successfully patched image (%s)", p.OS+"/"+p.Architecture),
+				Message:  "Successfully patched",
 			}
 			patchedSuccesses++
 			return nil
@@ -262,8 +289,14 @@ func patchMultiPlatformImage(
 		// g.Wait() will return the first non-nil error from any goroutine
 		// But since we're now returning nil from all goroutines, this should only
 		// happen if context is canceled
+		// Ensure the progress channel is closed on early exit
+		closeProgressOnce.Do(func() { close(sharedProgressCh) })
+		_ = displayEg.Wait()
 		return err
 	}
+
+	// Wait for the progress display to finish
+	_ = displayEg.Wait()
 
 	// Check if we should fail based on the results:
 	// Only consider real patch attempts (exclude preserved).
@@ -312,11 +345,11 @@ func patchMultiPlatformImage(
 		}
 
 		if len(patchedOnlyResults) > 0 {
-			log.Info("To push the individual architecture images, run:")
-			for _, result := range patchedOnlyResults {
-				log.Infof("  docker push %s", result.PatchedRef.String())
+			// Build push commands
+			pushCommands := make([]string, len(patchedOnlyResults))
+			for i, result := range patchedOnlyResults {
+				pushCommands[i] = fmt.Sprintf("docker push %s", result.PatchedRef.String())
 			}
-			log.Infof("To create and push the multi-platform manifest, run:")
 
 			// Include all platforms (both patched and preserved) in the manifest create command
 			refs := make([]string, len(patchResults))
@@ -334,15 +367,21 @@ func patchMultiPlatformImage(
 				}
 			}
 
-			log.Infof("  docker buildx imagetools create --tag %s %s", patchedImageName.String(), strings.Join(refs, " "))
+			manifestCmd := fmt.Sprintf("docker buildx imagetools create --tag %s %s", patchedImageName.String(), strings.Join(refs, " "))
+
+			// Render styled next steps
+			nextSteps := tui.NextSteps{
+				SuccessMessage:  "Image loaded successfully",
+				PushCommands:    pushCommands,
+				ManifestCommand: manifestCmd,
+			}
+			fmt.Fprintln(os.Stderr, tui.RenderNextSteps(nextSteps))
 		}
 		// If no patches were needed (all up-to-date), that's fine - don't return an error
 	}
 
-	var b strings.Builder
-	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PLATFORM\tSTATUS\tREFERENCE\tMESSAGE")
-
+	// Build summary for styled output
+	var summaries []tui.PlatformSummary
 	for _, p := range platforms {
 		platformKey := buildkit.PlatformKey(p.Platform)
 		s := summaryMap[platformKey]
@@ -351,11 +390,15 @@ func patchMultiPlatformImage(
 			if ref == "" {
 				ref = "-"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", s.Platform, s.Status, ref, s.Message)
+			summaries = append(summaries, tui.PlatformSummary{
+				Platform: s.Platform,
+				Status:   s.Status,
+				Ref:      ref,
+				Message:  s.Message,
+			})
 		}
 	}
-	w.Flush()
-	log.Info("\nMulti-arch patch summary:\n" + b.String())
+	fmt.Fprintln(os.Stderr, tui.RenderPatchSummary(summaries))
 
 	anySuccesses := false
 	for _, summary := range summaryMap {
@@ -376,4 +419,38 @@ func patchMultiPlatformImage(
 	}
 
 	return nil
+}
+
+// buildPatchingPlan creates a PatchingPlan from the options and platforms.
+func buildPatchingPlan(opts *types.Options, platforms []types.PatchPlatform) tui.PatchingPlan {
+	var targetPlatforms []string
+	var preservedPlatforms []string
+
+	for _, p := range platforms {
+		platformStr := p.String() // Includes variant for ARM platforms
+		if p.ShouldPreserve {
+			preservedPlatforms = append(preservedPlatforms, platformStr)
+		} else {
+			targetPlatforms = append(targetPlatforms, platformStr)
+		}
+	}
+
+	targetStr := strings.Join(targetPlatforms, ", ")
+	if len(targetPlatforms) == 0 {
+		targetStr = "all platforms"
+	}
+
+	// Use the same resolution logic as the actual patching to get accurate name
+	patchedName := opts.Image + "-patched" // fallback
+	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
+		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
+			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
+		}
+	}
+
+	return tui.PatchingPlan{
+		TargetPlatform:     targetStr,
+		PatchedImageName:   patchedName,
+		PreservedPlatforms: preservedPlatforms,
+	}
 }

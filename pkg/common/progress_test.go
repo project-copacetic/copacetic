@@ -7,6 +7,8 @@ import (
 
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
+	"github.com/opencontainers/go-digest"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 )
@@ -25,12 +27,13 @@ func TestDisplayProgress(t *testing.T) {
 		defer close(buildChannel)
 
 		// Send a test status
+		now := time.Now()
 		status := &client.SolveStatus{
 			Vertexes: []*client.Vertex{
 				{
-					Digest:  "test-digest",
+					Digest:  digest.FromString("test-vertex"),
 					Name:    "test-vertex",
-					Started: &[]time.Time{time.Now()}[0],
+					Started: &now,
 				},
 			},
 		}
@@ -81,4 +84,91 @@ func TestDisplayProgress_ContextCancellation(t *testing.T) {
 	if err != nil {
 		assert.Contains(t, err.Error(), "context canceled")
 	}
+}
+
+func TestDisplayProgressQuiet(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	eg, ctx := errgroup.WithContext(ctx)
+	ch := make(chan *client.SolveStatus)
+
+	// Start progress display in quiet mode
+	DisplayProgress(ctx, eg, ch, progressui.QuietMode)
+
+	// Send some status updates
+	now := time.Now()
+	ch <- &client.SolveStatus{
+		Vertexes: []*client.Vertex{
+			{
+				Digest:    digest.FromString("test"),
+				Name:      "test vertex",
+				Started:   &now,
+				Completed: &now,
+			},
+		},
+	}
+
+	// Close the channel
+	close(ch)
+
+	// Wait for completion
+	err := eg.Wait()
+	assert.NoError(t, err)
+}
+
+func TestDisplayProgressPlain(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	eg, ctx := errgroup.WithContext(ctx)
+	ch := make(chan *client.SolveStatus)
+
+	// Start progress display in plain mode
+	DisplayProgress(ctx, eg, ch, progressui.PlainMode)
+
+	// Send some status updates
+	now := time.Now()
+	ch <- &client.SolveStatus{
+		Vertexes: []*client.Vertex{
+			{
+				Digest:    digest.FromString("test"),
+				Name:      "test vertex",
+				Started:   &now,
+				Completed: &now,
+			},
+		},
+	}
+
+	// Close the channel
+	close(ch)
+
+	// Wait for completion
+	err := eg.Wait()
+	assert.NoError(t, err)
+}
+
+func TestDisplayProgressWithDebugMode(t *testing.T) {
+	// Save and restore log level
+	originalLevel := log.GetLevel()
+	defer log.SetLevel(originalLevel)
+
+	// Set debug level
+	log.SetLevel(log.DebugLevel)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	eg, ctx := errgroup.WithContext(ctx)
+	ch := make(chan *client.SolveStatus)
+
+	// Start progress display - should use plain mode due to debug
+	DisplayProgress(ctx, eg, ch, progressui.AutoMode)
+
+	// Close the channel immediately
+	close(ch)
+
+	// Wait for completion
+	err := eg.Wait()
+	assert.NoError(t, err)
 }
