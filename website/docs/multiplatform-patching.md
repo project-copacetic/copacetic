@@ -148,7 +148,7 @@ When patching images for architectures different from your host machine (e.g., p
 
 #### Package Manager Execution
 
-- Copa executes package managers (`apt`, `yum`, `apk`) inside the target architecture environment
+- Copa executes package managers (`apt`, `yum`, `apk`, `zypper`) inside the target architecture environment
 - Native binaries for foreign architectures cannot run without emulation
 - QEMU provides transparent binary translation
 
