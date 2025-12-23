@@ -46,7 +46,6 @@ func Patch(ctx context.Context, opts *types.Options) error {
 		ch <- patchWithContext(timeoutCtx, ch, opts)
 		close(ch)
 	}()
-
 	select {
 	case err := <-ch:
 		if err != nil {
@@ -55,7 +54,6 @@ func Patch(ctx context.Context, opts *types.Options) error {
 		}
 		return err
 	case <-timeoutCtx.Done():
-		// add a grace period for long running deferred cleanup functions to complete
 		<-time.After(1 * time.Second)
 
 		// Check if this was a cancellation (Ctrl+C) or actual timeout
