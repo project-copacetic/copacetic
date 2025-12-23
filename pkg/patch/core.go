@@ -64,6 +64,24 @@ type Context struct {
 	Client  gwclient.Client
 }
 
+// trySendError safely sends an error to the channel without panicking if closed.
+// This is needed because the error channel may be closed during context cancellation
+// while goroutines are still attempting to send errors.
+func trySendError(ch chan error, err error) {
+	if ch == nil {
+		return
+	}
+	defer func() {
+		// Recover from "send on closed channel" panic
+		_ = recover()
+	}()
+	// Non-blocking send - if the channel is full or closed, we don't block
+	select {
+	case ch <- err:
+	default:
+	}
+}
+
 // ExecutePatchCore executes the core patching logic that can be used by both
 // the patch command and a buildkit frontend.
 func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
@@ -76,18 +94,14 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Configure buildctl/client for use by package manager
 	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
 	if err != nil {
-		if opts.ErrorChannel != nil {
-			opts.ErrorChannel <- err
-		}
+		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
 
 	// Create package manager helper
 	manager, err := setupPackageManager(ctx, c, config, opts)
 	if err != nil {
-		if opts.ErrorChannel != nil {
-			opts.ErrorChannel <- err
-		}
+		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
 
@@ -105,9 +119,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		var installErr error
 		patchedImageState, errPkgs, installErr = manager.InstallUpdates(ctx, opts.Updates, opts.IgnoreError)
 		if installErr != nil {
-			if opts.ErrorChannel != nil {
-				opts.ErrorChannel <- installErr
-			}
+			trySendError(opts.ErrorChannel, installErr)
 			return nil, installErr
 		}
 	}
@@ -140,9 +152,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 					combinedLangError = fmt.Errorf("%w; %v", combinedLangError, tempErr)
 				}
 				if !ignoreError {
-					if opts.ErrorChannel != nil {
-						opts.ErrorChannel <- combinedLangError
-					}
+					trySendError(opts.ErrorChannel, combinedLangError)
 					return nil, combinedLangError
 				}
 			}
@@ -163,9 +173,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		errPkgs = utils.DeduplicateStringSlice(errPkgs)
 
 		if combinedLangError != nil && !ignoreError {
-			if opts.ErrorChannel != nil {
-				opts.ErrorChannel <- combinedLangError
-			}
+			trySendError(opts.ErrorChannel, combinedLangError)
 			return nil, combinedLangError
 		}
 	} else {
@@ -192,9 +200,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Marshal the state for the target platform
 	def, err := patchedImageState.Marshal(ctx, llb.Platform(opts.TargetPlatform.Platform))
 	if err != nil {
-		if opts.ErrorChannel != nil {
-			opts.ErrorChannel <- err
-		}
+		trySendError(opts.ErrorChannel, err)
 		return nil, fmt.Errorf("unable to get platform from ImageState %w", err)
 	}
 
@@ -204,18 +210,14 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		Evaluate:   true,
 	})
 	if err != nil {
-		if opts.ErrorChannel != nil {
-			opts.ErrorChannel <- err
-		}
+		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
 
 	// Normalize the configuration for the target platform
 	fixed, err := normalizeConfigForPlatform(config.ConfigData, opts.TargetPlatform)
 	if err != nil {
-		if opts.ErrorChannel != nil {
-			opts.ErrorChannel <- err
-		}
+		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)

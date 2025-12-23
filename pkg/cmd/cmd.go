@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -62,6 +64,23 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				return err
 			}
 
+			// Create a context that is canceled on SIGINT/SIGTERM.
+			// This ensures BuildKit and all child operations stop promptly on Ctrl+C.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			// Set up force-quit handler for multiple Ctrl+C presses.
+			// If the user presses Ctrl+C again while we're shutting down, exit immediately.
+			forceQuitCh := make(chan os.Signal, 1)
+			signal.Notify(forceQuitCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-forceQuitCh // First signal is handled by NotifyContext above
+				<-forceQuitCh // Second signal: force quit
+				fmt.Fprintln(os.Stderr, "\nForce quit")
+				os.Exit(1)
+			}()
+			defer signal.Stop(forceQuitCh)
+
 			opts := &types.Options{
 				Image:             ua.appImage,
 				Report:            ua.report,
@@ -107,7 +126,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				return errors.New("--image is required when not using --config")
 			}
 			log.Info("Starting in single image patching mode...")
-			return patch.Patch(context.Background(), opts)
+			return patch.Patch(ctx, opts)
 		},
 	}
 	flags := patchCmd.Flags()

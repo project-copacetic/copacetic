@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -40,23 +43,37 @@ func Patch(ctx context.Context, opts *types.Options) error {
 	ch := make(chan error, 1)
 
 	go func() {
-		defer close(ch)
-		err := patchWithContext(timeoutCtx, ch, opts)
-		if err != nil {
-			ch <- err
-		}
+		ch <- patchWithContext(timeoutCtx, ch, opts)
+		close(ch)
 	}()
 	select {
-	case err, ok := <-ch:
-		if !ok {
-			return nil
+	case err := <-ch:
+		if err != nil {
+			// Display styled error
+			fmt.Fprintln(os.Stderr, tui.RenderError(getErrorInfo(err)))
 		}
 		return err
 	case <-timeoutCtx.Done():
 		<-time.After(1 * time.Second)
 
+		// Check if this was a cancellation (Ctrl+C) or actual timeout
+		if ctx.Err() == context.Canceled {
+			// Parent context was canceled (user pressed Ctrl+C)
+			fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
+				Title:   "Operation Canceled",
+				Message: "Patch was canceled by user",
+				Hint:    "",
+			}))
+			return context.Canceled
+		}
+
+		// Actual timeout
 		err := fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
-		log.Error(err)
+		fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
+			Title:   "Operation Timed Out",
+			Message: fmt.Sprintf("Patch exceeded timeout of %v", opts.Timeout),
+			Hint:    "Try increasing timeout with --timeout flag (e.g., --timeout 10m)",
+		}))
 		return err
 	}
 }
@@ -105,7 +122,8 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 				ShouldPreserve: false,
 			}
 
-			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
+			displaySingleArchPlan(opts, &patchPlatform)
+			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -134,7 +152,8 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 				}
 			}
 
-			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
+			displaySingleArchPlan(opts, &patchPlatform)
+			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -174,9 +193,78 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	if patchPlatform.OS != LINUX {
 		patchPlatform.OS = LINUX
 	}
-	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false)
+	displaySingleArchPlan(opts, &patchPlatform)
+	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
+}
+
+// displaySingleArchPlan shows a patching plan for single-arch images.
+func displaySingleArchPlan(opts *types.Options, platform *types.PatchPlatform) {
+	// Use the same resolution logic as the actual patching to get accurate name
+	patchedName := opts.Image + "-patched" // fallback
+	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
+		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
+			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
+		}
+	}
+
+	plan := tui.PatchingPlan{
+		TargetPlatform:     platform.String(),
+		PatchedImageName:   patchedName,
+		PreservedPlatforms: nil,
+	}
+	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
+}
+
+// getErrorInfo maps common errors to styled error info.
+func getErrorInfo(err error) tui.ErrorInfo {
+	errStr := err.Error()
+
+	// Check for common error patterns and provide helpful hints
+	switch {
+	case containsIgnoreCase(errStr, "no updates found"):
+		return tui.ErrorInfo{
+			Title:   "No Updates Available",
+			Message: "No package updates were found for the specified vulnerabilities",
+			Hint:    "The image may already be up-to-date or the vulnerabilities may not have fixes available",
+		}
+	case containsIgnoreCase(errStr, "failed to connect") || containsIgnoreCase(errStr, "connection refused"):
+		return tui.ErrorInfo{
+			Title:   "Connection Failed",
+			Message: errStr,
+			Hint:    "Check that BuildKit is running (docker buildx create --use) and accessible",
+		}
+	case containsIgnoreCase(errStr, "not found") || containsIgnoreCase(errStr, "404"):
+		return tui.ErrorInfo{
+			Title:   "Resource Not Found",
+			Message: errStr,
+			Hint:    "Check that the image name is correct and accessible",
+		}
+	case containsIgnoreCase(errStr, "unauthorized") || containsIgnoreCase(errStr, "401"):
+		return tui.ErrorInfo{
+			Title:   "Authentication Failed",
+			Message: errStr,
+			Hint:    "Try logging in with 'docker login' first",
+		}
+	case containsIgnoreCase(errStr, "EOL") || containsIgnoreCase(errStr, "end of life"):
+		return tui.ErrorInfo{
+			Title:   "End of Life OS Detected",
+			Message: errStr,
+			Hint:    "Consider upgrading to a supported OS version",
+		}
+	default:
+		return tui.ErrorInfo{
+			Title:   "Patch Failed",
+			Message: errStr,
+			Hint:    "",
+		}
+	}
+}
+
+// containsIgnoreCase checks if s contains substr (case-insensitive).
+func containsIgnoreCase(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
