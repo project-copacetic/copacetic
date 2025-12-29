@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/project-copacetic/copacetic/pkg/cmd"
 	"github.com/project-copacetic/copacetic/pkg/generate"
-	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -39,7 +39,7 @@ func newRootCmd() *cobra.Command {
 	flags := rootCmd.PersistentFlags()
 	flags.BoolVar(&debug, "debug", false, "enable debug level logging")
 
-	rootCmd.AddCommand(patch.NewPatchCmd())
+	rootCmd.AddCommand(cmd.NewPatchCmd())
 	rootCmd.AddCommand(generate.NewGenerateCmd())
 	return rootCmd
 }

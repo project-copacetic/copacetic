@@ -772,7 +772,46 @@ jobs:
           docker rm registry || true
           
           echo "Local registry mixed OCI layout test completed successfully!"
-
+  test-patch-bulk:
+    needs: build
+    name: Test Bulk Patching
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Configure Docker Daemon
+        run: |
+          echo '{"features": {"containerd-snapshotter": true}, "insecure-registries": ["127.0.0.1:37219"]}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        with:
+          install: true
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: "1.24"
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Run bulk patch integration test
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          # The test now runs in a more realistic and consistent environment
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/bulk --copa="$(pwd)/copa"
+  
   test-nodejs:
     needs: build
     name: Test Node.js patching
