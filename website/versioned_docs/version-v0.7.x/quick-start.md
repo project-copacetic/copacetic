@@ -13,7 +13,7 @@ This guide illustrates how to patch outdated containers with `copa`.
     * If you are using a buildx instance, or using buildkitd directly, there is no need to enable the containerd image store. However, only images in a remote registry can be patched using these methods.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
   * Optional:
-    * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.  
+    * [trivy CLI](https://trivy.dev/docs/latest/getting-started/installation/) installed & pathed.  
       * Alternatively, see [scanner plugins](#scanner-plugins) for custom scanner support.
 
 ## Sample Steps
