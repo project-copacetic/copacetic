@@ -22,7 +22,7 @@ Before you begin, ensure you have:
   1. Docker's built-in BuildKit (requires Docker v24.0+ with [containerd image store](https://docs.docker.com/storage/containerd/#enable-containerd-image-store-on-docker-engine) enabled for local images)
   2. Current buildx builder (create one with `docker buildx create --use`)
   3. BuildKit daemon at `/run/buildkit/buildkitd.sock` (see [custom addresses](custom-address.md) for examples)
-- **Trivy CLI** (optional) - For vulnerability scanning ([installation guide](https://aquasecurity.github.io/trivy/latest/getting-started/installation/))
+- **Trivy CLI** (optional) - For vulnerability scanning ([installation guide](https://trivy.dev/docs/latest/getting-started/installation/))
 
 :::info
 For advanced BuildKit configurations, see [custom BuildKit addresses](custom-address.md).

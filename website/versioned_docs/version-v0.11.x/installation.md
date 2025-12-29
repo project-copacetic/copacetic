@@ -17,7 +17,7 @@ You can download the latest and previous versions of `copa` from the [GitHub rel
 ### Prerequisites
 - [Go](https://go.dev/doc/install)
 - [Docker](https://docs.docker.com/engine/install/)
-- [Trivy](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) (optional as a scanner)
+- [Trivy](https://trivy.dev/docs/latest/getting-started/installation/) (optional as a scanner)
 
 ```bash
 git clone https://github.com/project-copacetic/copacetic
