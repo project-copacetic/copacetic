@@ -7,7 +7,6 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/generate"
 	"github.com/project-copacetic/copacetic/pkg/patch"
-	"github.com/project-copacetic/copacetic/pkg/testprovenance"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -42,7 +41,6 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd.AddCommand(patch.NewPatchCmd())
 	rootCmd.AddCommand(generate.NewGenerateCmd())
-	rootCmd.AddCommand(testprovenance.NewTestProvenanceCmd())
 	return rootCmd
 }
 

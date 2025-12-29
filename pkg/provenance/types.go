@@ -1,47 +1,25 @@
 package provenance
 
-import (
-	intoto "github.com/in-toto/in-toto-golang/in_toto"
-)
-
 // RebuildStrategy defines how Copa should attempt to rebuild Go binaries.
 type RebuildStrategy int
 
 const (
 	// RebuildStrategyAuto automatically chooses the best strategy based on available information.
 	RebuildStrategyAuto RebuildStrategy = iota
-	// RebuildStrategyProvenance uses SLSA provenance for rebuild.
-	RebuildStrategyProvenance
-	// RebuildStrategyNone only updates go.mod/go.sum (current default behavior).
+	// RebuildStrategyHeuristic uses detected binary information for rebuild.
+	RebuildStrategyHeuristic
+	// RebuildStrategyNone indicates no rebuild is possible.
 	RebuildStrategyNone
 )
 
-// Attestation represents a parsed SLSA attestation with provenance information.
-type Attestation struct {
-	// Statement is the in-toto statement containing the attestation.
-	Statement *intoto.Statement
-	// Predicate contains the SLSA provenance data (parsed from Statement.Predicate).
-	Predicate map[string]any
-	// PredicateType is the type of predicate (e.g., "https://slsa.dev/provenance/v1").
-	PredicateType string
-	// SLSALevel is the inferred SLSA level (0-4).
-	SLSALevel int
-}
-
-// BuildInfo contains information extracted from SLSA provenance about how a Go binary was built.
+// BuildInfo contains information extracted about how a Go binary was built.
 type BuildInfo struct {
-	// Dockerfile is the base64-decoded Dockerfile from provenance (if available, mode=max only).
-	Dockerfile string
 	// BuildArgs contains the build arguments used.
 	BuildArgs map[string]string
 	// GoVersion is the Go version used for building.
 	GoVersion string
 	// BaseImage is the base image reference used.
 	BaseImage string
-	// BaseImageDigest is the digest of the base image for verification.
-	BaseImageDigest string
-	// BuildCommand is the go build command used (if extractable).
-	BuildCommand string
 	// CGOEnabled indicates if CGO was enabled during the build.
 	CGOEnabled bool
 	// BuildFlags are additional flags passed to go build.
@@ -52,40 +30,36 @@ type BuildInfo struct {
 	MainPackage string
 	// ModulePath is the Go module path (e.g., "github.com/org/repo").
 	ModulePath string
-	// ProvenanceMode is the BuildKit provenance mode (min/max).
-	ProvenanceMode string
-	// BuilderID is the builder identity from provenance.
-	BuilderID string
 	// Dependencies maps module names to versions (from binary detection).
 	Dependencies map[string]string
 }
 
-// ProvenanceCompleteness assesses how complete the provenance information is.
-type ProvenanceCompleteness struct {
-	// HasDockerfile indicates if the Dockerfile is present in provenance.
-	HasDockerfile bool
-	// HasBuildCommand indicates if build commands can be extracted.
-	HasBuildCommand bool
-	// HasBaseImage indicates if base image information is available.
-	HasBaseImage bool
-	// HasGoVersion indicates if Go version is specified.
-	HasGoVersion bool
-	// CanRebuild is an overall assessment of rebuild feasibility.
-	CanRebuild bool
-	// MissingInfo lists what information is missing.
-	MissingInfo []string
+// BinaryInfo contains information extracted from a Go binary using `go version -m`.
+type BinaryInfo struct {
+	// Path is the filesystem path to the binary in the target image.
+	Path string
+	// GoVersion is the Go version used to build the binary (e.g., "go1.21.5").
+	GoVersion string
+	// ModulePath is the main module path (e.g., "github.com/example/app").
+	ModulePath string
+	// Main is the main module info (path and version).
+	Main string
+	// Dependencies maps module names to versions.
+	Dependencies map[string]string
+	// BuildSettings contains build settings (CGO_ENABLED, GOOS, GOARCH, ldflags, etc.).
+	BuildSettings map[string]string
+	// VCS contains version control info (vcs, vcs.revision, vcs.time, vcs.modified).
+	VCS map[string]string
 }
 
 // RebuildContext contains all information needed for a binary rebuild attempt.
 type RebuildContext struct {
 	// Strategy is the rebuild strategy to use.
 	Strategy RebuildStrategy
-	// Provenance is the SLSA attestation (if available).
-	Provenance *Attestation
-	// BuildInfo is information extracted from provenance (if available).
+	// BuildInfo is information extracted from binary detection.
 	BuildInfo *BuildInfo
-	// Completeness assesses the quality of available information.
-	Completeness *ProvenanceCompleteness
+	// BinaryInfo contains information from detected Go binaries.
+	BinaryInfo []*BinaryInfo
 }
 
 // RebuildResult contains the outcome of a rebuild attempt.
@@ -94,10 +68,6 @@ type RebuildResult struct {
 	Success bool
 	// Strategy is the strategy that was used.
 	Strategy string
-	// BinaryPatched indicates if the binary was actually rebuilt.
-	BinaryPatched bool
-	// GoModUpdated indicates if go.mod/go.sum were updated.
-	GoModUpdated bool
 	// Error is the error if rebuild failed.
 	Error error
 	// Warnings are non-fatal issues encountered.

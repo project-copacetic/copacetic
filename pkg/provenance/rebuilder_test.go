@@ -1,11 +1,9 @@
 package provenance
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestDetermineBaseImage(t *testing.T) {
@@ -114,6 +112,24 @@ func TestGenerateGoMod(t *testing.T) {
 				"github.com/vulnerable/pkg v1.0.1",
 			},
 		},
+		{
+			name: "go.mod with version normalization (no v prefix)",
+			buildInfo: &BuildInfo{
+				ModulePath: "github.com/example/app",
+				GoVersion:  "1.22",
+				Dependencies: map[string]string{
+					"github.com/some/pkg": "v1.0.0",
+				},
+			},
+			updates: map[string]string{
+				"github.com/some/pkg": "1.0.1",
+			},
+			contains: []string{
+				"module github.com/example/app",
+				"go 1.22",
+				"github.com/some/pkg v1.0.1",
+			},
+		},
 	}
 
 	rebuilder := NewRebuilder()
@@ -143,7 +159,7 @@ func TestConstructBuildCommand(t *testing.T) {
 			},
 			contains: []string{
 				"CGO_ENABLED=0",
-				"go build",
+				"/usr/local/go/bin/go build",
 				"./cmd/app",
 			},
 		},
@@ -155,7 +171,7 @@ func TestConstructBuildCommand(t *testing.T) {
 			},
 			contains: []string{
 				"CGO_ENABLED=1",
-				"go build",
+				"/usr/local/go/bin/go build",
 			},
 		},
 		{
@@ -172,7 +188,7 @@ func TestConstructBuildCommand(t *testing.T) {
 				"CGO_ENABLED=0",
 				"GOOS=linux",
 				"GOARCH=arm64",
-				"go build",
+				"/usr/local/go/bin/go build",
 			},
 		},
 		{
@@ -195,8 +211,8 @@ func TestConstructBuildCommand(t *testing.T) {
 				CGOEnabled: false,
 			},
 			contains: []string{
-				"go build",
-				".", // Default to current directory
+				"/usr/local/go/bin/go build",
+				".",
 			},
 		},
 	}
@@ -205,12 +221,11 @@ func TestConstructBuildCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Ensure BuildArgs is initialized
 			if tt.buildInfo.BuildArgs == nil {
 				tt.buildInfo.BuildArgs = make(map[string]string)
 			}
 
-			cmd := rebuilder.constructBuildCommand(tt.buildInfo)
+			cmd := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go")
 
 			for _, s := range tt.contains {
 				assert.Contains(t, cmd, s)
@@ -225,7 +240,7 @@ func TestRebuildStrategy_String(t *testing.T) {
 		want     string
 	}{
 		{RebuildStrategyAuto, "auto"},
-		{RebuildStrategyProvenance, "provenance"},
+		{RebuildStrategyHeuristic, "heuristic"},
 		{RebuildStrategyNone, "none"},
 		{RebuildStrategy(999), "unknown"},
 	}
@@ -238,132 +253,74 @@ func TestRebuildStrategy_String(t *testing.T) {
 	}
 }
 
-func TestDiagnoseRebuildIssue(t *testing.T) {
+func TestNormalizeVersion(t *testing.T) {
 	tests := []struct {
-		name       string
-		rebuildCtx *RebuildContext
-		wantIssues []string
+		input string
+		want  string
 	}{
-		{
-			name:       "nil context",
-			rebuildCtx: nil,
-			wantIssues: []string{"No rebuild context available"},
-		},
-		{
-			name: "no provenance",
-			rebuildCtx: &RebuildContext{
-				Provenance: nil,
-			},
-			wantIssues: []string{"No SLSA provenance found"},
-		},
-		{
-			name: "missing build info fields",
-			rebuildCtx: &RebuildContext{
-				Provenance: &Attestation{},
-				BuildInfo:  &BuildInfo{
-					// Missing GoVersion, ModulePath, Dockerfile
-				},
-			},
-			wantIssues: []string{
-				"Go version not detected",
-				"Module path not detected",
-				"Dockerfile not in provenance",
-			},
-		},
-		{
-			name: "complete context",
-			rebuildCtx: &RebuildContext{
-				Provenance: &Attestation{},
-				BuildInfo: &BuildInfo{
-					GoVersion:  "1.21",
-					ModulePath: "github.com/example/app",
-					Dockerfile: "FROM golang:1.21",
-				},
-			},
-			wantIssues: []string{"Build information appears complete"},
-		},
+		{"1.0.0", "v1.0.0"},
+		{"v1.0.0", "v1.0.0"},
+		{"", ""},
+		{"2.3.4", "v2.3.4"},
+		{"v0.0.0", "v0.0.0"},
 	}
 
-	rebuilder := NewRebuilder()
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			issues := rebuilder.DiagnoseRebuildIssue(tt.rebuildCtx)
-
-			for _, want := range tt.wantIssues {
-				found := false
-				for _, issue := range issues {
-					if strings.Contains(issue, want) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					t.Errorf("Expected issue containing %q not found in %v", want, issues)
-				}
-			}
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeVersion(tt.input)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func TestRebuildError(t *testing.T) {
+func TestDeriveRepoFromModulePath(t *testing.T) {
 	tests := []struct {
-		name         string
-		rebuildError *RebuildError
-		wantContains string
+		modulePath  string
+		wantRepoURL string
+		wantSubpath string
 	}{
 		{
-			name: "error with underlying",
-			rebuildError: &RebuildError{
-				Phase:      "clone",
-				Message:    "failed to clone repository",
-				Underlying: assert.AnError,
-			},
-			wantContains: "[clone]",
+			modulePath:  "github.com/user/repo",
+			wantRepoURL: "https://github.com/user/repo",
+			wantSubpath: "",
 		},
 		{
-			name: "error without underlying",
-			rebuildError: &RebuildError{
-				Phase:   "build",
-				Message: "go build failed",
-			},
-			wantContains: "[build]",
+			modulePath:  "github.com/user/repo/subdir",
+			wantRepoURL: "https://github.com/user/repo",
+			wantSubpath: "subdir",
+		},
+		{
+			modulePath:  "k8s.io/autoscaler",
+			wantRepoURL: "https://github.com/kubernetes/autoscaler",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "k8s.io/autoscaler/cluster-autoscaler",
+			wantRepoURL: "https://github.com/kubernetes/autoscaler",
+			wantSubpath: "cluster-autoscaler",
+		},
+		{
+			modulePath:  "golang.org/x/net",
+			wantRepoURL: "https://github.com/golang/net",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "sigs.k8s.io/controller-runtime",
+			wantRepoURL: "https://github.com/kubernetes-sigs/controller-runtime",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "",
+			wantRepoURL: "",
+			wantSubpath: "",
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			errStr := tt.rebuildError.Error()
-			assert.Contains(t, errStr, tt.wantContains)
+		t.Run(tt.modulePath, func(t *testing.T) {
+			repoURL, subpath := deriveRepoFromModulePath(tt.modulePath)
+			assert.Equal(t, tt.wantRepoURL, repoURL)
+			assert.Equal(t, tt.wantSubpath, subpath)
 		})
 	}
-}
-
-func TestFormatRebuildSummary(t *testing.T) {
-	rebuilder := NewRebuilder()
-
-	rebuildCtx := &RebuildContext{
-		BuildInfo: &BuildInfo{
-			GoVersion:  "1.21",
-			ModulePath: "github.com/example/app",
-			CGOEnabled: false,
-			Dockerfile: "FROM golang:1.21",
-		},
-	}
-
-	result := &RebuildResult{
-		Strategy:        "provenance",
-		Success:         true,
-		BinariesRebuilt: 1,
-	}
-
-	summary := rebuilder.FormatRebuildSummary(rebuildCtx, result)
-
-	require.NotEmpty(t, summary)
-	assert.Contains(t, summary, "Go Binary Rebuild Summary")
-	assert.Contains(t, summary, "Strategy: provenance")
-	assert.Contains(t, summary, "Success: true")
-	assert.Contains(t, summary, "Go Version: 1.21")
-	assert.Contains(t, summary, "Module: github.com/example/app")
-	assert.Contains(t, summary, "Dockerfile: Available")
 }

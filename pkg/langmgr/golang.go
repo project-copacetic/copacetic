@@ -462,8 +462,7 @@ func (gm *golangManager) upgradePackages(
 	return &state, failedPackages, nil
 }
 
-// attemptBinaryRebuild attempts to rebuild Go binaries using SLSA provenance.
-// Note: Heuristic binary detection has been removed for v1 - only SLSA provenance is supported.
+// attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
 func (gm *golangManager) attemptBinaryRebuild(
 	ctx context.Context,
 	currentState *llb.State,
@@ -472,23 +471,44 @@ func (gm *golangManager) attemptBinaryRebuild(
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
-	log.Info("Attempting Go binary rebuild using SLSA provenance")
+	log.Info("Attempting Go binary rebuild via heuristic detection")
 
-	// Create rebuilder
+	// Create rebuilder and detector
 	rebuilder := provenance.NewRebuilder()
+	detector := provenance.NewDetector()
 
-	// Analyze image via provenance (which may enrich from GitHub)
-	rebuildCtx, err := rebuilder.AnalyzeImage(ctx, gm.config.ImageName, "")
-	if err != nil {
-		log.Debugf("Provenance analysis failed: %v", err)
-		rebuildCtx = &provenance.RebuildContext{
-			Strategy: provenance.RebuildStrategyNone,
+	// Initialize rebuild context
+	rebuildCtx := &provenance.RebuildContext{
+		Strategy: provenance.RebuildStrategyNone,
+	}
+
+	// Detect Go binaries using go version -m
+	binaries, detectErr := detector.DetectGoBinaries(ctx, gm.config.Client, currentState)
+	if detectErr != nil {
+		log.Debugf("Binary detection failed: %v", detectErr)
+	} else if len(binaries) > 0 {
+		log.Infof("Detected %d Go binaries via go version -m", len(binaries))
+
+		// Log what we found
+		for _, bi := range binaries {
+			log.Infof("  Found: %s (%s, %d deps)", bi.Path, bi.GoVersion, len(bi.Dependencies))
+			if cgo, ok := bi.BuildSettings["CGO_ENABLED"]; ok {
+				log.Debugf("    CGO_ENABLED=%s", cgo)
+			}
+			if ldflags, ok := bi.BuildSettings["-ldflags"]; ok {
+				log.Debugf("    ldflags=%s", ldflags)
+			}
 		}
+
+		// Convert binary info to build info
+		rebuildCtx.BinaryInfo = binaries
+		rebuildCtx.BuildInfo = detector.ConvertBinaryInfoToBuildInfo(binaries[0])
+		rebuildCtx.Strategy = provenance.RebuildStrategyHeuristic
 	}
 
 	// Check if we have enough information to rebuild
 	if rebuildCtx.Strategy == provenance.RebuildStrategyNone {
-		return currentState, failedPackages, fmt.Errorf("insufficient build information for binary rebuild: SLSA provenance required (build with --provenance=max)")
+		return currentState, failedPackages, fmt.Errorf("no Go binaries detected in image")
 	}
 
 	// Log what information we have
@@ -497,20 +517,28 @@ func (gm *golangManager) attemptBinaryRebuild(
 			rebuildCtx.BuildInfo.GoVersion,
 			rebuildCtx.BuildInfo.ModulePath,
 			rebuildCtx.BuildInfo.CGOEnabled)
-		if rebuildCtx.BuildInfo.Dockerfile != "" {
-			log.Info("Dockerfile available from provenance/GitHub")
-		}
 	}
 
 	log.Infof("Using rebuild strategy: %s", rebuildCtx.Strategy)
 
 	// Convert updates to module->version map
+	// Filter out packages that have complex dependency management
 	updateMap := make(map[string]string)
 	for _, update := range updates {
-		if update.FixedVersion != "" {
-			updateMap[update.Name] = update.FixedVersion
-			log.Infof("Will update %s to %s", update.Name, update.FixedVersion)
+		if update.FixedVersion == "" {
+			log.Debugf("Skipping %s: no fixed version available", update.Name)
+			continue
 		}
+
+		// k8s.io/kubernetes has hundreds of replace directives and requires
+		// careful version coordination - skip for now
+		if strings.HasPrefix(update.Name, "k8s.io/kubernetes") {
+			log.Warnf("Skipping %s: k8s.io/kubernetes requires careful version coordination", update.Name)
+			continue
+		}
+
+		updateMap[update.Name] = update.FixedVersion
+		log.Infof("Will update %s to %s", update.Name, update.FixedVersion)
 	}
 
 	if len(updateMap) == 0 {
@@ -518,7 +546,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	}
 
 	// Attempt to rebuild binary
-	newState, result, err := rebuilder.RebuildBinary(ctx, rebuildCtx, currentState, updateMap)
+	newState, result, err := rebuilder.RebuildBinary(rebuildCtx, updateMap)
 	if err != nil {
 		for module := range updateMap {
 			failedPackages = append(failedPackages, module)
@@ -534,7 +562,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	}
 
 	log.Infof("Binary rebuild successful: %d binaries rebuilt", result.BinariesRebuilt)
-	return newState, failedPackages, nil
+	return &newState, failedPackages, nil
 }
 
 // updateGoModule updates a single Go module or workspace.
