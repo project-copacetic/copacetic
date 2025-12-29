@@ -332,7 +332,7 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           install: true
       - name: Install oras CLI
@@ -377,7 +377,7 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           install: true
           platforms: linux/amd64,linux/arm/v5,linux/arm64,linux/386,linux/mips64le
@@ -500,7 +500,7 @@ jobs:
           echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           install: true
           platforms: linux/amd64,linux/arm64
@@ -573,7 +573,7 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
         with:
           install: true
           platforms: linux/amd64,linux/arm64
@@ -822,7 +822,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Check out code
-        uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3 # v6.0.0
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
       - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
         with:
           go-version: "1.25"
@@ -835,7 +835,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: copa_edge_linux_amd64.tar.gz
       - name: Extract copa
@@ -875,7 +875,7 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
           install: true
       - name: Install oras CLI
