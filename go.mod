@@ -1,6 +1,6 @@
 module github.com/project-copacetic/copacetic
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -41,7 +41,7 @@ require (
 	golang.org/x/term v0.37.0
 	google.golang.org/grpc v1.77.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/apimachinery v0.34.3
+	k8s.io/apimachinery v0.35.0
 )
 
 require (
