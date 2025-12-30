@@ -524,9 +524,16 @@ func (gm *golangManager) attemptBinaryRebuild(
 	// Convert updates to module->version map
 	// Filter out packages that have complex dependency management
 	updateMap := make(map[string]string)
+	mainModule := rebuildCtx.BuildInfo.ModulePath
 	for _, update := range updates {
 		if update.FixedVersion == "" {
 			log.Debugf("Skipping %s: no fixed version available", update.Name)
+			continue
+		}
+
+		// Skip main module - can't update the module we're building
+		if update.Name == mainModule || strings.HasPrefix(update.Name, mainModule+"/") {
+			log.Warnf("Skipping %s: cannot update main module (requires new source code version)", update.Name)
 			continue
 		}
 
