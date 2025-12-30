@@ -271,11 +271,20 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 
 	// Extract VCS info for source identification
 	if rev, ok := bi.VCS["vcs.revision"]; ok {
-		buildInfo.BuildArgs["_vcsRevision"] = rev
+		buildInfo.BuildArgs["_sourceCommit"] = rev
 	}
 
-	log.Debugf("Converted binary info: Go %s, module %s, CGO=%v",
-		buildInfo.GoVersion, buildInfo.ModulePath, buildInfo.CGOEnabled)
+	// Derive source repository from module path
+	if buildInfo.ModulePath != "" {
+		repoURL, _ := deriveRepoFromModulePath(buildInfo.ModulePath)
+		if repoURL != "" {
+			buildInfo.BuildArgs["_sourceRepo"] = repoURL
+		}
+	}
+
+	log.Debugf("Converted binary info: Go %s, module %s, CGO=%v, commit=%s",
+		buildInfo.GoVersion, buildInfo.ModulePath, buildInfo.CGOEnabled,
+		buildInfo.BuildArgs["_sourceCommit"])
 
 	return buildInfo
 }

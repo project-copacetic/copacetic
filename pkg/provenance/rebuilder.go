@@ -275,7 +275,14 @@ func (r *Rebuilder) generateGoMod(buildInfo *BuildInfo, updates map[string]strin
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("module %s\n\n", buildInfo.ModulePath))
-	sb.WriteString(fmt.Sprintf("go %s\n\n", buildInfo.GoVersion))
+
+	// Normalize Go version to major.minor format (strip patch version)
+	// e.g., "1.20.4" -> "1.20"
+	goVersion := buildInfo.GoVersion
+	if parts := strings.Split(goVersion, "."); len(parts) >= 2 {
+		goVersion = parts[0] + "." + parts[1]
+	}
+	sb.WriteString(fmt.Sprintf("go %s\n\n", goVersion))
 
 	if len(buildInfo.Dependencies) > 0 || len(updates) > 0 {
 		sb.WriteString("require (\n")
