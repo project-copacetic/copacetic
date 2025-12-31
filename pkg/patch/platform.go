@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/containerd/platforms"
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/opencontainers/go-digest"
@@ -111,7 +112,7 @@ func getPlatformDescriptorFromManifest(
 	desc, err := buildkit.TryGetManifestFromLocal(ref)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
-		desc, err = remote.Get(ref)
+		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
 			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", imageRef, err)
 		}

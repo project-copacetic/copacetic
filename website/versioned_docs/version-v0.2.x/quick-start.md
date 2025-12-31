@@ -10,7 +10,7 @@ This sample illustrates how to patch containers using vulnerability reports with
   * `copa` tool [built & pathed](./installation.md).
   * [buildkit](https://github.com/moby/buildkit/#quick-start) daemon installed & pathed.
   * [docker](https://docs.docker.com/desktop/linux/install/#generic-installation-steps) daemon running and CLI installed & pathed.
-  * [trivy CLI](https://aquasecurity.github.io/trivy/latest/getting-started/installation/) installed & pathed.
+  * [trivy CLI](https://trivy.dev/docs/latest/getting-started/installation/) installed & pathed.
 
 ## Sample Steps
 

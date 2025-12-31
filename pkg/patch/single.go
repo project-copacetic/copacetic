@@ -24,6 +24,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/report"
+	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -47,6 +48,7 @@ func removeIfNotDebug(workingFolder string) {
 }
 
 // patchSingleArchImage patches a single architecture image.
+// If sharedProgressCh is non-nil, progress is forwarded to it with platform prefix instead of displaying locally.
 func patchSingleArchImage(
 	ctx context.Context,
 	ch chan error,
@@ -54,6 +56,7 @@ func patchSingleArchImage(
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
 	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
 ) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
@@ -103,7 +106,6 @@ func patchSingleArchImage(
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
 	patchedImageName := fmt.Sprintf("%s:%s", patchImage, patchedTag)
-	log.Infof("Patched image name: %s", patchedImageName)
 
 	// Setup working folder
 	workingFolder, cleanup, err := setupWorkingFolder(workingFolder)
@@ -207,11 +209,24 @@ func patchSingleArchImage(
 			return err
 		}
 		patchResult = result
+		log.Debugf("BuildKit build completed for %s", patchedImageName)
 		return nil
 	})
 
-	// Display progress
-	common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+	// Display progress - either forward to shared channel or display locally
+	if sharedProgressCh != nil {
+		// Forward progress to shared channel with platform prefix
+		// Show host→target when using QEMU emulation
+		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
+		platformPrefix := tui.FormatEmulationPrefix(hostPlatform.Architecture, targetPlatform.Architecture, targetPlatform.Variant)
+		eg.Go(func() error {
+			common.ForwardProgressWithPrefix(ctx, buildChannel, sharedProgressCh, platformPrefix)
+			return nil
+		})
+	} else {
+		// Display progress locally (single-arch mode)
+		common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+	}
 
 	// Handle image loading if not pushing
 	if !push {
@@ -378,10 +393,14 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	// Use a fresh context for descriptor lookup to avoid cancellation issues
 	// The original context might be canceled after the patching operation completes
 	descriptorCtx := context.Background()
+
+	log.Debugf("Getting image descriptor for %s...", patchedImageName)
 	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
 	if err != nil {
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
+	} else {
+		log.Debugf("Got image descriptor for %s", patchedImageName)
 	}
 
 	// Add original manifest annotations if we have a patched descriptor
@@ -534,7 +553,7 @@ func executePatchBuild(
 		// vex document must contain at least one statement
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-				ch <- err
+				trySendError(ch, err)
 				return nil, err
 			}
 		}

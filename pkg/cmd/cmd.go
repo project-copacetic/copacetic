@@ -1,17 +1,20 @@
-package patch
-
+package cmd
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
-
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/bulk"
+	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-
 	// Register connection helpers for buildkit.
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
 	_ "github.com/moby/buildkit/client/connhelper/kubepod"
@@ -20,73 +23,104 @@ import (
 	_ "github.com/moby/buildkit/client/connhelper/ssh"
 	"github.com/moby/buildkit/util/progress/progressui"
 )
-
 type patchArgs struct {
-	appImage            string
-	report              string
-	patchedTag          string
-	suffix              string
-	workingFolder       string
-	timeout             time.Duration
-	scanner             string
-	ignoreError         bool
-	format              string
-	output              string
-	bkOpts              buildkit.Opts
-	push                bool
-	platform            []string
-	loader              string
-	pkgTypes            string
-	libraryPatchLevel   string
-	progress            string
-	ociDir              string
-	eolAPIBaseURL       string
+	appImage          string
+	report            string
+	patchedTag        string
+	suffix            string
+	workingFolder     string
+	timeout           time.Duration
+	scanner           string
+	ignoreError       bool
+	format            string
+	output            string
+	bkOpts            buildkit.Opts
+	push              bool
+	platform          []string
+	loader            string
+	pkgTypes          string
+	libraryPatchLevel string
+	progress          string
+	ociDir            string
+	eolAPIBaseURL     string
 	exitOnEOL           bool
 	enableGoBinaryPatch bool
+	configFile          string
 }
-
 func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
-		Use:     "patch",
-		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
-		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
+		Use:   "patch",
+		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
+		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
+copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
 			}
-
+			// Create a context that is canceled on SIGINT/SIGTERM.
+			// This ensures BuildKit and all child operations stop promptly on Ctrl+C.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			// Set up force-quit handler for multiple Ctrl+C presses.
+			// If the user presses Ctrl+C again while we're shutting down, exit immediately.
+			forceQuitCh := make(chan os.Signal, 1)
+			signal.Notify(forceQuitCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-forceQuitCh // First signal is handled by NotifyContext above
+				<-forceQuitCh // Second signal: force quit
+				fmt.Fprintln(os.Stderr, "\nForce quit")
+				os.Exit(1)
+			}()
+			defer signal.Stop(forceQuitCh)
 			opts := &types.Options{
-				Image:               ua.appImage,
-				Report:              ua.report,
-				PatchedTag:          ua.patchedTag,
-				Suffix:              ua.suffix,
-				WorkingFolder:       ua.workingFolder,
-				Timeout:             ua.timeout,
-				Scanner:             ua.scanner,
-				IgnoreError:         ua.ignoreError,
-				Format:              ua.format,
-				Output:              ua.output,
-				BkAddr:              ua.bkOpts.Addr,
-				BkCACertPath:        ua.bkOpts.CACertPath,
-				BkCertPath:          ua.bkOpts.CertPath,
-				BkKeyPath:           ua.bkOpts.KeyPath,
-				Push:                ua.push,
-				Platforms:           ua.platform,
-				Loader:              ua.loader,
-				PkgTypes:            ua.pkgTypes,
-				LibraryPatchLevel:   ua.libraryPatchLevel,
-				Progress:            progressui.DisplayMode(ua.progress),
-				OCIDir:              ua.ociDir,
-				EOLAPIBaseURL:       ua.eolAPIBaseURL,
+				Image:             ua.appImage,
+				Report:            ua.report,
+				PatchedTag:        ua.patchedTag,
+				Suffix:            ua.suffix,
+				WorkingFolder:     ua.workingFolder,
+				Timeout:           ua.timeout,
+				Scanner:           ua.scanner,
+				IgnoreError:       ua.ignoreError,
+				Format:            ua.format,
+				Output:            ua.output,
+				BkAddr:            ua.bkOpts.Addr,
+				BkCACertPath:      ua.bkOpts.CACertPath,
+				BkCertPath:        ua.bkOpts.CertPath,
+				BkKeyPath:         ua.bkOpts.KeyPath,
+				Push:              ua.push,
+				Platforms:         ua.platform,
+				Loader:            ua.loader,
+				PkgTypes:          ua.pkgTypes,
+				LibraryPatchLevel: ua.libraryPatchLevel,
+				Progress:          progressui.DisplayMode(ua.progress),
+				OCIDir:            ua.ociDir,
+				EOLAPIBaseURL:     ua.eolAPIBaseURL,
 				ExitOnEOL:           ua.exitOnEOL,
 				EnableGoBinaryPatch: ua.enableGoBinaryPatch,
+				ConfigFile:          ua.configFile,
 			}
-			return Patch(context.Background(), opts)
+			if ua.configFile == "" && ua.appImage == "" {
+				return errors.New("either --config or --image must be provided")
+			}
+			// bulk patch
+			if ua.configFile != "" {
+				if ua.appImage != "" || ua.report != "" || ua.patchedTag != "" {
+					return errors.New("--config cannot be used with --image, --report, or --tag")
+				}
+				log.Info("Starting in bulk image patching mode...")
+				return bulk.PatchFromConfig(context.Background(), ua.configFile, opts)
+			}
+			if ua.appImage == "" {
+				return errors.New("--image is required when not using --config")
+			}
+			log.Info("Starting in single image patching mode...")
+			return patch.Patch(ctx, opts)
 		},
 	}
 	flags := patchCmd.Flags()
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). Cannot be used with --image, --report, or --tag.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
@@ -113,7 +147,6 @@ func NewPatchCmd() *cobra.Command {
 	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
-
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
 		flags.StringVar(&ua.pkgTypes, "pkg-types", utils.PkgTypeOS,
@@ -132,14 +165,8 @@ func NewPatchCmd() *cobra.Command {
 		ua.libraryPatchLevel = utils.PatchTypePatch
 		ua.enableGoBinaryPatch = false
 	}
-
-	if err := patchCmd.MarkFlagRequired("image"); err != nil {
-		panic(err)
-	}
-
 	return patchCmd
 }
-
 // validateLibraryPatchLevel validates the library patch level flag and its usage.
 func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 	// Valid library patch levels
@@ -148,16 +175,13 @@ func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 		utils.PatchTypeMinor: true,
 		utils.PatchTypeMajor: true,
 	}
-
 	// Check if the provided level is valid
 	if !validLevels[libraryPatchLevel] {
 		return fmt.Errorf("invalid library patch level '%s': must be one of 'patch', 'minor', or 'major'", libraryPatchLevel)
 	}
-
 	// If library patch level is specified and not the default, ensure library is in pkg-types
 	if libraryPatchLevel != utils.PatchTypePatch && !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
 		return fmt.Errorf("--library-patch-level can only be used when 'library' is included in --pkg-types")
 	}
-
 	return nil
 }
