@@ -1,4 +1,5 @@
 package cmd
+
 import (
 	"context"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/bulk"
 	"github.com/project-copacetic/copacetic/pkg/patch"
@@ -15,6 +17,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+
 	// Register connection helpers for buildkit.
 	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
 	_ "github.com/moby/buildkit/client/connhelper/kubepod"
@@ -23,30 +26,32 @@ import (
 	_ "github.com/moby/buildkit/client/connhelper/ssh"
 	"github.com/moby/buildkit/util/progress/progressui"
 )
+
 type patchArgs struct {
-	appImage          string
-	report            string
-	patchedTag        string
-	suffix            string
-	workingFolder     string
-	timeout           time.Duration
-	scanner           string
-	ignoreError       bool
-	format            string
-	output            string
-	bkOpts            buildkit.Opts
-	push              bool
-	platform          []string
-	loader            string
-	pkgTypes          string
-	libraryPatchLevel string
-	progress          string
-	ociDir            string
-	eolAPIBaseURL     string
+	appImage            string
+	report              string
+	patchedTag          string
+	suffix              string
+	workingFolder       string
+	timeout             time.Duration
+	scanner             string
+	ignoreError         bool
+	format              string
+	output              string
+	bkOpts              buildkit.Opts
+	push                bool
+	platform            []string
+	loader              string
+	pkgTypes            string
+	libraryPatchLevel   string
+	progress            string
+	ociDir              string
+	eolAPIBaseURL       string
 	exitOnEOL           bool
 	enableGoBinaryPatch bool
 	configFile          string
 }
+
 func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
@@ -75,28 +80,28 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 			}()
 			defer signal.Stop(forceQuitCh)
 			opts := &types.Options{
-				Image:             ua.appImage,
-				Report:            ua.report,
-				PatchedTag:        ua.patchedTag,
-				Suffix:            ua.suffix,
-				WorkingFolder:     ua.workingFolder,
-				Timeout:           ua.timeout,
-				Scanner:           ua.scanner,
-				IgnoreError:       ua.ignoreError,
-				Format:            ua.format,
-				Output:            ua.output,
-				BkAddr:            ua.bkOpts.Addr,
-				BkCACertPath:      ua.bkOpts.CACertPath,
-				BkCertPath:        ua.bkOpts.CertPath,
-				BkKeyPath:         ua.bkOpts.KeyPath,
-				Push:              ua.push,
-				Platforms:         ua.platform,
-				Loader:            ua.loader,
-				PkgTypes:          ua.pkgTypes,
-				LibraryPatchLevel: ua.libraryPatchLevel,
-				Progress:          progressui.DisplayMode(ua.progress),
-				OCIDir:            ua.ociDir,
-				EOLAPIBaseURL:     ua.eolAPIBaseURL,
+				Image:               ua.appImage,
+				Report:              ua.report,
+				PatchedTag:          ua.patchedTag,
+				Suffix:              ua.suffix,
+				WorkingFolder:       ua.workingFolder,
+				Timeout:             ua.timeout,
+				Scanner:             ua.scanner,
+				IgnoreError:         ua.ignoreError,
+				Format:              ua.format,
+				Output:              ua.output,
+				BkAddr:              ua.bkOpts.Addr,
+				BkCACertPath:        ua.bkOpts.CACertPath,
+				BkCertPath:          ua.bkOpts.CertPath,
+				BkKeyPath:           ua.bkOpts.KeyPath,
+				Push:                ua.push,
+				Platforms:           ua.platform,
+				Loader:              ua.loader,
+				PkgTypes:            ua.pkgTypes,
+				LibraryPatchLevel:   ua.libraryPatchLevel,
+				Progress:            progressui.DisplayMode(ua.progress),
+				OCIDir:              ua.ociDir,
+				EOLAPIBaseURL:       ua.eolAPIBaseURL,
 				ExitOnEOL:           ua.exitOnEOL,
 				EnableGoBinaryPatch: ua.enableGoBinaryPatch,
 				ConfigFile:          ua.configFile,
@@ -167,6 +172,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	}
 	return patchCmd
 }
+
 // validateLibraryPatchLevel validates the library patch level flag and its usage.
 func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 	// Valid library patch levels

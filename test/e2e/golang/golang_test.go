@@ -59,7 +59,7 @@ func TestGoBinaryPatching(t *testing.T) {
 			// Patch the image
 			// Use simple tag like "coredns-patched" to avoid image naming issues
 			imageParts := strings.Split(tc.image, "/")
-			imageName := imageParts[len(imageParts)-1] // get last part (e.g., "coredns:latest")
+			imageName := imageParts[len(imageParts)-1]   // get last part (e.g., "coredns:latest")
 			imageName = strings.Split(imageName, ":")[0] // remove tag (e.g., "coredns")
 			patchedTag := imageName + ":patched"
 			patchedOutputFile := filepath.Join(tempDir, "patched.tar")
@@ -137,7 +137,7 @@ func TestGoBinaryPatching(t *testing.T) {
 			}
 
 			// Cleanup patched image
-			exec.Command("docker", "rmi", patchedTag).Run()
+			_ = exec.Command("docker", "rmi", patchedTag).Run()
 		})
 	}
 }
