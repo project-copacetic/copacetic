@@ -1,0 +1,16 @@
+[
+  {
+    "image": "docker.io/coredns/coredns",
+    "tag": "1.11.1",
+    "description": "CoreDNS DNS server with Go binary vulnerabilities",
+    "expectFix": true,
+    "skipMainModule": true
+  },
+  {
+    "image": "docker.io/library/traefik",
+    "tag": "v2.10.7",
+    "description": "Traefik reverse proxy with Go binary vulnerabilities",
+    "expectFix": true,
+    "skipMainModule": true
+  }
+]

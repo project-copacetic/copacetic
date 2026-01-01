@@ -1,7 +1,9 @@
 package golang
 
 import (
+	_ "embed"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,164 +14,184 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGolanggoBinaryPatching tests end-to-end Go binary patching using heuristic detection.
+//go:embed fixtures/test-images.json
+var testImages []byte
+
+type testImage struct {
+	Image          string `json:"image"`
+	Tag            string `json:"tag"`
+	Description    string `json:"description"`
+	ExpectFix      bool   `json:"expectFix"`
+	SkipMainModule bool   `json:"skipMainModule"`
+}
+
+// Vulnerability defines the fields we need to uniquely identify a vulnerability.
+type Vulnerability struct {
+	ID      string `json:"VulnerabilityID"`
+	PkgName string `json:"PkgName"`
+}
+
+// Key creates a unique identifier for a vulnerability instance.
+func (v Vulnerability) Key() string {
+	return fmt.Sprintf("%s|%s", v.PkgName, v.ID)
+}
+
 func TestGoBinaryPatching(t *testing.T) {
-	if os.Getenv("COPA_TEST_SKIP_GOLANG") == "1" {
-		t.Skip("Skipping Go binary patching test (COPA_TEST_SKIP_GOLANG=1)")
-	}
+	// Download Trivy DB once before running all sub-tests.
+	downloadTrivyDB(t)
 
-	// Set experimental flag
-	t.Setenv("COPA_EXPERIMENTAL", "1")
+	var images []testImage
+	err := json.Unmarshal(testImages, &images)
+	require.NoError(t, err)
 
-	testCases := []struct {
-		name        string
-		image       string
-		description string
-		expectFix   bool // whether we expect vulnerabilities to be fixed
-	}{
-		{
-			name:        "CoreDNS with dependency vulnerability",
-			image:       "docker.io/coredns/coredns:latest",
-			description: "CoreDNS image with github.com/expr-lang/expr vulnerability",
-			expectFix:   true,
-		},
-	}
+	for _, img := range images {
+		t.Run(img.Description, func(t *testing.T) {
+			t.Parallel()
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create temp directory for test artifacts
-			tempDir, err := os.MkdirTemp("", "copa-golang-test-*")
-			require.NoError(t, err, "Failed to create temp dir")
-			defer os.RemoveAll(tempDir)
+			dir := t.TempDir()
 
-			// Scan original image
-			originalScanFile := filepath.Join(tempDir, "original-scan.json")
-			t.Logf("Scanning original image: %s", tc.image)
-			scanCmd := exec.Command("trivy", "image", "--format", "json",
-				"--output", originalScanFile, tc.image)
-			output, err := scanCmd.CombinedOutput()
-			require.NoError(t, err, "Trivy scan failed: %s", string(output))
+			// Build the full image reference.
+			ref := img.Image + ":" + img.Tag
 
-			// Parse original scan to get Go binary vulnerabilities
-			originalVulns, err := getGoBinaryVulns(originalScanFile)
-			require.NoError(t, err, "Failed to parse original scan")
-			require.NotEmpty(t, originalVulns, "No Go binary vulnerabilities found in original image")
-			t.Logf("Found %d Go binary vulnerabilities in original image", len(originalVulns))
+			// 1. Scan the original image.
+			t.Log("scanning original image for baseline")
+			scanResultsFile := filepath.Join(dir, "scan.json")
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule)
+			require.NotEmpty(t, vulnsBefore, "expected vulnerabilities in the baseline scan")
+			t.Logf("Found %d unique vulnerabilities before patching", len(vulnsBefore))
 
-			// Patch the image
-			// Use simple tag like "coredns-patched" to avoid image naming issues
-			imageParts := strings.Split(tc.image, "/")
-			imageName := imageParts[len(imageParts)-1]   // get last part (e.g., "coredns:latest")
-			imageName = strings.Split(imageName, ":")[0] // remove tag (e.g., "coredns")
-			patchedTag := imageName + ":patched"
-			patchedOutputFile := filepath.Join(tempDir, "patched.tar")
+			// 2. Patch the image.
+			t.Log("patching image")
+			tagPatched := img.Tag + "-patched"
+			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
 
-			t.Logf("Patching image...")
-			copaPath := os.Getenv("COPA_BINARY")
-			if copaPath == "" {
-				// Try to find copa in common locations
-				for _, path := range []string{
-					"../../../dist/linux_amd64/release/copa",
-					"/tmp/copa-test",
-					"./copa",
-				} {
-					if _, err := os.Stat(path); err == nil {
-						copaPath = path
-						break
-					}
-				}
-			}
-			require.NotEmpty(t, copaPath, "Copa binary not found. Set COPA_BINARY or build first")
+			// 3. Scan the patched image.
+			t.Log("scanning patched image")
+			patchedRef := img.Image + ":" + tagPatched
+			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule)
+			t.Logf("Found %d unique vulnerabilities after patching", len(vulnsAfter))
 
-			patchCmd := exec.Command(copaPath, "patch",
-				"--image", tc.image,
-				"--report", originalScanFile,
-				"--output", patchedOutputFile,
-				"--tag", patchedTag,
-				"--timeout", "15m",
-				"--enable-go-binary-rebuild",
-				"--pkg-types", "os,library")
-			patchOutput, err := patchCmd.CombinedOutput()
-			if err != nil {
-				t.Logf("Copa patch output:\n%s", string(patchOutput))
-			}
-			require.NoError(t, err, "Copa patch failed")
+			// 4. Verify the patch was successful.
+			t.Logf("Comparing vulnerabilities: Before (%d) vs After (%d)", len(vulnsBefore), len(vulnsAfter))
 
-			// Verify patched image was created
-			checkImageCmd := exec.Command("docker", "images", patchedTag, "--format", "{{.Repository}}:{{.Tag}}")
-			imageOutput, err := checkImageCmd.Output()
-			require.NoError(t, err, "Failed to check for patched image")
-			assert.Contains(t, string(imageOutput), patchedTag, "Patched image not found")
-
-			if tc.expectFix {
-				// Scan patched image
-				patchedScanFile := filepath.Join(tempDir, "patched-scan.json")
-				t.Logf("Scanning patched image: %s", patchedTag)
-				scanPatchedCmd := exec.Command("trivy", "image", "--format", "json",
-					"--output", patchedScanFile, patchedTag)
-				scanOutput, err := scanPatchedCmd.CombinedOutput()
-				require.NoError(t, err, "Trivy scan of patched image failed: %s", string(scanOutput))
-
-				// Parse patched scan
-				patchedVulns, err := getGoBinaryVulns(patchedScanFile)
-				require.NoError(t, err, "Failed to parse patched scan")
-
-				// Verify vulnerabilities were reduced (not all may be fixable, e.g., main module)
-				t.Logf("Original vulnerabilities: %d, Patched vulnerabilities: %d",
-					len(originalVulns), len(patchedVulns))
-				assert.LessOrEqual(t, len(patchedVulns), len(originalVulns),
-					"Patched image should have same or fewer vulnerabilities")
-
-				// Verify specific dependency vulnerabilities were fixed
-				// (main module vulnerabilities will remain as they can't be updated)
-				fixedCount := 0
-				for pkg := range originalVulns {
-					// Skip main module vulnerabilities
-					if strings.Contains(pkg, "coredns/coredns") {
-						continue
-					}
-					if _, stillVuln := patchedVulns[pkg]; !stillVuln {
-						fixedCount++
-						t.Logf("Fixed vulnerability in: %s", pkg)
-					}
-				}
-				assert.Greater(t, fixedCount, 0, "Expected at least one dependency vulnerability to be fixed")
+			if img.ExpectFix {
+				assert.Less(t, len(vulnsAfter), len(vulnsBefore),
+					"expected fewer vulnerabilities after patching. Before: %d, After: %d. Copa output:\n%s",
+					len(vulnsBefore), len(vulnsAfter), copaOutput)
 			}
 
-			// Cleanup patched image
-			_ = exec.Command("docker", "rmi", patchedTag).Run()
+			// No new vulnerabilities should have been introduced.
+			for key, vuln := range vulnsAfter {
+				assert.Contains(t, vulnsBefore, key, "no new vulnerabilities should be introduced. Found new vuln: %+v", vuln)
+			}
+
+			// Cleanup patched image.
+			_ = exec.Command("docker", "rmi", patchedRef).Run()
 		})
 	}
 }
 
-// getGoBinaryVulns extracts Go binary vulnerabilities from a Trivy scan JSON file.
-func getGoBinaryVulns(scanFile string) (map[string]bool, error) {
-	data, err := os.ReadFile(scanFile)
-	if err != nil {
-		return nil, err
+func downloadTrivyDB(t *testing.T) {
+	t.Helper()
+	cmd := exec.Command("trivy", "image", "--download-db-only")
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, "failed to download trivy db:\n%s", string(output))
+}
+
+func scanAndParse(t *testing.T, image string, outputFile string, skipMainModule bool) map[string]Vulnerability {
+	t.Helper()
+
+	if outputFile == "" {
+		f, err := os.CreateTemp(t.TempDir(), "scan-*.json")
+		require.NoError(t, err)
+		outputFile = f.Name()
+		f.Close()
 	}
 
-	var scan struct {
+	args := []string{
+		"trivy", "image",
+		"--quiet",
+		"--format=json",
+		"-o=" + outputFile,
+		"--pkg-types=library",
+		"--ignore-unfixed",
+		"--skip-db-update",
+		image,
+	}
+
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("trivy scan failed: %v\nOutput: %s", err, string(output))
+		require.NoError(t, err, "trivy scan failed")
+	}
+
+	reportBytes, err := os.ReadFile(outputFile)
+	require.NoError(t, err, "failed to read trivy report file")
+
+	var report struct {
 		Results []struct {
-			Type            string `json:"Type"`
-			Vulnerabilities []struct {
-				PkgName string `json:"PkgName"`
-			} `json:"Vulnerabilities"`
+			Type            string          `json:"Type"`
+			Vulnerabilities []Vulnerability `json:"Vulnerabilities"`
 		} `json:"Results"`
 	}
+	err = json.Unmarshal(reportBytes, &report)
+	require.NoError(t, err, "failed to unmarshal trivy report")
 
-	if err := json.Unmarshal(data, &scan); err != nil {
-		return nil, err
-	}
-
-	vulns := make(map[string]bool)
-	for _, result := range scan.Results {
-		if result.Type == "gobinary" {
-			for _, vuln := range result.Vulnerabilities {
-				vulns[vuln.PkgName] = true
+	vulns := make(map[string]Vulnerability)
+	for _, result := range report.Results {
+		// Only consider gobinary results.
+		if result.Type != "gobinary" {
+			continue
+		}
+		for _, v := range result.Vulnerabilities {
+			// Skip main module vulnerabilities if configured.
+			// Main module vulns cannot be patched without rebuilding the entire app.
+			if skipMainModule && isMainModuleVuln(v.PkgName, image) {
+				continue
 			}
+			vulns[v.Key()] = v
 		}
 	}
 
-	return vulns, nil
+	return vulns
+}
+
+// isMainModuleVuln checks if a vulnerability is in the main module.
+// Main module packages typically match the image name pattern.
+func isMainModuleVuln(pkgName, image string) bool {
+	// Extract the likely main module name from the image.
+	// e.g., "coredns/coredns" -> "coredns"
+	// e.g., "traefik" -> "traefik"
+	parts := strings.Split(image, "/")
+	imageName := parts[len(parts)-1]
+	imageName = strings.Split(imageName, ":")[0]
+
+	return strings.Contains(strings.ToLower(pkgName), strings.ToLower(imageName))
+}
+
+func patchImage(t *testing.T, image, tag, reportFile string) string {
+	t.Helper()
+
+	args := []string{
+		"patch",
+		"-i=" + image,
+		"-r=" + reportFile,
+		"-t=" + tag,
+		"--pkg-types=os,library",
+		"--enable-go-binary-rebuild",
+		"--timeout=15m",
+	}
+
+	if buildkitAddr != "" {
+		args = append(args, "-a="+buildkitAddr)
+	}
+
+	cmd := exec.Command(copaPath, args...) //#nosec G204
+	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
+	out, err := cmd.CombinedOutput()
+
+	require.NoError(t, err, fmt.Sprintf("Copa patch failed:\n%s", string(out)))
+
+	return string(out)
 }
