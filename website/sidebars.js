@@ -33,6 +33,7 @@ const sidebars = {
       collapsed: false,
       items: [
         'app-level-patching',
+        'distroless-images',
         'docker-build',
         'github-action',
         'docker-extension',
