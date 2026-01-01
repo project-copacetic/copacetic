@@ -896,6 +896,47 @@ jobs:
         with:
           paths: "test-results.xml"
 
+  test-golang:
+    needs: build
+    name: Test Go patching
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: read-all
+    steps:
+      - name: Check out code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Add containerd-snapshotter to docker daemon
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Run Go e2e tests
+        shell: bash
+        env:
+          COPA_EXPERIMENTAL: "1"
+        run: |
+          set -eu -o pipefail
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/golang --addr=docker:// --copa="$(pwd)/copa" -timeout 0
+      - name: Test Summary
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
+
   test-frontend:
     needs: build
     name: Test BuildKit Frontend
