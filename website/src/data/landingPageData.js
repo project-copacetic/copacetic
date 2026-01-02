@@ -26,7 +26,7 @@ export const featureCards = [
     title: "Distroless Image Support",
     description: "Copacetic also supports patching of distroless DPKG and RPM based distroless images by spinning up a build tooling container.",
     icon: "/img/feature-distroless.png",
-    link: "/distroless-images",
+    link: "/multiplatform-patching",
   },
   {
     title: "Ecosystem & Scanner Compatible",
