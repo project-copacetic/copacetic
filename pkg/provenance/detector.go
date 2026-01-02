@@ -8,6 +8,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/frontend/gateway/client"
+	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -34,11 +35,27 @@ func (d *Detector) DetectGoBinaries(
 	ctx context.Context,
 	gwClient client.Client,
 	targetState *llb.State,
+	platform *specs.Platform,
 ) ([]*BinaryInfo, error) {
-	log.Info("Detecting Go binaries in image using go version -m")
+	if gwClient == nil {
+		return nil, fmt.Errorf("gateway client is nil")
+	}
+	if targetState == nil {
+		return nil, fmt.Errorf("target state is nil")
+	}
 
-	// Create tooling image with Go installed
-	tooling := llb.Image(golangToolingImage)
+	log.Info("Detecting Go binaries in image using go version -m")
+	if platform != nil {
+		log.Debugf("Target platform: %s/%s", platform.OS, platform.Architecture)
+	}
+
+	// Create tooling image with Go installed, using the target platform
+	var tooling llb.State
+	if platform != nil {
+		tooling = llb.Image(golangToolingImage, llb.Platform(*platform))
+	} else {
+		tooling = llb.Image(golangToolingImage)
+	}
 
 	// Create output directory
 	tooling = tooling.File(llb.Mkdir(outputDir, 0o755))
@@ -97,38 +114,48 @@ touch %s
 	).Root()
 
 	// Solve to get the result
+	log.Debug("Marshaling detection state...")
 	def, err := execState.Marshal(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal detector state: %w", err)
 	}
 
+	log.Debug("Running binary detection in BuildKit...")
 	res, err := gwClient.Solve(ctx, client.SolveRequest{
 		Definition: def.ToPB(),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to run go version -m: %w", err)
+		return nil, fmt.Errorf("failed to run binary detection (go version -m): %w. This may indicate the tooling image %s is not available for the target platform", err, golangToolingImage)
 	}
 
 	// Read the output file
 	ref, err := res.SingleRef()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get result ref: %w", err)
+		return nil, fmt.Errorf("failed to get result reference from BuildKit: %w", err)
 	}
 
+	log.Debugf("Reading detection output from %s...", outputFile)
 	outputBytes, err := ref.ReadFile(ctx, client.ReadRequest{
 		Filename: outputFile,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to read detector output: %w", err)
+		return nil, fmt.Errorf("failed to read detector output file %s: %w", outputFile, err)
 	}
 
 	// Debug: log the raw output
-	log.Debugf("Binary detection raw output:\n%s", string(outputBytes))
+	log.Debugf("Binary detection raw output (%d bytes):\n%s", len(outputBytes), string(outputBytes))
 
 	// Parse the output
 	binaries := d.parseGoVersionOutput(string(outputBytes))
 
-	log.Infof("Detected %d Go binaries in image", len(binaries))
+	if len(binaries) == 0 {
+		log.Debug("No Go binaries detected in the image")
+	} else {
+		log.Infof("Detected %d Go binaries in image", len(binaries))
+		for _, bi := range binaries {
+			log.Debugf("  Binary: %s (Go %s, module: %s)", bi.Path, bi.GoVersion, bi.ModulePath)
+		}
+	}
 	return binaries, nil
 }
 

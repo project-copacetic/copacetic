@@ -477,63 +477,35 @@ func (gm *golangManager) attemptBinaryRebuild(
 	rebuilder := provenance.NewRebuilder()
 	detector := provenance.NewDetector()
 
-	// Initialize rebuild context
-	rebuildCtx := &provenance.RebuildContext{
-		Strategy: provenance.RebuildStrategyNone,
-	}
-
 	// Detect Go binaries using go version -m
-	binaries, detectErr := detector.DetectGoBinaries(ctx, gm.config.Client, currentState)
+	binaries, detectErr := detector.DetectGoBinaries(ctx, gm.config.Client, currentState, gm.config.Platform)
 	if detectErr != nil {
 		log.Debugf("Binary detection failed: %v", detectErr)
-	} else if len(binaries) > 0 {
-		log.Infof("Detected %d Go binaries via go version -m", len(binaries))
-
-		// Log what we found
-		for _, bi := range binaries {
-			log.Infof("  Found: %s (%s, %d deps)", bi.Path, bi.GoVersion, len(bi.Dependencies))
-			if cgo, ok := bi.BuildSettings["CGO_ENABLED"]; ok {
-				log.Debugf("    CGO_ENABLED=%s", cgo)
-			}
-			if ldflags, ok := bi.BuildSettings["-ldflags"]; ok {
-				log.Debugf("    ldflags=%s", ldflags)
-			}
-		}
-
-		// Convert binary info to build info
-		rebuildCtx.BinaryInfo = binaries
-		rebuildCtx.BuildInfo = detector.ConvertBinaryInfoToBuildInfo(binaries[0])
-		rebuildCtx.Strategy = provenance.RebuildStrategyHeuristic
+		return currentState, failedPackages, fmt.Errorf("binary detection failed: %w", detectErr)
 	}
 
-	// Check if we have enough information to rebuild
-	if rebuildCtx.Strategy == provenance.RebuildStrategyNone {
+	if len(binaries) == 0 {
 		return currentState, failedPackages, fmt.Errorf("no Go binaries detected in image")
 	}
 
-	// Log what information we have
-	if rebuildCtx.BuildInfo != nil {
-		log.Infof("Build info: Go %s, module: %s, CGO: %v",
-			rebuildCtx.BuildInfo.GoVersion,
-			rebuildCtx.BuildInfo.ModulePath,
-			rebuildCtx.BuildInfo.CGOEnabled)
+	log.Infof("Detected %d Go binaries via go version -m", len(binaries))
+
+	// Log what we found
+	for _, bi := range binaries {
+		log.Infof("  Found: %s (%s, %d deps)", bi.Path, bi.GoVersion, len(bi.Dependencies))
+		if cgo, ok := bi.BuildSettings["CGO_ENABLED"]; ok {
+			log.Debugf("    CGO_ENABLED=%s", cgo)
+		}
+		if ldflags, ok := bi.BuildSettings["-ldflags"]; ok {
+			log.Debugf("    ldflags=%s", ldflags)
+		}
 	}
 
-	log.Infof("Using rebuild strategy: %s", rebuildCtx.Strategy)
-
-	// Convert updates to module->version map
-	// Filter out packages that have complex dependency management
+	// Build update map from updates (shared across all binaries)
 	updateMap := make(map[string]string)
-	mainModule := rebuildCtx.BuildInfo.ModulePath
 	for _, update := range updates {
 		if update.FixedVersion == "" {
 			log.Debugf("Skipping %s: no fixed version available", update.Name)
-			continue
-		}
-
-		// Skip main module - can't update the module we're building
-		if update.Name == mainModule || strings.HasPrefix(update.Name, mainModule+"/") {
-			log.Warnf("Skipping %s: cannot update main module (requires new source code version)", update.Name)
 			continue
 		}
 
@@ -545,31 +517,112 @@ func (gm *golangManager) attemptBinaryRebuild(
 		}
 
 		updateMap[update.Name] = update.FixedVersion
-		log.Infof("Will update %s to %s", update.Name, update.FixedVersion)
 	}
 
 	if len(updateMap) == 0 {
 		return currentState, failedPackages, fmt.Errorf("no version updates to apply")
 	}
 
-	// Attempt to rebuild binary
-	newState, result, err := rebuilder.RebuildBinary(rebuildCtx, updateMap)
-	if err != nil {
+	// Track overall results
+	state := currentState
+	totalRebuilt := 0
+	var rebuildErrors []string
+
+	// Process each detected binary
+	for i, binaryInfo := range binaries {
+		binaryPath := binaryInfo.Path
+		log.Infof("Processing binary %d/%d: %s", i+1, len(binaries), binaryPath)
+
+		// Convert this binary's info to build info
+		buildInfo := detector.ConvertBinaryInfoToBuildInfo(binaryInfo)
+		if buildInfo == nil {
+			log.Warnf("Could not extract build info for %s, skipping", binaryPath)
+			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no build info", binaryPath))
+			continue
+		}
+
+		// Skip if this is a main module update (can't update the module we're building)
+		mainModule := buildInfo.ModulePath
+		filteredUpdateMap := make(map[string]string)
+		for module, version := range updateMap {
+			if module == mainModule || strings.HasPrefix(module, mainModule+"/") {
+				log.Debugf("Skipping %s for binary %s: cannot update main module", module, binaryPath)
+				continue
+			}
+			filteredUpdateMap[module] = version
+		}
+
+		if len(filteredUpdateMap) == 0 {
+			log.Debugf("No applicable updates for binary %s, skipping", binaryPath)
+			continue
+		}
+
+		// Log what information we have for this binary
+		log.Infof("  Build info: Go %s, module: %s, CGO: %v",
+			buildInfo.GoVersion,
+			buildInfo.ModulePath,
+			buildInfo.CGOEnabled)
+
+		for module, version := range filteredUpdateMap {
+			log.Infof("  Will update %s to %s", module, version)
+		}
+
+		// Create rebuild context for this binary
+		rebuildCtx := &provenance.RebuildContext{
+			Strategy:   provenance.RebuildStrategyHeuristic,
+			BuildInfo:  buildInfo,
+			BinaryInfo: []*provenance.BinaryInfo{binaryInfo},
+		}
+
+		// Attempt to rebuild this binary and merge into current state
+		newState, result, err := rebuilder.RebuildBinary(rebuildCtx, filteredUpdateMap, gm.config.Platform, state, binaryPath)
+		if err != nil {
+			log.Errorf("Failed to rebuild %s: %v", binaryPath, err)
+			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, err))
+			if !ignoreErrors {
+				for module := range filteredUpdateMap {
+					failedPackages = append(failedPackages, module)
+				}
+				return currentState, failedPackages, fmt.Errorf("binary rebuild failed for %s: %w", binaryPath, err)
+			}
+			continue
+		}
+
+		if !result.Success {
+			log.Errorf("Rebuild unsuccessful for %s: %v", binaryPath, result.Error)
+			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, result.Error))
+			if !ignoreErrors {
+				for module := range filteredUpdateMap {
+					failedPackages = append(failedPackages, module)
+				}
+				return currentState, failedPackages, fmt.Errorf("binary rebuild unsuccessful for %s: %v", binaryPath, result.Error)
+			}
+			continue
+		}
+
+		// Success - update state for next iteration
+		state = &newState
+		totalRebuilt++
+		log.Infof("Successfully rebuilt binary: %s", binaryPath)
+	}
+
+	// Check if we rebuilt anything
+	if totalRebuilt == 0 {
 		for module := range updateMap {
 			failedPackages = append(failedPackages, module)
 		}
-		return currentState, failedPackages, fmt.Errorf("binary rebuild failed: %w", err)
-	}
-
-	if !result.Success {
-		for module := range updateMap {
-			failedPackages = append(failedPackages, module)
+		if len(rebuildErrors) > 0 {
+			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildErrors)
 		}
-		return currentState, failedPackages, fmt.Errorf("binary rebuild unsuccessful: %v", result.Error)
+		return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt")
 	}
 
-	log.Infof("Binary rebuild successful: %d binaries rebuilt", result.BinariesRebuilt)
-	return &newState, failedPackages, nil
+	log.Infof("Binary rebuild complete: %d/%d binaries rebuilt successfully", totalRebuilt, len(binaries))
+	if len(rebuildErrors) > 0 {
+		log.Warnf("Some binaries failed to rebuild: %v", rebuildErrors)
+	}
+
+	return state, failedPackages, nil
 }
 
 // updateGoModule updates a single Go module or workspace.
@@ -676,8 +729,13 @@ func (gm *golangManager) upgradePackagesWithTooling(
 	for _, modPath := range goModPaths {
 		log.Infof("Updating Go module at %s using tooling container", modPath)
 
-		// Create tooling container state
-		toolingState := llb.Image(toolingImage)
+		// Create tooling container state with target platform
+		var toolingState llb.State
+		if gm.config.Platform != nil {
+			toolingState = llb.Image(toolingImage, llb.Platform(*gm.config.Platform))
+		} else {
+			toolingState = llb.Image(toolingImage)
+		}
 
 		// Copy go.mod, go.sum, and go.work if exists from target to tooling
 		toolingState = toolingState.File(

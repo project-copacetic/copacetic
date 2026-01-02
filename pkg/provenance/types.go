@@ -74,4 +74,6 @@ type RebuildResult struct {
 	Warnings []string
 	// BinariesRebuilt is the number of binaries successfully rebuilt.
 	BinariesRebuilt int
+	// RebuiltBinaries maps original binary paths to their rebuild status.
+	RebuiltBinaries map[string]bool
 }
