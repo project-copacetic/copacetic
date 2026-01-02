@@ -2,15 +2,191 @@
   {
     "image": "docker.io/coredns/coredns",
     "tag": "1.11.1",
-    "description": "CoreDNS DNS server with Go binary vulnerabilities",
+    "description": "CoreDNS - distroless single binary",
+    "category": "distroless",
     "expectFix": true,
-    "skipMainModule": true
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/coredns"]
   },
   {
     "image": "docker.io/library/traefik",
     "tag": "v2.10.7",
-    "description": "Traefik reverse proxy with Go binary vulnerabilities",
+    "description": "Traefik - scratch-based reverse proxy",
+    "category": "scratch",
     "expectFix": true,
-    "skipMainModule": true
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/traefik"]
+  },
+  {
+    "image": "gcr.io/etcd-development/etcd",
+    "tag": "v3.5.10",
+    "description": "etcd - multi-binary (etcd, etcdctl, etcdutl)",
+    "category": "multi-binary",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 3,
+    "binaryPaths": ["/usr/local/bin/etcd", "/usr/local/bin/etcdctl", "/usr/local/bin/etcdutl"]
+  },
+  {
+    "image": "docker.io/library/caddy",
+    "tag": "2.7.6",
+    "description": "Caddy - scratch-based web server",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/usr/bin/caddy"]
+  },
+  {
+    "image": "docker.io/library/vault",
+    "tag": "1.15.4",
+    "description": "Vault - alpine-based secrets management",
+    "category": "alpine",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/bin/vault"]
+  },
+  {
+    "image": "docker.io/minio/minio",
+    "tag": "RELEASE.2024-01-05T22-17-24Z",
+    "description": "MinIO - scratch-based object storage",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/usr/bin/minio"]
+  },
+  {
+    "image": "docker.io/library/registry",
+    "tag": "2.8.3",
+    "description": "Docker Registry - alpine-based",
+    "category": "alpine",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/bin/registry"]
+  },
+  {
+    "image": "docker.io/grafana/loki",
+    "tag": "2.9.3",
+    "description": "Grafana Loki - scratch-based log aggregation",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/usr/bin/loki"]
+  },
+  {
+    "image": "docker.io/grafana/promtail",
+    "tag": "2.9.3",
+    "description": "Grafana Promtail - scratch-based log collector",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/usr/bin/promtail"]
+  },
+  {
+    "image": "docker.io/prom/prometheus",
+    "tag": "v2.48.1",
+    "description": "Prometheus - busybox-based monitoring",
+    "category": "busybox",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 2,
+    "binaryPaths": ["/bin/prometheus", "/bin/promtool"]
+  },
+  {
+    "image": "docker.io/prom/alertmanager",
+    "tag": "v0.26.0",
+    "description": "Alertmanager - busybox-based alerting",
+    "category": "busybox",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 2,
+    "binaryPaths": ["/bin/alertmanager", "/bin/amtool"]
+  },
+  {
+    "image": "docker.io/jaegertracing/jaeger-query",
+    "tag": "1.53.0",
+    "description": "Jaeger Query - scratch-based tracing",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/go/bin/query-linux"]
+  },
+  {
+    "image": "docker.io/jaegertracing/jaeger-collector",
+    "tag": "1.53.0",
+    "description": "Jaeger Collector - scratch-based tracing",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/go/bin/collector-linux"]
+  },
+  {
+    "image": "docker.io/bitnami/kubectl",
+    "tag": "1.28.4",
+    "description": "kubectl - debian-based Kubernetes CLI",
+    "category": "debian",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/opt/bitnami/kubectl/bin/kubectl"]
+  },
+  {
+    "image": "docker.io/envoyproxy/ratelimit",
+    "tag": "v1.4.0",
+    "description": "Envoy Ratelimit - alpine-based",
+    "category": "alpine",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/bin/ratelimit"]
+  },
+  {
+    "image": "docker.io/nats",
+    "tag": "2.10.7-scratch",
+    "description": "NATS - scratch-based messaging",
+    "category": "scratch",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/nats-server"]
+  },
+  {
+    "image": "docker.io/temporalio/server",
+    "tag": "1.22.4",
+    "description": "Temporal - multi-binary workflow",
+    "category": "multi-binary",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/etc/temporal/temporal-server"]
+  },
+  {
+    "image": "docker.io/dexidp/dex",
+    "tag": "v2.37.0",
+    "description": "Dex - alpine-based OIDC provider",
+    "category": "alpine",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/usr/local/bin/dex"]
+  },
+  {
+    "image": "docker.io/grafana/grafana",
+    "tag": "10.2.3",
+    "description": "Grafana - alpine-based dashboards (large deps)",
+    "category": "alpine",
+    "expectFix": true,
+    "skipMainModule": true,
+    "expectedBinaryCount": 2,
+    "binaryPaths": ["/usr/share/grafana/bin/grafana", "/usr/share/grafana/bin/grafana-cli"]
   }
 ]

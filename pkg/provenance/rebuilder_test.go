@@ -147,9 +147,10 @@ func TestGenerateGoMod(t *testing.T) {
 
 func TestConstructBuildCommand(t *testing.T) {
 	tests := []struct {
-		name      string
-		buildInfo *BuildInfo
-		contains  []string
+		name       string
+		buildInfo  *BuildInfo
+		outputPath string
+		contains   []string
 	}{
 		{
 			name: "basic build command",
@@ -157,9 +158,11 @@ func TestConstructBuildCommand(t *testing.T) {
 				CGOEnabled:  false,
 				MainPackage: "./cmd/app",
 			},
+			outputPath: "/output/app",
 			contains: []string{
 				"CGO_ENABLED=0",
 				"/usr/local/go/bin/go build",
+				"-o /output/app",
 				"./cmd/app",
 			},
 		},
@@ -169,9 +172,11 @@ func TestConstructBuildCommand(t *testing.T) {
 				CGOEnabled:  true,
 				MainPackage: ".",
 			},
+			outputPath: "/output/binary",
 			contains: []string{
 				"CGO_ENABLED=1",
 				"/usr/local/go/bin/go build",
+				"-o /output/binary",
 			},
 		},
 		{
@@ -184,11 +189,13 @@ func TestConstructBuildCommand(t *testing.T) {
 				},
 				MainPackage: ".",
 			},
+			outputPath: "/output/binary",
 			contains: []string{
 				"CGO_ENABLED=0",
 				"GOOS=linux",
 				"GOARCH=arm64",
 				"/usr/local/go/bin/go build",
+				"-o /output/binary",
 			},
 		},
 		{
@@ -198,8 +205,10 @@ func TestConstructBuildCommand(t *testing.T) {
 				BuildFlags:  []string{"-trimpath", "-ldflags=-s -w"},
 				MainPackage: "./cmd/server",
 			},
+			outputPath: "/output/server",
 			contains: []string{
 				"CGO_ENABLED=0",
+				"-o /output/server",
 				"-trimpath",
 				"-ldflags=-s -w",
 				"./cmd/server",
@@ -210,9 +219,23 @@ func TestConstructBuildCommand(t *testing.T) {
 			buildInfo: &BuildInfo{
 				CGOEnabled: false,
 			},
+			outputPath: "/output/app",
 			contains: []string{
 				"/usr/local/go/bin/go build",
+				"-o /output/app",
 				".",
+			},
+		},
+		{
+			name: "empty output path",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				MainPackage: ".",
+			},
+			outputPath: "",
+			contains: []string{
+				"CGO_ENABLED=0",
+				"/usr/local/go/bin/go build .",
 			},
 		},
 	}
@@ -225,7 +248,7 @@ func TestConstructBuildCommand(t *testing.T) {
 				tt.buildInfo.BuildArgs = make(map[string]string)
 			}
 
-			cmd := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go")
+			cmd := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go", tt.outputPath)
 
 			for _, s := range tt.contains {
 				assert.Contains(t, cmd, s)
@@ -269,6 +292,88 @@ func TestNormalizeVersion(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			got := normalizeVersion(tt.input)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidateBinaryPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid absolute path",
+			path:    "/coredns",
+			wantErr: false,
+		},
+		{
+			name:    "valid nested path",
+			path:    "/usr/bin/myapp",
+			wantErr: false,
+		},
+		{
+			name:    "empty path",
+			path:    "",
+			wantErr: true,
+			errMsg:  "empty",
+		},
+		{
+			name:    "relative path",
+			path:    "bin/myapp",
+			wantErr: true,
+			errMsg:  "absolute",
+		},
+		{
+			name:    "path traversal",
+			path:    "/usr/../etc/passwd",
+			wantErr: true,
+			errMsg:  "traversal",
+		},
+		{
+			name:    "path with null byte",
+			path:    "/app\x00malicious",
+			wantErr: true,
+			errMsg:  "null byte",
+		},
+		{
+			name:    "path with shell metacharacters",
+			path:    "/app;rm -rf /",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with pipe",
+			path:    "/app|cat",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with backticks",
+			path:    "/app`id`",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with dollar sign",
+			path:    "/app$HOME",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBinaryPath(tt.path)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }
