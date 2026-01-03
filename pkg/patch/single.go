@@ -204,7 +204,7 @@ func patchSingleArchImage(
 	var patchResult *Result
 	eg.Go(func() error {
 		result, err := executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, opts.EnableGoBinaryPatch)
 		if err != nil {
 			return err
 		}
@@ -466,6 +466,7 @@ func executePatchBuild(
 	reportFile, format, output, patchedImageName string,
 	buildChannel chan *client.SolveStatus,
 	exitOnEOL bool,
+	enableGoBinaryPatch bool,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -496,15 +497,16 @@ func executePatchBuild(
 		}
 
 		patchOpts := &Options{
-			ImageName:        imageName.String(),
-			TargetPlatform:   targetPlatform,
-			Updates:          updates,
-			ValidatedUpdates: validatedManifest,
-			WorkingFolder:    workingFolder,
-			IgnoreError:      ignoreError,
-			ErrorChannel:     ch,
-			ReturnState:      false, // Always solve for Docker export
-			ExitOnEOL:        exitOnEOL,
+			ImageName:           imageName.String(),
+			TargetPlatform:      targetPlatform,
+			Updates:             updates,
+			ValidatedUpdates:    validatedManifest,
+			WorkingFolder:       workingFolder,
+			IgnoreError:         ignoreError,
+			ErrorChannel:        ch,
+			ReturnState:         false, // Always solve for Docker export
+			ExitOnEOL:           exitOnEOL,
+			EnableGoBinaryPatch: enableGoBinaryPatch,
 		}
 
 		// Execute the core patching logic
