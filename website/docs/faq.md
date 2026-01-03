@@ -44,6 +44,15 @@ Azure Linux based images will use `ghcr.io/project-copacetic/copacetic/azurelinu
 
 These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`
 
+#### SUSE (SLES and BCI)
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/bci/bci-base` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.suse.com/bci/bci-base`.
+
+#### openSUSE Leap
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/leap` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.opensuse.org/opensuse/leap`.
+
+#### openSUSE Tumbleweed
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/tumbleweed` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.opensuse.org/opensuse/tumbleweed`.
+
 ### APK (Alpine)
 
 APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
