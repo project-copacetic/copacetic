@@ -90,6 +90,6 @@ func (d *dockerLoader) Load(ctx context.Context, tar io.Reader, _ string) error 
 		log.Debugf("final ImageLoad line (non-JSON): %s", lastLine)
 	}
 
-	log.Info("image loaded successfully via Docker API")
+	log.Debug("image loaded successfully via Docker API")
 	return nil
 }

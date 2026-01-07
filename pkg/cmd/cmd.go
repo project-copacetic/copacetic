@@ -1,15 +1,21 @@
-package patch
+package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/bulk"
+	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
+	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 
 	// Register connection helpers for buildkit.
@@ -42,19 +48,38 @@ type patchArgs struct {
 	ociDir            string
 	eolAPIBaseURL     string
 	exitOnEOL         bool
+	configFile        string
 }
 
 func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
-		Use:     "patch",
-		Short:   "Patch container images with upgrade packages specified by a vulnerability report",
-		Example: "copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched",
+		Use:   "patch",
+		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
+		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
+copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
 			}
+
+			// Create a context that is canceled on SIGINT/SIGTERM.
+			// This ensures BuildKit and all child operations stop promptly on Ctrl+C.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			// Set up force-quit handler for multiple Ctrl+C presses.
+			// If the user presses Ctrl+C again while we're shutting down, exit immediately.
+			forceQuitCh := make(chan os.Signal, 1)
+			signal.Notify(forceQuitCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-forceQuitCh // First signal is handled by NotifyContext above
+				<-forceQuitCh // Second signal: force quit
+				fmt.Fprintln(os.Stderr, "\nForce quit")
+				os.Exit(1)
+			}()
+			defer signal.Stop(forceQuitCh)
 
 			opts := &types.Options{
 				Image:             ua.appImage,
@@ -80,11 +105,32 @@ func NewPatchCmd() *cobra.Command {
 				OCIDir:            ua.ociDir,
 				EOLAPIBaseURL:     ua.eolAPIBaseURL,
 				ExitOnEOL:         ua.exitOnEOL,
+				ConfigFile:        ua.configFile,
 			}
-			return Patch(context.Background(), opts)
+
+			if ua.configFile == "" && ua.appImage == "" {
+				return errors.New("either --config or --image must be provided")
+			}
+
+			// bulk patch
+			if ua.configFile != "" {
+				if ua.appImage != "" || ua.report != "" || ua.patchedTag != "" {
+					return errors.New("--config cannot be used with --image, --report, or --tag")
+				}
+
+				log.Info("Starting in bulk image patching mode...")
+
+				return bulk.PatchFromConfig(context.Background(), ua.configFile, opts)
+			}
+			if ua.appImage == "" {
+				return errors.New("--image is required when not using --config")
+			}
+			log.Info("Starting in single image patching mode...")
+			return patch.Patch(ctx, opts)
 		},
 	}
 	flags := patchCmd.Flags()
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). Cannot be used with --image, --report, or --tag.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
@@ -124,10 +170,6 @@ func NewPatchCmd() *cobra.Command {
 		// Set default values when experimental flags are not enabled
 		ua.pkgTypes = utils.PkgTypeOS
 		ua.libraryPatchLevel = utils.PatchTypePatch
-	}
-
-	if err := patchCmd.MarkFlagRequired("image"); err != nil {
-		panic(err)
 	}
 
 	return patchCmd
