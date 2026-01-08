@@ -471,9 +471,9 @@ func TestIsSupportedOsType(t *testing.T) {
 	// Test non-canonical inputs that should be canonicalized to supported types
 	// This tests the integration with utils.CanonicalOSType
 	nonCanonicalSupported := []string{
-		"opensuse leap",      // space variant (older Trivy versions)
+		"opensuse leap",       // space variant (older Trivy versions)
 		"opensuse tumbleweed", // space variant (older Trivy versions)
-		"opensuse.leap",      // dot variant
+		"opensuse.leap",       // dot variant
 		"opensuse.tumbleweed", // dot variant
 		"suse linux enterprise server",
 		"SLES",

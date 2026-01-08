@@ -632,7 +632,7 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 
 // checkForZypperUpgrades checks if there are any available updates for SUSE images using zypper.
 // Returns true if updates are available, false otherwise.
-func (rm *rpmManager) checkForZypperUpgrades(ctx context.Context, toolingBase llb.State, chrootDir string) bool {
+func (rm *rpmManager) checkForZypperUpgrades(ctx context.Context, toolingBase *llb.State, chrootDir string) bool {
 	// Use zypper list-updates to check for available updates in the chroot
 	// The command returns 0 if updates are available (with output), non-zero or empty output if none
 	checkCmd := `
@@ -905,12 +905,10 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 		pkgs = strings.Join(pkgStrings, " ")
-	} else {
+	} else if !rm.checkForZypperUpgrades(ctx, &toolingBase, chrootDir) {
 		// Check if updates are available before proceeding (consistent with other RPM paths)
-		if !rm.checkForZypperUpgrades(ctx, toolingBase, chrootDir) {
-			log.Info("No upgradable packages found for this image (zypper path).")
-			return nil, nil, types.ErrNoUpdatesFound
-		}
+		log.Info("No upgradable packages found for this image (zypper path).")
+		return nil, nil, types.ErrNoUpdatesFound
 	}
 
 	// Build the zypper command with error handling based on ignoreErrors
