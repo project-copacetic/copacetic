@@ -45,7 +45,42 @@ var RPMDistros = []string{
 func CanonicalOSType(osType string) string {
 	os := strings.ToLower(osType)
 
+	// NOTE: Order matters! More specific matches must come before less specific ones
+	// since strings.Contains will match substrings. For example:
+	// - "opensuse-tumbleweed" and "opensuse-leap" must be checked before any generic "opensuse" check
+	// - "almalinux" must be checked before "alma"
+	// - "azurelinux" must be checked before "azure"
+
 	switch {
+	// openSUSE variants - check specific distros before any generic patterns
+	case strings.Contains(os, OSTypeOpenSUSELeap), strings.Contains(os, "opensuse leap"), strings.Contains(os, "opensuse.leap"):
+		return OSTypeOpenSUSELeap
+	case strings.Contains(os, OSTypeOpenSUSETW), strings.Contains(os, "opensuse tumbleweed"), strings.Contains(os, "opensuse.tumbleweed"):
+		return OSTypeOpenSUSETW
+
+	// SUSE Enterprise - check after openSUSE variants
+	case strings.Contains(os, OSTypeSLES), strings.Contains(os, "suse linux enterprise server"):
+		return OSTypeSLES
+
+	// AlmaLinux - check "almalinux" before "alma"
+	case strings.Contains(os, OSTypeAlmaLinux):
+		return OSTypeAlmaLinux
+	case strings.Contains(os, OSTypeAlma):
+		return OSTypeAlma
+
+	// Azure Linux - check before generic patterns
+	case strings.Contains(os, OSTypeAzureLinux), strings.Contains(os, "azure linux"):
+		return OSTypeAzureLinux
+
+	// CBL-Mariner
+	case strings.Contains(os, OSTypeCBLMariner), strings.Contains(os, "mariner"):
+		return OSTypeCBLMariner
+
+	// Red Hat variants
+	case strings.Contains(os, OSTypeRedHat), strings.Contains(os, "red hat"):
+		return OSTypeRedHat
+
+	// Other distros (no substring conflicts)
 	case strings.Contains(os, OSTypeAlpine):
 		return OSTypeAlpine
 	case strings.Contains(os, OSTypeDebian):
@@ -56,24 +91,11 @@ func CanonicalOSType(osType string) string {
 		return OSTypeAmazon
 	case strings.Contains(os, OSTypeCentOS):
 		return OSTypeCentOS
-	case strings.Contains(os, OSTypeCBLMariner), strings.Contains(os, "mariner"):
-		return OSTypeCBLMariner
-	case strings.Contains(os, OSTypeAzureLinux), strings.Contains(os, "azure linux"):
-		return OSTypeAzureLinux
-	case strings.Contains(os, OSTypeRedHat), strings.Contains(os, "red hat"):
-		return OSTypeRedHat
 	case strings.Contains(os, OSTypeRocky):
 		return OSTypeRocky
 	case strings.Contains(os, OSTypeOracle):
 		return OSTypeOracle
-	case strings.Contains(os, OSTypeAlma):
-		return OSTypeAlma
-	case strings.Contains(os, OSTypeSLES), strings.Contains(os, "suse linux enterprise server"):
-		return OSTypeSLES
-	case strings.Contains(os, OSTypeOpenSUSELeap), strings.Contains(os, "opensuse leap"), strings.Contains(os, "opensuse.leap"):
-		return OSTypeOpenSUSELeap
-	case strings.Contains(os, OSTypeOpenSUSETW), strings.Contains(os, "opensuse tumbleweed"), strings.Contains(os, "opensuse.tumbleweed"):
-		return OSTypeOpenSUSETW
+
 	default:
 		return ""
 	}

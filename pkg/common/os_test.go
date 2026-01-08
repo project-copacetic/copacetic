@@ -94,7 +94,7 @@ VERSION_ID="8.5"`,
 			name: "AlmaLinux",
 			osRelease: `NAME="AlmaLinux"
 VERSION_ID="9.1"`,
-			wantType:    utils.OSTypeAlma,
+			wantType:    utils.OSTypeAlmaLinux,
 			wantVersion: "9.1",
 		},
 		{
@@ -315,7 +315,7 @@ ALMALINUX_MANTISBT_PROJECT="AlmaLinux-9"
 ALMALINUX_MANTISBT_PROJECT_VERSION="9.4"
 REDHAT_SUPPORT_PRODUCT="AlmaLinux"
 REDHAT_SUPPORT_PRODUCT_VERSION="9.4"`,
-			wantType:    utils.OSTypeAlma,
+			wantType:    utils.OSTypeAlmaLinux,
 			wantVersion: "9.4",
 		},
 		{

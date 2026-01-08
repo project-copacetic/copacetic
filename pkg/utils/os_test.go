@@ -55,9 +55,10 @@ func TestCanonicalOSType(t *testing.T) {
 		{name: "oracle exact", input: "oracle", expected: OSTypeOracle},
 		{name: "Oracle Linux Server", input: "Oracle Linux Server", expected: OSTypeOracle},
 
-		// AlmaLinux variations
+		// AlmaLinux variations - note: "almalinux" matches before "alma"
 		{name: "alma exact", input: "alma", expected: OSTypeAlma},
-		{name: "AlmaLinux", input: "AlmaLinux", expected: OSTypeAlma},
+		{name: "AlmaLinux", input: "AlmaLinux", expected: OSTypeAlmaLinux},
+		{name: "almalinux lowercase", input: "almalinux", expected: OSTypeAlmaLinux},
 
 		// SLES variations
 		{name: "sles exact", input: "sles", expected: OSTypeSLES},
