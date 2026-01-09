@@ -458,12 +458,34 @@ func TestIsSupportedOsType(t *testing.T) {
 		utils.OSTypeRocky,
 		utils.OSTypeAmazon,
 		utils.OSTypeAlma,
+		utils.OSTypeSLES,
+		utils.OSTypeOpenSUSELeap,
+		utils.OSTypeOpenSUSETW,
 	}
 	for _, os := range supported {
 		if !isSupportedOsType(os) {
 			t.Errorf("expected %s to be supported", os)
 		}
 	}
+
+	// Test non-canonical inputs that should be canonicalized to supported types
+	// This tests the integration with utils.CanonicalOSType
+	nonCanonicalSupported := []string{
+		"opensuse leap",       // space variant (older Trivy versions)
+		"opensuse tumbleweed", // space variant (older Trivy versions)
+		"opensuse.leap",       // dot variant
+		"opensuse.tumbleweed", // dot variant
+		"suse linux enterprise server",
+		"SLES",
+		"openSUSE Leap",
+		"openSUSE Tumbleweed",
+	}
+	for _, os := range nonCanonicalSupported {
+		if !isSupportedOsType(os) {
+			t.Errorf("expected non-canonical %q to be supported after canonicalization", os)
+		}
+	}
+
 	unsupported := []string{"windows", "freebsd", "plan9"}
 	for _, os := range unsupported {
 		if isSupportedOsType(os) {
