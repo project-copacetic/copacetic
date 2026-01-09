@@ -630,31 +630,6 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	return err == nil
 }
 
-// checkForZypperUpgrades checks if there are any available updates for SUSE images using zypper.
-// Returns true if updates are available, false otherwise.
-func (rm *rpmManager) checkForZypperUpgrades(ctx context.Context, toolingBase *llb.State, chrootDir string) bool {
-	// Use zypper list-updates to check for available updates in the chroot
-	// The command returns 0 if updates are available (with output), non-zero or empty output if none
-	checkCmd := `
-		zypper --non-interactive refresh
-		updates=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" lu 2>/dev/null | grep -E "^v \|" || true)
-		if [ -n "$updates" ]; then
-			echo "updates_available" > /updates.txt
-		fi
-	`
-
-	stateWithCheck := toolingBase.Run(
-		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
-		buildkit.Sh(checkCmd),
-		llb.WithProxy(utils.GetProxy()),
-		llb.WithCustomName("Checking for available zypper updates"),
-	).AddMount(chrootDir, rm.config.ImageState)
-
-	// If we can extract updates.txt, updates are available
-	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, "/updates.txt")
-	return err == nil
-}
-
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
@@ -879,6 +854,12 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) { //nolint:lll
 	pkgs := ""
 
+	// Use the patched image state if available (for re-patching scenarios)
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
 	// Spin up a build tooling container to fetch and install packages
 	// inside a chroot directory to create the patch layer.
 
@@ -897,7 +878,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	chrootDir := "/tmp/rootfs"
 	manifestFile := "/tmp/manifest"
 
-	// If specific updates provided, parse into pkg names, else check for available updates first
+	// If specific updates provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
 		pkgStrings := []string{}
@@ -905,19 +886,22 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 			pkgStrings = append(pkgStrings, u.Name)
 		}
 		pkgs = strings.Join(pkgStrings, " ")
-	} else if !rm.checkForZypperUpgrades(ctx, &toolingBase, chrootDir) {
-		// Check if updates are available before proceeding (consistent with other RPM paths)
-		log.Info("No upgradable packages found for this image (zypper path).")
-		return nil, nil, types.ErrNoUpdatesFound
 	}
 
 	// Build the zypper command with error handling based on ignoreErrors
+	// We capture zypper's output to detect if any packages were actually updated
+	// Zypper outputs "Nothing to do." when no updates are available
+	updatesMarkerFile := "/tmp/updates_applied.txt"
 	var zypperCmd string
 	if ignoreErrors {
 		zypperCmd = `
                 if ! [[ -e "${COPA_RPM_DB_FILE}" ]]; then echo "RPM DB not found"; exit 1; fi
                 zypper --non-interactive refresh
-                zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s || true
+                output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1) || true
+                echo "$output"
+                if ! echo "$output" | grep -q "Nothing to do."; then
+                    echo "updates_applied" > "${COPA_UPDATES_MARKER}"
+                fi
                 zypper --installroot "${COPA_CHROOT_DIR}" clean --all
                 rm -rf "${COPA_CHROOT_DIR}"/var/cache/zypp/* "${COPA_CHROOT_DIR}"/var/log/zypp/*
                 rm -rf "${COPA_CHROOT_DIR}"/var/tmp/* "${COPA_CHROOT_DIR}"/usr/share/doc/packages/*
@@ -927,7 +911,13 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 		zypperCmd = `
                 if ! [[ -e "${COPA_RPM_DB_FILE}" ]]; then echo "RPM DB not found"; exit 1; fi
                 zypper --non-interactive refresh
-                zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s
+                output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1)
+                zypper_exit=$?
+                echo "$output"
+                if [ $zypper_exit -ne 0 ]; then exit $zypper_exit; fi
+                if ! echo "$output" | grep -q "Nothing to do."; then
+                    echo "updates_applied" > "${COPA_UPDATES_MARKER}"
+                fi
                 zypper --installroot "${COPA_CHROOT_DIR}" clean --all
                 rm -rf "${COPA_CHROOT_DIR}"/var/cache/zypp/* "${COPA_CHROOT_DIR}"/var/log/zypp/*
                 rm -rf "${COPA_CHROOT_DIR}"/var/tmp/* "${COPA_CHROOT_DIR}"/usr/share/doc/packages/*
@@ -936,31 +926,46 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	}
 	zypperCmd = fmt.Sprintf(zypperCmd, pkgs, pkgs)
 
-	downloaded := toolingBase.Run(
+	run := toolingBase.Run(
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
 		llb.AddEnv("COPA_RPM_DB_FILE", filepath.Join(chrootDir, rpmLibPath, rpmNDB)),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
+		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
 		buildkit.Sh(zypperCmd),
 		llb.WithProxy(utils.GetProxy()),
-	).AddMount(chrootDir, rm.config.ImageState)
+	)
+
+	downloaded := run.AddMount(chrootDir, imageStateCurrent)
+	toolingRoot := run.Root()
+
+	// For no-report mode, check if any updates were actually applied
+	if updates == nil {
+		_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile)
+		if err != nil {
+			log.Info("No upgradable packages found for this image (zypper path).")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
+	}
 
 	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &downloaded, manifestFile)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	withoutManifest := downloaded.File(llb.Rm(manifestFile))
-	diffBase := llb.Diff(rm.config.ImageState, withoutManifest)
-	downloaded = llb.Merge([]llb.State{diffBase, withoutManifest})
+	// Remove the manifest file from the patched image
+	patchedState := downloaded.File(llb.Rm(manifestFile))
 
 	// If the image has been patched before, diff the base image and patched image to retain previous patches
 	if rm.config.PatchedConfigData != nil {
 		// Diff the base image and patched image to get previous patches
 		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
 
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(rm.config.ImageState, patchedState)
+
 		// Merging these two diffs will discard everything in the filesystem that hasn't changed
 		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
-		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, downloaded})
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
 		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 
 		// Merge previous and new patches into the base image
@@ -969,11 +974,11 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 		return &completePatchMerge, resultBytes, nil
 	}
 
-	// Diff unpacked packages layers from previous and merge with target
-	diff := llb.Diff(rm.config.ImageState, downloaded)
-	merged := llb.Merge([]llb.State{llb.Scratch(), rm.config.ImageState, diff})
+	// Diff the installed updates and merge that into the target image
+	patchDiff := llb.Diff(rm.config.ImageState, patchedState)
+	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
 
-	return &merged, resultBytes, nil
+	return &patchMerge, resultBytes, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {
