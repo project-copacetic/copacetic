@@ -37,7 +37,7 @@ require (
 	github.com/tonistiigi/fsutil v0.0.0-20250605211040-586307ad452f
 	github.com/vito/progrock v0.10.1
 	golang.org/x/exp v0.0.0-20250911091902-df9299821621
-	golang.org/x/sync v0.18.0
+	golang.org/x/sync v0.19.0
 	golang.org/x/term v0.38.0
 	google.golang.org/grpc v1.78.0
 	gopkg.in/yaml.v3 v3.0.1
