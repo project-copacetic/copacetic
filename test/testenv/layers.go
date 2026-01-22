@@ -43,7 +43,7 @@ func GetOriginalImageLayerCount(ctx context.Context, c gwclient.Client, imageNam
 		},
 	}
 	if platform != nil {
-		resolveOpt.Platform = platform
+		resolveOpt.ImageOpt.Platform = platform
 	}
 
 	_, _, configData, err := c.ResolveImageConfig(ctx, normalizedImageName, resolveOpt)
