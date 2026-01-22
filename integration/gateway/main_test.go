@@ -10,6 +10,10 @@ import (
 	"os"
 	"testing"
 
+	// Register connection helpers for buildkit (required for podman-container://, docker-container://, etc.)
+	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
+	_ "github.com/moby/buildkit/client/connhelper/podmancontainer"
+
 	"github.com/project-copacetic/copacetic/test/testenv"
 )
 
