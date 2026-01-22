@@ -114,15 +114,30 @@ func isLessThanRPMVersion(v1, v2 string) bool {
 // Map the target image OSType & OSVersion to an appropriate tooling image.
 func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVersion string, useCachePrefix bool) string {
 	var image, version string
+	imagePrefix := "mcr.microsoft.com"
 
-	if osType == utils.OSTypeAzureLinux {
+	switch {
+	case osType == utils.OSTypeAzureLinux:
 		image = "azurelinux/base/core"
 		if strings.Contains(osVersion, "3.0") {
 			version = "3.0"
 		} else {
 			version = osVersion
 		}
-	} else {
+	case utils.IsSUSEImage(osType):
+		imagePrefix = "registry.opensuse.org"
+		version = osVersion
+
+		switch osType {
+		case utils.OSTypeSLES:
+			imagePrefix = "registry.suse.com"
+			image = "bci/bci-base"
+		case utils.OSTypeOpenSUSELeap:
+			image = "opensuse/leap"
+		case utils.OSTypeOpenSUSETW:
+			image = "opensuse/tumbleweed"
+		}
+	default:
 		// Standardize on cbl-mariner as tooling image base as redhat/ubi does not provide static busybox binary
 		image = "cbl-mariner/base/core"
 		version = "2.0"
@@ -138,7 +153,6 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 
 	log.Debugf("Using %s:%s as basis for tooling image", image, version)
 
-	imagePrefix := "mcr.microsoft.com"
 	if useCachePrefix {
 		imagePrefix = imageCachePrefix
 	}
@@ -249,12 +263,18 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 
 	var updatedImageState *llb.State
 	var resultManifestBytes []byte
-	if rm.isDistroless {
+	switch {
+	case rm.isDistroless:
 		updatedImageState, resultManifestBytes, err = rm.unpackAndMergeUpdates(ctx, updates, toolImageName, imagePlatform, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
-	} else {
+	case utils.IsSUSEImage(rm.osType):
+		updatedImageState, resultManifestBytes, err = rm.zypperChrootInstallUpdates(ctx, updates, toolImageName, imagePlatform, ignoreErrors)
+		if err != nil {
+			return nil, nil, err
+		}
+	default:
 		updatedImageState, resultManifestBytes, err = rm.installUpdates(ctx, updates, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
@@ -277,6 +297,11 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 	imageStateCurrent := rm.config.ImageState
 	if rm.config.PatchedConfigData != nil {
 		imageStateCurrent = rm.config.PatchedImageState
+	}
+
+	// For SUSE based images we don't need to install all the extra RPM tooling.
+	if utils.IsSUSEImage(rm.osType) {
+		return nil
 	}
 
 	// Spin up a build tooling container to pull and unpack packages to create patch layer.
@@ -478,7 +503,7 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		imageStateCurrent = rm.config.PatchedImageState
 	}
 
-	// If specific updates, provided, parse into pkg names, else will update all
+	// If specific updates provided, parse into pkg names, else will update all
 	if updates != nil {
 		// Format the requested updates into a space-separated string
 		pkgStrings := []string{}
@@ -824,6 +849,136 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	merged := llb.Merge([]llb.State{llb.Scratch(), rm.config.ImageState, diff})
 
 	return &merged, resultBytes, nil
+}
+
+func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) { //nolint:lll
+	pkgs := ""
+
+	// Use the patched image state if available (for re-patching scenarios)
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
+	// Spin up a build tooling container to fetch and install packages
+	// inside a chroot directory to create the patch layer.
+
+	// First try with the specified platform, fallback to host platform if it fails
+	toolingBase, err := tryImage(ctx, toolImage, rm.config.Client, platform)
+	if err != nil {
+		log.Debugf("Failed to resolve tooling image %s with platform %v, falling back to host platform: %v", toolImage, platform, err)
+		// Try again without platform specification (uses host platform)
+		toolingBase, err = tryImage(ctx, toolImage, rm.config.Client, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve tooling image %s even with host platform fallback: %w", toolImage, err)
+		}
+		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
+	}
+
+	chrootDir := "/tmp/rootfs"
+	manifestFile := "/tmp/manifest"
+
+	// If specific updates provided, parse into pkg names, else will update all
+	if updates != nil {
+		// Format the requested updates into a space-separated string
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		pkgs = strings.Join(pkgStrings, " ")
+	}
+
+	// Build the zypper command with error handling based on ignoreErrors
+	// We capture zypper's output to detect if any packages were actually updated
+	// Zypper outputs "Nothing to do." when no updates are available
+	updatesMarkerFile := "/tmp/updates_applied.txt"
+	var zypperCmd string
+	if ignoreErrors {
+		zypperCmd = `
+                if ! [[ -e "${COPA_RPM_DB_FILE}" ]]; then echo "RPM DB not found"; exit 1; fi
+                zypper --non-interactive refresh
+                output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1) || true
+                echo "$output"
+                if ! echo "$output" | grep -q "Nothing to do."; then
+                    echo "updates_applied" > "${COPA_UPDATES_MARKER}"
+                fi
+                zypper --installroot "${COPA_CHROOT_DIR}" clean --all
+                rm -rf "${COPA_CHROOT_DIR}"/var/cache/zypp/* "${COPA_CHROOT_DIR}"/var/log/zypp/*
+                rm -rf "${COPA_CHROOT_DIR}"/var/tmp/* "${COPA_CHROOT_DIR}"/usr/share/doc/packages/*
+                rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
+	`
+	} else {
+		zypperCmd = `
+                if ! [[ -e "${COPA_RPM_DB_FILE}" ]]; then echo "RPM DB not found"; exit 1; fi
+                zypper --non-interactive refresh
+                output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1)
+                zypper_exit=$?
+                echo "$output"
+                if [ $zypper_exit -ne 0 ]; then exit $zypper_exit; fi
+                if ! echo "$output" | grep -q "Nothing to do."; then
+                    echo "updates_applied" > "${COPA_UPDATES_MARKER}"
+                fi
+                zypper --installroot "${COPA_CHROOT_DIR}" clean --all
+                rm -rf "${COPA_CHROOT_DIR}"/var/cache/zypp/* "${COPA_CHROOT_DIR}"/var/log/zypp/*
+                rm -rf "${COPA_CHROOT_DIR}"/var/tmp/* "${COPA_CHROOT_DIR}"/usr/share/doc/packages/*
+                rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
+	`
+	}
+	zypperCmd = fmt.Sprintf(zypperCmd, pkgs, pkgs)
+
+	run := toolingBase.Run(
+		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
+		llb.AddEnv("COPA_RPM_DB_FILE", filepath.Join(chrootDir, rpmLibPath, rpmNDB)),
+		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
+		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
+		buildkit.Sh(zypperCmd),
+		llb.WithProxy(utils.GetProxy()),
+	)
+
+	downloaded := run.AddMount(chrootDir, imageStateCurrent)
+	toolingRoot := run.Root()
+
+	// For no-report mode, check if any updates were actually applied
+	if updates == nil {
+		_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile)
+		if err != nil {
+			log.Info("No upgradable packages found for this image (zypper path).")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
+	}
+
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &downloaded, manifestFile)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Remove the manifest file from the patched image
+	patchedState := downloaded.File(llb.Rm(manifestFile))
+
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if rm.config.PatchedConfigData != nil {
+		// Diff the base image and patched image to get previous patches
+		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+
+		// Diff the base image and new patches
+		newPatchDiff := llb.Diff(rm.config.ImageState, patchedState)
+
+		// Merging these two diffs will discard everything in the filesystem that hasn't changed
+		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
+
+		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultBytes, nil
+	}
+
+	// Diff the installed updates and merge that into the target image
+	patchDiff := llb.Diff(rm.config.ImageState, patchedState)
+	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
+
+	return &patchMerge, resultBytes, nil
 }
 
 func (rm *rpmManager) GetPackageType() string {

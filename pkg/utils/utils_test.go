@@ -143,6 +143,30 @@ func TestIsNonEmptyFile(t *testing.T) {
 	}
 }
 
+func TestIsSUSEImage(t *testing.T) {
+	type args struct {
+		osType string
+	}
+	tests := []struct {
+		name string
+		args args
+		want bool
+	}{
+		{"SLES_OS_Type", args{"sles"}, true},
+		{"OpenSUSE_Leap_OS_Type", args{"opensuse-leap"}, true},
+		{"OpenSUSE_Tumbleweed_OS_Type", args{"opensuse-tumbleweed"}, true},
+		{"Rocky_OS_Type", args{"rocky"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsSUSEImage(tt.args.osType); got != tt.want {
+				t.Errorf("IsSUSEImage() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetProxy(t *testing.T) {
 	var got llb.ProxyEnv
 	var want llb.ProxyEnv
@@ -230,20 +254,23 @@ func TestDeduplicateStringSlice(t *testing.T) {
 
 func TestCanonicalPkgManagerType(t *testing.T) {
 	tests := map[string]string{
-		"alpine":         "apk",
-		"AlPiNe":         "apk",
-		"debian":         "deb",
-		"ubuntu":         "deb",
-		"rpm":            "rpm",
-		"centos":         "rpm",
-		"rocky":          "rpm",
-		"alma":           "rpm",
-		"almalinux":      "rpm",
-		"amazon":         "rpm",
-		"oracle":         "rpm",
-		"cbl-mariner":    "rpm",
-		"azurelinux":     "rpm",
-		"unknown-distro": "unknown-distro", // passthrough
+		"alpine":              "apk",
+		"AlPiNe":              "apk",
+		"debian":              "deb",
+		"ubuntu":              "deb",
+		"rpm":                 "rpm",
+		"centos":              "rpm",
+		"rocky":               "rpm",
+		"alma":                "rpm",
+		"almalinux":           "rpm",
+		"amazon":              "rpm",
+		"oracle":              "rpm",
+		"cbl-mariner":         "rpm",
+		"azurelinux":          "rpm",
+		"sles":                "rpm",
+		"opensuse-leap":       "rpm",
+		"opensuse-tumbleweed": "rpm",
+		"unknown-distro":      "unknown-distro", // passthrough
 	}
 	for raw, want := range tests {
 		if got := CanonicalPkgManagerType(raw); got != want {

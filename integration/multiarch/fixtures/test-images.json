@@ -93,5 +93,32 @@
       "linux/amd64",
       "linux/arm64"
     ]
+  },
+  {
+    "originalImage": "registry.suse.com/bci/bci-base",
+    "localImage": "localhost:5000/bci-bci-base",
+    "tag": "15.7-5.8.29",
+    "distro": "sles",
+    "description": "Multi-platform bci/bci-base:15.7-5.8.29, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "skipAnnotations": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "registry.suse.com/bci/bci-base",
+    "localImage": "localhost:5000/bci-bci-base",
+    "tag": "15.7-5.8.29",
+    "distro": "sles",
+    "description": "Multi-platform bci/bci-base:15.7-5.8.29, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
   }
 ]
