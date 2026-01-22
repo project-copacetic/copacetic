@@ -29,6 +29,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/daemon"
@@ -84,7 +85,7 @@ func InitializeBuildkitConfig(
 		},
 	}
 	if platform != nil {
-		resolveOpt.Platform = platform
+		resolveOpt.ImageOpt.Platform = platform
 	}
 	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, resolveOpt)
 	if err != nil {
@@ -178,7 +179,7 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 }
 
 func isSupportedOsType(osType string) bool {
-	switch osType {
+	switch utils.CanonicalOSType(osType) {
 	case utils.OSTypeAlpine,
 		utils.OSTypeDebian,
 		utils.OSTypeUbuntu,
@@ -190,7 +191,10 @@ func isSupportedOsType(osType string) bool {
 		utils.OSTypeRocky,
 		utils.OSTypeAmazon,
 		utils.OSTypeAlma,
-		utils.OSTypeAlmaLinux:
+		utils.OSTypeAlmaLinux,
+		utils.OSTypeSLES,
+		utils.OSTypeOpenSUSELeap,
+		utils.OSTypeOpenSUSETW:
 		return true
 	default:
 		return false
@@ -304,7 +308,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	desc, err := TryGetManifestFromLocal(ref)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
-		desc, err = remote.Get(ref)
+		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
 			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
 		}
@@ -1445,7 +1449,7 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 	isLocal := (err == nil)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
-		desc, err = remote.Get(ref)
+		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
 			return nil, fmt.Errorf("failed to get remote descriptor: %w", err)
 		}
@@ -1552,7 +1556,7 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 						platformDesc, err := TryGetManifestFromLocal(platformRef)
 						if err != nil {
 							// Fall back to remote if local fails
-							img, err = remote.Image(platformRef)
+							img, err = remote.Image(platformRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 							if err != nil {
 								return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
 							}
@@ -1788,7 +1792,7 @@ func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.N
 	}
 
 	// Get the remote descriptor
-	desc, err := remote.Get(ref)
+	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
 		return fmt.Errorf("failed to get remote descriptor: %w", err)
 	}
