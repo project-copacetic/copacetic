@@ -125,7 +125,7 @@ func TestPatchDebian(t *testing.T) {
 					VulnerabilityID:  "CVE-2023-TEST",
 				},
 			},
-			expectedPkgMgr: []string{"apt", "dpkg"},
+			expectedPkgMgr: []string{"deb"},
 			osReleaseMatch: "Debian",
 		},
 		{
@@ -134,7 +134,7 @@ func TestPatchDebian(t *testing.T) {
 			osType:         "debian",
 			osVersion:      "11",
 			packages:       nil,
-			expectedPkgMgr: []string{"apt", "dpkg"},
+			expectedPkgMgr: []string{"deb"},
 			osReleaseMatch: "Debian",
 		},
 		{
@@ -150,7 +150,7 @@ func TestPatchDebian(t *testing.T) {
 					VulnerabilityID:  "CVE-2023-TEST",
 				},
 			},
-			expectedPkgMgr: []string{"apt", "dpkg"},
+			expectedPkgMgr: []string{"deb"},
 			osReleaseMatch: "Debian",
 		},
 	}
@@ -178,7 +178,7 @@ func TestPatchDistroless(t *testing.T) {
 					VulnerabilityID:  "CVE-2023-TEST",
 				},
 			},
-			expectedPkgMgr: []string{"dpkg"},
+			expectedPkgMgr: []string{"deb"},
 			osReleaseMatch: "Debian",
 		},
 		{
