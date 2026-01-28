@@ -42,6 +42,7 @@ const sidebars = {
         'scanner-plugins',
         'bulk-image-patching',
         "multiplatform-patching",
+        'demos',
       ],
     },
     {

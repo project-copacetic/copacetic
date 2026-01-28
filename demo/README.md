@@ -1,3 +1,50 @@
-# Demo
+# Demos
 
-This demo leverages work from https://github.com/paxtonhare/demo-magic. Run `copa-demo.sh` from a shell to run the demo. Once complete, you can run `copa-demo-cleanup.sh` to remove outputs from the demo.
+This directory contains demo scripts that use [demo-magic](https://github.com/paxtonhare/demo-magic) to walk through Copa patching workflows.
+
+## Prerequisites
+
+- [Copa](https://github.com/project-copacetic/copacetic) installed
+- Docker with buildx
+- [Trivy](https://aquasecurity.github.io/trivy/) scanner
+
+## Available Demos
+
+| Script | Description |
+|--------|-------------|
+| `copa-demo.sh` | OS-level patching of `nginx:1.21.6` |
+| `copa-demo-dotnet.sh` | OS + .NET library patching of a .NET sample image |
+| `copa-demo-nodejs.sh` | OS + Node.js library patching of `node:18` |
+| `copa-demo-python.sh` | OS + Python library patching of `python:3.11.0` |
+
+## Running a Demo
+
+```bash
+cd demo
+bash copa-demo.sh
+```
+
+The language patching demos require the `COPA_EXPERIMENTAL=1` environment variable, which is set automatically within each script.
+
+## Cleanup
+
+Each demo has a matching cleanup script that removes the buildx instance, patched/original images, and scan output:
+
+| Demo | Cleanup |
+|------|---------|
+| `copa-demo.sh` | `copa-demo-cleanup.sh` |
+| `copa-demo-dotnet.sh` | `copa-demo-dotnet-cleanup.sh` |
+| `copa-demo-nodejs.sh` | `copa-demo-nodejs-cleanup.sh` |
+| `copa-demo-python.sh` | `copa-demo-python-cleanup.sh` |
+
+```bash
+bash copa-demo-python-cleanup.sh
+```
+
+## Recording
+
+To record a demo as an asciinema cast for the website:
+
+```bash
+asciinema rec --command "bash copa-demo-python.sh" ../website/static/casts/demo-python.cast
+```

@@ -180,7 +180,7 @@ func extractPatchLayer(
 
 	// Channel to collect the patch layer data
 	patchChannel := make(chan []byte, 1)
-	buildChannel := make(chan *client.SolveStatus)
+	buildChannel := make(chan *client.SolveStatus, 128)
 
 	eg, ctx := errgroup.WithContext(ctx)
 

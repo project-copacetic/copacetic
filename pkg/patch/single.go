@@ -179,8 +179,12 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	// Create channels for build coordination
-	buildChannel := make(chan *client.SolveStatus)
+	// Create channels for build coordination.
+	// Buffer the channel to prevent backpressure from the progress display
+	// blocking BuildKit. The progrock TUI processes events slower than
+	// PlainMode due to rendering overhead; without a buffer, builds that
+	// generate heavy output (e.g. .NET patching) can stall indefinitely.
+	buildChannel := make(chan *client.SolveStatus, 128)
 	eg, ctx := errgroup.WithContext(ctx)
 
 	// Resolve image reference for BuildKit operations
