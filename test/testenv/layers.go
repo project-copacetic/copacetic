@@ -2,15 +2,17 @@ package testenv
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
-	securejoin "github.com/cyphar/filepath-securejoin"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -114,13 +116,6 @@ func (l *LayerCountTest) ExportAndCountLayers(
 		return nil, fmt.Errorf("failed to get buildkit client: %w", err)
 	}
 
-	// Create temp directory for export
-	exportDir := filepath.Join(l.outputDir, "oci-export")
-	if err := os.MkdirAll(exportDir, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create export directory: %w", err)
-	}
-	defer os.RemoveAll(exportDir)
-
 	// Create tarball path
 	tarPath := filepath.Join(l.outputDir, "image.tar")
 	defer os.Remove(tarPath)
@@ -150,29 +145,20 @@ func (l *LayerCountTest) ExportAndCountLayers(
 		return nil, fmt.Errorf("failed to solve/export: %w", err)
 	}
 
-	// Extract and parse the OCI layout
+	// Parse the OCI tar by streaming through it
 	return l.parseOCITar(tarPath, platform)
 }
 
-// parseOCITar extracts an OCI tar and parses its manifest to count layers.
+// parseOCITar opens an OCI tar as an fs.FS and reads the manifest to count layers.
 // Note: platform parameter is reserved for future multi-platform OCI layout support.
 func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageLayerInfo, error) {
-	// Create temp directory for extraction
-	extractDir := filepath.Join(l.outputDir, "extract")
-	if err := os.MkdirAll(extractDir, 0o755); err != nil {
-		return nil, fmt.Errorf("failed to create extract directory: %w", err)
-	}
-	defer os.RemoveAll(extractDir)
-
-	// Extract tar using tar command
-	// This is simpler than pulling in archive/tar
-	if err := extractTar(tarPath, extractDir); err != nil {
-		return nil, fmt.Errorf("failed to extract tar: %w", err)
+	fsys, err := newTarFS(tarPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read tar: %w", err)
 	}
 
 	// Read index.json
-	indexPath := filepath.Join(extractDir, "index.json")
-	indexData, err := os.ReadFile(indexPath)
+	indexData, err := fs.ReadFile(fsys, "index.json")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read index.json: %w", err)
 	}
@@ -194,28 +180,21 @@ func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageL
 
 	// Read the manifest blob
 	manifestDigest := index.Manifests[0].Digest
-	manifestHashPath, err := digestToPath(manifestDigest)
+	manifestPath, err := digestToPath(manifestDigest)
 	if err != nil {
 		return nil, fmt.Errorf("invalid manifest digest: %w", err)
 	}
 
-	// Try standard OCI blob path structure (blobs/sha256/abc123...)
-	blobPath := filepath.Join(extractDir, "blobs", manifestHashPath)
-
-	// Try alternate path structure with nested directories (blobs/sha256/ab/c123...)
-	if _, err := os.Stat(blobPath); os.IsNotExist(err) {
+	manifestData, err := fs.ReadFile(fsys, filepath.Join("blobs", manifestPath))
+	if err != nil {
+		// Try alternate path with nested directories (blobs/sha256/ab/c123...)
 		algo, hash, _ := parseDigest(manifestDigest)
 		if len(hash) >= 2 {
-			altPath := filepath.Join(extractDir, "blobs", algo, hash[:2], hash[2:])
-			if _, err := os.Stat(altPath); err == nil {
-				blobPath = altPath
-			}
+			manifestData, err = fs.ReadFile(fsys, filepath.Join("blobs", algo, hash[:2], hash[2:]))
 		}
-	}
-
-	manifestData, err := os.ReadFile(blobPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read manifest blob: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("manifest blob not found in tar: %w", err)
+		}
 	}
 
 	var manifest struct {
@@ -233,83 +212,116 @@ func (l *LayerCountTest) parseOCITar(tarPath string, _ *specs.Platform) (*ImageL
 
 	// Read config blob to get diff_ids
 	configDigest := manifest.Config.Digest
-	configHashPath, err := digestToPath(configDigest)
+	configPath, err := digestToPath(configDigest)
 	if err != nil {
 		return nil, fmt.Errorf("invalid config digest: %w", err)
 	}
-	configBlobPath := filepath.Join(extractDir, "blobs", configHashPath)
-	configData, err := os.ReadFile(configBlobPath)
+
+	configData, err := fs.ReadFile(fsys, filepath.Join("blobs", configPath))
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config blob: %w", err)
+		return nil, fmt.Errorf("config blob not found in tar: %w", err)
 	}
 
 	return parseImageLayerInfo(configData)
 }
 
-// extractTar extracts a tar file to a directory.
-// It uses securejoin to prevent Zip Slip (path traversal) attacks.
-func extractTar(tarPath, destDir string) error {
+// tarFS implements io/fs.FS over a tar file by reading small metadata files into memory.
+// Large entries (layer blobs) are skipped since we only need JSON metadata.
+type tarFS struct {
+	files map[string]*tarEntry
+}
+
+type tarEntry struct {
+	data    []byte
+	size    int64
+	modTime time.Time
+}
+
+// newTarFS streams through a tar file and indexes small files (< 1MB) into memory.
+func newTarFS(tarPath string) (*tarFS, error) {
 	f, err := os.Open(tarPath)
 	if err != nil {
-		return fmt.Errorf("failed to open tar file: %w", err)
+		return nil, err
 	}
 	defer f.Close()
 
+	tfs := &tarFS{files: make(map[string]*tarEntry)}
 	tr := tar.NewReader(f)
+
 	for {
-		header, err := tr.Next()
+		hdr, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("failed to read tar header: %w", err)
+			return nil, err
 		}
 
-		// Use securejoin to safely join paths and prevent Zip Slip attacks.
-		// This is the CodeQL-recognized solution for path traversal prevention.
-		target, err := securejoin.SecureJoin(destDir, header.Name)
-		if err != nil {
-			return fmt.Errorf("invalid tar path %q: %w", header.Name, err)
-		}
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return fmt.Errorf("failed to create directory: %w", err)
-			}
-		case tar.TypeReg:
-			// Ensure parent directory exists
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return fmt.Errorf("failed to create parent directory: %w", err)
-			}
-			if err := extractFile(target, tr, header.Size); err != nil {
-				return err
-			}
-		case tar.TypeSymlink:
-			// Skip symlinks entirely - they're not needed for OCI layer inspection
-			// which only reads JSON metadata files (index.json, manifests, configs).
-			// This also avoids potential symlink-based path traversal attacks.
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
+
+		// Skip large layer blobs — metadata files are small JSON
+		const maxSize = 1 << 20 // 1MB
+		if hdr.Size > maxSize {
+			continue
+		}
+
+		name := filepath.Clean(hdr.Name)
+		data, err := io.ReadAll(io.LimitReader(tr, hdr.Size))
+		if err != nil {
+			return nil, err
+		}
+
+		tfs.files[name] = &tarEntry{
+			data:    data,
+			size:    hdr.Size,
+			modTime: hdr.ModTime,
+		}
 	}
-	return nil
+
+	return tfs, nil
 }
 
-// extractFile extracts a single file from the tar reader to the target path.
-// The target path must have been validated by securejoin.SecureJoin before calling this.
-func extractFile(target string, tr *tar.Reader, size int64) error {
-	outFile, err := os.Create(target) // #nosec G304 -- path is validated by securejoin.SecureJoin
-	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
+// Open implements fs.FS.
+func (tfs *tarFS) Open(name string) (fs.File, error) {
+	name = filepath.Clean(name)
+	entry, ok := tfs.files[name]
+	if !ok {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrNotExist}
 	}
-	defer outFile.Close()
-
-	// Use io.Copy with a LimitReader to prevent decompression bombs
-	if _, err := io.Copy(outFile, io.LimitReader(tr, size)); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
-	}
-	return nil
+	return &tarFile{
+		Reader: bytes.NewReader(entry.data),
+		entry:  entry,
+		name:   name,
+	}, nil
 }
+
+// tarFile implements fs.File.
+type tarFile struct {
+	*bytes.Reader
+	entry *tarEntry
+	name  string
+}
+
+func (f *tarFile) Stat() (fs.FileInfo, error) {
+	return &tarFileInfo{name: filepath.Base(f.name), entry: f.entry}, nil
+}
+
+func (f *tarFile) Close() error { return nil }
+
+// tarFileInfo implements fs.FileInfo.
+type tarFileInfo struct {
+	name  string
+	entry *tarEntry
+}
+
+func (fi *tarFileInfo) Name() string       { return fi.name }
+func (fi *tarFileInfo) Size() int64        { return fi.entry.size }
+func (fi *tarFileInfo) Mode() fs.FileMode  { return 0o444 }
+func (fi *tarFileInfo) ModTime() time.Time { return fi.entry.modTime }
+func (fi *tarFileInfo) IsDir() bool        { return false }
+func (fi *tarFileInfo) Sys() any           { return nil }
 
 // parseDigest parses a digest string (e.g., "sha256:abc123...") into algorithm and hash.
 // Returns an error if the format is invalid.

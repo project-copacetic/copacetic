@@ -16,6 +16,8 @@ import (
 // TestInspectARM64Image tests that we can inspect an ARM64 image.
 // This verifies cross-architecture support in the gateway testing framework.
 func TestInspectARM64Image(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -52,6 +54,8 @@ func TestInspectARM64Image(t *testing.T) {
 
 // TestInspectARM64MarinerImage tests that we can inspect an ARM64 Mariner image.
 func TestInspectARM64MarinerImage(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -87,6 +91,8 @@ func TestInspectARM64MarinerImage(t *testing.T) {
 
 // TestPatchARM64Image tests patching an ARM64 image.
 func TestPatchARM64Image(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided (set COPA_BUILDKIT_ADDR or -addr flag)")
 	}
@@ -127,6 +133,8 @@ func TestPatchARM64Image(t *testing.T) {
 
 // TestLayerCountARM64 tests layer count retrieval for ARM64 images.
 func TestLayerCountARM64(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -151,6 +159,8 @@ func TestLayerCountARM64(t *testing.T) {
 
 // TestMultiPlatformImageResolution tests resolving images with multiple platforms.
 func TestMultiPlatformImageResolution(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 

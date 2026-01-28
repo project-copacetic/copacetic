@@ -19,6 +19,8 @@ import (
 // TestGatewayClientAccess verifies that the test environment can access
 // the BuildKit gateway client and resolve an image.
 func TestGatewayClientAccess(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -39,6 +41,8 @@ func TestGatewayClientAccess(t *testing.T) {
 
 // TestGetOriginalLayerCount tests that we can retrieve layer count from an image.
 func TestGetOriginalLayerCount(t *testing.T) {
+	t.Parallel()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -70,6 +74,8 @@ type patchTestCase struct {
 
 // TestPatchAlpine tests Copa patching on Alpine Linux images.
 func TestPatchAlpine(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -107,6 +113,8 @@ func TestPatchAlpine(t *testing.T) {
 
 // TestPatchDebian tests Copa patching on Debian-based images.
 func TestPatchDebian(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -160,6 +168,8 @@ func TestPatchDebian(t *testing.T) {
 
 // TestPatchDistroless tests Copa patching on distroless images.
 func TestPatchDistroless(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -222,17 +232,19 @@ func TestPatchDistroless(t *testing.T) {
 func runPatchTests(t *testing.T, testCases []patchTestCase) {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	platform := &specs.Platform{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-
 	for i := range testCases {
 		tc := &testCases[i]
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+
+			platform := &specs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
 			var updates *unversioned.UpdateManifest
 			if tc.packages != nil {
 				updates = testenv.CreateUpdateManifest(tc.osType, tc.osVersion, "amd64", tc.packages)
@@ -279,6 +291,8 @@ func runPatchTests(t *testing.T, testCases []patchTestCase) {
 
 // TestPatchPreservesConfig verifies that image config is preserved after patching.
 func TestPatchPreservesConfig(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -323,6 +337,8 @@ func TestPatchPreservesConfig(t *testing.T) {
 
 // TestLayerCountAfterPatch verifies layer count behavior.
 func TestLayerCountAfterPatch(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}

@@ -16,6 +16,8 @@ import (
 
 // TestPatchRPM tests Copa patching on RPM-based distributions.
 func TestPatchRPM(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -210,6 +212,8 @@ func TestPatchRPM(t *testing.T) {
 
 // TestSymlinkPreservation verifies that symlinks are preserved after patching.
 func TestSymlinkPreservation(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -267,6 +271,8 @@ func TestSymlinkPreservation(t *testing.T) {
 
 // TestConfigFilePreservation verifies that config files are preserved after patching.
 func TestConfigFilePreservation(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -326,16 +332,18 @@ func TestConfigFilePreservation(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-	defer cancel()
-
-	platform := &specs.Platform{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+
+			platform := &specs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
 			updates := testenv.CreateUpdateManifest(tc.osType, tc.osVersion, "amd64", tc.packages)
 
 			err := testEnv.RunPatchTestWithInspection(ctx, t, testenv.PatchTestConfig{
@@ -370,6 +378,8 @@ func TestConfigFilePreservation(t *testing.T) {
 
 // TestPatchUpdateAll tests the "update all" mode across different distros.
 func TestPatchUpdateAll(t *testing.T) {
+	t.Parallel()
+
 	if buildkitAddr == "" {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
@@ -388,16 +398,18 @@ func TestPatchUpdateAll(t *testing.T) {
 		{"almalinux", "docker.io/library/almalinux:9", "AlmaLinux"},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
-	defer cancel()
-
-	platform := &specs.Platform{
-		OS:           "linux",
-		Architecture: "amd64",
-	}
-
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+			defer cancel()
+
+			platform := &specs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
 			// nil updates triggers "update all" mode
 			var updates *unversioned.UpdateManifest
 
