@@ -115,7 +115,7 @@ NOT_GO_BINARY
 			expected: []*BinaryInfo{
 				{
 					Path:          "/app",
-					GoVersion:    "go1.21.0",
+					GoVersion:     "go1.21.0",
 					ModulePath:    "github.com/example/app",
 					Main:          "github.com/example/app@v1.0.0",
 					Dependencies:  map[string]string{},
@@ -136,7 +136,7 @@ NOT_GO_BINARY
 			expected: []*BinaryInfo{
 				{
 					Path:          "/myapp",
-					GoVersion:    "go1.21.0",
+					GoVersion:     "go1.21.0",
 					ModulePath:    "github.com/example/myapp",
 					Main:          "github.com/example/myapp@v1.0.0",
 					Dependencies:  map[string]string{},
@@ -173,7 +173,7 @@ some garbage output
 			expected: []*BinaryInfo{
 				{
 					Path:          "/valid",
-					GoVersion:    "go1.21.0",
+					GoVersion:     "go1.21.0",
 					ModulePath:    "github.com/example/valid",
 					Dependencies:  map[string]string{},
 					BuildSettings: map[string]string{},
@@ -268,7 +268,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 					"CGO_ENABLED": "1",
 				},
 				Dependencies: map[string]string{},
-				VCS:           map[string]string{},
+				VCS:          map[string]string{},
 			},
 			expected: &BuildInfo{
 				GoVersion:    "1.21.0",
