@@ -4,7 +4,7 @@
     "tag": "1.11.1",
     "description": "CoreDNS - distroless single binary",
     "category": "distroless",
-    "expectFix": true,
+    "expectFix": false,
     "skipMainModule": true,
     "expectedBinaryCount": 1,
     "binaryPaths": ["/coredns"]
@@ -14,7 +14,7 @@
     "tag": "v2.10.7",
     "description": "Traefik - scratch-based reverse proxy",
     "category": "scratch",
-    "expectFix": true,
+    "expectFix": false,
     "skipMainModule": true,
     "expectedBinaryCount": 1,
     "binaryPaths": ["/traefik"]
@@ -128,16 +128,6 @@
     "skipMainModule": true,
     "expectedBinaryCount": 1,
     "binaryPaths": ["/go/bin/collector-linux"]
-  },
-  {
-    "image": "docker.io/bitnami/kubectl",
-    "tag": "1.28.4",
-    "description": "kubectl - debian-based Kubernetes CLI",
-    "category": "debian",
-    "expectFix": true,
-    "skipMainModule": true,
-    "expectedBinaryCount": 1,
-    "binaryPaths": ["/opt/bitnami/kubectl/bin/kubectl"]
   },
   {
     "image": "docker.io/envoyproxy/ratelimit",

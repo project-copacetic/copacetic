@@ -101,24 +101,27 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
-	// Create package manager helper
-	manager, err := setupPackageManager(ctx, c, config, opts)
-	if err != nil {
-		trySendError(opts.ErrorChannel, err)
-		return nil, err
-	}
+	// Determine if we need OS-level patching or language-only patching.
+	// Language-only mode applies when the report has lang updates but no OS updates
+	// (common for scratch/distroless/busybox Go binary images).
+	langOnlyMode := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) > 0
 
-	// Apply OS package patches only if there are OS updates to apply. For library-only
-	// patch operations (LangUpdates present, OSUpdates empty) we skip invoking the
-	// OS package manager
+	var manager pkgmgr.PackageManager
 	var patchedImageState *llb.State
 	var errPkgs []string
-	if updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) > 0 {
-		log.Debug("No OS package updates found; skipping OS package manager step and proceeding with language updates only.")
-		// Start from the original image state
+
+	if langOnlyMode {
+		log.Debug("No OS package updates found; skipping OS package manager setup and proceeding with language updates only.")
 		st := config.ImageState
 		patchedImageState = &st
 	} else {
+		// Create package manager helper (requires OS metadata in the report)
+		manager, err = setupPackageManager(ctx, c, config, opts)
+		if err != nil {
+			trySendError(opts.ErrorChannel, err)
+			return nil, err
+		}
+
 		var installErr error
 		patchedImageState, errPkgs, installErr = manager.InstallUpdates(ctx, opts.Updates, opts.IgnoreError)
 		if installErr != nil {
@@ -192,7 +195,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	if opts.ReturnState {
 		return &Result{
 			Result:           nil, // No result when returning state
-			PackageType:      manager.GetPackageType(),
+			PackageType:      packageType(manager),
 			ErroredPackages:  errPkgs,
 			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
 			PatchedState:     preservedState,
@@ -229,7 +232,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// This enables Docker export (from result) AND OCI layout (from states)
 	return &Result{
 		Result:           res,
-		PackageType:      manager.GetPackageType(),
+		PackageType:      packageType(manager),
 		ErroredPackages:  errPkgs,
 		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
 		PatchedState:     preservedState,  // Always preserve for OCI export
@@ -248,6 +251,15 @@ func getValidatedUpdates(updates *unversioned.UpdateManifest, errPkgs []string) 
 		}
 	}
 	return validatedUpdates
+}
+
+// packageType returns the package type string from the manager, or
+// "library" when no OS package manager is available (language-only mode).
+func packageType(manager pkgmgr.PackageManager) string {
+	if manager != nil {
+		return manager.GetPackageType()
+	}
+	return utils.PkgTypeLibrary
 }
 
 // setupPackageManager creates and configures the appropriate package manager

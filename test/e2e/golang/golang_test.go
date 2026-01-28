@@ -75,11 +75,19 @@ func TestGoBinaryPatching(t *testing.T) {
 			// 2. Patch the image.
 			t.Log("patching image")
 			tagPatched := img.Tag + "-patched"
-			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile)
 
 			// Log copa output for debugging
 			if testing.Verbose() {
 				t.Logf("Copa output:\n%s", copaOutput)
+			}
+
+			if patchErr != nil {
+				if !img.ExpectFix {
+					t.Logf("Copa patch failed as expected for image with expectFix=false: %v", patchErr)
+					return
+				}
+				require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
 			}
 
 			// 3. Scan the patched image.
@@ -150,7 +158,15 @@ func TestGoBinaryPatchingByCategory(t *testing.T) {
 
 					// Patch
 					tagPatched := img.Tag + "-patched-" + category
-					patchImage(t, ref, tagPatched, scanResultsFile)
+					copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile)
+
+					if patchErr != nil {
+						if !img.ExpectFix {
+							t.Logf("Copa patch failed as expected for image with expectFix=false: %v", patchErr)
+							return
+						}
+						require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
+					}
 
 					// Verify
 					patchedRef := img.Image + ":" + tagPatched
@@ -199,7 +215,15 @@ func TestMultiBinaryImages(t *testing.T) {
 
 			// Patch
 			tagPatched := img.Tag + "-multi-patched"
-			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile)
+
+			if patchErr != nil {
+				if !img.ExpectFix {
+					t.Logf("Copa patch failed as expected for image with expectFix=false: %v", patchErr)
+					return
+				}
+				require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
+			}
 
 			// Verify binaries are mentioned in output
 			for _, binaryPath := range img.BinaryPaths {
@@ -257,7 +281,15 @@ func TestDistrolessImages(t *testing.T) {
 
 			// Patch - this should work without shell in target
 			tagPatched := img.Tag + "-distroless-patched"
-			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile)
+
+			if patchErr != nil {
+				if !img.ExpectFix {
+					t.Logf("Copa patch failed as expected for image with expectFix=false: %v", patchErr)
+					return
+				}
+				require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
+			}
 
 			// Should not see shell-related errors
 			assert.NotContains(t, copaOutput, "executable file not found",
@@ -356,7 +388,7 @@ func isMainModuleVuln(pkgName, image string) bool {
 	return strings.Contains(strings.ToLower(pkgName), strings.ToLower(imageName))
 }
 
-func patchImage(t *testing.T, image, tag, reportFile string) string {
+func tryPatchImage(t *testing.T, image, tag, reportFile string) (string, error) {
 	t.Helper()
 
 	args := []string{
@@ -379,9 +411,7 @@ func patchImage(t *testing.T, image, tag, reportFile string) string {
 	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
 	out, err := cmd.CombinedOutput()
 
-	require.NoError(t, err, fmt.Sprintf("Copa patch failed:\n%s", string(out)))
-
-	return string(out)
+	return string(out), err
 }
 
 // mapKeys returns the keys of a map as a slice.

@@ -25,14 +25,14 @@ func TestDetermineBaseImage(t *testing.T) {
 			buildInfo: &BuildInfo{
 				GoVersion: "1.22",
 			},
-			want: "golang:1.22-alpine",
+			want: rebuildToolingImage,
 		},
 		{
 			name: "construct from Go version with patch",
 			buildInfo: &BuildInfo{
 				GoVersion: "1.21.5",
 			},
-			want: "golang:1.21.5-alpine",
+			want: rebuildToolingImage,
 		},
 		{
 			name:      "empty build info",
@@ -374,6 +374,32 @@ func TestValidateBinaryPath(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestStripGoMajorVersionSuffix(t *testing.T) {
+	tests := []struct {
+		subpath string
+		want    string
+	}{
+		{"", ""},
+		{"v2", ""},
+		{"v3", ""},
+		{"v10", ""},
+		{"v1", "v1"},
+		{"v0", "v0"},
+		{"cmd/app", "cmd/app"},
+		{"cluster-autoscaler", "cluster-autoscaler"},
+		{"pkg/v2", "pkg"},
+		{"internal/cmd/v3", "internal/cmd"},
+		{"vfoo", "vfoo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subpath, func(t *testing.T) {
+			got := stripGoMajorVersionSuffix(tt.subpath)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

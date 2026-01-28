@@ -79,9 +79,9 @@ for f in /target/*; do
 done
 
 # Find executables in common binary locations (if they exist)
-for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/app /target/opt /target/go/bin; do
+for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/app /target/opt /target/go/bin /target/usr/share; do
     if [ -d "$dir" ]; then
-        found=$(find "$dir" -type f 2>/dev/null | head -50)
+        found=$(find "$dir" -type f -perm +0111 2>/dev/null)
         bins="$bins $found"
     fi
 done
@@ -271,11 +271,30 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 		return nil
 	}
 
+	// Extract the module root from the Main field (e.g., "github.com/prometheus/alertmanager@v0.26.0"
+	// or "github.com/prometheus/alertmanager@(devel)"). The ModulePath from go version -m's "path" line
+	// is the main package import path, which may be a subdirectory of the module (e.g., .../cmd/amtool).
+	modulePath := bi.ModulePath
+	if bi.Main != "" {
+		moduleRoot := strings.Split(bi.Main, "@")[0]
+		if moduleRoot != "" {
+			modulePath = moduleRoot
+		}
+	}
+
 	buildInfo := &BuildInfo{
 		GoVersion:    strings.TrimPrefix(bi.GoVersion, "go"),
-		ModulePath:   bi.ModulePath,
+		ModulePath:   modulePath,
 		Dependencies: bi.Dependencies,
 		BuildArgs:    make(map[string]string),
+	}
+
+	// Derive MainPackage if the binary's import path differs from the module root.
+	// e.g., import path "github.com/prometheus/alertmanager/cmd/amtool" with module root
+	// "github.com/prometheus/alertmanager" → MainPackage = "./cmd/amtool"
+	if bi.ModulePath != "" && modulePath != "" && bi.ModulePath != modulePath &&
+		strings.HasPrefix(bi.ModulePath, modulePath+"/") {
+		buildInfo.MainPackage = "./" + strings.TrimPrefix(bi.ModulePath, modulePath+"/")
 	}
 
 	// Extract CGO setting
@@ -309,8 +328,8 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 		}
 	}
 
-	log.Debugf("Converted binary info: Go %s, module %s, CGO=%v, commit=%s",
-		buildInfo.GoVersion, buildInfo.ModulePath, buildInfo.CGOEnabled,
+	log.Debugf("Converted binary info: Go %s, module %s, mainPkg=%s, CGO=%v, commit=%s",
+		buildInfo.GoVersion, buildInfo.ModulePath, buildInfo.MainPackage, buildInfo.CGOEnabled,
 		buildInfo.BuildArgs["_sourceCommit"])
 
 	return buildInfo

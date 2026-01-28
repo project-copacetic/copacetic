@@ -38,7 +38,9 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 	// Determine which package types are present
 	packageTypes := getPackageTypes(manifest.LangUpdates)
 
-	// Switch on each package type to add appropriate managers
+	// Switch on each package type to add appropriate managers.
+	// Track Go manager separately since GoModules and GoBinary share one manager.
+	goAdded := false
 	for packageType := range packageTypes {
 		switch packageType {
 		case utils.PythonPackages:
@@ -46,7 +48,10 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 		case utils.NodePackages:
 			managers = append(managers, &nodejsManager{config: config, workingFolder: workingFolder})
 		case utils.GoModules, utils.GoBinary:
-			managers = append(managers, &golangManager{config: config, workingFolder: workingFolder})
+			if !goAdded {
+				managers = append(managers, &golangManager{config: config, workingFolder: workingFolder})
+				goAdded = true
+			}
 		case utils.DotNetPackages:
 			managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
 		default:

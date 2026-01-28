@@ -320,6 +320,41 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "subpackage binary with Main field",
+			input: &BinaryInfo{
+				Path:       "/bin/amtool",
+				GoVersion:  "go1.20.7",
+				ModulePath: "github.com/prometheus/alertmanager/cmd/amtool",
+				Main:       "github.com/prometheus/alertmanager@(devel)",
+				Dependencies: map[string]string{
+					"golang.org/x/net": "v0.10.0",
+				},
+				BuildSettings: map[string]string{
+					"CGO_ENABLED": "0",
+					"GOOS":        "linux",
+					"GOARCH":      "arm64",
+				},
+				VCS: map[string]string{
+					"vcs.revision": "abc123",
+				},
+			},
+			expected: &BuildInfo{
+				GoVersion:   "1.20.7",
+				ModulePath:  "github.com/prometheus/alertmanager",
+				MainPackage: "./cmd/amtool",
+				CGOEnabled:  false,
+				Dependencies: map[string]string{
+					"golang.org/x/net": "v0.10.0",
+				},
+				BuildArgs: map[string]string{
+					"GOOS":          "linux",
+					"GOARCH":        "arm64",
+					"_sourceCommit": "abc123",
+					"_sourceRepo":   "https://github.com/prometheus/alertmanager",
+				},
+			},
+		},
 	}
 
 	detector := NewDetector()
@@ -336,6 +371,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 			require.NotNil(t, result)
 			assert.Equal(t, tt.expected.GoVersion, result.GoVersion)
 			assert.Equal(t, tt.expected.ModulePath, result.ModulePath)
+			assert.Equal(t, tt.expected.MainPackage, result.MainPackage)
 			assert.Equal(t, tt.expected.CGOEnabled, result.CGOEnabled)
 			assert.Equal(t, tt.expected.Dependencies, result.Dependencies)
 			assert.Equal(t, tt.expected.BuildFlags, result.BuildFlags)

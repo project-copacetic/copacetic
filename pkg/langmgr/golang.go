@@ -386,7 +386,7 @@ func (gm *golangManager) upgradePackages(
 	// Check if binary rebuilding is enabled (experimental feature)
 	if gm.config.EnableGoBinaryPatch {
 		log.Info("Go binary rebuilding is enabled (experimental)")
-		rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates, ignoreErrors)
+		rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates)
 		if rebuildErr == nil {
 			log.Info("Successfully rebuilt Go binaries with updated dependencies")
 			return rebuiltState, rebuildFailedPkgs, nil
@@ -413,11 +413,8 @@ func (gm *golangManager) upgradePackages(
 	goModPaths, err := gm.detectGoModules(ctx, currentState)
 	if err != nil || len(goModPaths) == 0 {
 		log.Warn("No go.mod files detected in image")
-		if !ignoreErrors {
-			for _, u := range updates {
-				failedPackages = append(failedPackages, u.Name)
-			}
-			return currentState, failedPackages, fmt.Errorf("no Go modules found to patch")
+		for _, u := range updates {
+			failedPackages = append(failedPackages, u.Name)
 		}
 		return currentState, failedPackages, nil
 	}
@@ -467,7 +464,6 @@ func (gm *golangManager) attemptBinaryRebuild(
 	ctx context.Context,
 	currentState *llb.State,
 	updates unversioned.LangUpdatePackages,
-	ignoreErrors bool,
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
@@ -577,26 +573,14 @@ func (gm *golangManager) attemptBinaryRebuild(
 		// Attempt to rebuild this binary and merge into current state
 		newState, result, err := rebuilder.RebuildBinary(rebuildCtx, filteredUpdateMap, gm.config.Platform, state, binaryPath)
 		if err != nil {
-			log.Errorf("Failed to rebuild %s: %v", binaryPath, err)
+			log.Warnf("Failed to rebuild %s (skipping): %v", binaryPath, err)
 			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, err))
-			if !ignoreErrors {
-				for module := range filteredUpdateMap {
-					failedPackages = append(failedPackages, module)
-				}
-				return currentState, failedPackages, fmt.Errorf("binary rebuild failed for %s: %w", binaryPath, err)
-			}
 			continue
 		}
 
 		if !result.Success {
-			log.Errorf("Rebuild unsuccessful for %s: %v", binaryPath, result.Error)
+			log.Warnf("Rebuild unsuccessful for %s (skipping): %v", binaryPath, result.Error)
 			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, result.Error))
-			if !ignoreErrors {
-				for module := range filteredUpdateMap {
-					failedPackages = append(failedPackages, module)
-				}
-				return currentState, failedPackages, fmt.Errorf("binary rebuild unsuccessful for %s: %v", binaryPath, result.Error)
-			}
 			continue
 		}
 
@@ -708,11 +692,8 @@ func (gm *golangManager) upgradePackagesWithTooling(
 	goModPaths, err := gm.detectGoModules(ctx, currentState)
 	if err != nil || len(goModPaths) == 0 {
 		log.Warn("No go.mod files detected in image for tooling container strategy")
-		if !ignoreErrors {
-			for _, u := range updates {
-				failedPackages = append(failedPackages, u.Name)
-			}
-			return currentState, failedPackages, fmt.Errorf("no Go modules found to patch")
+		for _, u := range updates {
+			failedPackages = append(failedPackages, u.Name)
 		}
 		return currentState, failedPackages, nil
 	}

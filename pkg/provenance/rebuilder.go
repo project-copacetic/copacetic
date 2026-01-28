@@ -3,6 +3,7 @@ package provenance
 import (
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
@@ -164,6 +165,13 @@ func (r *Rebuilder) RebuildBinary(
 	return finalState, result, nil
 }
 
+// rebuildToolingImage is the Go image used for rebuilding binaries with updated dependencies.
+// We use the latest stable Go toolchain rather than matching the original binary's Go version
+// because updated dependencies often require a newer Go version (e.g., golang.org/x/sys v0.38+
+// requires Go 1.24). Go maintains strong backwards compatibility so using a newer toolchain
+// to build an older codebase is safe.
+const rebuildToolingImage = "golang:alpine"
+
 // determineBaseImage selects the best base image for rebuilding.
 func (r *Rebuilder) determineBaseImage(buildInfo *BuildInfo) string {
 	if buildInfo.BaseImage != "" {
@@ -171,7 +179,7 @@ func (r *Rebuilder) determineBaseImage(buildInfo *BuildInfo) string {
 	}
 
 	if buildInfo.GoVersion != "" {
-		return fmt.Sprintf("golang:%s-alpine", buildInfo.GoVersion)
+		return rebuildToolingImage
 	}
 
 	return ""
@@ -235,6 +243,25 @@ func deriveRepoFromModulePath(modulePath string) (repoURL string, subpath string
 	return "", ""
 }
 
+// stripGoMajorVersionSuffix removes Go major version suffixes (v2, v3, etc.)
+// from repository subpaths. In Go modules, paths like "github.com/foo/bar/v2"
+// include /v2 to indicate major version 2, but the source code is typically at
+// the repository root, not in a v2/ subdirectory.
+func stripGoMajorVersionSuffix(subpath string) string {
+	if subpath == "" {
+		return ""
+	}
+	parts := strings.Split(subpath, "/")
+	last := parts[len(parts)-1]
+	if len(last) >= 2 && last[0] == 'v' {
+		if n, err := strconv.Atoi(last[1:]); err == nil && n >= 2 {
+			parts = parts[:len(parts)-1]
+			return strings.Join(parts, "/")
+		}
+	}
+	return subpath
+}
+
 // cloneSourceCode clones the source repository using BuildKit Git LLB.
 func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, error) {
 	repoURL := buildInfo.BuildArgs["_sourceRepo"]
@@ -249,11 +276,18 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 		return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
 	}
 
-	// Try to derive from module path if no repo URL
-	if repoURL == "" && buildInfo.ModulePath != "" {
-		repoURL, subpath = deriveRepoFromModulePath(buildInfo.ModulePath)
-		if repoURL != "" {
-			log.Infof("Derived source repository from module path: %s (subpath: %s)", repoURL, subpath)
+	// Always derive subpath from module path. For monorepo modules (e.g., k8s.io/autoscaler/cluster-autoscaler),
+	// the module root lives in a subdirectory of the repository and we need subpath to set the correct workdir.
+	if buildInfo.ModulePath != "" {
+		derivedURL, derivedSubpath := deriveRepoFromModulePath(buildInfo.ModulePath)
+		if repoURL == "" {
+			repoURL = derivedURL
+		}
+		// Strip Go major version suffixes (v2, v3, ...) since these are module path
+		// conventions, not actual subdirectories in most repositories.
+		subpath = stripGoMajorVersionSuffix(derivedSubpath)
+		if derivedURL != "" {
+			log.Infof("Derived source repository from module path: %s (subpath: %q)", derivedURL, subpath)
 		}
 	}
 
@@ -382,8 +416,10 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		).Root()
 	}
 
-	// Only run mod tidy if we generated go.mod
-	if !sourceCloned {
+	// Run mod tidy to sync go.sum after dependency updates.
+	// This is needed both for generated go.mod and for cloned source where
+	// go get may have added transitive dependencies not in the original go.sum.
+	{
 		log.Debug("Running go mod tidy...")
 		state = state.Run(
 			llb.Shlexf("%s mod tidy", goBin),
