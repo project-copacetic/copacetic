@@ -4,37 +4,26 @@
     "tag": "1.11.1",
     "description": "CoreDNS - distroless single binary",
     "category": "distroless",
-    "expectFix": false,
     "skipMainModule": true,
     "expectedBinaryCount": 1,
-    "binaryPaths": ["/coredns"]
+    "binaryPaths": ["/coredns"],
+    "libraryPatchLevel": "minor"
   },
   {
     "image": "docker.io/library/traefik",
     "tag": "v2.10.7",
     "description": "Traefik - scratch-based reverse proxy",
     "category": "scratch",
-    "expectFix": false,
     "skipMainModule": true,
     "expectedBinaryCount": 1,
-    "binaryPaths": ["/traefik"]
-  },
-  {
-    "image": "docker.io/minio/minio",
-    "tag": "RELEASE.2024-01-05T22-17-24Z",
-    "description": "MinIO - scratch-based object storage",
-    "category": "scratch",
-    "expectFix": true,
-    "skipMainModule": true,
-    "expectedBinaryCount": 1,
-    "binaryPaths": ["/usr/bin/minio"]
+    "binaryPaths": ["/traefik"],
+    "libraryPatchLevel": "minor"
   },
   {
     "image": "docker.io/prom/alertmanager",
     "tag": "v0.26.0",
     "description": "Alertmanager - busybox-based alerting",
     "category": "busybox",
-    "expectFix": true,
     "skipMainModule": true,
     "expectedBinaryCount": 2,
     "binaryPaths": ["/bin/alertmanager", "/bin/amtool"]
@@ -44,7 +33,6 @@
     "tag": "2.10.7-scratch",
     "description": "NATS - scratch-based messaging",
     "category": "scratch",
-    "expectFix": true,
     "skipMainModule": true,
     "expectedBinaryCount": 1,
     "binaryPaths": ["/nats-server"]

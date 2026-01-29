@@ -14,17 +14,17 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// shellUnsafeChars are characters that must not appear in values interpolated into shell commands.
+const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
+
 const (
-	goInstallTimeoutSeconds = 600
-	goCheckFile             = "/copa-go-check"
-	goModDetectFile         = "/copa-go-mod-paths"
-	goWorkDetectFile        = "/copa-go-work-path"
-	goVendorDetectFile      = "/copa-go-vendor-check"
-	goBinaryPathFile        = "/copa-go-binary-path"
-	goBuildInfoFile         = "/copa-go-buildinfo"
-	goVersionFile           = "/copa-go-version"
-	defaultToolingGoTag     = "1.23-alpine"
-	toolingGoTemplate       = "docker.io/library/golang:%s"
+	goCheckFile         = "/copa-go-check"
+	goModDetectFile     = "/copa-go-mod-paths"
+	goWorkDetectFile    = "/copa-go-work-path"
+	goVendorDetectFile  = "/copa-go-vendor-check"
+	goVersionFile       = "/copa-go-version"
+	defaultToolingGoTag = "1.23-alpine"
+	toolingGoTemplate   = "docker.io/library/golang:%s"
 )
 
 type golangManager struct {
@@ -353,7 +353,7 @@ func (gm *golangManager) detectVendor(ctx context.Context, currentState *llb.Sta
 // detectGoVersion attempts to detect the Go version from the binary or go.mod.
 func (gm *golangManager) detectGoVersion(ctx context.Context, currentState *llb.State) string {
 	// Try to get Go version from 'go version' command
-	versionCmd := `sh -c 'go version 2>/dev/null | grep -oP "go[0-9]+\.[0-9]+" | sed "s/go//" > ` + goVersionFile + `'`
+	versionCmd := `sh -c 'go version 2>/dev/null | grep -oE "go[0-9]+\.[0-9]+" | sed "s/go//" > ` + goVersionFile + `'`
 	versionState := currentState.Run(
 		llb.Shlex(versionCmd),
 		llb.WithProxy(utils.GetProxy()),
@@ -383,17 +383,15 @@ func (gm *golangManager) upgradePackages(
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
-	// Check if binary rebuilding is enabled (experimental feature)
-	if gm.config.EnableGoBinaryPatch {
-		log.Info("Go binary rebuilding is enabled (experimental)")
-		rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates)
-		if rebuildErr == nil {
-			log.Info("Successfully rebuilt Go binaries with updated dependencies")
-			return rebuiltState, rebuildFailedPkgs, nil
-		}
-		log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
-		// Continue with standard go.mod update approach as fallback
+	// Attempt binary rebuild for GoBinary packages. If it fails, fall back to
+	// go.mod/go.sum updates which is the standard approach for GoModules packages.
+	log.Info("Attempting Go binary rebuild with updated dependencies")
+	rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates)
+	if rebuildErr == nil {
+		log.Info("Successfully rebuilt Go binaries with updated dependencies")
+		return rebuiltState, rebuildFailedPkgs, nil
 	}
+	log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
 
 	// Detect if Go toolchain exists in the target image
 	goExists, err := gm.detectGo(ctx, currentState)
@@ -601,9 +599,10 @@ func (gm *golangManager) attemptBinaryRebuild(
 		return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt")
 	}
 
-	log.Infof("Binary rebuild complete: %d/%d binaries rebuilt successfully", totalRebuilt, len(binaries))
-	if len(rebuildErrors) > 0 {
-		log.Warnf("Some binaries failed to rebuild: %v", rebuildErrors)
+	if totalRebuilt < len(binaries) {
+		log.Warnf("Partial patch: %d/%d binaries rebuilt successfully. Failed: %v", totalRebuilt, len(binaries), rebuildErrors)
+	} else {
+		log.Infof("Binary rebuild complete: %d/%d binaries rebuilt successfully", totalRebuilt, len(binaries))
 	}
 
 	return state, failedPackages, nil
@@ -620,10 +619,21 @@ func (gm *golangManager) updateGoModule(
 ) (llb.State, error) {
 	state := *currentState
 
-	// Build list of 'go get' commands
+	// Validate modPath before shell interpolation (comes from target image filesystem)
+	if strings.ContainsAny(modPath, shellUnsafeChars) {
+		return state, fmt.Errorf("go.mod path contains unsafe characters: %s", modPath)
+	}
+
+	// Build list of 'go get' commands with input validation
 	var getCommands []string
 	for _, u := range updates {
 		if u.FixedVersion != "" {
+			if strings.ContainsAny(u.Name, shellUnsafeChars) {
+				return state, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
+			}
+			if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
+				return state, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
+			}
 			// Ensure version has 'v' prefix
 			version := u.FixedVersion
 			if !strings.HasPrefix(version, "v") {
@@ -732,10 +742,16 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		})
 		toolingState = toolingState.File(copyGoSum)
 
-		// Build update commands
+		// Build update commands with input validation
 		var getCommands []string
 		for _, u := range updates {
 			if u.FixedVersion != "" {
+				if strings.ContainsAny(u.Name, shellUnsafeChars) {
+					return currentState, nil, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
+				}
+				if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
+					return currentState, nil, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
+				}
 				version := u.FixedVersion
 				if !strings.HasPrefix(version, "v") {
 					version = "v" + version

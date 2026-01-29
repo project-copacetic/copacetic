@@ -65,39 +65,32 @@ func (d *Detector) DetectGoBinaries(
 	script := fmt.Sprintf(`
 bins=""
 
-# Debug: List what's in /target
-echo "=== DEBUG: /target contents ===" >> %s
-ls -la /target/ >> %s 2>&1 || echo "ls failed" >> %s
-echo "" >> %s
-
 # Check root directory first (common for distroless single-binary containers)
 for f in /target/*; do
     if [ -f "$f" ]; then
-        # Check if executable by trying to read file header
         bins="$bins $f"
     fi
 done
 
 # Find executables in common binary locations (if they exist)
-for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/app /target/opt /target/go/bin /target/usr/share; do
+for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/sbin /target/usr/sbin /target/app /target/opt /target/go/bin /target/usr/share; do
     if [ -d "$dir" ]; then
-        found=$(find "$dir" -type f -perm +0111 2>/dev/null)
+        found=$(find "$dir" -type f -perm /0111 2>/dev/null)
         bins="$bins $found"
     fi
 done
 
-# Debug: show what bins we found
-echo "=== DEBUG: bins found ===" >> %s
-echo "$bins" >> %s
-echo "" >> %s
-
 # Run go version -m on all found binaries, output to file
-# Use full path to go since PATH might not be set in BuildKit exec
 GO_BIN=/usr/local/go/bin/go
 for bin in $bins; do
     if [ -n "$bin" ] && [ -f "$bin" ]; then
         realpath=$(echo "$bin" | sed 's|^/target||')
         echo "=== BINARY: $realpath ===" >> %s
+        # Capture file permissions and ownership for preservation during rebuild
+        filemode=$(stat -c '%%a' "$bin" 2>/dev/null || stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
+        fileowner=$(stat -c '%%u:%%g' "$bin" 2>/dev/null || echo "0:0")
+        echo "=== FILEMODE: $filemode ===" >> %s
+        echo "=== FILEOWNER: $fileowner ===" >> %s
         $GO_BIN version -m "$bin" >> %s 2>&1 || echo "NOT_GO_BINARY" >> %s
         echo "" >> %s
     fi
@@ -105,7 +98,7 @@ done
 
 # Ensure file exists even if no binaries found
 touch %s
-`, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile)
+`, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile)
 
 	// Run the detection script with target image mounted at /target
 	execState := tooling.Run(
@@ -183,6 +176,18 @@ func (d *Detector) parseGoVersionOutput(output string) []*BinaryInfo {
 				BuildSettings: make(map[string]string),
 				VCS:           make(map[string]string),
 			}
+			continue
+		}
+
+		// File mode (e.g., "=== FILEMODE: 755 ===")
+		if strings.HasPrefix(line, "=== FILEMODE: ") && current != nil {
+			current.FileMode = strings.TrimSuffix(strings.TrimPrefix(line, "=== FILEMODE: "), " ===")
+			continue
+		}
+
+		// File ownership (e.g., "=== FILEOWNER: 0:0 ===")
+		if strings.HasPrefix(line, "=== FILEOWNER: ") && current != nil {
+			current.FileOwner = strings.TrimSuffix(strings.TrimPrefix(line, "=== FILEOWNER: "), " ===")
 			continue
 		}
 

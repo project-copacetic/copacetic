@@ -50,6 +50,10 @@ type BinaryInfo struct {
 	BuildSettings map[string]string
 	// VCS contains version control info (vcs, vcs.revision, vcs.time, vcs.modified).
 	VCS map[string]string
+	// FileMode is the octal file permission mode of the original binary (e.g., "0755").
+	FileMode string
+	// FileOwner is the uid:gid of the original binary (e.g., "0:0").
+	FileOwner string
 }
 
 // RebuildContext contains all information needed for a binary rebuild attempt.

@@ -359,12 +359,11 @@ Copa has experimental support for automatically rebuilding Go binaries with patc
 ```bash
 export COPA_EXPERIMENTAL=1
 
-# Enable Go binary rebuilding
+# Patch Go binaries (binary rebuild happens automatically)
 copa patch \
     -i $IMAGE \
     -r scan.json \
-    --pkg-types library \
-    --enable-go-binary-rebuild
+    --pkg-types library
 ```
 
 ##### How Binary Rebuilding Works
@@ -423,7 +422,6 @@ copa patch \
     -i $IMAGE \
     -r scan.json \
     --pkg-types library \
-    --enable-go-binary-rebuild \
     -t patched
 
 # Verify the patched binary

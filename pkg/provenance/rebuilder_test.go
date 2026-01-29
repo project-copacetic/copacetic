@@ -248,7 +248,8 @@ func TestConstructBuildCommand(t *testing.T) {
 				tt.buildInfo.BuildArgs = make(map[string]string)
 			}
 
-			cmd := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go", tt.outputPath)
+			cmd, err := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go", tt.outputPath)
+			assert.NoError(t, err)
 
 			for _, s := range tt.contains {
 				assert.Contains(t, cmd, s)

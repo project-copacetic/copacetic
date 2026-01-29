@@ -38,14 +38,13 @@ import (
 )
 
 type Config struct {
-	ImageName           string
-	Client              gwclient.Client
-	ConfigData          []byte
-	PatchedConfigData   []byte
-	Platform            *specs.Platform
-	ImageState          llb.State
-	PatchedImageState   llb.State
-	EnableGoBinaryPatch bool // Enable Go binary rebuilding (experimental)
+	ImageName         string
+	Client            gwclient.Client
+	ConfigData        []byte
+	PatchedConfigData []byte
+	Platform          *specs.Platform
+	ImageState        llb.State
+	PatchedImageState llb.State
 }
 
 type Opts struct {
@@ -72,13 +71,11 @@ func InitializeBuildkitConfig(
 	c gwclient.Client,
 	userImage string,
 	platform *specs.Platform,
-	enableGoBinaryPatch bool,
 ) (*Config, error) {
 	// Initialize buildkit config for the target image
 	config := Config{
-		ImageName:           userImage,
-		Platform:            platform,
-		EnableGoBinaryPatch: enableGoBinaryPatch,
+		ImageName: userImage,
+		Platform:  platform,
 	}
 
 	// Resolve and pull the config for the target image

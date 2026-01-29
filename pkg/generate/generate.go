@@ -275,8 +275,7 @@ func extractPatchLayer(
 			}
 
 			// Get the patched image state from result
-			// Note: EnableGoBinaryPatch is false for generate command as it only generates manifests
-			config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, &platform, false)
+			config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, &platform)
 			if err != nil {
 				ch <- err
 				return nil, err

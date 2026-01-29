@@ -28,28 +28,27 @@ import (
 )
 
 type patchArgs struct {
-	appImage            string
-	report              string
-	patchedTag          string
-	suffix              string
-	workingFolder       string
-	timeout             time.Duration
-	scanner             string
-	ignoreError         bool
-	format              string
-	output              string
-	bkOpts              buildkit.Opts
-	push                bool
-	platform            []string
-	loader              string
-	pkgTypes            string
-	libraryPatchLevel   string
-	progress            string
-	ociDir              string
-	eolAPIBaseURL       string
-	exitOnEOL           bool
-	enableGoBinaryPatch bool
-	configFile          string
+	appImage          string
+	report            string
+	patchedTag        string
+	suffix            string
+	workingFolder     string
+	timeout           time.Duration
+	scanner           string
+	ignoreError       bool
+	format            string
+	output            string
+	bkOpts            buildkit.Opts
+	push              bool
+	platform          []string
+	loader            string
+	pkgTypes          string
+	libraryPatchLevel string
+	progress          string
+	ociDir            string
+	eolAPIBaseURL     string
+	exitOnEOL         bool
+	configFile        string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -80,31 +79,30 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 			}()
 			defer signal.Stop(forceQuitCh)
 			opts := &types.Options{
-				Image:               ua.appImage,
-				Report:              ua.report,
-				PatchedTag:          ua.patchedTag,
-				Suffix:              ua.suffix,
-				WorkingFolder:       ua.workingFolder,
-				Timeout:             ua.timeout,
-				Scanner:             ua.scanner,
-				IgnoreError:         ua.ignoreError,
-				Format:              ua.format,
-				Output:              ua.output,
-				BkAddr:              ua.bkOpts.Addr,
-				BkCACertPath:        ua.bkOpts.CACertPath,
-				BkCertPath:          ua.bkOpts.CertPath,
-				BkKeyPath:           ua.bkOpts.KeyPath,
-				Push:                ua.push,
-				Platforms:           ua.platform,
-				Loader:              ua.loader,
-				PkgTypes:            ua.pkgTypes,
-				LibraryPatchLevel:   ua.libraryPatchLevel,
-				Progress:            progressui.DisplayMode(ua.progress),
-				OCIDir:              ua.ociDir,
-				EOLAPIBaseURL:       ua.eolAPIBaseURL,
-				ExitOnEOL:           ua.exitOnEOL,
-				EnableGoBinaryPatch: ua.enableGoBinaryPatch,
-				ConfigFile:          ua.configFile,
+				Image:             ua.appImage,
+				Report:            ua.report,
+				PatchedTag:        ua.patchedTag,
+				Suffix:            ua.suffix,
+				WorkingFolder:     ua.workingFolder,
+				Timeout:           ua.timeout,
+				Scanner:           ua.scanner,
+				IgnoreError:       ua.ignoreError,
+				Format:            ua.format,
+				Output:            ua.output,
+				BkAddr:            ua.bkOpts.Addr,
+				BkCACertPath:      ua.bkOpts.CACertPath,
+				BkCertPath:        ua.bkOpts.CertPath,
+				BkKeyPath:         ua.bkOpts.KeyPath,
+				Push:              ua.push,
+				Platforms:         ua.platform,
+				Loader:            ua.loader,
+				PkgTypes:          ua.pkgTypes,
+				LibraryPatchLevel: ua.libraryPatchLevel,
+				Progress:          progressui.DisplayMode(ua.progress),
+				OCIDir:            ua.ociDir,
+				EOLAPIBaseURL:     ua.eolAPIBaseURL,
+				ExitOnEOL:         ua.exitOnEOL,
+				ConfigFile:        ua.configFile,
 			}
 			if ua.configFile == "" && ua.appImage == "" {
 				return errors.New("either --config or --image must be provided")
@@ -160,15 +158,10 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", utils.PatchTypePatch,
 			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
 				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
-		flags.BoolVar(&ua.enableGoBinaryPatch, "enable-go-binary-rebuild", false,
-			"[EXPERIMENTAL] Enable Go binary rebuilding using SLSA provenance and binary detection. "+
-				"When enabled, Copa will attempt to rebuild Go binaries with updated dependencies. "+
-				"Defaults to false (go.mod/go.sum updates only)")
 	} else {
 		// Set default values when experimental flags are not enabled
 		ua.pkgTypes = utils.PkgTypeOS
 		ua.libraryPatchLevel = utils.PatchTypePatch
-		ua.enableGoBinaryPatch = false
 	}
 	return patchCmd
 }

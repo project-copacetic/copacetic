@@ -2,12 +2,14 @@ package provenance
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -59,6 +61,17 @@ func validateBinaryPath(path string) error {
 		return fmt.Errorf("binary path contains unsafe characters: %s", path)
 	}
 
+	return nil
+}
+
+// shellUnsafeChars are characters that must not appear in values interpolated into shell commands.
+const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
+
+// validateShellSafe checks that a string is safe to interpolate into a shell command.
+func validateShellSafe(value, label string) error {
+	if strings.ContainsAny(value, shellUnsafeChars) {
+		return fmt.Errorf("%s contains unsafe characters: %s", label, value)
+	}
 	return nil
 }
 
@@ -135,13 +148,40 @@ func (r *Rebuilder) RebuildBinary(
 	// Copy the rebuilt binary from build container to target image
 	// This is a pure LLB operation - works on distroless images (no shell needed)
 	log.Infof("Copying rebuilt binary from %s to target at %s", outputPath, binaryPath)
+	copyInfo := &llb.CopyInfo{
+		CreateDestPath:      true,
+		AllowWildcard:       false,
+		AllowEmptyWildcard:  false,
+		CopyDirContentsOnly: false,
+	}
+
+	// Preserve original binary's file permissions and ownership
+	if len(rebuildCtx.BinaryInfo) > 0 {
+		bi := rebuildCtx.BinaryInfo[0]
+		if bi.FileMode != "" {
+			if mode, err := strconv.ParseUint(bi.FileMode, 8, 32); err == nil {
+				copyInfo.Mode = &llb.ChmodOpt{Mode: os.FileMode(mode)}
+				log.Debugf("Preserving file mode: 0%s", bi.FileMode)
+			}
+		}
+		if bi.FileOwner != "" {
+			parts := strings.SplitN(bi.FileOwner, ":", 2)
+			if len(parts) == 2 {
+				uid, uidErr := strconv.Atoi(parts[0])
+				gid, gidErr := strconv.Atoi(parts[1])
+				if uidErr == nil && gidErr == nil {
+					copyInfo.ChownOpt = &llb.ChownOpt{
+						User:  &llb.UserOpt{UID: uid},
+						Group: &llb.UserOpt{UID: gid},
+					}
+					log.Debugf("Preserving file ownership: %d:%d", uid, gid)
+				}
+			}
+		}
+	}
+
 	modifiedTarget := targetState.File(
-		llb.Copy(buildState, outputPath, binaryPath, &llb.CopyInfo{
-			CreateDestPath:      true,
-			AllowWildcard:       false,
-			AllowEmptyWildcard:  false,
-			CopyDirContentsOnly: false,
-		}),
+		llb.Copy(buildState, outputPath, binaryPath, copyInfo),
 	)
 
 	// Capture only the diff (like dotnet patching)
@@ -179,6 +219,8 @@ func (r *Rebuilder) determineBaseImage(buildInfo *BuildInfo) string {
 	}
 
 	if buildInfo.GoVersion != "" {
+		log.Debugf("Binary was built with Go %s, using latest toolchain (%s) for compatibility with updated dependencies",
+			buildInfo.GoVersion, rebuildToolingImage)
 		return rebuildToolingImage
 	}
 
@@ -400,11 +442,18 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 	log.Debug("Running go mod download with retry...")
 	state = state.Run(
 		llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(downloadScript, "'", "'\"'\"'"))),
-		llb.WithProxy(llb.ProxyEnv{}),
+		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Apply updates with retry for each module
+	// Apply updates with retry for each module.
+	// Validate module names and versions before constructing shell commands to prevent injection.
 	for module, version := range updates {
+		if strings.ContainsAny(module, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
+			return llb.State{}, fmt.Errorf("module name contains unsafe characters: %s", module)
+		}
+		if strings.ContainsAny(version, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
+			return llb.State{}, fmt.Errorf("version contains unsafe characters: %s for module %s", version, module)
+		}
 		normalizedVersion := normalizeVersion(version)
 		log.Infof("Updating module %s: %s -> %s", module, buildInfo.Dependencies[module], normalizedVersion)
 
@@ -412,7 +461,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		getScript := retryScript(getCmd, 3)
 		state = state.Run(
 			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(getScript, "'", "'\"'\"'"))),
-			llb.WithProxy(llb.ProxyEnv{}),
+			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	}
 
@@ -423,7 +472,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		log.Debug("Running go mod tidy...")
 		state = state.Run(
 			llb.Shlexf("%s mod tidy", goBin),
-			llb.WithProxy(llb.ProxyEnv{}),
+			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	}
 
@@ -433,11 +482,21 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 	state = state.File(llb.Mkdir(outputDir, 0o755, llb.WithParents(true)))
 
 	// Build the binary to the specified output path
-	buildCmd := r.constructBuildCommand(buildInfo, goBin, outputPath)
+	buildCmd, err := r.constructBuildCommand(buildInfo, goBin, outputPath)
+	if err != nil {
+		return llb.State{}, fmt.Errorf("unsafe build command: %w", err)
+	}
 	log.Infof("Build command: %s", buildCmd)
 	state = state.Run(
 		llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(buildCmd, "'", "'\"'\"'"))),
-		llb.WithProxy(llb.ProxyEnv{}),
+		llb.WithProxy(utils.GetProxy()),
+	).Root()
+
+	// Verify the rebuilt binary is a valid Go binary and is executable
+	verifyCmd := fmt.Sprintf("%s version -m %s", goBin, outputPath)
+	log.Debug("Verifying rebuilt binary...")
+	state = state.Run(
+		llb.Shlex(fmt.Sprintf("sh -c '%s'", verifyCmd)),
 	).Root()
 
 	return state, nil
@@ -481,7 +540,29 @@ func (r *Rebuilder) generateGoMod(buildInfo *BuildInfo, updates map[string]strin
 }
 
 // constructBuildCommand constructs a go build command from build info.
-func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, outputPath string) string {
+func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, outputPath string) (string, error) {
+	// Validate all values sourced from untrusted binary metadata before shell interpolation.
+	if goos, ok := buildInfo.BuildArgs["GOOS"]; ok {
+		if err := validateShellSafe(goos, "GOOS"); err != nil {
+			return "", err
+		}
+	}
+	if goarch, ok := buildInfo.BuildArgs["GOARCH"]; ok {
+		if err := validateShellSafe(goarch, "GOARCH"); err != nil {
+			return "", err
+		}
+	}
+	for _, flag := range buildInfo.BuildFlags {
+		if err := validateShellSafe(flag, "build flag"); err != nil {
+			return "", err
+		}
+	}
+	if buildInfo.MainPackage != "" {
+		if err := validateShellSafe(buildInfo.MainPackage, "main package"); err != nil {
+			return "", err
+		}
+	}
+
 	var parts []string
 
 	if !buildInfo.CGOEnabled {
@@ -499,7 +580,6 @@ func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, ou
 
 	parts = append(parts, goBin, "build")
 
-	// Add output path flag
 	if outputPath != "" {
 		parts = append(parts, "-o", outputPath)
 	}
@@ -512,7 +592,7 @@ func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, ou
 	}
 	parts = append(parts, mainPkg)
 
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
 // String returns string representation of RebuildStrategy.
