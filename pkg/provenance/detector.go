@@ -60,45 +60,46 @@ func (d *Detector) DetectGoBinaries(
 	// Create output directory
 	tooling = tooling.File(llb.Mkdir(outputDir, 0o755))
 
-	// Script that finds executables and runs go version -m on all of them
-	// This runs as a single operation - very fast
+	// Script that finds executables and runs go version -m on all of them.
+	// Uses NUL-delimited find output to safely handle filenames with spaces,
+	// newlines, or other special characters (defense against crafted images).
 	script := fmt.Sprintf(`
-bins=""
+OUTPUT=%s
+GO_BIN=/usr/local/go/bin/go
+
+process_bin() {
+    bin="$1"
+    if [ -n "$bin" ] && [ -f "$bin" ]; then
+        realpath="${bin#/target}"
+        printf '=== BINARY: %%s ===\n' "$realpath" >> "$OUTPUT"
+        filemode=$(stat -c '%%a' "$bin" 2>/dev/null || stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
+        fileowner=$(stat -c '%%u:%%g' "$bin" 2>/dev/null || echo "0:0")
+        printf '=== FILEMODE: %%s ===\n' "$filemode" >> "$OUTPUT"
+        printf '=== FILEOWNER: %%s ===\n' "$fileowner" >> "$OUTPUT"
+        $GO_BIN version -m "$bin" >> "$OUTPUT" 2>&1 || echo "NOT_GO_BINARY" >> "$OUTPUT"
+        echo "" >> "$OUTPUT"
+    fi
+}
 
 # Check root directory first (common for distroless single-binary containers)
 for f in /target/*; do
     if [ -f "$f" ]; then
-        bins="$bins $f"
+        process_bin "$f"
     fi
 done
 
-# Find executables in common binary locations (if they exist)
+# Find executables in common binary locations using NUL-delimited output
 for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/sbin /target/usr/sbin /target/app /target/opt /target/go/bin /target/usr/share; do
     if [ -d "$dir" ]; then
-        found=$(find "$dir" -type f -perm /0111 2>/dev/null)
-        bins="$bins $found"
-    fi
-done
-
-# Run go version -m on all found binaries, output to file
-GO_BIN=/usr/local/go/bin/go
-for bin in $bins; do
-    if [ -n "$bin" ] && [ -f "$bin" ]; then
-        realpath=$(echo "$bin" | sed 's|^/target||')
-        echo "=== BINARY: $realpath ===" >> %s
-        # Capture file permissions and ownership for preservation during rebuild
-        filemode=$(stat -c '%%a' "$bin" 2>/dev/null || stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
-        fileowner=$(stat -c '%%u:%%g' "$bin" 2>/dev/null || echo "0:0")
-        echo "=== FILEMODE: $filemode ===" >> %s
-        echo "=== FILEOWNER: $fileowner ===" >> %s
-        $GO_BIN version -m "$bin" >> %s 2>&1 || echo "NOT_GO_BINARY" >> %s
-        echo "" >> %s
+        find "$dir" -type f -perm /0111 -print0 2>/dev/null | while IFS= read -r -d '' bin; do
+            process_bin "$bin"
+        done
     fi
 done
 
 # Ensure file exists even if no binaries found
-touch %s
-`, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile, outputFile)
+touch "$OUTPUT"
+`, outputFile)
 
 	// Run the detection script with target image mounted at /target
 	execState := tooling.Run(

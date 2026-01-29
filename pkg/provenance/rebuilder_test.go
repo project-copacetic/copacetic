@@ -405,6 +405,58 @@ func TestStripGoMajorVersionSuffix(t *testing.T) {
 	}
 }
 
+func TestValidateRepoURL(t *testing.T) {
+	tests := []struct {
+		url     string
+		wantErr bool
+	}{
+		{"https://github.com/prometheus/alertmanager", false},
+		{"https://github.com/coredns/coredns", false},
+		{"https://gitlab.com/evil/repo", true},
+		{"https://evil.com/backdoor", true},
+		{"http://github.com/user/repo", true},
+		{"", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			err := validateRepoURL(tt.url)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCommitHash(t *testing.T) {
+	tests := []struct {
+		name    string
+		commit  string
+		wantErr bool
+	}{
+		{"valid sha1", "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d", false},
+		{"valid short", "abc123", false},
+		{"empty", "", true},
+		{"has semicolon", "abc;rm -rf /", true},
+		{"has space", "abc 123", true},
+		{"has newline", "abc\n123", true},
+		{"has dot", "abc.123", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCommitHash(tt.commit)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestDeriveRepoFromModulePath(t *testing.T) {
 	tests := []struct {
 		modulePath  string

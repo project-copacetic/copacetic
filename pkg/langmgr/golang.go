@@ -718,6 +718,9 @@ func (gm *golangManager) upgradePackagesWithTooling(
 
 	// Process each module path
 	for _, modPath := range goModPaths {
+		if strings.ContainsAny(modPath, shellUnsafeChars) {
+			return currentState, nil, fmt.Errorf("go.mod path contains unsafe characters: %s", modPath)
+		}
 		log.Infof("Updating Go module at %s using tooling container", modPath)
 
 		// Create tooling container state with target platform

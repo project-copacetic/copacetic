@@ -173,8 +173,15 @@ func (r *Rebuilder) RebuildBinary(
 		bi := rebuildCtx.BinaryInfo[0]
 		if bi.FileMode != "" {
 			if mode, err := strconv.ParseUint(bi.FileMode, 8, 32); err == nil {
-				copyInfo.Mode = &llb.ChmodOpt{Mode: os.FileMode(mode)}
-				log.Debugf("Preserving file mode: 0%s", bi.FileMode)
+				fmode := os.FileMode(mode)
+				// Strip setuid/setgid/sticky bits — rebuilding a binary should not
+				// produce a setuid executable, as that would be a privilege escalation risk.
+				if fmode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+					log.Warnf("Stripping setuid/setgid/sticky bits from rebuilt binary (original mode: 0%s)", bi.FileMode)
+					fmode &^= os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+				}
+				copyInfo.Mode = &llb.ChmodOpt{Mode: fmode}
+				log.Debugf("Preserving file mode: 0%o", fmode)
 			}
 		}
 		if bi.FileOwner != "" {
@@ -317,6 +324,34 @@ func stripGoMajorVersionSuffix(subpath string) string {
 	return subpath
 }
 
+// validateRepoURL checks that a repository URL is from a trusted host.
+// Only repositories from known hosts are allowed to prevent supply chain attacks
+// via crafted binary metadata pointing to malicious repositories.
+func validateRepoURL(repoURL string) error {
+	trustedPrefixes := []string{
+		"https://github.com/",
+	}
+	for _, prefix := range trustedPrefixes {
+		if strings.HasPrefix(repoURL, prefix) {
+			return nil
+		}
+	}
+	return fmt.Errorf("repository URL %q is not from a trusted host (only github.com is supported)", repoURL)
+}
+
+// validateCommitHash checks that a commit hash contains only valid hex characters.
+func validateCommitHash(commit string) error {
+	if commit == "" {
+		return fmt.Errorf("empty commit hash")
+	}
+	for _, c := range commit {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return fmt.Errorf("commit hash contains invalid character %q: %s", c, commit)
+		}
+	}
+	return nil
+}
+
 // cloneSourceCode clones the source repository using BuildKit Git LLB.
 func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, error) {
 	repoURL := buildInfo.BuildArgs["_sourceRepo"]
@@ -329,6 +364,11 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 			log.Warnf("No commit/tag specified for %s - skipping clone", repoURL)
 		}
 		return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
+	}
+
+	// Validate commit hash format to prevent injection via crafted binary metadata
+	if err := validateCommitHash(commit); err != nil {
+		return llb.State{}, "", fmt.Errorf("invalid source commit: %w", err)
 	}
 
 	// Always derive subpath from module path. For monorepo modules (e.g., k8s.io/autoscaler/cluster-autoscaler),
@@ -348,6 +388,11 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 
 	if repoURL == "" {
 		return llb.State{}, "", fmt.Errorf("no source repository URL in build info")
+	}
+
+	// Validate repository URL is from a trusted host
+	if err := validateRepoURL(repoURL); err != nil {
+		return llb.State{}, "", err
 	}
 
 	log.Infof("Cloning source from %s @ %s", repoURL, commit)
