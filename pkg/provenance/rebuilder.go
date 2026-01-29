@@ -65,11 +65,24 @@ func validateBinaryPath(path string) error {
 }
 
 // shellUnsafeChars are characters that must not appear in values interpolated into shell commands.
-const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
+const shellUnsafeChars = ";&|`$(){}[]<>\\*?!~#\t\n\r"
+
+// shellUnsafeCharsStrict includes quotes, for contexts where even quoting is suspicious.
+const shellUnsafeCharsStrict = shellUnsafeChars + "\"'"
 
 // validateShellSafe checks that a string is safe to interpolate into a shell command.
+// It allows quotes (needed for Go -ldflags values) but blocks injection characters.
 func validateShellSafe(value, label string) error {
 	if strings.ContainsAny(value, shellUnsafeChars) {
+		return fmt.Errorf("%s contains unsafe characters: %s", label, value)
+	}
+	return nil
+}
+
+// validateShellSafeStrict checks that a string has no unsafe characters including quotes.
+// Use for simple values like GOOS, GOARCH, package paths where quotes are never expected.
+func validateShellSafeStrict(value, label string) error {
+	if strings.ContainsAny(value, shellUnsafeCharsStrict) {
 		return fmt.Errorf("%s contains unsafe characters: %s", label, value)
 	}
 	return nil
@@ -543,12 +556,12 @@ func (r *Rebuilder) generateGoMod(buildInfo *BuildInfo, updates map[string]strin
 func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, outputPath string) (string, error) {
 	// Validate all values sourced from untrusted binary metadata before shell interpolation.
 	if goos, ok := buildInfo.BuildArgs["GOOS"]; ok {
-		if err := validateShellSafe(goos, "GOOS"); err != nil {
+		if err := validateShellSafeStrict(goos, "GOOS"); err != nil {
 			return "", err
 		}
 	}
 	if goarch, ok := buildInfo.BuildArgs["GOARCH"]; ok {
-		if err := validateShellSafe(goarch, "GOARCH"); err != nil {
+		if err := validateShellSafeStrict(goarch, "GOARCH"); err != nil {
 			return "", err
 		}
 	}
@@ -558,7 +571,7 @@ func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, ou
 		}
 	}
 	if buildInfo.MainPackage != "" {
-		if err := validateShellSafe(buildInfo.MainPackage, "main package"); err != nil {
+		if err := validateShellSafeStrict(buildInfo.MainPackage, "main package"); err != nil {
 			return "", err
 		}
 	}
