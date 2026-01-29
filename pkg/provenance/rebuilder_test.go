@@ -437,7 +437,8 @@ func TestValidateCommitHash(t *testing.T) {
 		wantErr bool
 	}{
 		{"valid sha1", "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d", false},
-		{"valid short", "abc123", false},
+		{"valid short", "abc1234", false},
+		{"too short", "abc12", true},
 		{"empty", "", true},
 		{"has semicolon", "abc;rm -rf /", true},
 		{"has space", "abc 123", true},

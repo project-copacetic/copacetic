@@ -61,39 +61,49 @@ func (d *Detector) DetectGoBinaries(
 	tooling = tooling.File(llb.Mkdir(outputDir, 0o755))
 
 	// Script that finds executables and runs go version -m on all of them.
-	// Uses NUL-delimited find output to safely handle filenames with spaces,
-	// newlines, or other special characters (defense against crafted images).
+	// Uses a helper script invoked via find -exec to safely handle filenames
+	// with spaces, newlines, or special characters. POSIX sh compatible
+	// (works in busybox ash on Alpine).
 	script := fmt.Sprintf(`
 OUTPUT=%s
 GO_BIN=/usr/local/go/bin/go
 
-process_bin() {
-    bin="$1"
-    if [ -n "$bin" ] && [ -f "$bin" ]; then
-        realpath="${bin#/target}"
-        printf '=== BINARY: %%s ===\n' "$realpath" >> "$OUTPUT"
-        filemode=$(stat -c '%%a' "$bin" 2>/dev/null || stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
-        fileowner=$(stat -c '%%u:%%g' "$bin" 2>/dev/null || echo "0:0")
-        printf '=== FILEMODE: %%s ===\n' "$filemode" >> "$OUTPUT"
-        printf '=== FILEOWNER: %%s ===\n' "$fileowner" >> "$OUTPUT"
-        $GO_BIN version -m "$bin" >> "$OUTPUT" 2>&1 || echo "NOT_GO_BINARY" >> "$OUTPUT"
-        echo "" >> "$OUTPUT"
-    fi
-}
+# Create a helper script for processing individual binaries.
+# find -exec invokes this with the filename as a single argument,
+# which is safe against word splitting and glob expansion.
+HELPER=/copa-detect/process.sh
+cat > "$HELPER" << 'ENDHELPER'
+#!/bin/sh
+bin="$1"
+OUTPUT="$2"
+GO_BIN="$3"
+if [ -n "$bin" ] && [ -f "$bin" ]; then
+    realpath="${bin#/target}"
+    printf '=== BINARY: %%s ===\n' "$realpath" >> "$OUTPUT"
+    filemode=$(stat -c '%%a' "$bin" 2>/dev/null || stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
+    fileowner=$(stat -c '%%u:%%g' "$bin" 2>/dev/null || echo "0:0")
+    printf '=== FILEMODE: %%s ===\n' "$filemode" >> "$OUTPUT"
+    printf '=== FILEOWNER: %%s ===\n' "$fileowner" >> "$OUTPUT"
+    $GO_BIN version -m "$bin" >> "$OUTPUT" 2>&1 || echo "NOT_GO_BINARY" >> "$OUTPUT"
+    echo "" >> "$OUTPUT"
+fi
+ENDHELPER
+chmod +x "$HELPER"
 
-# Check root directory first (common for distroless single-binary containers)
+# Check root directory first (common for distroless single-binary containers).
+# Shell glob expansion handles filenames with spaces correctly.
 for f in /target/*; do
     if [ -f "$f" ]; then
-        process_bin "$f"
+        "$HELPER" "$f" "$OUTPUT" "$GO_BIN"
     fi
 done
 
-# Find executables in common binary locations using NUL-delimited output
+# Find executables in common binary locations.
+# find -exec passes each filename as a single argument to the helper script,
+# preventing word splitting and glob expansion attacks from crafted filenames.
 for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/sbin /target/usr/sbin /target/app /target/opt /target/go/bin /target/usr/share; do
     if [ -d "$dir" ]; then
-        find "$dir" -type f -perm /0111 -print0 2>/dev/null | while IFS= read -r -d '' bin; do
-            process_bin "$bin"
-        done
+        find "$dir" -type f -perm /0111 -exec "$HELPER" {} "$OUTPUT" "$GO_BIN" \; 2>/dev/null
     fi
 done
 

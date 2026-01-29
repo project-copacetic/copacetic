@@ -335,6 +335,10 @@ func (gm *golangManager) detectGoWorkspace(ctx context.Context, currentState *ll
 
 // detectVendor checks if a vendor directory exists at the given module path.
 func (gm *golangManager) detectVendor(ctx context.Context, currentState *llb.State, modPath string) (bool, error) {
+	// Defense-in-depth: validate modPath even though callers should also validate.
+	if strings.ContainsAny(modPath, shellUnsafeChars) {
+		return false, fmt.Errorf("modPath contains unsafe characters: %s", modPath)
+	}
 	checkCmd := fmt.Sprintf(`sh -c 'if [ -d "%s/vendor" ]; then echo ok > %s; fi'`, modPath, goVendorDetectFile)
 	checked := currentState.Run(
 		llb.Shlex(checkCmd),

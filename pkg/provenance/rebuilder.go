@@ -173,13 +173,14 @@ func (r *Rebuilder) RebuildBinary(
 		bi := rebuildCtx.BinaryInfo[0]
 		if bi.FileMode != "" {
 			if mode, err := strconv.ParseUint(bi.FileMode, 8, 32); err == nil {
-				fmode := os.FileMode(mode)
-				// Strip setuid/setgid/sticky bits — rebuilding a binary should not
-				// produce a setuid executable, as that would be a privilege escalation risk.
-				if fmode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
-					log.Warnf("Stripping setuid/setgid/sticky bits from rebuilt binary (original mode: 0%s)", bi.FileMode)
-					fmode &^= os.ModeSetuid | os.ModeSetgid | os.ModeSticky
+				// Strip setuid/setgid/sticky bits from raw Unix mode BEFORE casting.
+				// os.FileMode uses different bit positions than Unix, so we must
+				// clear bits 0o7000 on the raw value, not on the os.FileMode.
+				if mode&0o7000 != 0 {
+					log.Warnf("Stripping setuid/setgid/sticky bits from rebuilt binary (original mode: 0%o)", mode)
+					mode &^= 0o7000
 				}
+				fmode := os.FileMode(mode)
 				copyInfo.Mode = &llb.ChmodOpt{Mode: fmode}
 				log.Debugf("Preserving file mode: 0%o", fmode)
 			}
@@ -339,10 +340,14 @@ func validateRepoURL(repoURL string) error {
 	return fmt.Errorf("repository URL %q is not from a trusted host (only github.com is supported)", repoURL)
 }
 
-// validateCommitHash checks that a commit hash contains only valid hex characters.
+// validateCommitHash checks that a commit hash contains only valid hex characters
+// and has a reasonable length (7-64 chars) to avoid ambiguous short refs.
 func validateCommitHash(commit string) error {
 	if commit == "" {
 		return fmt.Errorf("empty commit hash")
+	}
+	if len(commit) < 7 || len(commit) > 64 {
+		return fmt.Errorf("commit hash has invalid length %d (expected 7-64): %s", len(commit), commit)
 	}
 	for _, c := range commit {
 		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
