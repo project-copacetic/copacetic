@@ -350,7 +350,7 @@ func validateCommitHash(commit string) error {
 		return fmt.Errorf("commit hash has invalid length %d (expected 7-64): %s", len(commit), commit)
 	}
 	for _, c := range commit {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return fmt.Errorf("commit hash contains invalid character %q: %s", c, commit)
 		}
 	}
