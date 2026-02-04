@@ -21,6 +21,8 @@ export default function AsciinemaPlayer({
         const ref = React.useRef(null);
         const playerRef = React.useRef(null);
 
+        // Player is created once when src changes. Other props (rows, cols, etc.) are
+        // set at creation time and intentionally not reactive to avoid re-creating the player.
         React.useEffect(() => {
           if (ref.current && !playerRef.current) {
             playerRef.current = AsciinemaPlayerLib.create(resolvedSrc, ref.current, {
@@ -39,6 +41,7 @@ export default function AsciinemaPlayer({
               playerRef.current = null;
             }
           };
+          // eslint-disable-next-line react-hooks/exhaustive-deps
         }, [resolvedSrc]);
 
         return <div ref={ref} />;

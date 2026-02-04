@@ -14,7 +14,7 @@ This directory contains demo scripts that use [demo-magic](https://github.com/pa
 |--------|-------------|
 | `copa-demo.sh` | OS-level patching of `nginx:1.21.6` |
 | `copa-demo-dotnet.sh` | OS + .NET library patching of a .NET sample image |
-| `copa-demo-nodejs.sh` | OS + Node.js library patching of `node:18` |
+| `copa-demo-nodejs.sh` | OS + Node.js library patching of Ghost CMS (`ghost:latest`) |
 | `copa-demo-python.sh` | OS + Python library patching of `python:3.11.0` |
 
 ## Running a Demo

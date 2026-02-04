@@ -22,10 +22,10 @@ Patches a .NET runtime image with a known Newtonsoft.Json vulnerability (CVE-202
 
 ```bash
 # Step 1: Scan the image for vulnerabilities
-trivy image --pkg-types library --ignore-unfixed ashnam/dotnet-runtime-vuln:v2
+trivy image --scanners vuln --pkg-types library --ignore-unfixed ashnam/dotnet-runtime-vuln:v2
 
 # Step 2: Export scan results to JSON
-trivy image --pkg-types os,library --ignore-unfixed -f json -o dotnet-scan.json ashnam/dotnet-runtime-vuln:v2
+trivy image --scanners vuln --pkg-types os,library --ignore-unfixed -f json -o dotnet-scan.json ashnam/dotnet-runtime-vuln:v2
 
 # Step 3: Create a BuildKit instance
 docker buildx create --name copademo-dotnet
@@ -33,10 +33,10 @@ docker buildx create --name copademo-dotnet
 # Step 4: Patch the image with Copa
 COPA_EXPERIMENTAL=1 copa patch -i ashnam/dotnet-runtime-vuln:v2 \
     -r dotnet-scan.json -t v2-patched -a buildx://copademo-dotnet \
-    --pkg-types os,library --library-patch-level major --ignore-errors
+    --pkg-types os,library --library-patch-level major --ignore-errors --timeout 10m
 
 # Step 5: Verify the fix
-trivy image --pkg-types library --ignore-unfixed ashnam/dotnet-runtime-vuln:v2-patched
+trivy image --scanners vuln --pkg-types library --ignore-unfixed ashnam/dotnet-runtime-vuln:v2-patched
 ```
 
 <AsciinemaPlayer src="/casts/demo-dotnet.cast" rows={30} cols={120} />
@@ -47,10 +47,10 @@ Patches a Ghost CMS image (Node.js-based), updating OS packages and npm dependen
 
 ```bash
 # Step 1: Scan the image for vulnerabilities
-trivy image --pkg-types library --ignore-unfixed ghost:latest
+trivy image --scanners vuln --pkg-types library --ignore-unfixed ghost:latest
 
 # Step 2: Export scan results to JSON
-trivy image --pkg-types os,library --ignore-unfixed -f json -o nodejs-scan.json ghost:latest
+trivy image --scanners vuln --pkg-types os,library --ignore-unfixed -f json -o nodejs-scan.json ghost:latest
 
 # Step 3: Create a BuildKit instance
 docker buildx create --name copademo-nodejs
@@ -61,7 +61,7 @@ COPA_EXPERIMENTAL=1 copa patch -i ghost:latest \
     --pkg-types os,library --library-patch-level major --ignore-errors
 
 # Step 5: Verify the fix
-trivy image --pkg-types library --ignore-unfixed ghost:latest-patched
+trivy image --scanners vuln --pkg-types library --ignore-unfixed ghost:latest-patched
 ```
 
 <AsciinemaPlayer src="/casts/demo-nodejs.cast" rows={30} cols={120} />
@@ -72,10 +72,10 @@ Patches a Python image, updating OS packages and pip dependencies.
 
 ```bash
 # Step 1: Scan the image for vulnerabilities
-trivy image --pkg-types library --ignore-unfixed python:3.11.0
+trivy image --scanners vuln --pkg-types library --ignore-unfixed python:3.11.0
 
 # Step 2: Export scan results to JSON
-trivy image --pkg-types os,library --ignore-unfixed -f json -o python-scan.json python:3.11.0
+trivy image --scanners vuln --pkg-types os,library --ignore-unfixed -f json -o python-scan.json python:3.11.0
 
 # Step 3: Create a BuildKit instance
 docker buildx create --name copademo-python
@@ -86,7 +86,7 @@ COPA_EXPERIMENTAL=1 copa patch -i python:3.11.0 \
     --pkg-types os,library --library-patch-level major --ignore-errors
 
 # Step 5: Verify the fix
-trivy image --pkg-types library --ignore-unfixed python:3.11.0-patched
+trivy image --scanners vuln --pkg-types library --ignore-unfixed python:3.11.0-patched
 ```
 
 <AsciinemaPlayer src="/casts/demo-python.cast" rows={30} cols={120} />
