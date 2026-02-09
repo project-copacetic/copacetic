@@ -422,8 +422,9 @@ func TestFilterGoPackages(t *testing.T) {
 			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.23.7", FixedVersion: "1.24.6"},
 			{Name: "golang.org/x/crypto", Type: utils.GoModules, FixedVersion: "v0.45.0"},
 		}
-		result, hasStdlib := filterGoPackages(input)
-		assert.True(t, hasStdlib, "Expected hasStdlib to be true")
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.NotEmpty(t, stdlibFixedVersion, "Expected stdlibFixedVersion to be set")
+		assert.Equal(t, "v1.24.6", stdlibFixedVersion)
 		assert.Len(t, result, 1, "Expected 1 non-stdlib package")
 		assert.Equal(t, "golang.org/x/crypto", result[0].Name)
 	})
@@ -432,8 +433,9 @@ func TestFilterGoPackages(t *testing.T) {
 		input := unversioned.LangUpdatePackages{
 			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.23.7", FixedVersion: "1.24.6"},
 		}
-		result, hasStdlib := filterGoPackages(input)
-		assert.True(t, hasStdlib, "Expected hasStdlib to be true")
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.NotEmpty(t, stdlibFixedVersion, "Expected stdlibFixedVersion to be set")
+		assert.Equal(t, "v1.24.6", stdlibFixedVersion)
 		assert.Len(t, result, 0, "Expected 0 non-stdlib packages")
 	})
 
@@ -441,9 +443,20 @@ func TestFilterGoPackages(t *testing.T) {
 		input := unversioned.LangUpdatePackages{
 			{Name: "golang.org/x/crypto", Type: utils.GoModules, FixedVersion: "v0.45.0"},
 		}
-		result, hasStdlib := filterGoPackages(input)
-		assert.False(t, hasStdlib, "Expected hasStdlib to be false")
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.Empty(t, stdlibFixedVersion, "Expected stdlibFixedVersion to be empty")
 		assert.Len(t, result, 1)
+	})
+
+	t.Run("multiple stdlib vulns picks highest fix", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.22.0", FixedVersion: "1.23.5"},
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.22.0", FixedVersion: "1.24.1"},
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.22.0", FixedVersion: "1.23.8"},
+		}
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.Equal(t, "v1.24.1", stdlibFixedVersion, "Expected highest stdlib fix version")
+		assert.Len(t, result, 0)
 	})
 }
 

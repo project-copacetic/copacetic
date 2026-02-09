@@ -133,22 +133,26 @@ func cleanGoVersion(version string) string {
 }
 
 // filterGoPackages filters for Go module and binary packages.
-// Returns the non-stdlib Go packages and whether stdlib vulnerabilities were found.
-// Stdlib vulns are fixed by rebuilding with a newer Go compiler, not by go get.
-func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.LangUpdatePackages, bool) {
+// Returns the non-stdlib Go packages and the minimum Go version needed to fix
+// stdlib vulnerabilities (empty string if none). Stdlib vulns are fixed by
+// rebuilding with a newer Go compiler, not by go get.
+func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.LangUpdatePackages, string) {
 	var goPackages unversioned.LangUpdatePackages
-	hasStdlib := false
+	stdlibFixedVersion := ""
 	for _, pkg := range langUpdates {
 		if pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary {
 			if pkg.Name == "stdlib" {
-				hasStdlib = true
+				fixVer := cleanGoVersion(pkg.FixedVersion)
+				if fixVer != "" && (stdlibFixedVersion == "" || isLessThanGoVersion(stdlibFixedVersion, fixVer)) {
+					stdlibFixedVersion = fixVer
+				}
 				log.Infof("Found stdlib vulnerability: %s → %s (will fix via Go compiler upgrade)", pkg.InstalledVersion, pkg.FixedVersion)
 				continue
 			}
 			goPackages = append(goPackages, pkg)
 		}
 	}
-	return goPackages, hasStdlib
+	return goPackages, stdlibFixedVersion
 }
 
 // InstallUpdates is the main entry point for patching Go module vulnerabilities.
@@ -162,13 +166,15 @@ func (gm *golangManager) InstallUpdates(
 	var errPkgsReported []string
 
 	// Filter for Go packages only
-	goUpdates, hasStdlib := filterGoPackages(manifest.LangUpdates)
+	goUpdates, stdlibFixedVersion := filterGoPackages(manifest.LangUpdates)
+	hasStdlib := stdlibFixedVersion != ""
 
 	// Only act on stdlib vulns if user explicitly opted in
 	if hasStdlib && !gm.goStdlibUpgrade {
 		log.Warn("Stdlib vulnerabilities found but --go-stdlib-upgrade not set, skipping. " +
 			"Use --go-stdlib-upgrade to rebuild binaries with latest Go compiler.")
 		hasStdlib = false
+		stdlibFixedVersion = ""
 	}
 
 	if len(goUpdates) == 0 && !hasStdlib {
@@ -177,7 +183,7 @@ func (gm *golangManager) InstallUpdates(
 	}
 
 	if hasStdlib {
-		log.Info("Stdlib vulnerabilities detected - binary rebuild with latest Go compiler will fix these")
+		log.Infof("Stdlib vulnerabilities detected - binaries built with Go < %s will be rebuilt", stdlibFixedVersion)
 	}
 
 	log.Infof("Found %d Go package updates to process (stdlib=%v)", len(goUpdates), hasStdlib)
@@ -239,7 +245,7 @@ func (gm *golangManager) InstallUpdates(
 	}
 
 	// Perform the upgrade
-	updatedImageState, failedPkgs, upgradeErr := gm.upgradePackages(ctx, currentState, updatesToAttempt, ignoreErrors, hasStdlib)
+	updatedImageState, failedPkgs, upgradeErr := gm.upgradePackages(ctx, currentState, updatesToAttempt, ignoreErrors, stdlibFixedVersion)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Go packages: %v", upgradeErr)
 		errPkgsReported = append(errPkgsReported, failedPkgs...)
@@ -399,14 +405,14 @@ func (gm *golangManager) upgradePackages(
 	currentState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
-	hasStdlib bool,
+	stdlibFixedVersion string,
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
 	// Attempt binary rebuild for GoBinary packages. If it fails, fall back to
 	// go.mod/go.sum updates which is the standard approach for GoModules packages.
 	log.Info("Attempting Go binary rebuild with updated dependencies")
-	rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates, hasStdlib)
+	rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates, stdlibFixedVersion)
 	if rebuildErr == nil {
 		log.Info("Successfully rebuilt Go binaries with updated dependencies")
 		return rebuiltState, rebuildFailedPkgs, nil
@@ -478,13 +484,14 @@ func (gm *golangManager) upgradePackages(
 }
 
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
-// When hasStdlib is true, binaries are rebuilt even without dependency updates,
-// because recompiling with a newer Go toolchain fixes stdlib vulnerabilities.
+// When stdlibFixedVersion is set, only binaries built with a Go version older than
+// that version are rebuilt for stdlib fixes. Binaries already on a new enough Go
+// version are skipped unless they also have dependency updates.
 func (gm *golangManager) attemptBinaryRebuild(
 	ctx context.Context,
 	currentState *llb.State,
 	updates unversioned.LangUpdatePackages,
-	hasStdlib bool,
+	stdlibFixedVersion string,
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
@@ -536,12 +543,12 @@ func (gm *golangManager) attemptBinaryRebuild(
 		updateMap[update.Name] = update.FixedVersion
 	}
 
-	if len(updateMap) == 0 && !hasStdlib {
+	if len(updateMap) == 0 && stdlibFixedVersion == "" {
 		return currentState, failedPackages, fmt.Errorf("no version updates to apply")
 	}
 
-	if hasStdlib {
-		log.Info("Stdlib vulnerabilities present - rebuilding binaries with latest Go compiler")
+	if stdlibFixedVersion != "" {
+		log.Infof("Stdlib fix requires Go >= %s - will check each binary individually", stdlibFixedVersion)
 	}
 
 	// Track overall results
@@ -573,7 +580,20 @@ func (gm *golangManager) attemptBinaryRebuild(
 			filteredUpdateMap[module] = version
 		}
 
-		if len(filteredUpdateMap) == 0 && !hasStdlib {
+		// Check if this specific binary needs stdlib upgrade by comparing its
+		// Go version against the required fix version
+		binaryNeedsStdlib := false
+		if stdlibFixedVersion != "" {
+			binaryGoVersion := strings.TrimPrefix(binaryInfo.GoVersion, "go")
+			if isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion) {
+				binaryNeedsStdlib = true
+				log.Infof("  Binary %s (Go %s) needs stdlib upgrade to >= %s", binaryPath, binaryGoVersion, stdlibFixedVersion)
+			} else {
+				log.Debugf("  Binary %s (Go %s) already has stdlib >= %s, no stdlib rebuild needed", binaryPath, binaryGoVersion, stdlibFixedVersion)
+			}
+		}
+
+		if len(filteredUpdateMap) == 0 && !binaryNeedsStdlib {
 			log.Debugf("No applicable updates for binary %s, skipping", binaryPath)
 			continue
 		}

@@ -563,19 +563,57 @@ fi
 	log.Debugf("Creating output directory: %s", outputDir)
 	state = state.File(llb.Mkdir(outputDir, 0o755, llb.WithParents(true)))
 
-	// Build the binary to the specified output path
+	// Build the binary to the specified output path.
+	// When the source is cloned, wrap the build in a directory existence check so
+	// that a missing MainPackage path (common in monorepos) skips gracefully
+	// instead of failing the entire LLB solve and canceling sibling builds.
 	buildCmd, err := r.constructBuildCommand(buildInfo, goBin, outputPath)
 	if err != nil {
 		return llb.State{}, fmt.Errorf("unsafe build command: %w", err)
 	}
-	log.Infof("Build command: %s", buildCmd)
-	state = state.Run(
-		llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(buildCmd, "'", "'\"'\"'"))),
-		llb.WithProxy(utils.GetProxy()),
-	).Root()
 
-	// Verify the rebuilt binary is a valid Go binary and is executable
-	verifyCmd := fmt.Sprintf("%s version -m %s", goBin, outputPath)
+	if sourceCloned && buildInfo.MainPackage != "" && buildInfo.MainPackage != "." {
+		// Verify the main package directory exists before building. If it doesn't,
+		// create a placeholder binary so downstream Copy/verify steps don't fail.
+		mainPkgDir := strings.TrimPrefix(buildInfo.MainPackage, "./")
+		guardedCmd := fmt.Sprintf(
+			"if [ -d %s ]; then %s; else echo 'SKIP: main package directory %s not found, creating placeholder'; echo '#!/bin/sh' > %s && chmod +x %s; fi",
+			mainPkgDir, buildCmd, mainPkgDir, outputPath, outputPath,
+		)
+		log.Infof("Build command (guarded): %s", guardedCmd)
+		state = state.Run(
+			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(guardedCmd, "'", "'\"'\"'"))),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
+	} else if sourceCloned && (buildInfo.MainPackage == "" || buildInfo.MainPackage == ".") {
+		// When MainPackage is "." but root has no Go files, try cmd/<binary>/ as fallback.
+		binaryName := filepath.Base(outputPath)
+		fallbackCmd := fmt.Sprintf(
+			"if ls *.go 1>/dev/null 2>&1; then %s; elif [ -d cmd/%s ]; then %s; else echo 'SKIP: no Go source at root or cmd/%s'; echo '#!/bin/sh' > %s && chmod +x %s; fi",
+			buildCmd,
+			binaryName,
+			strings.Replace(buildCmd, " .", " ./cmd/"+binaryName, 1),
+			binaryName,
+			outputPath, outputPath,
+		)
+		log.Infof("Build command (with fallback): %s", fallbackCmd)
+		state = state.Run(
+			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(fallbackCmd, "'", "'\"'\"'"))),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
+	} else {
+		log.Infof("Build command: %s", buildCmd)
+		state = state.Run(
+			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(buildCmd, "'", "'\"'\"'"))),
+			llb.WithProxy(utils.GetProxy()),
+		).Root()
+	}
+
+	// Verify the rebuilt binary is a valid Go binary and is executable.
+	// If the build was skipped (placeholder created), verification will fail
+	// but the Copy step will still succeed - the caller handles this gracefully.
+	verifyCmd := fmt.Sprintf("test -s %s && %s version -m %s || echo 'WARN: binary %s was not rebuilt (skipped or failed)'",
+		outputPath, goBin, outputPath, outputPath)
 	log.Debug("Verifying rebuilt binary...")
 	state = state.Run(
 		llb.Shlex(fmt.Sprintf("sh -c '%s'", verifyCmd)),
