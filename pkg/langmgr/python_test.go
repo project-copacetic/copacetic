@@ -354,7 +354,7 @@ func TestPythonManagerType(t *testing.T) {
 			},
 		},
 	}
-	managers := GetLanguageManagers(config, workingFolder, manifest)
+	managers := GetLanguageManagers(config, workingFolder, manifest, false)
 	require.Len(t, managers, 1)
 
 	pythonMgr, ok := managers[0].(*pythonManager)

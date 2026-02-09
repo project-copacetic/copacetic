@@ -44,6 +44,7 @@ type patchArgs struct {
 	loader            string
 	pkgTypes          string
 	libraryPatchLevel string
+	goStdlibUpgrade   bool
 	progress          string
 	ociDir            string
 	eolAPIBaseURL     string
@@ -101,6 +102,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				Loader:            ua.loader,
 				PkgTypes:          ua.pkgTypes,
 				LibraryPatchLevel: ua.libraryPatchLevel,
+				GoStdlibUpgrade:   ua.goStdlibUpgrade,
 				Progress:          progressui.DisplayMode(ua.progress),
 				OCIDir:            ua.ociDir,
 				EOLAPIBaseURL:     ua.eolAPIBaseURL,
@@ -166,6 +168,9 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", utils.PatchTypePatch,
 			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
 				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
+		flags.BoolVar(&ua.goStdlibUpgrade, "go-stdlib-upgrade", false,
+			"[EXPERIMENTAL] Rebuild Go binaries with the latest Go compiler to fix stdlib vulnerabilities. "+
+				"Requires 'library' in --pkg-types")
 	} else {
 		// Set default values when experimental flags are not enabled
 		ua.pkgTypes = utils.PkgTypeOS

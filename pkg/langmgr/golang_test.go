@@ -404,7 +404,7 @@ func TestFilterGoPackages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := filterGoPackages(tt.input)
+			result, _ := filterGoPackages(tt.input)
 			assert.Len(t, result, tt.expected, "Expected %d packages, got %d", tt.expected, len(result))
 
 			// Verify all returned packages are Go packages
@@ -415,6 +415,36 @@ func TestFilterGoPackages(t *testing.T) {
 			}
 		})
 	}
+
+	// Test stdlib detection
+	t.Run("stdlib detected", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.23.7", FixedVersion: "1.24.6"},
+			{Name: "golang.org/x/crypto", Type: utils.GoModules, FixedVersion: "v0.45.0"},
+		}
+		result, hasStdlib := filterGoPackages(input)
+		assert.True(t, hasStdlib, "Expected hasStdlib to be true")
+		assert.Len(t, result, 1, "Expected 1 non-stdlib package")
+		assert.Equal(t, "golang.org/x/crypto", result[0].Name)
+	})
+
+	t.Run("stdlib only", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.23.7", FixedVersion: "1.24.6"},
+		}
+		result, hasStdlib := filterGoPackages(input)
+		assert.True(t, hasStdlib, "Expected hasStdlib to be true")
+		assert.Len(t, result, 0, "Expected 0 non-stdlib packages")
+	})
+
+	t.Run("no stdlib", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "golang.org/x/crypto", Type: utils.GoModules, FixedVersion: "v0.45.0"},
+		}
+		result, hasStdlib := filterGoPackages(input)
+		assert.False(t, hasStdlib, "Expected hasStdlib to be false")
+		assert.Len(t, result, 1)
+	})
 }
 
 func TestGetLanguageManagers_Go(t *testing.T) {
@@ -502,7 +532,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			managers := GetLanguageManagers(config, workingFolder, tt.manifest)
+			managers := GetLanguageManagers(config, workingFolder, tt.manifest, false)
 			assert.Len(t, managers, tt.expectedCount, "Expected %d managers, got %d", tt.expectedCount, len(managers))
 
 			var hasGoMgr, hasPythonMgr, hasNodeMgr bool

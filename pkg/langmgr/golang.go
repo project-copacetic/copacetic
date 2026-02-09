@@ -28,8 +28,9 @@ const (
 )
 
 type golangManager struct {
-	config        *buildkit.Config
-	workingFolder string
+	config          *buildkit.Config
+	workingFolder   string
+	goStdlibUpgrade bool
 }
 
 // validateGoPackageName validates a Go module name for safety and correctness.
@@ -132,20 +133,22 @@ func cleanGoVersion(version string) string {
 }
 
 // filterGoPackages filters for Go module and binary packages.
-func filterGoPackages(langUpdates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
+// Returns the non-stdlib Go packages and whether stdlib vulnerabilities were found.
+// Stdlib vulns are fixed by rebuilding with a newer Go compiler, not by go get.
+func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.LangUpdatePackages, bool) {
 	var goPackages unversioned.LangUpdatePackages
+	hasStdlib := false
 	for _, pkg := range langUpdates {
 		if pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary {
-			// Skip stdlib - these are Go standard library vulnerabilities that
-			// can only be fixed by upgrading Go itself, not by updating dependencies
 			if pkg.Name == "stdlib" {
-				log.Warnf("Skipping stdlib vulnerability (requires Go version upgrade): %s → %s", pkg.InstalledVersion, pkg.FixedVersion)
+				hasStdlib = true
+				log.Infof("Found stdlib vulnerability: %s → %s (will fix via Go compiler upgrade)", pkg.InstalledVersion, pkg.FixedVersion)
 				continue
 			}
 			goPackages = append(goPackages, pkg)
 		}
 	}
-	return goPackages
+	return goPackages, hasStdlib
 }
 
 // InstallUpdates is the main entry point for patching Go module vulnerabilities.
@@ -159,13 +162,25 @@ func (gm *golangManager) InstallUpdates(
 	var errPkgsReported []string
 
 	// Filter for Go packages only
-	goUpdates := filterGoPackages(manifest.LangUpdates)
-	if len(goUpdates) == 0 {
+	goUpdates, hasStdlib := filterGoPackages(manifest.LangUpdates)
+
+	// Only act on stdlib vulns if user explicitly opted in
+	if hasStdlib && !gm.goStdlibUpgrade {
+		log.Warn("Stdlib vulnerabilities found but --go-stdlib-upgrade not set, skipping. " +
+			"Use --go-stdlib-upgrade to rebuild binaries with latest Go compiler.")
+		hasStdlib = false
+	}
+
+	if len(goUpdates) == 0 && !hasStdlib {
 		log.Debug("No Go packages found to update.")
 		return currentState, []string{}, nil
 	}
 
-	log.Infof("Found %d Go package updates to process", len(goUpdates))
+	if hasStdlib {
+		log.Info("Stdlib vulnerabilities detected - binary rebuild with latest Go compiler will fix these")
+	}
+
+	log.Infof("Found %d Go package updates to process (stdlib=%v)", len(goUpdates), hasStdlib)
 
 	// Get unique latest updates using Go version comparer
 	goComparer := VersionComparer{isValidGoVersion, isLessThanGoVersion}
@@ -181,7 +196,7 @@ func (gm *golangManager) InstallUpdates(
 		log.Warn("Continuing despite errors in determining unique updates")
 	}
 
-	if len(updatesToAttempt) == 0 {
+	if len(updatesToAttempt) == 0 && !hasStdlib {
 		log.Warn("No Go update packages were specified to apply after deduplication.")
 		return currentState, []string{}, nil
 	}
@@ -224,7 +239,7 @@ func (gm *golangManager) InstallUpdates(
 	}
 
 	// Perform the upgrade
-	updatedImageState, failedPkgs, upgradeErr := gm.upgradePackages(ctx, currentState, updatesToAttempt, ignoreErrors)
+	updatedImageState, failedPkgs, upgradeErr := gm.upgradePackages(ctx, currentState, updatesToAttempt, ignoreErrors, hasStdlib)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Go packages: %v", upgradeErr)
 		errPkgsReported = append(errPkgsReported, failedPkgs...)
@@ -384,13 +399,14 @@ func (gm *golangManager) upgradePackages(
 	currentState *llb.State,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
+	hasStdlib bool,
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
 	// Attempt binary rebuild for GoBinary packages. If it fails, fall back to
 	// go.mod/go.sum updates which is the standard approach for GoModules packages.
 	log.Info("Attempting Go binary rebuild with updated dependencies")
-	rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates)
+	rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates, hasStdlib)
 	if rebuildErr == nil {
 		log.Info("Successfully rebuilt Go binaries with updated dependencies")
 		return rebuiltState, rebuildFailedPkgs, nil
@@ -462,10 +478,13 @@ func (gm *golangManager) upgradePackages(
 }
 
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
+// When hasStdlib is true, binaries are rebuilt even without dependency updates,
+// because recompiling with a newer Go toolchain fixes stdlib vulnerabilities.
 func (gm *golangManager) attemptBinaryRebuild(
 	ctx context.Context,
 	currentState *llb.State,
 	updates unversioned.LangUpdatePackages,
+	hasStdlib bool,
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
@@ -517,8 +536,12 @@ func (gm *golangManager) attemptBinaryRebuild(
 		updateMap[update.Name] = update.FixedVersion
 	}
 
-	if len(updateMap) == 0 {
+	if len(updateMap) == 0 && !hasStdlib {
 		return currentState, failedPackages, fmt.Errorf("no version updates to apply")
+	}
+
+	if hasStdlib {
+		log.Info("Stdlib vulnerabilities present - rebuilding binaries with latest Go compiler")
 	}
 
 	// Track overall results
@@ -550,7 +573,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 			filteredUpdateMap[module] = version
 		}
 
-		if len(filteredUpdateMap) == 0 {
+		if len(filteredUpdateMap) == 0 && !hasStdlib {
 			log.Debugf("No applicable updates for binary %s, skipping", binaryPath)
 			continue
 		}

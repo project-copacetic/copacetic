@@ -46,6 +46,9 @@ type Options struct {
 	PkgTypes          string
 	LibraryPatchLevel string
 
+	// Go stdlib upgrade
+	GoStdlibUpgrade bool
+
 	// Generate specific
 	OutputContext string
 
