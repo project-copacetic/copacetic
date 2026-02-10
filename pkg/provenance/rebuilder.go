@@ -13,6 +13,76 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// discoverAndBuildScript is a shell script that discovers the main package
+// directory in a cloned Go repository and builds the binary from it.
+// Arguments: $1=binary-name $2=output-path $3=explicit-main-pkg
+// Reads the go build command prefix (without main pkg arg) from /tmp/copa_build_prefix.
+const discoverAndBuildScript = `#!/bin/sh
+BINARY_NAME="$1"
+OUTPUT="$2"
+EXPLICIT_PKG="$3"
+BUILD_PREFIX="$(cat /tmp/copa_build_prefix)"
+
+run_build() {
+    echo "Copa: building from $1"
+    eval "$BUILD_PREFIX $1"
+}
+
+# Strategy 1: Explicit main package path (from go version -m metadata)
+if [ -n "$EXPLICIT_PKG" ] && [ "$EXPLICIT_PKG" != "." ]; then
+    stripped=$(echo "$EXPLICIT_PKG" | sed 's|^\./||')
+    if [ -d "$stripped" ]; then
+        run_build "$EXPLICIT_PKG"
+        exit $?
+    fi
+    echo "Copa: explicit path $EXPLICIT_PKG not found, trying discovery..."
+fi
+
+# Strategy 2: Root directory has Go source files
+if ls *.go 1>/dev/null 2>&1; then
+    run_build "."
+    exit $?
+fi
+
+# Strategy 3: cmd/<binary-name>/
+if [ -d "cmd/$BINARY_NAME" ]; then
+    run_build "./cmd/$BINARY_NAME"
+    exit $?
+fi
+
+# Strategy 4: First cmd/ subdirectory with Go files
+for d in cmd/*/; do
+    [ -d "$d" ] || continue
+    if ls "${d}"*.go 1>/dev/null 2>&1; then
+        run_build "./${d%/}"
+        exit $?
+    fi
+done
+
+# Strategy 5: Find main.go in directory matching binary name
+FOUND=$(find . -name main.go -not -path "*/vendor/*" -not -path "*/_*" -not -path "*/testdata/*" 2>/dev/null | while IFS= read -r f; do
+    dir=$(dirname "$f")
+    case "$dir" in *"$BINARY_NAME"*) echo "$dir"; break;; esac
+done | head -1)
+if [ -n "$FOUND" ]; then
+    run_build "$FOUND"
+    exit $?
+fi
+
+# Strategy 6: First main.go found anywhere (excluding vendor/test)
+FIRST_DIR=$(find . -name main.go -not -path "*/vendor/*" -not -path "*/_*" -not -path "*/testdata/*" -exec dirname {} \; 2>/dev/null | head -1)
+if [ -n "$FIRST_DIR" ]; then
+    run_build "$FIRST_DIR"
+    exit $?
+fi
+
+# Nothing found - create placeholder so LLB does not fail
+echo "SKIP: no buildable Go source found for $BINARY_NAME"
+mkdir -p "$(dirname "$OUTPUT")"
+printf '#!/bin/sh\necho placeholder\n' > "$OUTPUT"
+chmod +x "$OUTPUT"
+`
+
 // normalizeVersion ensures a version string has the 'v' prefix required by Go modules.
 func normalizeVersion(version string) string {
 	if version == "" {
@@ -563,48 +633,41 @@ fi
 	log.Debugf("Creating output directory: %s", outputDir)
 	state = state.File(llb.Mkdir(outputDir, 0o755, llb.WithParents(true)))
 
-	// Build the binary to the specified output path.
-	// When the source is cloned, wrap the build in a directory existence check so
-	// that a missing MainPackage path (common in monorepos) skips gracefully
-	// instead of failing the entire LLB solve and canceling sibling builds.
-	buildCmd, err := r.constructBuildCommand(buildInfo, goBin, outputPath)
+	// Build the binary. When source is cloned, use the discovery script to find
+	// the correct main package directory (handles monorepos, non-standard layouts,
+	// and binary name mismatches). Otherwise, run the build command directly.
+	buildPrefix, mainPkg, err := r.constructBuildCommandParts(buildInfo, goBin, outputPath)
 	if err != nil {
 		return llb.State{}, fmt.Errorf("unsafe build command: %w", err)
 	}
 
-	if sourceCloned && buildInfo.MainPackage != "" && buildInfo.MainPackage != "." {
-		// Verify the main package directory exists before building. If it doesn't,
-		// create a placeholder binary so downstream Copy/verify steps don't fail.
-		mainPkgDir := strings.TrimPrefix(buildInfo.MainPackage, "./")
-		guardedCmd := fmt.Sprintf(
-			"if [ -d %s ]; then %s; else echo 'SKIP: main package directory %s not found, creating placeholder'; echo '#!/bin/sh' > %s && chmod +x %s; fi",
-			mainPkgDir, buildCmd, mainPkgDir, outputPath, outputPath,
-		)
-		log.Infof("Build command (guarded): %s", guardedCmd)
-		state = state.Run(
-			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(guardedCmd, "'", "'\"'\"'"))),
-			llb.WithProxy(utils.GetProxy()),
-		).Root()
-	} else if sourceCloned && (buildInfo.MainPackage == "" || buildInfo.MainPackage == ".") {
-		// When MainPackage is "." but root has no Go files, try cmd/<binary>/ as fallback.
+	if sourceCloned {
 		binaryName := filepath.Base(outputPath)
-		fallbackCmd := fmt.Sprintf(
-			"if ls *.go 1>/dev/null 2>&1; then %s; elif [ -d cmd/%s ]; then %s; else echo 'SKIP: no Go source at root or cmd/%s'; echo '#!/bin/sh' > %s && chmod +x %s; fi",
-			buildCmd,
-			binaryName,
-			strings.Replace(buildCmd, " .", " ./cmd/"+binaryName, 1),
-			binaryName,
-			outputPath, outputPath,
+		log.Infof("Using discovery+build script for %s (explicit pkg: %s)", binaryName, mainPkg)
+
+		// Write the build command prefix to a file so the discovery script can
+		// read it without shell escaping issues (ldflags often contain quotes).
+		state = state.File(
+			llb.Mkfile("/tmp/copa_build_prefix", 0o644, []byte(buildPrefix)),
 		)
-		log.Infof("Build command (with fallback): %s", fallbackCmd)
+		state = state.File(
+			llb.Mkfile("/tmp/copa_discover_build.sh", 0o755, []byte(discoverAndBuildScript)),
+		)
 		state = state.Run(
-			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(fallbackCmd, "'", "'\"'\"'"))),
+			llb.Shlex(fmt.Sprintf("sh /tmp/copa_discover_build.sh %s %s %s", binaryName, outputPath, mainPkg)),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	} else {
-		log.Infof("Build command: %s", buildCmd)
+		// No source cloned (generated go.mod). Guard the build so failures don't
+		// cancel sibling binary builds running in parallel in the same LLB solve.
+		buildCmd := buildPrefix + " " + mainPkg
+		guardedCmd := fmt.Sprintf(
+			"%s || { echo 'SKIP: build failed for %s, creating placeholder'; mkdir -p %s; printf '#!/bin/sh\\necho placeholder\\n' > %s; chmod +x %s; }",
+			buildCmd, filepath.Base(outputPath), filepath.Dir(outputPath), outputPath, outputPath,
+		)
+		log.Infof("Build command (guarded, no source): %s", buildCmd)
 		state = state.Run(
-			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(buildCmd, "'", "'\"'\"'"))),
+			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(guardedCmd, "'", "'\"'\"'"))),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	}
@@ -661,25 +724,35 @@ func (r *Rebuilder) generateGoMod(buildInfo *BuildInfo, updates map[string]strin
 
 // constructBuildCommand constructs a go build command from build info.
 func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, outputPath string) (string, error) {
+	prefix, mainPkg, err := r.constructBuildCommandParts(buildInfo, goBin, outputPath)
+	if err != nil {
+		return "", err
+	}
+	return prefix + " " + mainPkg, nil
+}
+
+// constructBuildCommandParts returns the build command prefix and main package separately.
+// The prefix contains everything except the main package argument.
+func (r *Rebuilder) constructBuildCommandParts(buildInfo *BuildInfo, goBin string, outputPath string) (string, string, error) {
 	// Validate all values sourced from untrusted binary metadata before shell interpolation.
 	if goos, ok := buildInfo.BuildArgs["GOOS"]; ok {
 		if err := validateShellSafeStrict(goos, "GOOS"); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if goarch, ok := buildInfo.BuildArgs["GOARCH"]; ok {
 		if err := validateShellSafeStrict(goarch, "GOARCH"); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	for _, flag := range buildInfo.BuildFlags {
 		if err := validateShellSafe(flag, "build flag"); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 	if buildInfo.MainPackage != "" {
 		if err := validateShellSafeStrict(buildInfo.MainPackage, "main package"); err != nil {
-			return "", err
+			return "", "", err
 		}
 	}
 
@@ -710,9 +783,8 @@ func (r *Rebuilder) constructBuildCommand(buildInfo *BuildInfo, goBin string, ou
 	if mainPkg == "" {
 		mainPkg = "."
 	}
-	parts = append(parts, mainPkg)
 
-	return strings.Join(parts, " "), nil
+	return strings.Join(parts, " "), mainPkg, nil
 }
 
 // String returns string representation of RebuildStrategy.

@@ -349,106 +349,163 @@ Copa does not perform automated testing or validation of the patched application
 #### Experimental: Go Binary Rebuilding
 
 :::warning Advanced Experimental Feature
-Go binary rebuilding is an advanced experimental feature that requires additional flags beyond `COPA_EXPERIMENTAL=1`. This feature attempts to automatically rebuild Go binaries with updated dependencies using information from SLSA provenance and/or embedded build info.
+Go binary rebuilding is an experimental feature that requires `COPA_EXPERIMENTAL=1`. This feature attempts to automatically rebuild Go binaries with updated dependencies using information from SLSA provenance and/or embedded build info (VCS metadata).
 :::
 
-Copa has experimental support for automatically rebuilding Go binaries with patched dependencies. This feature addresses the main limitation of Go module patching by attempting to rebuild the actual binary, not just updating module files.
+Copa has experimental support for automatically rebuilding Go binaries with patched dependencies. This feature addresses the main limitation of Go module patching by rebuilding the actual compiled binary, not just updating module files.
 
 ##### Enabling Binary Rebuild
 
 ```bash
 export COPA_EXPERIMENTAL=1
 
-# Patch Go binaries (binary rebuild happens automatically)
+# Patch Go binaries with dependency updates
 copa patch \
     -i $IMAGE \
     -r scan.json \
     --pkg-types library
+
+# Also fix Go stdlib vulnerabilities by upgrading the Go compiler
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --go-stdlib-upgrade
+```
+
+##### The `--go-stdlib-upgrade` Flag
+
+By default, Copa only updates third-party Go module dependencies. The `--go-stdlib-upgrade` flag additionally rebuilds binaries using a newer Go compiler to fix vulnerabilities in the Go standard library (`stdlib`).
+
+When enabled, Copa compares each binary's embedded Go version against the fixed version reported by the vulnerability scanner. Only binaries whose Go version is older than the fix version are rebuilt with the newer compiler.
+
+```bash
+# Fix both dependency and stdlib vulnerabilities
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --go-stdlib-upgrade
 ```
 
 ##### How Binary Rebuilding Works
 
-1. **SLSA Provenance Analysis**: Copa attempts to fetch SLSA provenance attestations from the container registry. If found, it extracts build information including Go version, build commands, and Dockerfile.
+Copa analyzes Go binaries in the image and rebuilds them using embedded build metadata:
 
-2. **GitHub Fallback**: If provenance doesn't contain the Dockerfile (common with `slsa-github-generator`), Copa fetches it from the source repository using the commit hash in provenance.
+1. **Binary detection**: Runs `go version -m` on each binary in the image to extract embedded build metadata (module path, dependency versions, build flags, VCS info)
+2. **Source derivation**: Derives the source repository URL from the module path (e.g., `github.com/example/repo`)
+3. **Source cloning**: Uses the embedded VCS commit hash (`vcs.revision`) to clone the exact source at the correct commit
+4. **Build reconstruction**: Reconstructs build flags from the embedded build settings (`-ldflags`, `-tags`, `CGO_ENABLED`, etc.)
+5. **Dependency update**: Applies `go get module@version` for each vulnerable dependency, runs `go mod tidy`
+6. **Main package discovery**: Locates the main package in the cloned source using multiple strategies (explicit path, `cmd/` directory, binary name matching)
+7. **Rebuild and replace**: Rebuilds the binary with updated dependencies and copies it back to its original location in the image
 
-3. **Binary Detection**: If provenance is insufficient, Copa analyzes Go binaries in the image using `go version -m` to extract embedded build information.
+##### Key Requirement: VCS Commit Hash
 
-4. **Source Cloning**: Copa clones the source repository at the provenance commit using BuildKit Git operations.
+:::danger Critical Requirement
+Go binaries **must have a VCS commit hash embedded** for Copa to clone the source and rebuild. This is the most important requirement for binary rebuilding to work.
+:::
 
-5. **Rebuild with Updates**: Copa rebuilds the binary with updated dependencies:
-   - Applies `go get module@version` for each vulnerable dependency
-   - Runs `go mod tidy` to clean up dependencies
-   - Executes the original build command with detected flags
+The Go toolchain automatically embeds VCS metadata (commit hash, timestamp, dirty flag) when building inside a git repository (default since Go 1.18). However, many Dockerfiles exclude the `.git` directory via `.dockerignore` or by not copying it, which prevents VCS embedding.
 
-6. **Binary Replacement**: The rebuilt binary is copied back to its original location in the image.
+**Recommended: Use a multi-stage build with `.git` in the builder stage.** The `.git` directory is only needed during compilation and never ends up in the final image, so there is no size penalty:
+
+```dockerfile
+# GOOD: Multi-stage build preserves VCS metadata at zero cost
+FROM golang:1.23 AS builder
+COPY .git /src/.git
+COPY . /src
+WORKDIR /src
+RUN go build -o /app ./cmd/myapp
+
+FROM gcr.io/distroless/static
+COPY --from=builder /app /app
+# Final image has no .git, but the binary has VCS info embedded
+```
+
+If your `.dockerignore` excludes `.git`, remove that line -- in a multi-stage build it only affects the builder stage and won't bloat your final image.
+
+```dockerfile
+# BAD: No .git means no VCS metadata in the binary
+FROM golang:1.23 AS builder
+COPY . /src
+# .git excluded by .dockerignore or never copied
+RUN go build -o /app ./cmd/myapp
+# Binary has no vcs.revision -- Copa cannot rebuild it
+```
+
+You can verify whether a binary has VCS info embedded:
+
+```bash
+go version -m /path/to/binary | grep vcs
+# Expected output:
+#   build   vcs=git
+#   build   vcs.revision=abc123...
+#   build   vcs.time=2024-01-01T00:00:00Z
+```
+
+If `vcs.revision` is missing, the binary was built without git context and Copa cannot rebuild it.
 
 ##### Binary Rebuild Requirements
 
-For binary rebuilding to work, the image should have one or more of:
-
-- **SLSA Provenance**: Built with `slsa-github-generator` or BuildKit with `--provenance=max`
-- **Embedded Build Info**: Go binaries built with `-buildinfo` (default since Go 1.18)
-- **Public Source Repository**: Source code accessible on GitHub at the provenance commit
-
-##### Supported SLSA Provenance Versions
-
-- SLSA v0.2 (common from slsa-github-generator)
-- SLSA v1.0 (newer provenance format)
+- **VCS commit hash**: The Go binary must have `vcs.revision` embedded (requires `.git` directory present at build time)
+- **Public source repository**: Source code must be accessible on GitHub at the embedded commit
+- **Standard Go build**: The binary must be buildable with the standard Go toolchain
 
 ##### Binary Rebuild Limitations
 
-1. **Private Repositories**: Currently only public GitHub repositories are supported for source cloning and Dockerfile fetching.
+1. **VCS metadata required**: Binaries built without `.git` present (or with `-buildvcs=false`) cannot be rebuilt. This is the most common cause of failure, as many production Go container images lack embedded VCS metadata.
 
-2. **Complex Builds**: Multi-stage Dockerfiles, custom build scripts, and CGO-dependent builds may not rebuild correctly.
+2. **Private repositories**: Currently only public GitHub repositories are supported for source cloning.
 
-3. **Non-Go Tools**: The binary rebuild process requires standard Go toolchain. Builds using custom compilers or tools may fail.
+3. **Complex builds**: Multi-stage Dockerfiles, custom build scripts, and CGO-dependent builds may not rebuild correctly.
 
-4. **Build Reproducibility**: Rebuilt binaries may differ from originals due to timestamps, Go version differences, or non-deterministic build steps.
+4. **Monorepo builds**: Images containing multiple binaries from the same repository may have binaries at non-standard source locations. Copa uses a multi-strategy discovery approach but may not find all main packages.
+
+5. **Module download failures**: Some projects use private modules, vanity import paths, or vendored dependencies that cannot be resolved in the rebuild environment.
+
+6. **Build reproducibility**: Rebuilt binaries may differ from originals due to timestamps, Go version differences, or non-deterministic build steps.
+
+7. **Multi-binary images**: If an image contains multiple Go binaries and some lack VCS metadata, Copa will rebuild the ones it can and skip the rest. The skipped binaries remain unchanged in the patched image.
 
 ##### Example with Binary Rebuild
 
 ```bash
 export COPA_EXPERIMENTAL=1
 
-# Image built with slsa-github-generator provenance
-export IMAGE=ghcr.io/fluxcd/source-controller:v1.2.0
-
 # Scan for vulnerabilities
+export IMAGE=ghcr.io/kubereboot/kured:v1.13.1
 trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
 
-# Patch with binary rebuilding
+# Patch with binary rebuilding + stdlib upgrade
 copa patch \
     -i $IMAGE \
     -r scan.json \
     --pkg-types library \
+    --go-stdlib-upgrade \
     -t patched
 
 # Verify the patched binary
 trivy image patched --vuln-type library
 ```
 
-##### Rebuild Strategy
+##### Rebuild Strategy Logging
 
-Copa requires SLSA provenance for binary rebuilding:
-
-1. **Provenance Strategy**: Uses SLSA provenance with GitHub-enriched Dockerfile (requires `--provenance=max`)
-2. **go.mod Only**: Falls back to updating module files only if provenance is not available
-
-The strategy used is logged during patching:
+Copa logs detailed information for each binary during patching:
 
 ```text
-INFO Using rebuild strategy: provenance
-INFO Binary rebuild successful: 1 binaries rebuilt
+INFO Using rebuild strategy: heuristic
+INFO   Build info: Go 1.22.0, module: github.com/example/repo, CGO: false
+INFO   Source: github.com/example/repo @ abc123
+INFO   Will update golang.org/x/net to v0.33.0
 ```
 
-Or when provenance is not available:
+When a binary lacks VCS metadata:
 
 ```text
-INFO No rebuild strategy available (SLSA provenance required), will only update go.mod/go.sum
+WARN   Binary /usr/bin/mybinary has no VCS commit info (likely built without .git directory).
+       Source clone will not be possible; rebuild may fail.
 ```
-
-> **Note**: Binary rebuild requires images built with SLSA provenance (`docker buildx build --provenance=max`). Images without provenance will only have their go.mod/go.sum files updated.
 
 ### .NET
 

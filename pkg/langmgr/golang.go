@@ -604,6 +604,20 @@ func (gm *golangManager) attemptBinaryRebuild(
 			buildInfo.ModulePath,
 			buildInfo.CGOEnabled)
 
+		// Warn when source cannot be cloned due to missing VCS metadata
+		sourceRepo := buildInfo.BuildArgs["_sourceRepo"]
+		sourceCommit := buildInfo.BuildArgs["_sourceCommit"]
+		switch {
+		case sourceCommit == "":
+			log.Warnf("  Binary %s has no VCS commit info (likely built with -trimpath or -buildvcs=false). "+
+				"Source clone will not be possible; rebuild may fail.", binaryPath)
+		case sourceRepo == "":
+			log.Warnf("  Binary %s has commit %s but no source repo could be derived. "+
+				"Source clone will not be possible.", binaryPath, sourceCommit)
+		default:
+			log.Infof("  Source: %s @ %s", sourceRepo, sourceCommit)
+		}
+
 		for module, version := range filteredUpdateMap {
 			log.Infof("  Will update %s to %s", module, version)
 		}
