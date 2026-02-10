@@ -1,6 +1,6 @@
 #!/bin/bash
 
 docker buildx rm copademo-nodejs
-docker rmi ghost:latest-patched
-docker rmi ghost:latest
+docker rmi node:18-alpine-patched
+docker rmi node:18-alpine
 rm -f nodejs-scan.json
