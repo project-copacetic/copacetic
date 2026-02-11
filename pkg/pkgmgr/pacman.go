@@ -106,6 +106,40 @@ func validatePacmanPackageVersions(updates unversioned.UpdatePackages, cmp Versi
 	return errorPkgs, errors.Join(allErrors...)
 }
 
+func (pm *pacmanManager) InstallUpdates(ctx context.Context, manifest *unversioned.UpdateManifest, ignoreErrors bool) (*llb.State, []string, error) {
+	if manifest == nil {
+		updatedImageState, _, err := pm.upgradePackages(ctx, nil, ignoreErrors)
+		if err != nil {
+			return updatedImageState, nil, err
+		}
+		return updatedImageState, nil, nil
+	}
+
+	pacmanComparer := VersionComparer{isValidPacmanVersion, isLessThanPacmanVersion}
+	updates, err := GetUniqueLatestUpdates(manifest.OSUpdates, pacmanComparer, ignoreErrors)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if len(updates) == 0 {
+		log.Warn("No update packages were specified to apply")
+		return &pm.config.ImageState, nil, nil
+	}
+	log.Debugf("latest unique pacman packages: %v", updates)
+
+	updatedImageState, resultBytes, err := pm.upgradePackages(ctx, updates, ignoreErrors)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	errPkgs, err := validatePacmanPackageVersions(updates, pacmanComparer, resultBytes, ignoreErrors)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return updatedImageState, errPkgs, nil
+}
+
 func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
 	imageStateCurrent := pm.config.ImageState
 	if pm.config.PatchedConfigData != nil {
@@ -189,4 +223,8 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 	patchDiff := llb.Diff(pacmanUpdated, pacmanInstalled)
 	patchMerge := llb.Merge([]llb.State{pm.config.ImageState, patchDiff})
 	return &patchMerge, resultManifestBytes, nil
+}
+
+func (pm *pacmanManager) GetPackageType() string {
+	return "pacman"
 }
