@@ -37,12 +37,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.3.1
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -68,11 +68,11 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.3.1
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.3.1
         with:
           egress-policy: audit
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -114,8 +114,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -160,8 +160,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -275,12 +275,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.3.1
+        uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -322,8 +322,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -405,8 +405,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -462,8 +462,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -523,8 +523,8 @@ jobs:
           docker tag nginx:latest localhost:5000/nginx:latest
           docker push localhost:5000/nginx:latest
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -578,8 +578,8 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm64
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -772,6 +772,40 @@ jobs:
           docker rm registry || true
           
           echo "Local registry mixed OCI layout test completed successfully!"
+
+  test-gateway:
+    needs: build
+    name: Gateway Integration Tests ${{ matrix.buildkit_mode }}
+    runs-on: oracle-vm-16cpu-64gb-x86-64
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: "1.25"
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - name: Run gateway integration tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 20m
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@v2
+        with:
+          paths: "test-results.xml"
+
   test-patch-bulk:
     needs: build
     name: Test Bulk Patching
@@ -779,7 +813,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Configure Docker Daemon
         run: |
           echo '{"features": {"containerd-snapshotter": true}, "insecure-registries": ["127.0.0.1:37219"]}' | sudo tee /etc/docker/daemon.json
@@ -789,7 +823,7 @@ jobs:
         with:
           install: true
       - name: Set up Go
-        uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -820,8 +854,8 @@ jobs:
     permissions: read-all
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -861,8 +895,8 @@ jobs:
     permissions: read-all
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
@@ -945,8 +979,8 @@ jobs:
     permissions: read-all
     steps:
       - name: Check out code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
-      - uses: actions/setup-go@4dc6199c7b1a012772edbd06daecab0f50c9053c # v6.1.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
           go-version: "1.25"
           check-latest: true
