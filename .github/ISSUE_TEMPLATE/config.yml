@@ -1,1 +1,5 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Security Issue
+    url: https://github.com/project-copacetic/copacetic/security/advisories/new
+    about: Please do not use GitHub issues for security vulnerabilities. Use this private form.

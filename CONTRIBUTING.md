@@ -23,6 +23,16 @@ Follow the instructions to set up your dev environment to build Copacetic.
 
 For an overview of the project components, refer to the [Copa design](./website/docs/design.md) document.
 
+
+## Security Guidelines
+
+If your contribution addresses a security vulnerability, please **do not open a public pull request**. Instead, follow the instructions in our [Security Policy](./SECURITY.md) to report the issue confidentially.
+
+Once the vulnerability is addressed, you may be invited to contribute a public patch.
+
+---
+
+
 ### IDE Setup
 
 Copacetic is written in Go, so any IDE that supports Go may be used. If you have an IDE you prefer, simply search for a guide to set it up with Go. If you don't have a preferred IDE or if you're a new developer, some popular options are listed below:
@@ -77,6 +87,18 @@ We suggest:
   * **test:** Adding missing tests or correcting existing tests
 * Use a [concise, imperative description](https://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html) of the changes included in the `<short summary>` of the header, the body of the PR, and generally in your commit messages.
 * Use [GitHub keywords](https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/using-keywords-in-issues-and-pull-requests) in the footer of your PR description, such as `closes` to automatically close issues the PR intends to address.
+
+Please ensure all contributions also:
+
+- Follow secure coding practices (e.g., avoid hardcoding credentials, sanitize user input, etc.)
+- Avoid introducing new dependencies unless necessary and reviewed for known CVEs
+- Include a security/privacy consideration section if the PR touches any authentication, authorization, or sensitive data handling logic
+
+## Licensing
+
+By contributing code to this project, you agree to license your contribution under the project's open source license, currently Apache 2.0.
+
+Make sure you do not include any third-party code or content without proper license compatibility and attribution.
 
 ## Developer Certificate of Origin (DCO)
 
