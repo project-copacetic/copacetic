@@ -47,13 +47,13 @@ func TestPacmanReadResultsManifest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := apkReadResultsManifest(tt.args.path)
+			got, err := pacmanReadResultsManifest(tt.args.path)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("apkReadResultsManifest() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("pacmanReadResultsManifest() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("apkReadResultsManifest() = %v, want %v", got, tt.want)
+				t.Errorf("pacmanReadResultsManifest() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -172,7 +172,7 @@ func Test_pacmanManager_GetPackageType(t *testing.T) {
 				workingFolder: tt.fields.workingFolder,
 			}
 			if got := pm.GetPackageType(); got != tt.want {
-				t.Errorf("apkManager.GetPackageType() = %v, want %v", got, tt.want)
+				t.Errorf("pacmanManager.GetPackageType() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -191,12 +191,10 @@ func Test_InstallUpdates_Pacman(t *testing.T) {
 		{
 			name: "Update specific packages",
 			mockSetup: func(mr *mocks.MockReference) {
-				// FIX: Added "-1" suffix to make these valid Pacman versions
 				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1 1.0.1-1\npackage2 2.0.1-1\n"), nil)
 			},
 			manifest: &unversioned.UpdateManifest{
 				OSUpdates: unversioned.UpdatePackages{
-					// FIX: Added "-1" suffix
 					{Name: "package1", FixedVersion: "1.0.1-1"},
 					{Name: "package2", FixedVersion: "2.0.1-1"},
 				},
@@ -220,17 +218,15 @@ func Test_InstallUpdates_Pacman(t *testing.T) {
 			name: "Ignore errors",
 			manifest: &unversioned.UpdateManifest{
 				OSUpdates: unversioned.UpdatePackages{
-					// FIX: Requesting 2.0.0-1
 					{Name: "package1", FixedVersion: "2.0.0-1"},
 				},
 			},
 			ignoreErrors: true,
 			mockSetup: func(mr *mocks.MockReference) {
-				// FIX: Mocking installed version as 1.0.1-1 (which is < 2.0.0-1, simulating a failed update)
 				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1 1.0.1-1\n"), nil)
 			},
 			expectedState: true,
-			expectedPkgs:  []string{"package1"}, // Now this should correctly capture the package due to version mismatch, not syntax error
+			expectedPkgs:  []string{"package1"},
 			expectedError: "",
 		},
 	}

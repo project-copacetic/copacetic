@@ -157,7 +157,7 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 		const updatesAvailableMarker = "/updates.txt"
 		// 1. Define the shell script properly with valid 2>&1 syntax
 		// Note: We use pacman -Sy to ensure the DB is synced before checking
-		shellScript := fmt.Sprintf("if /usr/bin/pacman -SyQu > /dev/null 2>&1; then touch %s; fi", updatesAvailableMarker)
+		shellScript := fmt.Sprintf("if /usr/bin/pacman -Qu > /dev/null 2>&1; then touch %s; fi", updatesAvailableMarker)
 
 		// 2. Explicitly construct the command args (safer than Shlex for complex scripts)
 		// We use /bin/sh because it is the universal shell path (even on Arch)
@@ -187,8 +187,6 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 		const pacmanInstallTemplate = `/usr/bin/pacman -S --noconfirm %s`
 		installCmd := fmt.Sprintf(pacmanInstallTemplate, strings.Join(pkgStrings, " "))
 
-		// FIX: Chain off 'pacmanUpdated', NOT 'pacmanInstalled'
-		// FIX: Assign the result back to 'pacmanInstalled'
 		pacmanInstalled = pacmanUpdated.Run(
 			llb.Shlex(installCmd),
 			llb.WithProxy(utils.GetProxy()),
@@ -198,13 +196,11 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 		// Construct the verification command
 		// Note: Use strings.Join instead of Trim format hack for cleaner slice conversion
 		pkgs := strings.Join(pkgStrings, " ")
-		const outputResultsTemplate = `/bin/sh -c '/usr/bin/pacman -Q %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: pacman -Q returned $?"; fi'`
+		const outputResultsTemplate = `/bin/sh -c '/usr/bin/pacman -Q %s > %s; status=$?; if [ "$status" -ne 0 ]; then echo "WARN: pacman -Q returned $status"; fi'`
 		outputResultsCmd := fmt.Sprintf(outputResultsTemplate, pkgs, resultManifest)
 
-		// FIX: Use the NEW pacmanInstalled state for the next step
 		mkFolders := pacmanInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
 
-		// This looks correct now, provided pacmanInstalled is valid
 		resultDiff := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
 		resultManifestBytes, err = buildkit.ExtractFileFromState(ctx, pm.config.Client, &resultDiff, resultManifest)
@@ -220,7 +216,7 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 		).Root()
 
 		if !ignoreErrors {
-			pacmanInstalled = pacmanUpdated.Run(
+			pacmanInstalled = pacmanInstalled.Run(
 				buildkit.Sh("if [ -s error_log.txt ]; then cat error_log.txt; exit 1; fi"),
 				llb.WithCustomName("Validating package updates"),
 			).Root()
