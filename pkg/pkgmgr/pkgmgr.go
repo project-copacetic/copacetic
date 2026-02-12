@@ -61,6 +61,11 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			osType:        canonicalOSType,
 			osVersion:     osVersion,
 		}, nil
+	case utils.OSTypeArchLinux:
+		return &pacmanManager{
+			config:        config,
+			workingFolder: workingFolder,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported osType %s specified", osType)
 	}
