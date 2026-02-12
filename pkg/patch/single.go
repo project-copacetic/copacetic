@@ -116,7 +116,13 @@ func patchSingleArchImage(
 
 	// Parse report for update packages
 	var updates *unversioned.UpdateManifest
+	var patchSummary *report.PatchSummary
 	if reportFile != "" {
+		patchSummary, err = report.TrySummarizeScanReport(reportFile, scanner, pkgTypes)
+		if err != nil {
+			return nil, err
+		}
+
 		updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
 		if err != nil {
 			return nil, err
@@ -146,6 +152,12 @@ func patchSingleArchImage(
 			// If after filtering there are zero OS and zero library updates, return an error
 			// only when user explicitly requested some package types (default is OS) but none are patchable.
 			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
+				if patchSummary != nil {
+					log.Infof("Patch Summary:")
+					log.Infof("  Total vulnerabilities in report: %d", patchSummary.TotalVulnerabilities)
+					log.Infof("  Patched: %d (%d OS, %d library)", patchSummary.Patched, patchSummary.PatchedOS, patchSummary.PatchedLibrary)
+					log.Infof("  Skipped: %d (no fix available)", patchSummary.SkippedNoFix)
+				}
 				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
 				return res, types.ErrNoUpdatesFound
 			}
@@ -246,6 +258,13 @@ func patchSingleArchImage(
 			return res, types.ErrNoUpdatesFound
 		}
 		return nil, err
+	}
+
+	if patchSummary != nil {
+		log.Infof("Patch Summary:")
+		log.Infof("  Total vulnerabilities in report: %d", patchSummary.TotalVulnerabilities)
+		log.Infof("  Patched: %d (%d OS, %d library)", patchSummary.Patched, patchSummary.PatchedOS, patchSummary.PatchedLibrary)
+		log.Infof("  Skipped: %d (no fix available)", patchSummary.SkippedNoFix)
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
