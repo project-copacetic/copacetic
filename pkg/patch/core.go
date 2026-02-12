@@ -39,8 +39,8 @@ type Options struct {
 	// If true, return the BuildKit state instead of solving it
 	ReturnState bool
 
-	// Go stdlib upgrade
-	GoStdlibUpgrade bool
+	// Toolchain patch level (e.g., "patch", "minor", "major"; empty = disabled)
+	ToolchainPatchLevel string
 
 	// EOL configuration
 	ExitOnEOL bool
@@ -133,7 +133,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// For normal Docker export, continue with solving but preserve states
 	// Handle Language Specific Updates
 	if updates != nil && len(updates.LangUpdates) > 0 {
-		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates, opts.GoStdlibUpgrade)
+		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates, opts.ToolchainPatchLevel)
 		var langErrPkgsFromAllManagers []string
 		var combinedLangError error
 

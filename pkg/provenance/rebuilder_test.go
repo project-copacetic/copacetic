@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDetermineBaseImage(t *testing.T) {
@@ -25,14 +26,14 @@ func TestDetermineBaseImage(t *testing.T) {
 			buildInfo: &BuildInfo{
 				GoVersion: "1.22",
 			},
-			want: rebuildToolingImage,
+			want: "golang:1.22",
 		},
 		{
 			name: "construct from Go version with patch",
 			buildInfo: &BuildInfo{
 				GoVersion: "1.21.5",
 			},
-			want: rebuildToolingImage,
+			want: "golang:1.21",
 		},
 		{
 			name:      "empty build info",
@@ -249,7 +250,7 @@ func TestConstructBuildCommand(t *testing.T) {
 			}
 
 			cmd, err := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go", tt.outputPath)
-			assert.NoError(t, err)
+			require.NoError(t, err)
 
 			for _, s := range tt.contains {
 				assert.Contains(t, cmd, s)

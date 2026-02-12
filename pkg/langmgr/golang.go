@@ -23,14 +23,14 @@ const (
 	goWorkDetectFile    = "/copa-go-work-path"
 	goVendorDetectFile  = "/copa-go-vendor-check"
 	goVersionFile       = "/copa-go-version"
-	defaultToolingGoTag = "1.23-alpine"
+	defaultToolingGoTag = "1.23"
 	toolingGoTemplate   = "docker.io/library/golang:%s"
 )
 
 type golangManager struct {
-	config          *buildkit.Config
-	workingFolder   string
-	goStdlibUpgrade bool
+	config              *buildkit.Config
+	workingFolder       string
+	toolchainPatchLevel string
 }
 
 // validateGoPackageName validates a Go module name for safety and correctness.
@@ -169,10 +169,10 @@ func (gm *golangManager) InstallUpdates(
 	goUpdates, stdlibFixedVersion := filterGoPackages(manifest.LangUpdates)
 	hasStdlib := stdlibFixedVersion != ""
 
-	// Only act on stdlib vulns if user explicitly opted in
-	if hasStdlib && !gm.goStdlibUpgrade {
-		log.Warn("Stdlib vulnerabilities found but --go-stdlib-upgrade not set, skipping. " +
-			"Use --go-stdlib-upgrade to rebuild binaries with latest Go compiler.")
+	// Only act on stdlib vulns if user explicitly opted in via --toolchain-patch-level
+	if hasStdlib && gm.toolchainPatchLevel == "" {
+		log.Warn("Stdlib vulnerabilities found but --toolchain-patch-level not set, skipping. " +
+			"Use --toolchain-patch-level to rebuild binaries with an updated Go compiler.")
 		hasStdlib = false
 		stdlibFixedVersion = ""
 	}
@@ -394,9 +394,7 @@ func (gm *golangManager) detectGoVersion(ctx context.Context, currentState *llb.
 	}
 
 	log.Debug("Could not detect Go version, using default for tooling")
-	// Extract version from default tooling tag (e.g., "1.23-alpine" -> "1.23")
-	parts := strings.Split(defaultToolingGoTag, "-")
-	return parts[0]
+	return defaultToolingGoTag
 }
 
 // upgradePackages handles the main upgrade logic, choosing between in-image and tooling strategies.
@@ -750,7 +748,7 @@ func (gm *golangManager) updateGoModule(
 }
 
 // upgradePackagesWithTooling handles Go module updates when the Go toolchain is not in the target image.
-// This uses a golang:alpine tooling container to perform the updates.
+// This uses a golang tooling container to perform the updates.
 func (gm *golangManager) upgradePackagesWithTooling(
 	ctx context.Context,
 	currentState *llb.State,
@@ -771,7 +769,7 @@ func (gm *golangManager) upgradePackagesWithTooling(
 
 	// Detect Go version (or use default)
 	goVersion := gm.detectGoVersion(ctx, currentState)
-	toolingImage := fmt.Sprintf(toolingGoTemplate, goVersion+"-alpine")
+	toolingImage := fmt.Sprintf(toolingGoTemplate, goVersion)
 
 	log.Infof("Using tooling container: %s", toolingImage)
 

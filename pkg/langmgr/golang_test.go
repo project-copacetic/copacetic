@@ -349,9 +349,11 @@ func TestCleanGoVersion(t *testing.T) {
 
 func TestFilterGoPackages(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    unversioned.LangUpdatePackages
-		expected int
+		name           string
+		input          unversioned.LangUpdatePackages
+		expected       int
+		expectedStdlib string
+		expectedNames  []string
 	}{
 		{
 			name: "all Go modules",
@@ -359,7 +361,8 @@ func TestFilterGoPackages(t *testing.T) {
 				{Name: "pkg1", Type: utils.GoModules},
 				{Name: "pkg2", Type: utils.GoModules},
 			},
-			expected: 2,
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg2"},
 		},
 		{
 			name: "all Go binaries",
@@ -367,7 +370,8 @@ func TestFilterGoPackages(t *testing.T) {
 				{Name: "pkg1", Type: utils.GoBinary},
 				{Name: "pkg2", Type: utils.GoBinary},
 			},
-			expected: 2,
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg2"},
 		},
 		{
 			name: "mixed Go modules and binaries",
@@ -375,7 +379,8 @@ func TestFilterGoPackages(t *testing.T) {
 				{Name: "pkg1", Type: utils.GoModules},
 				{Name: "pkg2", Type: utils.GoBinary},
 			},
-			expected: 2,
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg2"},
 		},
 		{
 			name: "mixed with other package types",
@@ -385,7 +390,8 @@ func TestFilterGoPackages(t *testing.T) {
 				{Name: "pkg3", Type: utils.NodePackages},
 				{Name: "pkg4", Type: utils.GoBinary},
 			},
-			expected: 2,
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg4"},
 		},
 		{
 			name: "no Go packages",
@@ -404,14 +410,20 @@ func TestFilterGoPackages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, _ := filterGoPackages(tt.input)
-			assert.Len(t, result, tt.expected, "Expected %d packages, got %d", tt.expected, len(result))
+			result, stdlibFixedVersion := filterGoPackages(tt.input)
+			require.Len(t, result, tt.expected, "Expected %d packages, got %d", tt.expected, len(result))
+			assert.Equal(t, tt.expectedStdlib, stdlibFixedVersion, "stdlibFixedVersion mismatch")
 
-			// Verify all returned packages are Go packages
+			// Verify all returned packages are Go packages with expected names
+			var names []string
 			for _, pkg := range result {
 				assert.True(t,
 					pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary,
 					"Package %s has unexpected type %s", pkg.Name, pkg.Type)
+				names = append(names, pkg.Name)
+			}
+			if tt.expectedNames != nil {
+				assert.ElementsMatch(t, tt.expectedNames, names, "Returned package names mismatch")
 			}
 		})
 	}
@@ -545,7 +557,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			managers := GetLanguageManagers(config, workingFolder, tt.manifest, false)
+			managers := GetLanguageManagers(config, workingFolder, tt.manifest, "")
 			assert.Len(t, managers, tt.expectedCount, "Expected %d managers, got %d", tt.expectedCount, len(managers))
 
 			var hasGoMgr, hasPythonMgr, hasNodeMgr bool
@@ -565,6 +577,33 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 			assert.Equal(t, tt.expectNodeMgr, hasNodeMgr, "Node manager presence mismatch")
 		})
 	}
+
+	// Verify toolchainPatchLevel is propagated to the Go manager
+	t.Run("toolchainPatchLevel propagated", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+			},
+		}
+		managers := GetLanguageManagers(config, workingFolder, manifest, "minor")
+		require.Len(t, managers, 1)
+		goMgr, ok := managers[0].(*golangManager)
+		require.True(t, ok, "Expected golangManager")
+		assert.Equal(t, "minor", goMgr.toolchainPatchLevel, "toolchainPatchLevel should be propagated")
+	})
+
+	t.Run("toolchainPatchLevel empty when not set", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+			},
+		}
+		managers := GetLanguageManagers(config, workingFolder, manifest, "")
+		require.Len(t, managers, 1)
+		goMgr, ok := managers[0].(*golangManager)
+		require.True(t, ok, "Expected golangManager")
+		assert.Empty(t, goMgr.toolchainPatchLevel, "toolchainPatchLevel should be empty when not set")
+	})
 }
 
 func TestGetUniqueLatestUpdates_Go(t *testing.T) {
@@ -617,6 +656,15 @@ func TestGetUniqueLatestUpdates_Go(t *testing.T) {
 			ignoreErrors:  false,
 			expectedCount: 2,
 			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 2)
+				nameToVersion := map[string]string{}
+				for _, pkg := range packages {
+					nameToVersion[pkg.Name] = pkg.FixedVersion
+				}
+				assert.Equal(t, "v1.7.7", nameToVersion["github.com/gin-gonic/gin"])
+				assert.Equal(t, "v0.5.0", nameToVersion["golang.org/x/net"])
+			},
 		},
 		{
 			name: "package with empty FixedVersion - should be skipped",
@@ -676,10 +724,10 @@ func TestGetUniqueLatestUpdates_Go(t *testing.T) {
 			result, err := GetUniqueLatestUpdates(tt.input, goComparer, tt.ignoreErrors)
 
 			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+				require.Error(t, err)
+				return
 			}
+			require.NoError(t, err)
 
 			assert.Len(t, result, tt.expectedCount, "Expected %d packages, got %d", tt.expectedCount, len(result))
 

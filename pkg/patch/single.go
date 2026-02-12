@@ -78,7 +78,7 @@ func patchSingleArchImage(
 	}
 	pkgTypes := opts.PkgTypes
 	libraryPatchLevel := opts.LibraryPatchLevel
-	goStdlibUpgrade := opts.GoStdlibUpgrade
+	toolchainPatchLevel := opts.ToolchainPatchLevel
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -205,7 +205,7 @@ func patchSingleArchImage(
 	var patchResult *Result
 	eg.Go(func() error {
 		result, err := executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, goStdlibUpgrade)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel)
 		if err != nil {
 			return err
 		}
@@ -467,7 +467,7 @@ func executePatchBuild(
 	reportFile, format, output, patchedImageName string,
 	buildChannel chan *client.SolveStatus,
 	exitOnEOL bool,
-	goStdlibUpgrade bool,
+	toolchainPatchLevel string,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -498,16 +498,16 @@ func executePatchBuild(
 		}
 
 		patchOpts := &Options{
-			ImageName:        imageName.String(),
-			TargetPlatform:   targetPlatform,
-			Updates:          updates,
-			ValidatedUpdates: validatedManifest,
-			WorkingFolder:    workingFolder,
-			IgnoreError:      ignoreError,
-			ErrorChannel:     ch,
-			ReturnState:      false, // Always solve for Docker export
-			ExitOnEOL:        exitOnEOL,
-			GoStdlibUpgrade:  goStdlibUpgrade,
+			ImageName:           imageName.String(),
+			TargetPlatform:      targetPlatform,
+			Updates:             updates,
+			ValidatedUpdates:    validatedManifest,
+			WorkingFolder:       workingFolder,
+			IgnoreError:         ignoreError,
+			ErrorChannel:        ch,
+			ReturnState:         false, // Always solve for Docker export
+			ExitOnEOL:           exitOnEOL,
+			ToolchainPatchLevel: toolchainPatchLevel,
 		}
 
 		// Execute the core patching logic

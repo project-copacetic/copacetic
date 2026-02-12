@@ -236,7 +236,7 @@ func TestGetLanguageManagers_DotnetAndPython(t *testing.T) {
 		},
 	}
 
-	managers := GetLanguageManagers(config, testWorkingFolder, manifest, false)
+	managers := GetLanguageManagers(config, testWorkingFolder, manifest, "")
 	// Expect two managers (order not strictly guaranteed)
 	assert.Len(t, managers, 2)
 
@@ -256,14 +256,14 @@ func TestGetLanguageManagers_DotnetAndPython(t *testing.T) {
 func TestGetLanguageManagers_None(t *testing.T) {
 	config := &buildkit.Config{}
 	manifest := &unversioned.UpdateManifest{LangUpdates: unversioned.LangUpdatePackages{}}
-	managers := GetLanguageManagers(config, testWorkingFolder, manifest, false)
+	managers := GetLanguageManagers(config, testWorkingFolder, manifest, "")
 	assert.Len(t, managers, 0)
 }
 
 func TestGetLanguageManagers_DotnetOnly(t *testing.T) {
 	config := &buildkit.Config{}
 	manifest := &unversioned.UpdateManifest{LangUpdates: unversioned.LangUpdatePackages{{Name: "Newtonsoft.Json", FixedVersion: "13.0.3", Type: utils.DotNetPackages}}}
-	managers := GetLanguageManagers(config, testWorkingFolder, manifest, false)
+	managers := GetLanguageManagers(config, testWorkingFolder, manifest, "")
 	assert.Len(t, managers, 1)
 	_, ok := managers[0].(*dotnetManager)
 	assert.True(t, ok, "expected first manager to be dotnetManager")

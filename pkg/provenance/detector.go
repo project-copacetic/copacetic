@@ -14,7 +14,7 @@ import (
 
 const (
 	// golangToolingImage is the image used for running go version -m.
-	golangToolingImage = "golang:1.23-alpine"
+	golangToolingImage = "golang:1.23"
 	// outputDir is where the detection results are written.
 	outputDir = "/copa-detect"
 	// outputFile is the file containing go version -m output.

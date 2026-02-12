@@ -296,23 +296,27 @@ func (r *Rebuilder) RebuildBinary(
 	return finalState, result, nil
 }
 
-// rebuildToolingImage is the Go image used for rebuilding binaries with updated dependencies.
-// We use the latest stable Go toolchain rather than matching the original binary's Go version
-// because updated dependencies often require a newer Go version (e.g., golang.org/x/sys v0.38+
-// requires Go 1.24). Go maintains strong backwards compatibility so using a newer toolchain
-// to build an older codebase is safe.
-const rebuildToolingImage = "golang:alpine"
-
 // determineBaseImage selects the best base image for rebuilding.
+// Uses the binary's Go version with a floating minor tag (e.g., "golang:1.23")
+// to get the latest patch release for compatibility.
 func (r *Rebuilder) determineBaseImage(buildInfo *BuildInfo) string {
 	if buildInfo.BaseImage != "" {
 		return buildInfo.BaseImage
 	}
 
 	if buildInfo.GoVersion != "" {
-		log.Debugf("Binary was built with Go %s, using latest toolchain (%s) for compatibility with updated dependencies",
-			buildInfo.GoVersion, rebuildToolingImage)
-		return rebuildToolingImage
+		// Extract major.minor from the full version (e.g., "1.23.4" -> "1.23")
+		parts := strings.SplitN(buildInfo.GoVersion, ".", 3)
+		var floatingTag string
+		if len(parts) >= 2 {
+			floatingTag = parts[0] + "." + parts[1]
+		} else {
+			floatingTag = buildInfo.GoVersion
+		}
+		image := "golang:" + floatingTag
+		log.Debugf("Binary was built with Go %s, using floating tag %s for latest patch release",
+			buildInfo.GoVersion, image)
+		return image
 	}
 
 	return ""

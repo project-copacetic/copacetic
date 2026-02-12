@@ -370,22 +370,31 @@ copa patch \
     -i $IMAGE \
     -r scan.json \
     --pkg-types library \
-    --go-stdlib-upgrade
+    --toolchain-patch-level
 ```
 
-##### The `--go-stdlib-upgrade` Flag
+##### The `--toolchain-patch-level` Flag
 
-By default, Copa only updates third-party Go module dependencies. The `--go-stdlib-upgrade` flag additionally rebuilds binaries using a newer Go compiler to fix vulnerabilities in the Go standard library (`stdlib`).
+By default, Copa only updates third-party Go module dependencies. The `--toolchain-patch-level` flag additionally rebuilds binaries using a newer Go compiler to fix vulnerabilities in the Go standard library (`stdlib`).
+
+When specified without a value, `--toolchain-patch-level` defaults to `patch`, meaning Copa will upgrade the Go compiler to the latest patch release within the same minor version (e.g., Go 1.23.0 -> 1.23.10). You can also specify `minor` or `major` for broader upgrades.
 
 When enabled, Copa compares each binary's embedded Go version against the fixed version reported by the vulnerability scanner. Only binaries whose Go version is older than the fix version are rebuilt with the newer compiler.
 
 ```bash
-# Fix both dependency and stdlib vulnerabilities
+# Fix both dependency and stdlib vulnerabilities (defaults to patch level)
 copa patch \
     -i $IMAGE \
     -r scan.json \
     --pkg-types library \
-    --go-stdlib-upgrade
+    --toolchain-patch-level
+
+# Explicitly specify the patch level
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --toolchain-patch-level minor
 ```
 
 ##### How Binary Rebuilding Works
@@ -482,7 +491,7 @@ copa patch \
     -i $IMAGE \
     -r scan.json \
     --pkg-types library \
-    --go-stdlib-upgrade \
+    --toolchain-patch-level \
     -t patched
 
 # Verify the patched binary
