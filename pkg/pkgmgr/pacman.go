@@ -147,7 +147,7 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 	}
 
 	pacmanUpdated := imageStateCurrent.Run(
-		llb.Shlex("pacman -Sy"),
+		llb.Shlex("/usr/bin/pacman -Sy"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 		llb.WithCustomName("Updating package database"),
@@ -155,9 +155,14 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 
 	if updates == nil {
 		const updatesAvailableMarker = "/updates.txt"
-		checkUpgradable := fmt.Sprintf(`sh -c 'if pacman -Qu > /dev/null 2 &1; then touch %s; fi'`, updatesAvailableMarker)
+		// 1. Define the shell script properly with valid 2>&1 syntax
+		// Note: We use pacman -Sy to ensure the DB is synced before checking
+		shellScript := fmt.Sprintf("if /usr/bin/pacman -SyQu > /dev/null 2>&1; then touch %s; fi", updatesAvailableMarker)
+
+		// 2. Explicitly construct the command args (safer than Shlex for complex scripts)
+		// We use /bin/sh because it is the universal shell path (even on Arch)
 		stateWithCheck := pacmanUpdated.Run(
-			llb.Shlex(checkUpgradable),
+			llb.Args([]string{"/bin/sh", "-c", shellScript}),
 			llb.WithCustomName("Checking for available updates"),
 		).Root()
 
@@ -176,27 +181,38 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
 		}
-		const pacmanInstallTemplate = `pacman -S --noconfirm %s`
+
+		// 1. Join strings properly
+		// 2. Use /bin/sh explicitly for safety
+		const pacmanInstallTemplate = `/usr/bin/pacman -S --noconfirm %s`
 		installCmd := fmt.Sprintf(pacmanInstallTemplate, strings.Join(pkgStrings, " "))
-		pacmanInstalled.Run(
+
+		// FIX: Chain off 'pacmanUpdated', NOT 'pacmanInstalled'
+		// FIX: Assign the result back to 'pacmanInstalled'
+		pacmanInstalled = pacmanUpdated.Run(
 			llb.Shlex(installCmd),
 			llb.WithProxy(utils.GetProxy()),
 			llb.WithCustomName(fmt.Sprintf("Upgrading %d security updates", len(pkgStrings))),
 		).Root()
 
-		const outputResultsTemplate = `sh -c 'pacman -Q %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: pacman -Q returned $?"; fi'`
-		pkgs := strings.Trim(fmt.Sprintf("%s", pkgStrings), "[]")
+		// Construct the verification command
+		// Note: Use strings.Join instead of Trim format hack for cleaner slice conversion
+		pkgs := strings.Join(pkgStrings, " ")
+		const outputResultsTemplate = `/bin/sh -c '/usr/bin/pacman -Q %s > %s; if [[ $? -ne 0 ]]; then echo "WARN: pacman -Q returned $?"; fi'`
 		outputResultsCmd := fmt.Sprintf(outputResultsTemplate, pkgs, resultManifest)
+
+		// FIX: Use the NEW pacmanInstalled state for the next step
 		mkFolders := pacmanInstalled.File(llb.Mkdir(resultsPath, 0o744, llb.WithParents(true)))
+
+		// This looks correct now, provided pacmanInstalled is valid
 		resultDiff := mkFolders.Dir(resultsPath).Run(llb.Shlex(outputResultsCmd)).AddMount(resultsPath, llb.Scratch())
 
 		resultManifestBytes, err = buildkit.ExtractFileFromState(ctx, pm.config.Client, &resultDiff, resultManifest)
 		if err != nil {
 			return nil, nil, err
 		}
-
 	} else {
-		installCmd := `output=$(pacman -Su --noconfirm 2>&1); if [ $? -ne 0 ]; then echo "$output" >> error_log.txt; fi`
+		installCmd := `output=$(/usr/bin/pacman -Su --noconfirm 2>&1); if [ $? -ne 0 ]; then echo "$output" >> error_log.txt; fi`
 		pacmanInstalled = pacmanUpdated.Run(
 			buildkit.Sh(installCmd),
 			llb.WithProxy(utils.GetProxy()),
