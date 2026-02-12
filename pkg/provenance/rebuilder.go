@@ -570,7 +570,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 
 	// Install git (needed for go mod download)
 	state = state.Run(
-		llb.Shlex("apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*"),
+		llb.Args([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*"}),
 	).Root()
 
 	// Download dependencies with retry (network can be flaky)
