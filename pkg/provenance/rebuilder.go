@@ -296,25 +296,22 @@ func (r *Rebuilder) RebuildBinary(
 	return finalState, result, nil
 }
 
+// golangToolingTag is the Docker tag used for Go tooling images (detection,
+// rebuilding, etc.). We use "1" (latest stable Go 1.x) rather than a pinned
+// minor version because updated dependencies often require a newer Go, and Go
+// maintains strong backwards compatibility so using a newer toolchain is safe.
+const golangToolingTag = "1"
+
 // determineBaseImage selects the best base image for rebuilding.
-// Uses the binary's Go version with a floating minor tag (e.g., "golang:1.23")
-// to get the latest patch release for compatibility.
+// Uses the latest stable Go toolchain to ensure compatibility with updated dependencies.
 func (r *Rebuilder) determineBaseImage(buildInfo *BuildInfo) string {
 	if buildInfo.BaseImage != "" {
 		return buildInfo.BaseImage
 	}
 
 	if buildInfo.GoVersion != "" {
-		// Extract major.minor from the full version (e.g., "1.23.4" -> "1.23")
-		parts := strings.SplitN(buildInfo.GoVersion, ".", 3)
-		var floatingTag string
-		if len(parts) >= 2 {
-			floatingTag = parts[0] + "." + parts[1]
-		} else {
-			floatingTag = buildInfo.GoVersion
-		}
-		image := "golang:" + floatingTag
-		log.Debugf("Binary was built with Go %s, using floating tag %s for latest patch release",
+		image := "golang:" + golangToolingTag
+		log.Debugf("Binary was built with Go %s, using latest stable toolchain (%s) for compatibility with updated dependencies",
 			buildInfo.GoVersion, image)
 		return image
 	}

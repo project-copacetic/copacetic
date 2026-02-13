@@ -26,14 +26,14 @@ func TestDetermineBaseImage(t *testing.T) {
 			buildInfo: &BuildInfo{
 				GoVersion: "1.22",
 			},
-			want: "golang:1.22",
+			want: "golang:" + golangToolingTag,
 		},
 		{
 			name: "construct from Go version with patch",
 			buildInfo: &BuildInfo{
 				GoVersion: "1.21.5",
 			},
-			want: "golang:1.21",
+			want: "golang:" + golangToolingTag,
 		},
 		{
 			name:      "empty build info",

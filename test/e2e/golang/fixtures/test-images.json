@@ -10,13 +10,13 @@
     "libraryPatchLevel": "minor"
   },
   {
-    "image": "docker.io/library/traefik",
-    "tag": "v2.10.7",
-    "description": "Traefik - scratch-based reverse proxy",
+    "image": "docker.io/prom/pushgateway",
+    "tag": "v1.11.2",
+    "description": "Pushgateway - scratch-based metrics gateway",
     "category": "scratch",
     "skipMainModule": true,
     "expectedBinaryCount": 1,
-    "binaryPaths": ["/traefik"],
+    "binaryPaths": ["/bin/pushgateway"],
     "libraryPatchLevel": "minor"
   },
   {

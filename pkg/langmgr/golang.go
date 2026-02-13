@@ -18,12 +18,14 @@ import (
 const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
 
 const (
-	goCheckFile         = "/copa-go-check"
-	goModDetectFile     = "/copa-go-mod-paths"
-	goWorkDetectFile    = "/copa-go-work-path"
-	goVendorDetectFile  = "/copa-go-vendor-check"
-	goVersionFile       = "/copa-go-version"
-	defaultToolingGoTag = "1.23"
+	goCheckFile        = "/copa-go-check"
+	goModDetectFile    = "/copa-go-mod-paths"
+	goWorkDetectFile   = "/copa-go-work-path"
+	goVendorDetectFile = "/copa-go-vendor-check"
+	goVersionFile      = "/copa-go-version"
+	// defaultToolingGoTag is the fallback Docker tag when Go version can't be
+	// detected from the image. Uses "1" to always get the latest stable Go 1.x.
+	defaultToolingGoTag = "1"
 	toolingGoTemplate   = "docker.io/library/golang:%s"
 )
 
