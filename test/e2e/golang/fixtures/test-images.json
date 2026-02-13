@@ -1,0 +1,40 @@
+[
+  {
+    "image": "docker.io/coredns/coredns",
+    "tag": "1.11.1",
+    "description": "CoreDNS - distroless single binary",
+    "category": "distroless",
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/coredns"],
+    "libraryPatchLevel": "minor"
+  },
+  {
+    "image": "docker.io/prom/pushgateway",
+    "tag": "v1.11.2",
+    "description": "Pushgateway - scratch-based metrics gateway",
+    "category": "scratch",
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/bin/pushgateway"],
+    "libraryPatchLevel": "minor"
+  },
+  {
+    "image": "docker.io/prom/alertmanager",
+    "tag": "v0.26.0",
+    "description": "Alertmanager - busybox-based alerting",
+    "category": "busybox",
+    "skipMainModule": true,
+    "expectedBinaryCount": 2,
+    "binaryPaths": ["/bin/alertmanager", "/bin/amtool"]
+  },
+  {
+    "image": "docker.io/nats",
+    "tag": "2.10.7-scratch",
+    "description": "NATS - scratch-based messaging",
+    "category": "scratch",
+    "skipMainModule": true,
+    "expectedBinaryCount": 1,
+    "binaryPaths": ["/nats-server"]
+  }
+]
