@@ -137,6 +137,66 @@ func TestOptimalVersionSelection(t *testing.T) {
 	}
 }
 
+func TestSummarizeTrivyFindings(t *testing.T) {
+	t.Run("counts total patched and skipped for os and library vulnerabilities", func(t *testing.T) {
+		report := &trivyTypes.Report{
+			Results: []trivyTypes.Result{
+				{
+					Class: trivyTypes.ClassOSPkg,
+					Type:  "alpine",
+					Vulnerabilities: []trivyTypes.DetectedVulnerability{
+						{PkgName: "openssl", FixedVersion: "3.0.1-r0"},
+						{PkgName: "musl", FixedVersion: ""},
+					},
+				},
+				{
+					Class: utils.LangPackages,
+					Type:  utils.NodePackages,
+					Vulnerabilities: []trivyTypes.DetectedVulnerability{
+						{PkgName: "ansi-regex", FixedVersion: "6.2.2"},
+						{PkgName: "ws", FixedVersion: ""},
+					},
+				},
+			},
+		}
+
+		summary := summarizeTrivyFindings(report, utils.PkgTypeOS+","+utils.PkgTypeLibrary)
+		assert.Equal(t, 4, summary.TotalVulnerabilities)
+		assert.Equal(t, 2, summary.Patched)
+		assert.Equal(t, 1, summary.PatchedOS)
+		assert.Equal(t, 1, summary.PatchedLibrary)
+		assert.Equal(t, 2, summary.SkippedNoFix)
+	})
+
+	t.Run("respects package type filtering", func(t *testing.T) {
+		report := &trivyTypes.Report{
+			Results: []trivyTypes.Result{
+				{
+					Class: trivyTypes.ClassOSPkg,
+					Type:  "alpine",
+					Vulnerabilities: []trivyTypes.DetectedVulnerability{
+						{PkgName: "busybox", FixedVersion: "1.36.1-r31"},
+					},
+				},
+				{
+					Class: utils.LangPackages,
+					Type:  utils.PythonPackages,
+					Vulnerabilities: []trivyTypes.DetectedVulnerability{
+						{PkgName: "jinja2", FixedVersion: "3.1.6"},
+					},
+				},
+			},
+		}
+
+		summary := summarizeTrivyFindings(report, utils.PkgTypeOS)
+		assert.Equal(t, 1, summary.TotalVulnerabilities)
+		assert.Equal(t, 1, summary.Patched)
+		assert.Equal(t, 1, summary.PatchedOS)
+		assert.Equal(t, 0, summary.PatchedLibrary)
+		assert.Equal(t, 0, summary.SkippedNoFix)
+	})
+}
+
 // TestOptimalVersionSelectionWithPatchLevel tests the library patch level specific logic.
 func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 	testCases := []struct {

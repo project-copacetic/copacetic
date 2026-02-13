@@ -336,6 +336,61 @@ func NewTrivyParser() *TrivyParser {
 	return &TrivyParser{}
 }
 
+func summarizeTrivyReport(file, pkgTypes string) (*PatchSummary, error) {
+	report, err := parseTrivyReport(file)
+	if err != nil {
+		return nil, err
+	}
+	return summarizeTrivyFindings(report, pkgTypes), nil
+}
+
+func summarizeTrivyFindings(report *trivyTypes.Report, pkgTypes string) *PatchSummary {
+	summary := &PatchSummary{}
+
+	includeOS := strings.Contains(pkgTypes, utils.PkgTypeOS) || pkgTypes == ""
+	includeLibrary := strings.Contains(pkgTypes, utils.PkgTypeLibrary)
+
+	for i := range report.Results {
+		r := &report.Results[i]
+
+		if r.Class == trivyTypes.ClassOSPkg && includeOS {
+			for v := range r.Vulnerabilities {
+				vuln := &r.Vulnerabilities[v]
+				summary.TotalVulnerabilities++
+				if vuln.FixedVersion == "" {
+					summary.SkippedNoFix++
+					continue
+				}
+				summary.Patched++
+				summary.PatchedOS++
+			}
+		}
+
+		if r.Class == utils.LangPackages && includeLibrary {
+			for v := range r.Vulnerabilities {
+				vuln := &r.Vulnerabilities[v]
+
+				if r.Type == utils.DotNetPackages && strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") {
+					continue
+				}
+				if r.Type != utils.PythonPackages && r.Type != utils.NodePackages && r.Type != utils.DotNetPackages {
+					continue
+				}
+
+				summary.TotalVulnerabilities++
+				if vuln.FixedVersion == "" {
+					summary.SkippedNoFix++
+					continue
+				}
+				summary.Patched++
+				summary.PatchedLibrary++
+			}
+		}
+	}
+
+	return summary
+}
+
 func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 	// Default to "patch" level for backward compatibility
 	return t.ParseWithLibraryPatchLevel(file, "patch")
