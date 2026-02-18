@@ -2463,10 +2463,10 @@
   resolved "https://registry.yarnpkg.com/@trysound/sax/-/sax-0.2.0.tgz#cccaab758af56761eb7bf37af6f03f326dd798ad"
   integrity sha512-L7z9BgrNEcYyUYtF+HaEfiS5ebkh9jXqbszz7pC0hRBPaatV0XjSD3+eHrpqFemQfgwiFF0QPIarnIihIDn7OA==
 
-"@tsconfig/docusaurus@^2.0.8":
-  version "2.0.8"
-  resolved "https://registry.yarnpkg.com/@tsconfig/docusaurus/-/docusaurus-2.0.8.tgz#5f6cf36b7449cf1db4bb1a9f476c5577eae13099"
-  integrity sha512-25cxrJH44gGHdjljVHNMPWu3Baf96sPtMjkUgoon+mXViaSuCeoYki+XUTFIitsnoPmpev/vMGjk06Kqan3a7Q==
+"@tsconfig/docusaurus@^2.0.9":
+  version "2.0.9"
+  resolved "https://registry.yarnpkg.com/@tsconfig/docusaurus/-/docusaurus-2.0.9.tgz#e530ae78bca4f88917af48fe25a944d6d6bdcdf5"
+  integrity sha512-0jVxZCgy2v7TnJrW9kVNikNwJHeiWb68Zhiiw2vHw4tzBFSP5vS2zn3O5EY2oPEVz5dXZRkK7MnWG3Ay5q0mIg==
 
 "@types/acorn@^4.0.0":
   version "4.0.6"
@@ -4334,10 +4334,10 @@ dot-prop@^6.0.1:
   dependencies:
     is-obj "^2.0.0"
 
-dotenv@^17.2.4:
-  version "17.2.4"
-  resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-17.2.4.tgz#b5a0e2f015e0be287a5330a90bf0e804606504c2"
-  integrity sha512-mudtfb4zRB4bVvdj0xRo+e6duH1csJRM8IukBqfTRvHotn9+LBXB8ynAidP9zHqoRC/fsllXgk4kCKlR21fIhw==
+dotenv@^17.3.1:
+  version "17.3.1"
+  resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-17.3.1.tgz#2706f5b0165e45a1503348187b8468f87fe6aae2"
+  integrity sha512-IO8C/dzEb6O3F9/twg6ZLXz164a2fhTnEWb95H23Dm4OuN+92NmEAlTrupP9VW6Jm3sO26tQlqyvyi4CsnY9GA==
 
 dunder-proto@^1.0.1:
   version "1.0.1"
