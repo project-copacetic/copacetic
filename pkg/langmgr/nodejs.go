@@ -47,25 +47,27 @@ func getPackageBaseName(name string) string {
 	return name
 }
 
-// getNpmTarballURL returns the npm registry tarball URL for a package.
-// Scoped packages like "@babel/core" use URL encoding: @babel%2fcore.
+// getNpmTarballURL returns a shell expression that resolves the npm registry tarball URL for a package.
+// It respects custom npm registries configured via .npmrc or NPM_CONFIG_REGISTRY.
+// Scoped packages like "@babel/core" use URL encoding: @babel%2Fcore.
 func getNpmTarballURL(name, version string) string {
 	encodedName := name
 	if strings.HasPrefix(name, "@") {
-		encodedName = strings.Replace(name, "/", "%2f", 1)
+		encodedName = strings.Replace(name, "/", "%2F", 1)
 	}
 	return fmt.Sprintf("https://registry.npmjs.org/%s/-/%s-%s.tgz", encodedName, getPackageBaseName(name), version)
 }
 
 // nodeDownloadScript returns a shell snippet that uses Node.js to download a URL to a file.
 // This is used instead of wget/curl which may not be available in all images.
-// Uses the same '\''...'\'' quoting pattern as the rest of the codebase for single quotes
-// inside sh -c '...' commands.
+// Uses the same '\”...'\” quoting pattern as the rest of the codebase for single quotes
+// inside sh -c '...' commands. Returns non-zero exit code on download failure.
 func nodeDownloadScript(url, destFile string) string {
 	return fmt.Sprintf(
 		`node -e "var h=require('\''https'\''),f=require('\''fs'\'');`+
 			`function dl(u){h.get(u,function(r){`+
 			`if(r.statusCode>300&&r.statusCode<400){dl(r.headers.location)}`+
+			`else if(r.statusCode!==200){console.error('\''HTTP '\''+r.statusCode+'\'' for '\''+u);process.exit(1)}`+
 			`else{r.pipe(f.createWriteStream('\''%s'\'')).on('\''finish'\'',function(){process.exit(0)})}`+
 			`}).on('\''error'\'',function(e){console.error(e);process.exit(1)})}`+
 			`dl('\''%s'\'')"`,
@@ -215,7 +217,7 @@ func hasNpmVulnerabilities(updates unversioned.LangUpdatePackages) bool {
 
 // selectNpmVersionForNode returns the appropriate npm version for a given Node.js major version.
 // This ensures compatibility between npm and Node.js versions.
-func selectNpmVersionForNode(nodeVersion string) string {
+func selectNpmVersionForNode(nodeVersion string) string { //nolint:unused // kept for potential future use
 	if nodeVersion == "" {
 		return npmVersionLatest // Fallback when Node version unknown
 	}
@@ -556,10 +558,14 @@ func (nm *nodejsManager) installNodePackages(
 					`PKG_DIR="node_modules/%s" && `+
 					`if [ -d "$PKG_DIR" ]; then `+
 					`  echo "INFO: Replacing direct dependency %s with version %s" && `+
-					`  %s && `+
-					`  rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-					`  tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
-					`  rm -f %s; `+
+					`  if %s; then `+
+					`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
+					`    tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
+					`    rm -f %s && `+
+					`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
+					`  else `+
+					`    echo "WARN: failed to download %s@%s, skipping"; `+
+					`  fi; `+
 					`else `+
 					`  echo "WARN: %s not found in node_modules, skipping"; `+
 					`fi'`,
@@ -569,6 +575,8 @@ func (nm *nodejsManager) installNodePackages(
 				downloadScript,
 				tarballFile,
 				tarballFile,
+				u.Name,
+				u.Name, u.FixedVersion,
 				u.Name,
 			)
 
@@ -603,19 +611,23 @@ func (nm *nodejsManager) installNodePackages(
 
 			replaceCmd := fmt.Sprintf(
 				`sh -c 'cd %s && `+
-					`%s && `+
-					`PKG_NAME="%s" && `+
-					`FOUND=0 && `+
-					`for dir in $(find node_modules -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
-					`  if [ -f "$dir/package.json" ]; then `+
-					`    echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
-					`    rm -rf "$dir" && mkdir -p "$dir" && `+
-					`    tar xzf %s --strip-components=1 -C "$dir" && `+
-					`    FOUND=$((FOUND+1)); `+
-					`  fi; `+
-					`done && `+
-					`rm -f %s && `+
-					`if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi'`,
+					`if %s; then `+
+					`  PKG_NAME="%s" && `+
+					`  FOUND=0 && `+
+					`  for dir in $(find node_modules -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
+					`    if [ -f "$dir/package.json" ]; then `+
+					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
+					`      rm -rf "$dir" && mkdir -p "$dir" && `+
+					`      tar xzf %s --strip-components=1 -C "$dir" && `+
+					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
+					`      FOUND=$((FOUND+1)); `+
+					`    fi; `+
+					`  done && `+
+					`  rm -f %s && `+
+					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
+					`else `+
+					`  echo "WARN: failed to download %s@%s, skipping"; `+
+					`fi'`,
 				workDir,
 				downloadScript,
 				u.Name,
@@ -623,6 +635,7 @@ func (nm *nodejsManager) installNodePackages(
 				tarballFile,
 				tarballFile,
 				u.Name,
+				u.Name, u.FixedVersion,
 			)
 
 			log.Infof("Replacing transitive dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
@@ -679,7 +692,7 @@ func (nm *nodejsManager) detectPackageJSON(ctx context.Context, currentState *ll
 	var findCmd strings.Builder
 	findCmd.WriteString(`sh -c 'paths=""; for dir in`)
 	for _, p := range candidatePaths {
-		findCmd.WriteString(fmt.Sprintf(" %s", p))
+		fmt.Fprintf(&findCmd, " %s", p)
 	}
 	findCmd.WriteString(`; do if [ -f "$dir/package.json" ]; then paths="$paths $dir"; fi; done; `)
 
@@ -825,8 +838,9 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 // upgradeGlobalPackages patches globally installed npm packages (like eslint, pnpm) that have vulnerable dependencies.
 // This handles packages in the global node_modules directory (e.g., /usr/local/lib/node_modules/).
 //
-// Strategy: If npm has vulnerabilities, upgrade npm to latest compatible version.
-// For other global packages, use npm overrides to update transitive dependencies.
+// Strategy: Replace vulnerable packages by downloading fixed-version tarballs from the npm registry
+// and extracting them directly into node_modules, avoiding npm install which re-resolves the
+// dependency tree and can introduce new vulnerabilities.
 func (nm *nodejsManager) upgradeGlobalPackages(
 	ctx context.Context,
 	currentState *llb.State,
@@ -868,25 +882,30 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 
 			replaceCmd := fmt.Sprintf(
 				`sh -c 'NPM_ROOT=$(npm root -g) && `+
-					`%s && `+
-					`PKG_NAME="%s" && `+
-					`FOUND=0 && `+
-					`for dir in $(find "$NPM_ROOT/npm" -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
-					`  if [ -f "$dir/package.json" ]; then `+
-					`    echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
-					`    rm -rf "$dir" && mkdir -p "$dir" && `+
-					`    tar xzf %s --strip-components=1 -C "$dir" && `+
-					`    FOUND=$((FOUND+1)); `+
-					`  fi; `+
-					`done && `+
-					`rm -f %s && `+
-					`if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in npm node_modules"; fi'`,
+					`if %s; then `+
+					`  PKG_NAME="%s" && `+
+					`  FOUND=0 && `+
+					`  for dir in $(find "$NPM_ROOT/npm" -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
+					`    if [ -f "$dir/package.json" ]; then `+
+					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
+					`      rm -rf "$dir" && mkdir -p "$dir" && `+
+					`      tar xzf %s --strip-components=1 -C "$dir" && `+
+					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
+					`      FOUND=$((FOUND+1)); `+
+					`    fi; `+
+					`  done && `+
+					`  rm -f %s && `+
+					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in npm node_modules"; fi; `+
+					`else `+
+					`  echo "WARN: failed to download %s@%s, skipping"; `+
+					`fi'`,
 				downloadScript,
 				u.Name,
 				u.FixedVersion,
 				tarballFile,
 				tarballFile,
 				u.Name,
+				u.Name, u.FixedVersion,
 			)
 
 			log.Infof("Replacing %s@%s within npm's node_modules", u.Name, u.FixedVersion)
@@ -995,10 +1014,14 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`PKG_DIR="node_modules/%s" && `+
 						`if [ -d "$PKG_DIR" ]; then `+
 						`  echo "INFO: Replacing direct dependency %s with version %s" && `+
-						`  %s && `+
-						`  rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-						`  tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
-						`  rm -f %s; `+
+						`  if %s; then `+
+						`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
+						`    tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
+						`    rm -f %s && `+
+						`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
+						`  else `+
+						`    echo "WARN: failed to download %s@%s, skipping"; `+
+						`  fi; `+
 						`else `+
 						`  echo "WARN: %s not found in node_modules, skipping"; `+
 						`fi'`,
@@ -1008,6 +1031,8 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					downloadScript,
 					tarballFile,
 					tarballFile,
+					u.Name,
+					u.Name, u.FixedVersion,
 					u.Name,
 				)
 
@@ -1035,19 +1060,23 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 
 				replaceCmd := fmt.Sprintf(
 					`sh -c 'cd %s && `+
-						`%s && `+
-						`PKG_NAME="%s" && `+
-						`FOUND=0 && `+
-						`for dir in $(find node_modules -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
-						`  if [ -f "$dir/package.json" ]; then `+
-						`    echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
-						`    rm -rf "$dir" && mkdir -p "$dir" && `+
-						`    tar xzf %s --strip-components=1 -C "$dir" && `+
-						`    FOUND=$((FOUND+1)); `+
-						`  fi; `+
-						`done && `+
-						`rm -f %s && `+
-						`if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi'`,
+						`if %s; then `+
+						`  PKG_NAME="%s" && `+
+						`  FOUND=0 && `+
+						`  for dir in $(find node_modules -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
+						`    if [ -f "$dir/package.json" ]; then `+
+						`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
+						`      rm -rf "$dir" && mkdir -p "$dir" && `+
+						`      tar xzf %s --strip-components=1 -C "$dir" && `+
+						`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
+						`      FOUND=$((FOUND+1)); `+
+						`    fi; `+
+						`  done && `+
+						`  rm -f %s && `+
+						`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
+						`else `+
+						`  echo "WARN: failed to download %s@%s, skipping"; `+
+						`fi'`,
 					pkgPath,
 					downloadScript,
 					u.Name,
@@ -1055,6 +1084,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					tarballFile,
 					tarballFile,
 					u.Name,
+					u.Name, u.FixedVersion,
 				)
 
 				log.Infof("Replacing transitive dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)
