@@ -2,8 +2,8 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
+	"syscall"
 
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
@@ -59,9 +59,9 @@ func RenderPatchingPlan(plan PatchingPlan) string {
 
 func renderPatchingPlanPlain(plan PatchingPlan) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Patching: %s -> %s", plan.TargetPlatform, plan.PatchedImageName))
+	fmt.Fprintf(&b, "Patching: %s -> %s", plan.TargetPlatform, plan.PatchedImageName)
 	if len(plan.PreservedPlatforms) > 0 {
-		b.WriteString(fmt.Sprintf(" (preserving: %s)", strings.Join(plan.PreservedPlatforms, ", ")))
+		fmt.Fprintf(&b, " (preserving: %s)", strings.Join(plan.PreservedPlatforms, ", "))
 	}
 	b.WriteString("\n")
 	return b.String()
@@ -90,15 +90,15 @@ func RenderNextSteps(steps NextSteps) string {
 
 	stepNum := 1
 	if len(steps.PushCommands) > 0 {
-		b.WriteString(fmt.Sprintf("   %s Push architecture images:\n", boldStyle.Render(fmt.Sprintf("%d.", stepNum))))
+		fmt.Fprintf(&b, "   %s Push architecture images:\n", boldStyle.Render(fmt.Sprintf("%d.", stepNum)))
 		for _, cmd := range steps.PushCommands {
-			b.WriteString(fmt.Sprintf("      %s\n", dimStyle.Render(cmd)))
+			fmt.Fprintf(&b, "      %s\n", dimStyle.Render(cmd))
 		}
 		stepNum++
 	}
 	if steps.ManifestCommand != "" {
-		b.WriteString(fmt.Sprintf("   %s Create multi-platform manifest:\n", boldStyle.Render(fmt.Sprintf("%d.", stepNum))))
-		b.WriteString(fmt.Sprintf("      %s\n", dimStyle.Render(steps.ManifestCommand)))
+		fmt.Fprintf(&b, "   %s Create multi-platform manifest:\n", boldStyle.Render(fmt.Sprintf("%d.", stepNum)))
+		fmt.Fprintf(&b, "      %s\n", dimStyle.Render(steps.ManifestCommand))
 	}
 	return b.String()
 }
@@ -106,19 +106,19 @@ func RenderNextSteps(steps NextSteps) string {
 func renderNextStepsPlain(steps NextSteps) string {
 	var b strings.Builder
 	if steps.SuccessMessage != "" {
-		b.WriteString(fmt.Sprintf("✓ %s\n", steps.SuccessMessage))
+		fmt.Fprintf(&b, "✓ %s\n", steps.SuccessMessage)
 	}
 	stepNum := 1
 	if len(steps.PushCommands) > 0 {
-		b.WriteString(fmt.Sprintf("%d. Push architecture images:\n", stepNum))
+		fmt.Fprintf(&b, "%d. Push architecture images:\n", stepNum)
 		for _, cmd := range steps.PushCommands {
-			b.WriteString(fmt.Sprintf("   %s\n", cmd))
+			fmt.Fprintf(&b, "   %s\n", cmd)
 		}
 		stepNum++
 	}
 	if steps.ManifestCommand != "" {
-		b.WriteString(fmt.Sprintf("%d. Create multi-platform manifest:\n", stepNum))
-		b.WriteString(fmt.Sprintf("   %s\n", steps.ManifestCommand))
+		fmt.Fprintf(&b, "%d. Create multi-platform manifest:\n", stepNum)
+		fmt.Fprintf(&b, "   %s\n", steps.ManifestCommand)
 	}
 	return b.String()
 }
@@ -143,7 +143,7 @@ func RenderPatchSummary(summaries []PlatformSummary) string {
 	for _, s := range summaries {
 		b.WriteString("   ")
 		b.WriteString(formatStatusStyled(s.Status))
-		b.WriteString(fmt.Sprintf(" %-16s ", s.Platform))
+		fmt.Fprintf(&b, " %-16s ", s.Platform)
 		if s.Message != "" {
 			b.WriteString(dimStyle.Render(s.Message))
 		}
@@ -173,7 +173,7 @@ func renderPatchSummaryPlain(summaries []PlatformSummary) string {
 	var b strings.Builder
 	for _, s := range summaries {
 		statusIcon := getStatusIcon(s.Status)
-		b.WriteString(fmt.Sprintf("%s %-16s %-12s %s\n", statusIcon, s.Platform, s.Status, s.Message))
+		fmt.Fprintf(&b, "%s %-16s %-12s %s\n", statusIcon, s.Platform, s.Status, s.Message)
 	}
 	return b.String()
 }
@@ -223,10 +223,10 @@ func RenderError(info ErrorInfo) string {
 
 func renderErrorPlain(info ErrorInfo) string {
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Error: %s\n", info.Title))
-	b.WriteString(fmt.Sprintf("  %s\n", info.Message))
+	fmt.Fprintf(&b, "Error: %s\n", info.Title)
+	fmt.Fprintf(&b, "  %s\n", info.Message)
 	if info.Hint != "" {
-		b.WriteString(fmt.Sprintf("  Hint: %s\n", info.Hint))
+		fmt.Fprintf(&b, "  Hint: %s\n", info.Hint)
 	}
 	return b.String()
 }
@@ -236,7 +236,7 @@ func isTerminal() bool {
 	// We print UI output to both stdout and stderr depending on call site.
 	// Prefer enabling styles when either stream is a TTY to avoid losing colors
 	// when e.g. stdout is redirected but stderr is still interactive.
-	return term.IsTerminal(int(os.Stdout.Fd())) || term.IsTerminal(int(os.Stderr.Fd()))
+	return term.IsTerminal(syscall.Stdout) || term.IsTerminal(syscall.Stderr)
 }
 
 // FormatEmulationPrefix formats a platform prefix showing host→target when using QEMU emulation.
