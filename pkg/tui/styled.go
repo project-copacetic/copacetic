@@ -2,8 +2,8 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
+	"syscall"
 
 	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
@@ -236,13 +236,7 @@ func isTerminal() bool {
 	// We print UI output to both stdout and stderr depending on call site.
 	// Prefer enabling styles when either stream is a TTY to avoid losing colors
 	// when e.g. stdout is redirected but stderr is still interactive.
-	return term.IsTerminal(fdToInt(os.Stdout.Fd())) || term.IsTerminal(fdToInt(os.Stderr.Fd()))
-}
-
-// fdToInt safely converts a uintptr file descriptor to int.
-func fdToInt(fd uintptr) int {
-	//nolint:gosec // File descriptors are always small non-negative values; overflow is not possible.
-	return int(fd)
+	return term.IsTerminal(syscall.Stdout) || term.IsTerminal(syscall.Stderr)
 }
 
 // FormatEmulationPrefix formats a platform prefix showing host→target when using QEMU emulation.
