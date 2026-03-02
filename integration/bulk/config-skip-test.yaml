@@ -1,0 +1,10 @@
+apiVersion: copa.sh/v1alpha1
+kind: PatchConfig
+images:
+  - name: "alpine-skip-test"
+    image: "__ALPINE_REPO__"
+    tags:
+      strategy: "list"
+      list: ["3.19.1"]
+    target:
+      tag: "{{ .SourceTag }}-skip-test"
