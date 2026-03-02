@@ -610,7 +610,7 @@ func (nm *nodejsManager) detectPackageJSON(ctx context.Context, currentState *ll
 	var findCmd strings.Builder
 	findCmd.WriteString(`sh -c 'paths=""; for dir in`)
 	for _, p := range candidatePaths {
-		findCmd.WriteString(fmt.Sprintf(" %s", p))
+		fmt.Fprintf(&findCmd, " %s", p)
 	}
 	findCmd.WriteString(`; do if [ -f "$dir/package.json" ]; then paths="$paths $dir"; fi; done; `)
 

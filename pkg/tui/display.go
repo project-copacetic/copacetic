@@ -35,14 +35,14 @@ func NewDisplay(output *os.File, debugMode bool, progress progressui.DisplayMode
 		return progressui.NewDisplay(output, progress)
 	case progressui.AutoMode, progressui.TtyMode:
 		// Auto or TTY mode: use progrock if we have a TTY
-		if term.IsTerminal(int(output.Fd())) {
+		if term.IsTerminal(int(output.Fd())) { //nolint:gosec // G115: fd always fits in int
 			return NewProgrockDisplay(output)
 		}
 		// No TTY available, fall back to plain mode
 		return progressui.NewDisplay(output, progressui.PlainMode)
 	default:
 		// Unknown mode, default to auto behavior
-		if term.IsTerminal(int(output.Fd())) {
+		if term.IsTerminal(int(output.Fd())) { //nolint:gosec // G115: fd always fits in int
 			return NewProgrockDisplay(output)
 		}
 		return progressui.NewDisplay(output, progressui.PlainMode)
@@ -64,7 +64,7 @@ func NewProgrockDisplay(output *os.File) (Display, error) {
 	tape.ShowInternal(false) // Hide internal vertices by default
 
 	return &progrockDisplay{
-		fd:   int(output.Fd()),
+		fd:   int(output.Fd()), //nolint:gosec // G115: fd always fits in int
 		tape: tape,
 		ui:   progrock.DefaultUI(),
 		rec:  progrock.NewRecorder(tape),

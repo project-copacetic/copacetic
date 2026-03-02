@@ -208,13 +208,13 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		llb.ResolveModeDefault,
 	)
 	updated := toolingBase.Run(
-		llb.Shlex("apt-get update"),
+		llb.Shlex("apt-get -o Acquire::Retries=3 update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 		llb.WithCustomName("Updating package database"),
 	).Root()
 
-	const installBusyBoxCmd = "apt-get install busybox-static"
+	const installBusyBoxCmd = "apt-get -o Acquire::Retries=3 install busybox-static"
 	busyBoxInstalled := updated.Run(
 		llb.Shlex(installBusyBoxCmd),
 		llb.WithProxy(utils.GetProxy()),
@@ -344,7 +344,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	}
 
 	aptGetUpdated := imageStateCurrent.Run(
-		llb.Shlex("apt-get update"),
+		llb.Shlex("apt-get -o Acquire::Retries=3 update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 		llb.WithCustomName("Updating package database"),
@@ -389,7 +389,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	var installCmd string
 	if updates != nil {
-		aptGetInstallTemplate := `sh -c "apt-get install --no-install-recommends -y %s && apt-get clean -y"`
+		aptGetInstallTemplate := `sh -c "apt-get -o Acquire::Retries=3 install --no-install-recommends -y %s && apt-get clean -y"`
 		pkgStrings := []string{}
 		for _, u := range updates {
 			pkgStrings = append(pkgStrings, u.Name)
@@ -397,7 +397,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 		installCmd = fmt.Sprintf(aptGetInstallTemplate, strings.Join(pkgStrings, " "))
 	} else {
 		// if updates is not specified, update all packages
-		installCmd = `sh -c "output=$(apt-get upgrade -y && apt-get clean -y && apt-get autoremove -y 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
+		installCmd = `sh -c "output=$(apt-get -o Acquire::Retries=3 upgrade -y && apt-get clean -y && apt-get autoremove -y 2>&1); if [ $? -ne 0 ]; then echo "$output" >>error_log.txt; fi"`
 	}
 
 	var customName string
@@ -483,7 +483,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 	// Run apt-get update && apt-get download list of updates to target folder
 	updated := toolingBase.Run(
-		llb.Shlex("apt-get update"),
+		llb.Shlex("apt-get -o Acquire::Retries=3 update"),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 		llb.WithCustomName("Updating package database in tooling container"),
@@ -544,11 +544,11 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 							rm -r /var/lib/dpkg/info
 							mkdir -p /var/lib/dpkg/info
 
-							apt-get update
+							apt-get -o Acquire::Retries=3 update
 
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								apt-get install --reinstall -y $pkg_name
+								apt-get -o Acquire::Retries=3 install --reinstall -y $pkg_name
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
 							apt --fix-broken install

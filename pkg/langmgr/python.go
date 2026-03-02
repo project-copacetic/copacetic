@@ -467,13 +467,13 @@ func (pm *pythonManager) upgradePackagesWithTooling(
 	}
 	detectScriptBuilder.WriteString("\"; for pattern in")
 	for _, p := range candidatePaths {
-		detectScriptBuilder.WriteString(fmt.Sprintf(" '%s'", p))
+		fmt.Fprintf(&detectScriptBuilder, " '%s'", p)
 	}
 	detectScriptBuilder.WriteString("; do for d in $pattern; do [ -d \"$d\" ] || continue; c=0; for p in $pkgs; do if [ -d \"$d/$p\" ] || ls \"$d\" 2>/dev/null | grep -i -q \"^$p-.*\\.dist-info$\"; then c=$((c+1)); fi; done; if [ $c -gt $bestc ]; then bestc=$c; best=$d; fi; done; done; if [ -n \"$best\" ]; then echo $best > ") // nolint: lll
 	detectScriptBuilder.WriteString(sitePackagesDetectFile)
 	detectScriptBuilder.WriteString("; else for pattern in")
 	for _, p := range candidatePaths {
-		detectScriptBuilder.WriteString(fmt.Sprintf(" '%s'", p))
+		fmt.Fprintf(&detectScriptBuilder, " '%s'", p)
 	}
 	detectScriptBuilder.WriteString("; do for d in $pattern; do if [ -d \"$d\" ]; then echo $d > ")
 	detectScriptBuilder.WriteString(sitePackagesDetectFile)

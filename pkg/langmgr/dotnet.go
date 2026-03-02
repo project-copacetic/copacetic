@@ -346,8 +346,7 @@ func (dnm *dotnetManager) patchRuntimeImage(
 			// Escape values for safe XML attribute usage (defense in depth)
 			safeName := escapeXMLAttribute(u.Name)
 			safeVersion := escapeXMLAttribute(u.FixedVersion)
-			packageRefs.WriteString(fmt.Sprintf(`    <PackageReference Include="%s" Version="%s" />
-`, safeName, safeVersion))
+			fmt.Fprintf(&packageRefs, "    <PackageReference Include=\"%s\" Version=\"%s\" />\n", safeName, safeVersion)
 		}
 	}
 
@@ -545,7 +544,7 @@ echo "Generated target framework: $GEN_TARGET_KEY"
 		oldVersion := update.InstalledVersion
 		newVersion := update.FixedVersion
 
-		script.WriteString(fmt.Sprintf(`
+		fmt.Fprintf(&script, `
 # Update %s from %s to %s
 echo "Updating %s: %s -> %s"
 
@@ -555,7 +554,7 @@ NEW_LIBRARY=$(jq -r '.libraries["%s/%s"] // empty' /output/patch.deps.json 2>/de
 
 if [ -n "$NEW_TARGET" ] && [ "$NEW_TARGET" != "null" ] && [ -n "$NEW_LIBRARY" ] && [ "$NEW_LIBRARY" != "null" ]; then
 	echo "  Extracted package metadata from generated deps.json"
-	
+
 	# Update targets section: remove old package entry, add new one with correct metadata
 	jq --argjson newTarget "$NEW_TARGET" --arg targetKey "$ORIG_TARGET_KEY" '
 		.targets[$targetKey] |= (
@@ -563,7 +562,7 @@ if [ -n "$NEW_TARGET" ] && [ "$NEW_TARGET" != "null" ] && [ -n "$NEW_LIBRARY" ] 
 			. + {"%s/%s": $newTarget}
 		)
 	' "$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
-	
+
 	# Update libraries section: remove old entry, add new one with correct sha512, hashPath, etc.
 	jq --argjson newLib "$NEW_LIBRARY" '
 		.libraries |= (
@@ -571,11 +570,11 @@ if [ -n "$NEW_TARGET" ] && [ "$NEW_TARGET" != "null" ] && [ -n "$NEW_LIBRARY" ] 
 			. + {"%s/%s": $newLib}
 		)
 	' "$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
-	
+
 	# Update dependency version references throughout all targets
 	jq '(.targets[][].dependencies // {}) |= with_entries(if .key == "%s" then .value = "%s" else . end)' \
 		"$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
-	
+
 	echo "  Updated %s to %s with correct metadata (sha512, hashPath, assemblyVersion, fileVersion)"
 else
 	echo "  ERROR: Could not extract package metadata for %s/%s from generated deps.json"
@@ -587,7 +586,7 @@ fi
 			packageName, oldVersion, packageName, newVersion, // libraries update
 			packageName, newVersion, // dependency update
 			packageName, newVersion, // success message
-			packageName, newVersion)) // error message
+			packageName, newVersion) // error message
 	}
 
 	script.WriteString(`
@@ -599,8 +598,9 @@ echo "Verifying updates in $UPDATED_DEPS:"
 
 	for _, update := range updates {
 		if update.FixedVersion != "" {
-			script.WriteString(fmt.Sprintf(`grep -o '"%s/%s"' "$UPDATED_DEPS" | head -1 && echo "  %s/%s found" || echo "  WARNING: %s/%s not found"
-`, update.Name, update.FixedVersion, update.Name, update.FixedVersion, update.Name, update.FixedVersion))
+			fmt.Fprintf(&script,
+				"grep -o '\"%s/%s\"' \"$UPDATED_DEPS\" | head -1 && echo \"  %s/%s found\" || echo \"  WARNING: %s/%s not found\"\n",
+				update.Name, update.FixedVersion, update.Name, update.FixedVersion, update.Name, update.FixedVersion)
 		}
 	}
 

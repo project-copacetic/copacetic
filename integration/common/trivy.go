@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -87,12 +88,31 @@ func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars .
 	}
 
 	args = append(args, ref)
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, envVars...)
-	out, err := cmd.CombinedOutput()
+
+	const maxRetries = 3
+	var out []byte
+	var err error
+	for attempt := range maxRetries {
+		cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+		cmd.Env = append(os.Environ(), envVars...)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !isTransientScanError(string(out)) || attempt == maxRetries-1 {
+			break
+		}
+		t.Logf("trivy scan attempt %d/%d failed with transient error, retrying: %s", attempt+1, maxRetries, string(out))
+	}
 
 	assert.NoError(t, err, string(out))
+}
+
+// isTransientScanError returns true for network/IO errors that may succeed on retry.
+func isTransientScanError(output string) bool {
+	return strings.Contains(output, "unexpected EOF") ||
+		strings.Contains(output, "connection reset") ||
+		strings.Contains(output, "deadline exceeded")
 }
 
 func DownloadDB(t *testing.T, envVars ...string) {

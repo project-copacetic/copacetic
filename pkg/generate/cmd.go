@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -59,7 +60,7 @@ This command produces a build context with the patch diff layer and a Dockerfile
   copa generate -i alpine:3.18 -r scan.json --output-context patch.tar`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			// Check if stdout is a TTY when not writing to file
-			if ga.outputContext == "" && term.IsTerminal(int(os.Stdout.Fd())) {
+			if ga.outputContext == "" && term.IsTerminal(syscall.Stdout) {
 				return fmt.Errorf("refusing to write tar stream to terminal. Use --output-context to save to file or redirect stdout")
 			}
 
