@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: 0.59.1
+  TRIVY_VERSION: 0.69.3
   BUILDKIT_VERSION: 0.19.0
   TRIVY_DISABLE_VEX_NOTICE: "true"
 
