@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	log "github.com/sirupsen/logrus"
@@ -128,7 +129,7 @@ func findTagsByPattern(repo name.Repository, spec *ImageSpec) ([]string, error) 
 
 // listAllTags is a function variable that can be overridden for testing purposes.
 var listAllTags = func(repo name.Repository) ([]string, error) {
-	tags, err := remote.List(repo)
+	tags, err := remote.List(repo, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 	if err != nil {
 		return nil, fmt.Errorf("failed to list tags for repository '%s': %w", repo.Name(), err)
 	}

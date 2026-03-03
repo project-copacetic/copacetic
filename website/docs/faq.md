@@ -111,6 +111,46 @@ For more information on source policies, see [Buildkit Source Policies](https://
 
 Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
 
+## Why is bulk patching creating versioned tags like `1.25.3-patched-1`?
+
+When using [bulk image patching](./bulk-image-patching.md) with `--push`, Copa automatically avoids re-patching images that have no new vulnerabilities. When a re-patch is needed due to new vulnerabilities, Copa creates version-suffixed tags since registry tags are immutable:
+
+```
+nginx:1.25.3            ← original source image
+nginx:1.25.3-patched    ← initial patch (from 1.25.3)
+nginx:1.25.3-patched-1  ← first re-patch (from 1.25.3, not from 1.25.3-patched)
+nginx:1.25.3-patched-2  ← second re-patch (from 1.25.3, not from 1.25.3-patched-1)
+```
+
+**Note**: Each re-patch is created from the **original source image** (e.g., `nginx:1.25.3`), not from the previous patched image. This ensures comprehensive updates and prevents layer buildup, consistent with Copa's architecture.
+
+This automatic versioning:
+- Saves time and compute by skipping unnecessary patches
+- Preserves existing tags (registry tags cannot be overwritten)
+- Provides a clear history of patch iterations
+- Ensures each patch is comprehensive (all updates from original)
+- Works with custom tag templates (e.g., `{{ .SourceTag }}-fixed`)
+
+## How does bulk patching decide whether to skip an image?
+
+Copa uses vulnerability reports you provide to decide whether re-patching is needed. Reports are matched by reading the `ArtifactName` field from inside each JSON file:
+
+1. **No existing patched tag**: Proceeds with patching using the base tag
+2. **Existing patched tag exists**:
+   - If `-r` provided: Looks up the vulnerability report by `ArtifactName`
+     - Report shows no fixable vulnerabilities → skips patching (saves time)
+     - Report shows fixable vulnerabilities → re-patches with version-bumped tag
+     - Report not found (no matching `ArtifactName`) → proceeds with patching (fail-open)
+   - If `-r` not provided: Always proceeds with patching
+
+**Important**: The vulnerability report only determines whether to re-patch, not what to patch. When patching occurs, Copa still applies comprehensive updates to all packages (not selective patching based on specific CVEs).
+
+If Copa cannot complete the report check (e.g., no matching report, parse error, registry errors), it defaults to patching (fail-open behavior) to ensure scheduled jobs don't fail silently. See [troubleshooting](./troubleshooting.md#bulk-patching-images-not-being-skipped) for more details.
+
+### Scanner Agnostic
+
+Skip detection works with any scanner Copa supports (Trivy, native format, custom plugins). You provide the reports, Copa parses them. This maintains separation of concerns: you control when and how scanning happens.
+
 ## Does Copa cause a buildup of patched layers on each patch?
 
 No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
