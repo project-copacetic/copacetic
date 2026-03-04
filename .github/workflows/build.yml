@@ -366,7 +366,7 @@ jobs:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
