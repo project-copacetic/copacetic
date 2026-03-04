@@ -14,6 +14,7 @@ const (
 type PatchConfig struct {
 	APIVersion string      `yaml:"apiVersion"`
 	Kind       string      `yaml:"kind"`
+	Target     TargetSpec  `yaml:"target,omitempty"` // Default target for all images
 	Images     []ImageSpec `yaml:"images"`
 }
 
@@ -26,9 +27,10 @@ type ImageSpec struct {
 	Platforms []string    `yaml:"platforms,omitempty"`
 }
 
-// TargetSpec defines how the patched image's tag should be named.
+// TargetSpec defines how the patched image should be tagged and where it should be pushed.
 type TargetSpec struct {
-	Tag string `yaml:"tag,omitempty"`
+	Registry string `yaml:"registry,omitempty"` // Target registry/namespace prefix (e.g., "ghcr.io/myorg")
+	Tag      string `yaml:"tag,omitempty"`      // Tag template (defaults to "{{ .SourceTag }}-patched")
 }
 
 // TagStrategy defines the method for discovering image tags to be patched.
