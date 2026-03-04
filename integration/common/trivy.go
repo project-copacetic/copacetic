@@ -2,8 +2,10 @@ package common
 
 import (
 	_ "embed"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,6 +24,7 @@ type ScannerCmd struct {
 	ExitCode     int
 	Platform     string
 	ImageSrc     string
+	CacheDir     string
 }
 
 func NewScanner() *ScannerCmd {
@@ -58,6 +61,11 @@ func (s *ScannerCmd) WithImageSrc(imageSrc string) *ScannerCmd {
 	return s
 }
 
+func (s *ScannerCmd) WithCacheDir(cacheDir string) *ScannerCmd {
+	s.CacheDir = cacheDir
+	return s
+}
+
 func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars ...string) {
 	args := []string{
 		"trivy",
@@ -86,6 +94,9 @@ func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars .
 	if s.ImageSrc != "" {
 		args = append(args, "--image-src="+s.ImageSrc)
 	}
+	if s.CacheDir != "" {
+		args = append(args, "--cache-dir="+s.CacheDir)
+	}
 
 	args = append(args, ref)
 
@@ -112,7 +123,8 @@ func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars .
 func isTransientScanError(output string) bool {
 	return strings.Contains(output, "unexpected EOF") ||
 		strings.Contains(output, "connection reset") ||
-		strings.Contains(output, "deadline exceeded")
+		strings.Contains(output, "deadline exceeded") ||
+		strings.Contains(output, "cache may be in use")
 }
 
 func DownloadDB(t *testing.T, envVars ...string) {
@@ -127,4 +139,61 @@ func DownloadDB(t *testing.T, envVars ...string) {
 	cmd.Env = append(cmd.Env, envVars...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
+}
+
+// DownloadDBToDir downloads the Trivy vulnerability database to a specific cache directory.
+func DownloadDBToDir(t *testing.T, cacheDir string, envVars ...string) {
+	t.Helper()
+	args := []string{
+		"trivy",
+		"image",
+		"--download-db-only",
+		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
+		"--cache-dir=" + cacheDir,
+	}
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, envVars...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
+// CopyCacheDir creates a per-test copy of the Trivy cache directory to avoid
+// concurrent cache lock contention between parallel tests.
+func CopyCacheDir(t *testing.T, srcCacheDir string) string {
+	t.Helper()
+	dstCacheDir := filepath.Join(t.TempDir(), "trivy-cache")
+	require.NoError(t, os.MkdirAll(filepath.Join(dstCacheDir, "db"), 0o755))
+
+	entries, err := os.ReadDir(filepath.Join(srcCacheDir, "db"))
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(srcCacheDir, "db", entry.Name())
+		dst := filepath.Join(dstCacheDir, "db", entry.Name())
+		if err := copyFile(src, dst); err != nil {
+			require.NoError(t, err)
+		}
+	}
+	return dstCacheDir
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }
