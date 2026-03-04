@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -36,8 +37,9 @@ func (v Vulnerability) Key() string {
 }
 
 func TestDotNetSDKImagePatching(t *testing.T) {
-	// Download Trivy DB once before running all sub-tests.
-	downloadTrivyDB(t)
+	// Download Trivy DB once to a shared cache directory.
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
 
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -47,6 +49,8 @@ func TestDotNetSDKImagePatching(t *testing.T) {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
+			// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+			testCacheDir := copyCacheDir(t, sharedCacheDir)
 			dir := t.TempDir()
 
 			// Build the full image reference
@@ -58,7 +62,7 @@ func TestDotNetSDKImagePatching(t *testing.T) {
 			// 1. Scan the original image.
 			t.Log("scanning original image for baseline")
 			scanResultsFile := filepath.Join(dir, "scan.json")
-			vulnsBefore := scanAndParse(t, ref, scanResultsFile)
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, testCacheDir)
 			require.NotEmpty(t, vulnsBefore, "expected vulnerabilities in the baseline scan")
 			t.Logf("Found %d unique vulnerabilities before patching", len(vulnsBefore))
 
@@ -70,7 +74,7 @@ func TestDotNetSDKImagePatching(t *testing.T) {
 			// 3. Scan the patched image.
 			t.Log("scanning patched image")
 			patchedRef := img.Image + ":" + tagPatched
-			vulnsAfter := scanAndParse(t, patchedRef, "")
+			vulnsAfter := scanAndParse(t, patchedRef, "", testCacheDir)
 			t.Logf("Found %d unique vulnerabilities after patching", len(vulnsAfter))
 
 			// 4. Verify the patch was successful
@@ -98,14 +102,14 @@ func TestDotNetSDKImagePatching(t *testing.T) {
 	}
 }
 
-func downloadTrivyDB(t *testing.T) {
+func downloadTrivyDB(t *testing.T, cacheDir string) {
 	t.Helper()
-	cmd := exec.Command("trivy", "image", "--download-db-only")
+	cmd := exec.Command("trivy", "image", "--download-db-only", "--cache-dir="+cacheDir) //#nosec G204
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to download trivy db:\n%s", string(output))
 }
 
-func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vulnerability {
+func scanAndParse(t *testing.T, image string, outputFile string, cacheDir string) map[string]Vulnerability {
 	t.Helper()
 
 	if outputFile == "" {
@@ -123,12 +127,25 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 		"--pkg-types=library",
 		"--ignore-unfixed",
 		"--skip-db-update",
+		"--cache-dir=" + cacheDir,
 		image,
 	}
 
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
-	output, err := cmd.CombinedOutput()
+	const maxRetries = 3
+	var output []byte
+	var err error
+	for attempt := range maxRetries {
+		cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+		cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
+		output, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !strings.Contains(string(output), "cache may be in use") || attempt == maxRetries-1 {
+			break
+		}
+		t.Logf("trivy scan attempt %d/%d failed with cache contention, retrying", attempt+1, maxRetries)
+	}
 	if err != nil {
 		t.Logf("trivy scan failed: %v\nOutput: %s", err, string(output))
 		require.NoError(t, err, "trivy scan failed")
@@ -180,4 +197,31 @@ func patchImage(t *testing.T, image, tag, reportFile string) string {
 	require.NoError(t, err, fmt.Sprintf("Copa patch failed:\n%s", string(out)))
 
 	return string(out)
+}
+
+func copyCacheDir(t *testing.T, srcCacheDir string) string {
+	t.Helper()
+	dstCacheDir := filepath.Join(t.TempDir(), "trivy-cache")
+	require.NoError(t, os.MkdirAll(filepath.Join(dstCacheDir, "db"), 0o755))
+
+	entries, err := os.ReadDir(filepath.Join(srcCacheDir, "db"))
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(srcCacheDir, "db", entry.Name())
+		dst := filepath.Join(dstCacheDir, "db", entry.Name())
+
+		in, openErr := os.Open(src)
+		require.NoError(t, openErr)
+		out, createErr := os.Create(dst)
+		require.NoError(t, createErr)
+		_, copyErr := io.Copy(out, in)
+		in.Close()
+		out.Close()
+		require.NoError(t, copyErr)
+	}
+	return dstCacheDir
 }

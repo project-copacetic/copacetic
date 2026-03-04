@@ -47,8 +47,9 @@ func TestPatch(t *testing.T) {
 	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
 	require.NoError(t, err)
 
-	// download the trivy db before running the tests
-	common.DownloadDB(t, common.DockerDINDAddress.Env()...)
+	// download the trivy db once to a shared cache directory
+	sharedCacheDir := filepath.Join(tmp, "trivy-shared-cache")
+	common.DownloadDBToDir(t, sharedCacheDir, common.DockerDINDAddress.Env()...)
 
 	for _, img := range images {
 		t.Run(img.Description, func(t *testing.T) {
@@ -65,6 +66,7 @@ func TestPatch(t *testing.T) {
 			var wg sync.WaitGroup
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
+				goroutineCacheDir := common.CopyCacheDir(t, sharedCacheDir)
 				go func() {
 					defer wg.Done()
 
@@ -76,6 +78,7 @@ func TestPatch(t *testing.T) {
 						WithIgnoreFile(ignoreFile).
 						WithOutput(reportPath).
 						WithSkipDBUpdate().
+						WithCacheDir(goroutineCacheDir).
 						WithPlatform(platformStr).
 						// Do not set a non-zero exit code because we are expecting vulnerabilities.
 						Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
@@ -98,6 +101,7 @@ func TestPatch(t *testing.T) {
 			wg = sync.WaitGroup{}
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
+				goroutineCacheDir := common.CopyCacheDir(t, sharedCacheDir)
 				go func() {
 					defer wg.Done()
 					// only want the platform string for the scanner
@@ -121,6 +125,7 @@ func TestPatch(t *testing.T) {
 					common.NewScanner().
 						WithIgnoreFile(ignoreFile).
 						WithSkipDBUpdate().
+						WithCacheDir(goroutineCacheDir).
 						WithImageSrc("docker").
 						WithPlatform(platformStr).
 						// here we want a non-zero exit code because we are expecting no vulnerabilities.
