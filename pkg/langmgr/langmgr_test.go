@@ -148,6 +148,40 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			ignoreErrors: false,
 			expectError:  true,
 		},
+		{
+			name: "same package at different PkgPaths - kept as separate entries",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "usr/lib/python3.12/site-packages"},
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+			comparer: mockVersionComparer(),
+			expected: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "usr/lib/python3.12/site-packages"},
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+		},
+		{
+			name: "same package at same PkgPath with different CVEs - merged to one entry with latest version",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "23.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+			comparer: mockVersionComparer(),
+			expected: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+		},
+		{
+			name: "packages without PkgPath still deduplicate by name (backward compat)",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "urllib3", FixedVersion: "1.26.0"},
+				{Name: "urllib3", FixedVersion: "1.27.0"},
+			},
+			comparer: mockVersionComparer(),
+			expected: unversioned.LangUpdatePackages{
+				{Name: "urllib3", FixedVersion: "1.27.0"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
