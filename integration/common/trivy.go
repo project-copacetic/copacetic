@@ -160,6 +160,7 @@ func DownloadDBToDir(t *testing.T, cacheDir string, envVars ...string) {
 
 // CopyCacheDir creates a per-test copy of the Trivy cache directory to avoid
 // concurrent cache lock contention between parallel tests.
+// Uses hardlinks for data files to avoid expensive copies (the DB files are read-only during scans).
 func CopyCacheDir(t *testing.T, srcCacheDir string) string {
 	t.Helper()
 	dstCacheDir := filepath.Join(t.TempDir(), "trivy-cache")
@@ -174,8 +175,13 @@ func CopyCacheDir(t *testing.T, srcCacheDir string) string {
 		}
 		src := filepath.Join(srcCacheDir, "db", entry.Name())
 		dst := filepath.Join(dstCacheDir, "db", entry.Name())
-		if err := copyFile(src, dst); err != nil {
-			require.NoError(t, err)
+		// Use hardlink instead of copy - DB files are read-only during scans
+		// and hardlinks share the same inode, avoiding ~700MB copy per goroutine
+		if err := os.Link(src, dst); err != nil {
+			// Fall back to copy if hardlink fails (e.g., cross-device)
+			if err := copyFile(src, dst); err != nil {
+				require.NoError(t, err)
+			}
 		}
 	}
 	return dstCacheDir
