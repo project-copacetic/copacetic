@@ -1,6 +1,6 @@
 module github.com/project-copacetic/copacetic
 
-go 1.25.0
+go 1.25.6
 
 require (
 	github.com/Masterminds/semver v1.5.0
@@ -27,6 +27,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.7
+	github.com/parthivsaikia/go-pacman-version v0.0.0-20260212091406-8640ae78daee
 	github.com/pkg/errors v0.9.1
 	github.com/quay/claircore v1.5.49
 	github.com/sirupsen/logrus v1.9.4
