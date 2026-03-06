@@ -51,6 +51,10 @@ func TestPatch(t *testing.T) {
 	err = os.WriteFile(ignoreFile, common.TrivyIgnore, 0o600)
 	require.NoError(t, err)
 
+	// Download the trivy db once to a shared cache directory
+	sharedCacheDir := filepath.Join(tmp, "trivy-shared-cache")
+	common.DownloadDBToDir(t, sharedCacheDir, common.DockerDINDAddress.Env()...)
+
 	for _, img := range images {
 		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
 		mediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
@@ -62,11 +66,11 @@ func TestPatch(t *testing.T) {
 			img.IgnoreErrors = false
 		}
 
-		// download the trivy db before running the tests
-		common.DownloadDB(t, common.DockerDINDAddress.Env()...)
-
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
+
+			// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+			testCacheDir := common.CopyCacheDir(t, sharedCacheDir)
 
 			// Only the buildkit instance running within the docker daemon can work
 			// with locally-built or locally-tagged images. As a result, skip tests
@@ -93,6 +97,7 @@ func TestPatch(t *testing.T) {
 					WithIgnoreFile(ignoreFile).
 					WithOutput(scanResults).
 					WithSkipDBUpdate().
+					WithCacheDir(testCacheDir).
 					// Do not set a non-zero exit code because we are expecting vulnerabilities.
 					Scan(t, ref, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
 			}
@@ -145,6 +150,7 @@ func TestPatch(t *testing.T) {
 				common.NewScanner().
 					WithIgnoreFile(ignoreFile).
 					WithSkipDBUpdate().
+					WithCacheDir(testCacheDir).
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					WithExitCode(1).
 					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)
@@ -153,6 +159,7 @@ func TestPatch(t *testing.T) {
 				common.NewScanner().
 					WithIgnoreFile(ignoreFile).
 					WithSkipDBUpdate().
+					WithCacheDir(testCacheDir).
 					// here we want a non-zero exit code because we are expecting no vulnerabilities.
 					WithExitCode(1).
 					Scan(t, patchedRef, img.IgnoreErrors, common.DockerDINDAddress.Env()...)

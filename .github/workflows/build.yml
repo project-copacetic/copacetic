@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 env:
-  TRIVY_VERSION: 0.59.1
+  TRIVY_VERSION: 0.69.3
   BUILDKIT_VERSION: 0.19.0
   TRIVY_DISABLE_VEX_NOTICE: "true"
 
@@ -366,7 +366,7 @@ jobs:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
-    timeout-minutes: 40
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
