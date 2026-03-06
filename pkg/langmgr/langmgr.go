@@ -28,7 +28,7 @@ type LangManager interface {
 
 // GetLanguageManagers returns a list of language managers that have relevant packages to process.
 // Uses a switch-based approach to determine which managers to include based on package types.
-func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest *unversioned.UpdateManifest) []LangManager {
+func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest *unversioned.UpdateManifest, toolchainPatchLevel string) []LangManager {
 	var managers []LangManager
 
 	if manifest == nil || len(manifest.LangUpdates) == 0 {
@@ -38,13 +38,20 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 	// Determine which package types are present
 	packageTypes := getPackageTypes(manifest.LangUpdates)
 
-	// Switch on each package type to add appropriate managers
+	// Switch on each package type to add appropriate managers.
+	// Track Go manager separately since GoModules and GoBinary share one manager.
+	goAdded := false
 	for packageType := range packageTypes {
 		switch packageType {
 		case utils.PythonPackages:
 			managers = append(managers, &pythonManager{config: config, workingFolder: workingFolder})
 		case utils.NodePackages:
 			managers = append(managers, &nodejsManager{config: config, workingFolder: workingFolder})
+		case utils.GoModules, utils.GoBinary:
+			if !goAdded {
+				managers = append(managers, &golangManager{config: config, workingFolder: workingFolder, toolchainPatchLevel: toolchainPatchLevel})
+				goAdded = true
+			}
 		case utils.DotNetPackages:
 			managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
 		default:

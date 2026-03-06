@@ -46,6 +46,9 @@ type Options struct {
 	PkgTypes          string
 	LibraryPatchLevel string
 
+	// Toolchain patch level (e.g., Go stdlib upgrade)
+	ToolchainPatchLevel string
+
 	// Generate specific
 	OutputContext string
 
