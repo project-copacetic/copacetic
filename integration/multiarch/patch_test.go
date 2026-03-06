@@ -151,6 +151,10 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	// Copy the original multi-arch image to local registry
 	copyImage(t, originalRef, localRef)
 
+	// Download the trivy db to a dedicated cache directory
+	cacheDir := filepath.Join(t.TempDir(), "trivy-cache")
+	common.DownloadDBToDir(t, cacheDir, common.DockerDINDAddress.Env()...)
+
 	// Create a temporary directory for reports
 	reportDir := t.TempDir()
 
@@ -163,6 +167,7 @@ func TestPatchPartialArchitectures(t *testing.T) {
 	common.NewScanner().
 		WithOutput(reportPath).
 		WithSkipDBUpdate().
+		WithCacheDir(cacheDir).
 		WithPlatform(platformToScan).
 		Scan(t, localRef, false)
 
