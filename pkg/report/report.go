@@ -29,11 +29,29 @@ type ScanReportParser interface {
 	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
+// PatchSummary captures vulnerability patching visibility for a scan report.
+type PatchSummary struct {
+	TotalVulnerabilities int
+	Patched              int
+	PatchedOS            int
+	PatchedLibrary       int
+	SkippedNoFix         int
+}
+
 func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
 		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
 	}
 	return customParseScanReport(file, scanner)
+}
+
+// TrySummarizeScanReport returns patchability summary details for supported scanners.
+// For unsupported scanners, it returns (nil, nil).
+func TrySummarizeScanReport(file, scanner, pkgTypes string) (*PatchSummary, error) {
+	if scanner == "trivy" {
+		return summarizeTrivyReport(file, pkgTypes)
+	}
+	return nil, nil
 }
 
 func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, error) {
