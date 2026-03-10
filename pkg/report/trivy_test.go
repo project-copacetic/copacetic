@@ -2,6 +2,7 @@ package report
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
@@ -844,4 +845,82 @@ func TestTrivyParserParseNoHistory(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestTrivyParserParseWithPythonVenv tests that Python packages at different paths
+// (e.g. system site-packages vs a venv) are treated as separate upgrade targets via
+// the composite (PkgName + PkgPath) key, and that PkgPath is preserved in UpdatePackage.
+func TestTrivyParserParseWithPythonVenv(t *testing.T) {
+	parser := &TrivyParser{}
+	manifest, err := parser.Parse("testdata/trivy_python_venv.json")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, manifest)
+	assert.Empty(t, manifest.OSUpdates)
+
+	// requests at two different paths → 2 entries; urllib3 at one path → 1 entry = 3 total
+	assert.Equal(t, 3, len(manifest.LangUpdates))
+
+	// Build a lookup by (name, pkgPath) to verify composite-key separation.
+	type key struct{ name, pkgPath string }
+	byKey := make(map[key]struct{})
+	for _, u := range manifest.LangUpdates {
+		byKey[key{u.Name, u.PkgPath}] = struct{}{}
+	}
+
+	_, hasVenvRequests := byKey[key{"requests", "opt/venv/lib/python3.11/site-packages"}]
+	_, hasSysRequests := byKey[key{"requests", "usr/local/lib/python3.11/site-packages"}]
+	_, hasVenvUrllib3 := byKey[key{"urllib3", "opt/venv/lib/python3.11/site-packages"}]
+
+	assert.True(t, hasVenvRequests, "expected requests entry for venv path")
+	assert.True(t, hasSysRequests, "expected requests entry for system path")
+	assert.True(t, hasVenvUrllib3, "expected urllib3 entry for venv path")
+
+	// PkgPath must be preserved in each UpdatePackage.
+	for _, u := range manifest.LangUpdates {
+		assert.NotEmpty(t, u.PkgPath, "PkgPath should be preserved in UpdatePackage")
+		assert.Equal(t, utils.PythonPackages, u.Type)
+		assert.NotEmpty(t, u.FixedVersion)
+	}
+}
+
+// TestTrivyParserParseWithDotNet tests that:
+//   - dotnet-core packages are parsed and use the composite (PkgName + PkgPath) key
+//   - Microsoft.Build.* packages are filtered out
+//   - same package at different paths becomes separate upgrade targets
+func TestTrivyParserParseWithDotNet(t *testing.T) {
+	parser := &TrivyParser{}
+	manifest, err := parser.Parse("testdata/trivy_dotnet.json")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, manifest)
+	assert.Empty(t, manifest.OSUpdates)
+
+	// Expected entries:
+	//   - Microsoft.Identity.Web @ app/MyApp.deps.json  (1 entry)
+	//   - Microsoft.Build.Framework → filtered out
+	//   - System.Text.Json @ app/MyApp.deps.json        (1 entry)
+	//   - System.Text.Json @ app/OtherLib.deps.json     (1 entry)
+	assert.Equal(t, 3, len(manifest.LangUpdates))
+
+	// Verify Microsoft.Build.* is absent.
+	for _, u := range manifest.LangUpdates {
+		assert.False(t, strings.HasPrefix(u.Name, "Microsoft.Build."),
+			"Microsoft.Build.* packages should be filtered out")
+		assert.Equal(t, utils.DotNetPackages, u.Type)
+		assert.NotEmpty(t, u.PkgPath)
+		assert.NotEmpty(t, u.FixedVersion)
+	}
+
+	// Verify System.Text.Json produces two separate entries (different PkgPath).
+	var jsonEntries []string
+	for _, u := range manifest.LangUpdates {
+		if u.Name == "System.Text.Json" {
+			jsonEntries = append(jsonEntries, u.PkgPath)
+		}
+	}
+	assert.ElementsMatch(t, []string{
+		"app/MyApp.deps.json",
+		"app/OtherLib.deps.json",
+	}, jsonEntries, "same package at different paths should be separate upgrade targets")
 }

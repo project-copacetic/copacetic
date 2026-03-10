@@ -82,15 +82,19 @@ func GetUniqueLatestUpdates(
 		return unversioned.LangUpdatePackages{}, nil
 	}
 
-	// Track the highest version and collect metadata for each package
+	// Track the highest version per (Name, PkgPath) pair so the same package
+	// at different locations (e.g. system Python vs venv) is treated as a
+	// separate upgrade target.
 	type packageInfo struct {
+		name             string
 		installedVersion string
 		version          string
-		pkgPaths         map[string]bool // Track all unique PkgPaths for this package
+		pkgPath          string
 		pkgType          string
 		pkgClass         string
 		vulnerabilityID  string
 	}
+	// Key: Name + NUL + PkgPath — unique per package location.
 	dict := make(map[string]*packageInfo)
 	var allErrors *multierror.Error
 
@@ -101,26 +105,24 @@ func GetUniqueLatestUpdates(
 			log.Debugf("Skipping package %s: no suitable version found according to patch level restrictions", u.Name)
 			continue
 		case cmp.IsValid(u.FixedVersion):
-			info, ok := dict[u.Name]
+			key := u.Name + "\x00" + u.PkgPath
+			info, ok := dict[key]
 			if !ok {
-				// First time seeing this package
-				dict[u.Name] = &packageInfo{
+				dict[key] = &packageInfo{
+					name:             u.Name,
 					installedVersion: u.InstalledVersion,
 					version:          u.FixedVersion,
-					pkgPaths:         map[string]bool{u.PkgPath: true},
+					pkgPath:          u.PkgPath,
 					pkgType:          u.Type,
 					pkgClass:         u.Class,
 					vulnerabilityID:  u.VulnerabilityID,
 				}
 			} else {
-				// Package already exists, update version if higher and track PkgPath
+				// Same package at same location — keep the highest fixed version.
 				if cmp.LessThan(info.version, u.FixedVersion) {
 					info.version = u.FixedVersion
 				}
-				if u.PkgPath != "" {
-					info.pkgPaths[u.PkgPath] = true
-				}
-				// Keep the installed version and vulnerability ID from first occurrence
+				// Keep the installed version and vulnerability ID from first occurrence.
 				if info.installedVersion == "" && u.InstalledVersion != "" {
 					info.installedVersion = u.InstalledVersion
 				}
@@ -139,25 +141,16 @@ func GetUniqueLatestUpdates(
 		return nil, allErrors.ErrorOrNil()
 	}
 
-	// Build output with preserved metadata
 	out := unversioned.LangUpdatePackages{}
-	for pkgName, info := range dict {
-		// If multiple PkgPaths exist, we'll just pick the first one
-		// In practice, for app-level patching, packages should have consistent paths
-		var pkgPath string
-		for path := range info.pkgPaths {
-			pkgPath = path
-			break
-		}
-
+	for _, info := range dict {
 		out = append(out, unversioned.UpdatePackage{
-			Name:             pkgName,
+			Name:             info.name,
 			InstalledVersion: info.installedVersion,
 			FixedVersion:     info.version,
 			VulnerabilityID:  info.vulnerabilityID,
 			Type:             info.pkgType,
 			Class:            info.pkgClass,
-			PkgPath:          pkgPath,
+			PkgPath:          info.pkgPath,
 		})
 	}
 	return out, nil
