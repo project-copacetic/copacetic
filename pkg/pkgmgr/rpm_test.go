@@ -964,6 +964,7 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 		mockSetup      func(reference *mocks.MockReference)
 		toolImage      string
 		ignoreErrors   bool
+		usePatchedCfg  bool
 		expectedError  bool
 		expectedResult []byte
 	}{
@@ -1002,8 +1003,23 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 			},
 			toolImage:      "almalinux:9",
 			ignoreErrors:   true,
+			usePatchedCfg:  false,
 			expectedError:  false,
 			expectedResult: []byte("package1\t1.0.1\tx86_64\n"),
+		},
+		{
+			name: "dnf chroot - re-patching path uses PatchedConfigData",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.2.3"},
+			},
+			toolImage:      "almalinux:9",
+			ignoreErrors:   false,
+			usePatchedCfg:  true,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.2.3\tx86_64\n"),
 		},
 		{
 			name:      "dnf chroot - Solve error propagates",
@@ -1013,6 +1029,7 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 			},
 			toolImage:      "almalinux:9",
 			ignoreErrors:   false,
+			usePatchedCfg:  false,
 			expectedError:  true,
 			expectedResult: nil,
 		},
@@ -1032,11 +1049,17 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 				mockClient.On("Solve", mock.Anything, mock.Anything).Return(nil, errors.New("solve failed"))
 			}
 
+			cfg := &buildkit.Config{
+				Client:     mockClient,
+				ImageState: llb.Scratch(),
+			}
+			if tt.usePatchedCfg {
+				cfg.PatchedConfigData = []byte(`{"previous":"patched"}`)
+				cfg.PatchedImageState = llb.Scratch()
+			}
+
 			rm := &rpmManager{
-				config: &buildkit.Config{
-					Client:     mockClient,
-					ImageState: llb.Scratch(),
-				},
+				config:         cfg,
 				isMissingTools: true,
 				osType:         utils.OSTypeRedHat,
 				osVersion:      "9.3",

@@ -1056,6 +1056,11 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	// Build the dnf command with error handling based on ignoreErrors.
 	// We use the target image's own repo configuration through --setopt=reposdir
 	// so the tooling image only needs to provide the dnf binary.
+	// --nogpgcheck is required for this chroot flow because dnf executes from the
+	// tooling image while using repo files mounted from the target rootfs.
+	// In minimal/toolless images, repo GPG key references (often file:// paths
+	// under /etc/pki in the target) may not resolve correctly in this execution
+	// context, causing signature checks to fail even when repos are valid.
 	updatesMarkerFile := "/tmp/updates_applied.txt"
 	var dnfCmd string
 	if ignoreErrors {
@@ -1087,9 +1092,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                 dnf_exit=$?
                 echo "$output"
                 if [ $dnf_exit -ne 0 ]; then exit $dnf_exit; fi
-                if echo "$output" | grep -q "Nothing to do"; then
-                    true
-                else
+                if ! echo "$output" | grep -q "Nothing to do"; then
                     echo "updates_applied" > "${COPA_UPDATES_MARKER}"
                 fi
                 dnf --installroot="${COPA_CHROOT_DIR}" \
