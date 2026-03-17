@@ -36,55 +36,57 @@ Before using the Copa BuildKit frontend, ensure you have:
 Docker Buildx provides the most seamless integration with existing Docker workflows:
 
 ```bash
-# Generate vulnerability report
-trivy image --format json --output report.json nginx:1.21.6
-
 # Create build context directory with reports
 mkdir build-context
-cp report.json build-context/
 
-# Create empty Dockerfile (required for buildx)
-touch build-context/Dockerfile
+# Generate vulnerability report
+trivy image --format json --output build-context/report.json nginx:1.21.6
 
 # Set up buildx builder
-docker buildx create --name copa-builder --use
+docker buildx create --name copa-builder
 
 # Patch using buildx
 docker buildx build \
+  --builder copa-builder \
   --build-arg BUILDKIT_SYNTAX=ghcr.io/project-copacetic/copacetic-frontend:latest \
-  --build-arg image=nginx:1.21.6 \
+  --build-arg image=docker.io/library/nginx:1.21.6 \
   --build-arg report=report.json \
   --build-context report=./build-context \
   --output type=image,name=nginx:1.21.6-patched \
+  -f /dev/null \
   ./build-context
-```
 
-:::info Docker Buildx Requirements
-Docker Buildx requires a `Dockerfile` in the build context, even if it's empty. The vulnerability reports can be placed in the same context directory.
-:::
+# Clean up builder
+docker buildx rm copa-builder
+rm build-context/report.json
+rmdir build-context
+```
 
 ### BuildKit CLI Alternative
 
 For environments without Docker Buildx, use the `buildctl` CLI directly:
 
 ```bash
-# Generate vulnerability report (same as above)
-trivy image --format json --output report.json nginx:1.21.6
-
 # Create report context directory
 mkdir reports
-cp report.json reports/
+
+# Generate vulnerability report (same as above)
+trivy image --format json --output reports/report.json nginx:1.21.6
 
 # Patch using buildctl
 buildctl build \
   --frontend=gateway.v0 \
   --opt source=ghcr.io/project-copacetic/copacetic-frontend:latest \
-  --opt image=nginx:1.21.6 \
+  --opt image=docker.io/library/nginx:1.21.6 \
   --opt report=report.json \
   --opt scanner=trivy \
   --local report=./reports \
   --opt context:report=local:report \
   --output type=image,name=nginx:1.21.6-patched
+
+# Clean up report
+rm reports/report.json
+rmdir reports
 ```
 
 ## Configuration Options
@@ -188,25 +190,28 @@ Platform-specific reports do not need to follow any specific naming pattern as l
 Patch a multi-architecture image with platform-specific vulnerability reports:
 
 ```bash
-# Generate reports for each platform
-trivy image --platform linux/amd64 --format json --output linux-amd64.json nginx:1.21.6
-trivy image --platform linux/arm64 --format json --output linux-arm64.json nginx:1.21.6
-
-# Organize reports
+# Create reports directory
 mkdir reports
-mv linux-*.json reports/
+
+# Generate reports for each platform
+trivy image --platform linux/amd64 --format json --output reports/linux-amd64.json nginx:1.21.6
+trivy image --platform linux/arm64 --format json --output reports/linux-arm64.json nginx:1.21.6
 
 # Patch all platforms
 buildctl build \
   --frontend=gateway.v0 \
   --opt source=ghcr.io/project-copacetic/copacetic-frontend:latest \
-  --opt image=nginx:1.21.6 \
+  --opt image=docker.io/library/nginx:1.21.6 \
   --opt report=. \
   --opt scanner=trivy \
   --opt platform=linux/amd64,linux/arm64 \
   --local report=./reports \
   --opt context:report=local:report \
   --output type=image,name=nginx:1.21.6-multiarch-patched
+
+# Clean up reports
+rm reports/linux-*.json
+rmdir reports
 ```
 
 ### CI/CD Integration
@@ -234,16 +239,16 @@ jobs:
         run: |
           mkdir build-context
           trivy image --format json --output build-context/report.json nginx:1.21.6
-          touch build-context/Dockerfile
 
       - name: Patch image with Copa frontend
         run: |
           docker buildx build \
             --build-arg BUILDKIT_SYNTAX=ghcr.io/project-copacetic/copacetic-frontend:v0.13.0 \
-            --build-arg image=nginx:1.21.6 \
+            --build-arg image=docker.io/library/nginx:1.21.6 \
             --build-arg report=report.json \
             --build-context report=./build-context \
             --output type=image,name=nginx:1.21.6-patched,push=true \
+            -f /dev/null \
             ./build-context
 ```
 
@@ -256,7 +261,7 @@ Use with a specific BuildKit daemon:
 buildctl --addr tcp://buildkit-server:1234 build \
   --frontend=gateway.v0 \
   --opt source=ghcr.io/project-copacetic/copacetic-frontend:latest \
-  --opt image=nginx:1.21.6 \
+  --opt image=docker.io/library/nginx:1.21.6 \
   --opt report=report.json \
   --local report=./reports \
   --opt context:report=local:report \
@@ -272,13 +277,11 @@ Library patching features (`pkg-types` and `library-patch-level`) are experiment
 Patch both OS and library vulnerabilities with preferred update level:
 
 ```bash
-# Generate comprehensive vulnerability report
-trivy image --format json --output report.json myapp:latest
-
 # Create build context
 mkdir build-context
-cp report.json build-context/
-touch build-context/Dockerfile
+
+# Generate comprehensive vulnerability report
+trivy image --format json --output build-context/report.json myapp:latest
 
 # Patch both OS and library vulnerabilities, preferring minor version updates for libraries
 docker buildx build \
@@ -289,7 +292,12 @@ docker buildx build \
   --build-arg library-patch-level=minor \
   --build-context report=./build-context \
   --output type=image,name=myapp:latest-patched \
+  -f /dev/null \
   ./build-context
+
+# Clean up report
+rm build-context/report.json
+rmdir build-context
 ```
 
 :::note Library Patching
