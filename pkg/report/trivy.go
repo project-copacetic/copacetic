@@ -376,7 +376,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		},
 	}
 
-	// Process Language packages - group by package name to find optimal fixed version
+	// Process Language packages - group by (name, pkgPath) to find optimal fixed version.
+	// Using a composite key ensures the same package at different locations (e.g. system
+	// Python vs a venv) is treated as a separate upgrade target.
 	langPackageVulns := make(map[string][]trivyTypes.DetectedVulnerability)
 	langPackageInfo := make(map[string]unversioned.UpdatePackage)
 	// track all vulnerability IDs per lang package for VEX emission
@@ -409,20 +411,22 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
-						if _, exists := langPackageVulns[vuln.PkgName]; !exists {
-							langPackageVulns[vuln.PkgName] = []trivyTypes.DetectedVulnerability{}
-							langPackageInfo[vuln.PkgName] = unversioned.UpdatePackage{
+						// Composite key: same package at different paths is a separate upgrade target.
+						key := vuln.PkgName + "\x00" + vuln.PkgPath
+						if _, exists := langPackageVulns[key]; !exists {
+							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
+							langPackageInfo[key] = unversioned.UpdatePackage{
 								Name:             vuln.PkgName,
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
-								PkgPath:          vuln.PkgPath, // Preserve package path from Trivy
+								PkgPath:          vuln.PkgPath,
 							}
-							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
+							langPackageVulnIDs[key] = make(map[string]struct{})
 						}
-						langPackageVulns[vuln.PkgName] = append(langPackageVulns[vuln.PkgName], *vuln)
+						langPackageVulns[key] = append(langPackageVulns[key], *vuln)
 						if vuln.VulnerabilityID != "" {
-							langPackageVulnIDs[vuln.PkgName][vuln.VulnerabilityID] = struct{}{}
+							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
 					}
 				}
@@ -437,19 +441,21 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 						continue
 					}
 					if vuln.FixedVersion != "" {
-						if _, exists := langPackageVulns[vuln.PkgName]; !exists {
-							langPackageVulns[vuln.PkgName] = []trivyTypes.DetectedVulnerability{}
-							langPackageInfo[vuln.PkgName] = unversioned.UpdatePackage{
+						key := vuln.PkgName + "\x00" + vuln.PkgPath
+						if _, exists := langPackageVulns[key]; !exists {
+							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
+							langPackageInfo[key] = unversioned.UpdatePackage{
 								Name:             vuln.PkgName,
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
+								PkgPath:          vuln.PkgPath,
 							}
-							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
+							langPackageVulnIDs[key] = make(map[string]struct{})
 						}
-						langPackageVulns[vuln.PkgName] = append(langPackageVulns[vuln.PkgName], *vuln)
+						langPackageVulns[key] = append(langPackageVulns[key], *vuln)
 						if vuln.VulnerabilityID != "" {
-							langPackageVulnIDs[vuln.PkgName][vuln.VulnerabilityID] = struct{}{}
+							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
 					}
 				}
@@ -457,8 +463,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 	}
 
-	// Process Language packages to find optimal fixed versions
-	for pkgName, vulns := range langPackageVulns {
+	// Process Language packages to find optimal fixed versions.
+	// The key is a composite of PkgName + NUL + PkgPath.
+	for key, vulns := range langPackageVulns {
 		var fixedVersions []string
 
 		for i := range vulns {
@@ -479,20 +486,21 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 
 		if len(fixedVersions) > 0 {
-			info, ok := langPackageInfo[pkgName]
+			info, ok := langPackageInfo[key]
 			if !ok {
 				// Defensive: skip if info not recorded (shouldn't happen)
 				continue
 			}
 
-			// Determine patch level to use, with special handling for certain packages
+			// Determine patch level to use, with special handling for certain packages.
+			// Use info.Name (the actual package name) not the composite key.
 			patchLevelToUse := libraryPatchLevel
-			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[pkgName]; exists {
+			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[info.Name]; exists {
 				patchLevelToUse = specialPatchLevel
 			}
 
 			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)
-			if idsMap, ok2 := langPackageVulnIDs[pkgName]; ok2 {
+			if idsMap, ok2 := langPackageVulnIDs[key]; ok2 {
 				var ids []string
 				for id := range idsMap {
 					ids = append(ids, id)
