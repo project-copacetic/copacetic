@@ -309,3 +309,40 @@ func TestGetUniqueLatestUpdatesNode(t *testing.T) {
 		})
 	}
 }
+
+func TestGetPackageBaseName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"unscoped package", "lodash", "lodash"},
+		{"scoped package", "@babel/core", "core"},
+		{"scoped with dashes", "@types/node", "node"},
+		{"package with dots", "es5-ext", "es5-ext"},
+		{"empty string", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, getPackageBaseName(tt.input))
+		})
+	}
+}
+
+func TestGetNpmTarballURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		pkg      string
+		version  string
+		expected string
+	}{
+		{"unscoped package", "lodash", "4.17.21", "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz"},
+		{"scoped package", "@babel/core", "7.24.0", "https://registry.npmjs.org/@babel%2Fcore/-/core-7.24.0.tgz"},
+		{"scoped with dashes", "@types/node", "20.11.0", "https://registry.npmjs.org/@types%2Fnode/-/node-20.11.0.tgz"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, getNpmTarballURL(tt.pkg, tt.version))
+		})
+	}
+}

@@ -35,6 +35,25 @@ var validPlatforms = []string{
 	"linux/riscv64",
 }
 
+// ArchTagSuffixes returns the set of architecture suffixes that Copa appends to base
+// tags when pushing per-architecture images (e.g. "386", "amd64", "arm-v7").
+// The list is derived from validPlatforms so it stays in sync automatically.
+func ArchTagSuffixes() []string {
+	suffixes := make([]string, 0, len(validPlatforms))
+	for _, p := range validPlatforms {
+		spec, err := platforms.Parse(p)
+		if err != nil {
+			continue
+		}
+		suffix := spec.Architecture
+		if spec.Variant != "" {
+			suffix += "-" + spec.Variant
+		}
+		suffixes = append(suffixes, suffix)
+	}
+	return suffixes
+}
+
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
 	if variant != "" {

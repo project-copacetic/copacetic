@@ -63,7 +63,7 @@ func TestComprehensiveBulkPatching(t *testing.T) {
 	)
 	configContent := replacer.Replace(configTemplate)
 
-	err = os.WriteFile(configPath, []byte(configContent), 0600) //nolint:gofumpt
+	err = os.WriteFile(configPath, []byte(configContent), 0o600) //nolint:gofumpt
 	require.NoError(t, err, "failed to write temporary config file")
 
 	t.Logf("Running copa binary against generated config: %s", configPath)

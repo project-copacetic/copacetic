@@ -114,8 +114,8 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 
 			// bulk patch
 			if ua.configFile != "" {
-				if ua.appImage != "" || ua.report != "" || ua.patchedTag != "" {
-					return errors.New("--config cannot be used with --image, --report, or --tag")
+				if ua.appImage != "" || ua.patchedTag != "" {
+					return errors.New("--config cannot be used with --image or --tag")
 				}
 
 				log.Info("Starting in bulk image patching mode...")
@@ -130,9 +130,9 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		},
 	}
 	flags := patchCmd.Flags()
-	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). Cannot be used with --image, --report, or --tag.")
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). Cannot be used with --image or --tag.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
-	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory path")
+	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory of reports")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched",
 		"Suffix for the patched image (if no explicit --tag provided)")

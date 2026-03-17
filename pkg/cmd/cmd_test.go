@@ -25,7 +25,7 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			name:                  "FAIL: Conflicting flags (--config and --image)",
 			args:                  []string{"--config", "config.yaml", "--image", "alpine"},
 			expectValidationError: true,
-			expectedErrorContains: "--config cannot be used with --image, --report, or --tag",
+			expectedErrorContains: "--config cannot be used with --image or --tag",
 		},
 		{
 			name:                  "PASS: Single image mode validation",
