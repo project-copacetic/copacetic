@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,8 +51,9 @@ func (v Vulnerability) Key() string {
 
 // TestGoBinaryPatching tests Go binary patching across diverse images.
 func TestGoBinaryPatching(t *testing.T) {
-	// Download Trivy DB once before running all sub-tests.
-	downloadTrivyDB(t)
+	// Download Trivy DB once to a shared cache directory.
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
 
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -61,6 +63,8 @@ func TestGoBinaryPatching(t *testing.T) {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
+			// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+			testCacheDir := copyCacheDir(t, sharedCacheDir)
 			dir := t.TempDir()
 
 			// Build the full image reference.
@@ -69,7 +73,7 @@ func TestGoBinaryPatching(t *testing.T) {
 			// 1. Scan the original image.
 			t.Log("scanning original image for baseline")
 			scanResultsFile := filepath.Join(dir, "scan.json")
-			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image)
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image, testCacheDir)
 			require.NotEmpty(t, vulnsBefore, "expected vulnerabilities in the baseline scan")
 			t.Logf("Found %d unique vulnerabilities before patching", len(vulnsBefore))
 
@@ -95,7 +99,7 @@ func TestGoBinaryPatching(t *testing.T) {
 			// 3. Scan the patched image.
 			t.Log("scanning patched image")
 			patchedRef := img.Image + ":" + tagPatched
-			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image)
+			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image, testCacheDir)
 			t.Logf("Found %d unique vulnerabilities after patching", len(vulnsAfter))
 
 			// 4. Verify the patch was successful.
@@ -137,7 +141,8 @@ func TestGoBinaryPatching(t *testing.T) {
 
 // TestGoBinaryPatchingByCategory runs tests grouped by image category.
 func TestGoBinaryPatchingByCategory(t *testing.T) {
-	downloadTrivyDB(t)
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
 
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -155,12 +160,14 @@ func TestGoBinaryPatchingByCategory(t *testing.T) {
 				t.Run(img.Description, func(t *testing.T) {
 					t.Parallel()
 
+					// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+					testCacheDir := copyCacheDir(t, sharedCacheDir)
 					dir := t.TempDir()
 					ref := img.Image + ":" + img.Tag
 
 					// Scan original
 					scanResultsFile := filepath.Join(dir, "scan.json")
-					vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image)
+					vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image, testCacheDir)
 					if len(vulnsBefore) == 0 {
 						t.Skip("no vulnerabilities found in baseline scan")
 					}
@@ -172,7 +179,7 @@ func TestGoBinaryPatchingByCategory(t *testing.T) {
 
 					// Verify
 					patchedRef := img.Image + ":" + tagPatched
-					vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image)
+					vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image, testCacheDir)
 
 					assert.Less(t, len(vulnsAfter), len(vulnsBefore),
 						"category %s: expected fewer vulnerabilities", category)
@@ -186,7 +193,8 @@ func TestGoBinaryPatchingByCategory(t *testing.T) {
 
 // TestMultiBinaryImages specifically tests images with multiple Go binaries.
 func TestMultiBinaryImages(t *testing.T) {
-	downloadTrivyDB(t)
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
 
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -200,12 +208,14 @@ func TestMultiBinaryImages(t *testing.T) {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
+			// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+			testCacheDir := copyCacheDir(t, sharedCacheDir)
 			dir := t.TempDir()
 			ref := img.Image + ":" + img.Tag
 
 			// Scan
 			scanResultsFile := filepath.Join(dir, "scan.json")
-			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image)
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image, testCacheDir)
 			if len(vulnsBefore) == 0 {
 				t.Skip("no vulnerabilities found")
 			}
@@ -227,7 +237,7 @@ func TestMultiBinaryImages(t *testing.T) {
 
 			// Verify vulnerabilities reduced
 			patchedRef := img.Image + ":" + tagPatched
-			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image)
+			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image, testCacheDir)
 
 			assert.Less(t, len(vulnsAfter), len(vulnsBefore),
 				"expected fewer vulnerabilities in multi-binary image")
@@ -239,7 +249,8 @@ func TestMultiBinaryImages(t *testing.T) {
 
 // TestDistrolessImages specifically tests distroless (no shell) images.
 func TestDistrolessImages(t *testing.T) {
-	downloadTrivyDB(t)
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
 
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -258,12 +269,14 @@ func TestDistrolessImages(t *testing.T) {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
+			// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+			testCacheDir := copyCacheDir(t, sharedCacheDir)
 			dir := t.TempDir()
 			ref := img.Image + ":" + img.Tag
 
 			// Scan
 			scanResultsFile := filepath.Join(dir, "scan.json")
-			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image)
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image, testCacheDir)
 			if len(vulnsBefore) == 0 {
 				t.Skip("no vulnerabilities found")
 			}
@@ -281,7 +294,7 @@ func TestDistrolessImages(t *testing.T) {
 
 			// Verify vulnerabilities reduced
 			patchedRef := img.Image + ":" + tagPatched
-			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image)
+			vulnsAfter := scanAndParse(t, patchedRef, "", img.SkipMainModule, img.Image, testCacheDir)
 
 			assert.Less(t, len(vulnsAfter), len(vulnsBefore),
 				"expected fewer vulnerabilities in distroless image")
@@ -291,14 +304,14 @@ func TestDistrolessImages(t *testing.T) {
 	}
 }
 
-func downloadTrivyDB(t *testing.T) {
+func downloadTrivyDB(t *testing.T, cacheDir string) {
 	t.Helper()
-	cmd := exec.Command("trivy", "image", "--download-db-only")
+	cmd := exec.Command("trivy", "image", "--download-db-only", "--cache-dir="+cacheDir) //#nosec G204
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "failed to download trivy db:\n%s", string(output))
 }
 
-func scanAndParse(t *testing.T, image string, outputFile string, skipMainModule bool, imageName string) map[string]Vulnerability {
+func scanAndParse(t *testing.T, image string, outputFile string, skipMainModule bool, imageName string, cacheDir string) map[string]Vulnerability {
 	t.Helper()
 
 	if outputFile == "" {
@@ -316,11 +329,24 @@ func scanAndParse(t *testing.T, image string, outputFile string, skipMainModule 
 		"--pkg-types=library",
 		"--ignore-unfixed",
 		"--skip-db-update",
+		"--cache-dir=" + cacheDir,
 		image,
 	}
 
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	output, err := cmd.CombinedOutput()
+	const maxRetries = 3
+	var output []byte
+	var err error
+	for attempt := range maxRetries {
+		cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+		output, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !strings.Contains(string(output), "cache may be in use") || attempt == maxRetries-1 {
+			break
+		}
+		t.Logf("trivy scan attempt %d/%d failed with cache contention, retrying", attempt+1, maxRetries)
+	}
 	if err != nil {
 		t.Logf("trivy scan failed: %v\nOutput: %s", err, string(output))
 		require.NoError(t, err, "trivy scan failed")
@@ -393,6 +419,40 @@ func tryPatchImage(t *testing.T, image, tag, reportFile, patchLevel string) (str
 	out, err := cmd.CombinedOutput()
 
 	return string(out), err
+}
+
+// copyCacheDir creates a copy of the shared Trivy cache directory for a parallel subtest,
+// avoiding lock contention when multiple subtests run trivy concurrently.
+func copyCacheDir(t *testing.T, src string) string {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), "trivy-cache")
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		relPath, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dst, relPath)
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+		srcFile, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer srcFile.Close()
+		dstFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY, info.Mode())
+		if err != nil {
+			return err
+		}
+		defer dstFile.Close()
+		_, err = io.Copy(dstFile, srcFile)
+		return err
+	})
+	require.NoError(t, err, "failed to copy trivy cache directory")
+	return dst
 }
 
 // mapKeys returns the keys of a map as a slice.
