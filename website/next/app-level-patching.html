@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.d407da98.css">
-<script src="/copacetic/website/assets/js/runtime~main.5efd752c.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.a2874e5e.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.74e1eab8.js" defer="defer"></script>
 </head>
 <body class="navigation-with-keyboard">
@@ -176,13 +176,23 @@
 </ul>
 <div class="theme-admonition theme-admonition-danger admonition_xJq3 alert alert--danger"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 12 16"><path fill-rule="evenodd" d="M5.05.31c.81 2.17.41 3.38-.52 4.31C3.55 5.67 1.98 6.45.9 7.98c-1.45 2.05-1.7 6.53 3.53 7.7-2.2-1.16-2.67-4.52-.3-6.61-.61 2.03.53 3.33 1.94 2.86 1.39-.47 2.3.53 2.27 1.67-.02.78-.31 1.44-1.13 1.81 3.42-.59 4.78-3.42 4.78-5.56 0-2.84-2.53-3.22-1.25-5.61-1.52.13-2.03 1.13-1.89 2.75.09 1.08-1.02 1.8-1.86 1.33-.67-.41-.66-1.19-.06-1.78C8.18 5.31 8.68 2.45 5.05.32L5.03.3l.02.01z"></path></svg></span>DLL Replacement Bypasses Compilation</div><div class="admonitionContent_BuS1"><p>API incompatibilities won&#x27;t surface until runtime. Always test in staging before production.</p></div></div>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="net-limitations">.NET Limitations<a href="#net-limitations" class="hash-link" aria-label="Direct link to .NET Limitations" title="Direct link to .NET Limitations" translate="no">​</a></h4>
-<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="microsoftbuild-packages">Microsoft.Build.* Packages<a href="#microsoftbuild-packages" class="hash-link" aria-label="Direct link to Microsoft.Build.* Packages" title="Direct link to Microsoft.Build.* Packages" translate="no">​</a></h5>
-<p>Copa automatically filters out <code>Microsoft.Build.*</code> packages from patching. These are SDK/build-time dependencies that:</p>
+<h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="automatically-skipped-packages">Automatically Skipped Packages<a href="#automatically-skipped-packages" class="hash-link" aria-label="Direct link to Automatically Skipped Packages" title="Direct link to Automatically Skipped Packages" translate="no">​</a></h5>
+<p>Copa automatically filters out certain .NET packages that cannot be patched via NuGet <code>PackageReference</code>:</p>
+<p><strong>Microsoft.Build.* packages</strong> — These are SDK/build-time dependencies that:</p>
 <ul>
 <li class="">Are not part of the runtime application</li>
 <li class="">Often have version constraints incompatible with patching</li>
 <li class="">Don&#x27;t represent actual security vulnerabilities in the deployed application</li>
 </ul>
+<p><strong>.NET Runtime/Platform packages</strong> — These include packages like:</p>
+<ul>
+<li class=""><code>Microsoft.AspNetCore.App.Runtime.&lt;rid&gt;</code> (e.g., <code>Microsoft.AspNetCore.App.Runtime.linux-x64</code>)</li>
+<li class=""><code>Microsoft.NETCore.App.Runtime.&lt;rid&gt;</code></li>
+<li class=""><code>Microsoft.WindowsDesktop.App.Runtime.&lt;rid&gt;</code></li>
+<li class=""><code>Microsoft.AspNetCore.App.Ref</code>, <code>Microsoft.NETCore.App.Ref</code></li>
+<li class=""><code>Microsoft.NETCore.App.Host.&lt;rid&gt;</code></li>
+</ul>
+<p>These are <code>DotnetPlatform</code> NuGet package types that are part of the .NET shared framework. They cannot be added as regular <code>PackageReference</code> entries (NuGet fails with error <code>NU1213</code>).</p>
 <h5 class="anchor anchorTargetStickyNavbar_Vzrq" id="dependency-resolution-1">Dependency Resolution<a href="#dependency-resolution-1" class="hash-link" aria-label="Direct link to Dependency Resolution" title="Direct link to Dependency Resolution" translate="no">​</a></h5>
 <p>Copa does not perform full dependency resolution. It applies updates based on scanner results. If updating a package causes dependency conflicts, you may need to:</p>
 <ul>
