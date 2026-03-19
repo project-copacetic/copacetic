@@ -6,7 +6,7 @@ title: App-Level Patching
 App-level patching is an experimental feature that requires setting the `COPA_EXPERIMENTAL=1` environment variable to enable. This feature is under active development, and future releases may introduce breaking changes. Feedback is welcome!
 :::
 
-Copa supports patching application-level dependencies, such as Python packages, in addition to operating system packages. This feature allows you to update vulnerable libraries and packages in various programming language ecosystems.
+Copa supports patching application-level dependencies, such as Python packages, Node.js packages, and Go modules, in addition to operating system packages. This feature allows you to update vulnerable libraries and packages in various programming language ecosystems.
 
 ## Overview
 
@@ -14,6 +14,7 @@ App-level patching works by scanning and updating application dependencies found
 
 - Python packages (`pip` is the supported package manager)
 - Node.js packages (`npm` is the supported package manager, for both user applications and globally-installed packages)
+- Go modules (`go.mod` files are supported; vendor directories are also supported)
 
 Please note that app-level patching requires scanner results that identify vulnerabilities in application libraries.
 
@@ -35,7 +36,7 @@ copa patch -i $IMAGE --pkg-types os,library ...
 ### Package Type Options
 
 - `os`: Operating system packages (APT, YUM, APK, etc.). This is the default behavior if no `--pkg-types` flag is specified.
-- `library`: Application-level packages (Python, Node.js, etc.)
+- `library`: Application-level packages (Python, Node.js, Go, etc.)
 - `os,library`: Both types
 
 This filtering is particularly useful when you want to:
@@ -235,6 +236,285 @@ Copa uses the `--ignore-scripts` flag when installing Node.js packages to avoid 
 ###### Node.js Testing and Validation
 
 As with Python packages, it is *highly recommended* to thoroughly test your Node.js application after applying updates. Copa does not perform automated testing or validation of the patched application.
+
+### Go
+
+Copa supports patching Go module dependencies defined in `go.mod` files. When scanning an image for vulnerabilities, Copa will:
+
+1. **Go Modules**: Detect and patch module dependencies defined in `go.mod` files
+2. **Workspaces**: Support Go 1.18+ multi-module workspaces (`go.work` files)
+3. **Vendor Directories**: Automatically update `vendor/` directories when present
+
+#### Usage Example
+
+```bash
+export COPA_EXPERIMENTAL=1
+export IMAGE=golang:1.23
+
+# Scan for Go module vulnerabilities
+trivy image --vuln-type os,library --ignore-unfixed -f json -o go-scan.json $IMAGE
+
+# Apply patch-level Go module updates
+copa patch \
+    -i $IMAGE \
+    -r go-scan.json \
+    --pkg-types os,library \
+    --library-patch-level patch
+```
+
+#### Go Limitations
+
+##### Compiled Binary Limitations
+
+**Critical Limitation**: Copa updates `go.mod` and `go.sum` files but **does not automatically rebuild compiled Go binaries**. This is the most important limitation to understand:
+
+- **What Copa Does**: Updates `go.mod` and `go.sum` with fixed dependency versions
+- **What Copa Doesn't Do**: Rebuild compiled binaries to include the fixed dependencies
+- **Impact**: If your image contains a compiled Go binary, the binary will still contain vulnerable code even after Copa updates the module files
+
+**Workflow for Compiled Binaries**:
+1. Use Copa to update `go.mod` and `go.sum`
+2. Extract the updated files from the patched image
+3. Rebuild your Go application with the updated dependencies
+4. Create a new image with the rebuilt binary
+
+**Example**:
+```bash
+# Step 1: Patch the image (updates go.mod/go.sum only)
+copa patch -i myapp:1.0 -r scan.json --pkg-types library -t myapp:1.0-patched
+
+# Step 2: Extract updated module files
+docker run --rm myapp:1.0-patched cat /app/go.mod > go.mod
+docker run --rm myapp:1.0-patched cat /app/go.sum > go.sum
+
+# Step 3: Rebuild your application
+go build -o myapp ./cmd/myapp
+
+# Step 4: Create new image with rebuilt binary
+docker build -t myapp:1.0-fully-patched .
+```
+
+##### Go Module Detection
+
+Copa searches for `go.mod` files in common Go project locations:
+- `/app`
+- `/go/src`
+- `/usr/src/app`
+- `/workspace`
+- `/src`
+- `/opt/app`
+
+If your Go modules are in non-standard locations, Copa may not detect them automatically.
+
+##### Dependency Resolution
+
+Copa does not perform full dependency resolution for Go modules. It relies on `go get` and `go mod tidy` to handle dependency resolution, which may result in:
+
+- Updated transitive dependencies beyond the explicitly patched modules
+- Potential version conflicts if modules have strict version requirements
+- Changes to `go.sum` that include dependencies not directly related to the vulnerability fixes
+
+##### Go Version Compatibility
+
+Copa does not check whether the updated Go modules are compatible with the Go version in the image. Module updates that require a newer Go version may fail to build or cause errors.
+
+##### Replace Directives
+
+Copa preserves existing `replace` directives in `go.mod` files during patching. However:
+
+- New `replace` directives are not added automatically
+- Conflicts between `replace` directives and vulnerability fixes are not automatically resolved
+- Manual intervention may be required if a `replace` directive points to a vulnerable version
+
+##### Tooling Container Strategy
+
+When the Go toolchain is not present in the target image (e.g., distroless images):
+
+- Copa uses a `golang:X.Y-alpine` tooling container to perform updates
+- The Go version is detected from the image or defaults to Go 1.23
+- Module files are copied to the tooling container, updated, and copied back
+- This strategy only updates module files, not compiled binaries
+
+##### Testing and Validation
+
+Due to the limitations with compiled binaries and dependency resolution, it is **highly recommended** to:
+
+1. Thoroughly test your application after applying updates
+2. Verify that the updated modules are compatible with your Go version
+3. Check that `go.sum` changes are expected and legitimate
+4. Rebuild and test compiled binaries before deploying to production
+
+Copa does not perform automated testing or validation of the patched application.
+
+#### Experimental: Go Binary Rebuilding
+
+:::warning Advanced Experimental Feature
+Go binary rebuilding is an experimental feature that requires `COPA_EXPERIMENTAL=1`. This feature attempts to automatically rebuild Go binaries with updated dependencies using information from SLSA provenance and/or embedded build info (VCS metadata).
+:::
+
+Copa has experimental support for automatically rebuilding Go binaries with patched dependencies. This feature addresses the main limitation of Go module patching by rebuilding the actual compiled binary, not just updating module files.
+
+##### Enabling Binary Rebuild
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+# Patch Go binaries with dependency updates
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library
+
+# Also fix Go stdlib vulnerabilities by upgrading the Go compiler
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --toolchain-patch-level
+```
+
+##### The `--toolchain-patch-level` Flag
+
+By default, Copa only updates third-party Go module dependencies. The `--toolchain-patch-level` flag additionally rebuilds binaries using a newer Go compiler to fix vulnerabilities in the Go standard library (`stdlib`).
+
+When specified without a value, `--toolchain-patch-level` defaults to `patch`, meaning Copa will upgrade the Go compiler to the latest patch release within the same minor version (e.g., Go 1.23.0 -> 1.23.10). You can also specify `minor` or `major` for broader upgrades.
+
+When enabled, Copa compares each binary's embedded Go version against the fixed version reported by the vulnerability scanner. Only binaries whose Go version is older than the fix version are rebuilt with the newer compiler.
+
+```bash
+# Fix both dependency and stdlib vulnerabilities (defaults to patch level)
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --toolchain-patch-level
+
+# Explicitly specify the patch level
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --toolchain-patch-level minor
+```
+
+##### How Binary Rebuilding Works
+
+Copa analyzes Go binaries in the image and rebuilds them using embedded build metadata:
+
+1. **Binary detection**: Runs `go version -m` on each binary in the image to extract embedded build metadata (module path, dependency versions, build flags, VCS info)
+2. **Source derivation**: Derives the source repository URL from the module path (e.g., `github.com/example/repo`)
+3. **Source cloning**: Uses the embedded VCS commit hash (`vcs.revision`) to clone the exact source at the correct commit
+4. **Build reconstruction**: Reconstructs build flags from the embedded build settings (`-ldflags`, `-tags`, `CGO_ENABLED`, etc.)
+5. **Dependency update**: Applies `go get module@version` for each vulnerable dependency, runs `go mod tidy`
+6. **Main package discovery**: Locates the main package in the cloned source using multiple strategies (explicit path, `cmd/` directory, binary name matching)
+7. **Rebuild and replace**: Rebuilds the binary with updated dependencies and copies it back to its original location in the image
+
+##### Key Requirement: VCS Commit Hash
+
+:::danger Critical Requirement
+Go binaries **must have a VCS commit hash embedded** for Copa to clone the source and rebuild. This is the most important requirement for binary rebuilding to work.
+:::
+
+The Go toolchain automatically embeds VCS metadata (commit hash, timestamp, dirty flag) when building inside a git repository (default since Go 1.18). However, many Dockerfiles exclude the `.git` directory via `.dockerignore` or by not copying it, which prevents VCS embedding.
+
+**Recommended: Use a multi-stage build with `.git` in the builder stage.** The `.git` directory is only needed during compilation and never ends up in the final image, so there is no size penalty:
+
+```dockerfile
+# GOOD: Multi-stage build preserves VCS metadata at zero cost
+FROM golang:1.23 AS builder
+COPY .git /src/.git
+COPY . /src
+WORKDIR /src
+RUN go build -o /app ./cmd/myapp
+
+FROM gcr.io/distroless/static
+COPY --from=builder /app /app
+# Final image has no .git, but the binary has VCS info embedded
+```
+
+If your `.dockerignore` excludes `.git`, remove that line -- in a multi-stage build it only affects the builder stage and won't bloat your final image.
+
+```dockerfile
+# BAD: No .git means no VCS metadata in the binary
+FROM golang:1.23 AS builder
+COPY . /src
+# .git excluded by .dockerignore or never copied
+RUN go build -o /app ./cmd/myapp
+# Binary has no vcs.revision -- Copa cannot rebuild it
+```
+
+You can verify whether a binary has VCS info embedded:
+
+```bash
+go version -m /path/to/binary | grep vcs
+# Expected output:
+#   build   vcs=git
+#   build   vcs.revision=abc123...
+#   build   vcs.time=2024-01-01T00:00:00Z
+```
+
+If `vcs.revision` is missing, the binary was built without git context and Copa cannot rebuild it.
+
+##### Binary Rebuild Requirements
+
+- **VCS commit hash**: The Go binary must have `vcs.revision` embedded (requires `.git` directory present at build time)
+- **Public source repository**: Source code must be accessible on GitHub at the embedded commit
+- **Standard Go build**: The binary must be buildable with the standard Go toolchain
+
+##### Binary Rebuild Limitations
+
+1. **VCS metadata required**: Binaries built without `.git` present (or with `-buildvcs=false`) cannot be rebuilt. This is the most common cause of failure, as many production Go container images lack embedded VCS metadata.
+
+2. **Private repositories**: Currently only public GitHub repositories are supported for source cloning.
+
+3. **Complex builds**: Multi-stage Dockerfiles, custom build scripts, and CGO-dependent builds may not rebuild correctly.
+
+4. **Monorepo builds**: Images containing multiple binaries from the same repository may have binaries at non-standard source locations. Copa uses a multi-strategy discovery approach but may not find all main packages.
+
+5. **Module download failures**: Some projects use private modules, vanity import paths, or vendored dependencies that cannot be resolved in the rebuild environment.
+
+6. **Build reproducibility**: Rebuilt binaries may differ from originals due to timestamps, Go version differences, or non-deterministic build steps.
+
+7. **Multi-binary images**: If an image contains multiple Go binaries and some lack VCS metadata, Copa will rebuild the ones it can and skip the rest. The skipped binaries remain unchanged in the patched image.
+
+##### Example with Binary Rebuild
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+# Scan for vulnerabilities
+export IMAGE=ghcr.io/kubereboot/kured:v1.13.1
+trivy image --vuln-type library --ignore-unfixed -f json -o scan.json $IMAGE
+
+# Patch with binary rebuilding + stdlib upgrade
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --toolchain-patch-level \
+    -t patched
+
+# Verify the patched binary
+trivy image patched --vuln-type library
+```
+
+##### Rebuild Strategy Logging
+
+Copa logs detailed information for each binary during patching:
+
+```text
+INFO Using rebuild strategy: heuristic
+INFO   Build info: Go 1.22.0, module: github.com/example/repo, CGO: false
+INFO   Source: github.com/example/repo @ abc123
+INFO   Will update golang.org/x/net to v0.33.0
+```
+
+When a binary lacks VCS metadata:
+
+```text
+WARN   Binary /usr/bin/mybinary has no VCS commit info (likely built without .git directory).
+       Source clone will not be possible; rebuild may fail.
+```
 
 ### .NET
 
