@@ -41,7 +41,7 @@ require (
 	golang.org/x/mod v0.32.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/term v0.39.0
-	google.golang.org/grpc v1.79.1
+	google.golang.org/grpc v1.79.3
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/apimachinery v0.35.2
 )
