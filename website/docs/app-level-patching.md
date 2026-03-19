@@ -579,12 +579,23 @@ API incompatibilities won't surface until runtime. Always test in staging before
 
 #### .NET Limitations
 
-##### Microsoft.Build.* Packages
+##### Automatically Skipped Packages
 
-Copa automatically filters out `Microsoft.Build.*` packages from patching. These are SDK/build-time dependencies that:
+Copa automatically filters out certain .NET packages that cannot be patched via NuGet `PackageReference`:
+
+**Microsoft.Build.\* packages** — These are SDK/build-time dependencies that:
 - Are not part of the runtime application
 - Often have version constraints incompatible with patching
 - Don't represent actual security vulnerabilities in the deployed application
+
+**.NET Runtime/Platform packages** — These include packages like:
+- `Microsoft.AspNetCore.App.Runtime.<rid>` (e.g., `Microsoft.AspNetCore.App.Runtime.linux-x64`)
+- `Microsoft.NETCore.App.Runtime.<rid>`
+- `Microsoft.WindowsDesktop.App.Runtime.<rid>`
+- `Microsoft.AspNetCore.App.Ref`, `Microsoft.NETCore.App.Ref`
+- `Microsoft.NETCore.App.Host.<rid>`
+
+These are `DotnetPlatform` NuGet package types that are part of the .NET shared framework. They cannot be added as regular `PackageReference` entries (NuGet fails with error `NU1213`). 
 
 ##### Dependency Resolution
 

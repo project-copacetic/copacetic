@@ -18,6 +18,28 @@ import (
 
 type TrivyParser struct{}
 
+// isUnpatchableDotnetRuntimePackage returns true for .NET runtime/platform packages
+// that have the DotnetPlatform NuGet package type and cannot be installed via
+// PackageReference in a .csproj file (dotnet restore fails with NU1213).
+// These packages are part of the .NET shared framework and are updated by
+// upgrading the runtime itself, not through NuGet.
+func isUnpatchableDotnetRuntimePackage(pkgName string) bool {
+	unpatchablePrefixes := []string{
+		"Microsoft.AspNetCore.App.Runtime.",
+		"Microsoft.NETCore.App.Runtime.",
+		"Microsoft.WindowsDesktop.App.Runtime.",
+		"Microsoft.AspNetCore.App.Ref",
+		"Microsoft.NETCore.App.Ref",
+		"Microsoft.NETCore.App.Host.",
+	}
+	for _, prefix := range unpatchablePrefixes {
+		if strings.HasPrefix(pkgName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // getSpecialPackagePatchLevels returns a map of package names to their special patch level handling rules.
 func getSpecialPackagePatchLevels() map[string]string {
 	return map[string]string{
@@ -436,8 +458,11 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			if r.Type == utils.DotNetPackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
-					// Skip Microsoft.Build.* packages as they are SDK/build-time dependencies, not runtime
-					if strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") {
+					// Skip packages that cannot be patched via NuGet PackageReference:
+					// - Microsoft.Build.* are SDK/build-time dependencies
+					// - *.App.Runtime.* are DotnetPlatform packages (e.g. Microsoft.AspNetCore.App.Runtime.linux-x64,
+					//   Microsoft.NETCore.App.Runtime.linux-x64) that fail dotnet restore with NU1213
+					if strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") || isUnpatchableDotnetRuntimePackage(vuln.PkgName) {
 						continue
 					}
 					if vuln.FixedVersion != "" {
