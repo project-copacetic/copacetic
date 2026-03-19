@@ -44,6 +44,20 @@
           "PkgPath": "app/OtherLib.deps.json",
           "InstalledVersion": "8.0.0",
           "FixedVersion": "8.0.4"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-26130",
+          "PkgName": "Microsoft.AspNetCore.App.Runtime.linux-x64",
+          "PkgPath": "usr/share/dotnet/shared/Microsoft.AspNetCore.App/8.0.22/Microsoft.AspNetCore.App.deps.json",
+          "InstalledVersion": "8.0.22",
+          "FixedVersion": "8.0.25, 9.0.14, 10.0.4"
+        },
+        {
+          "VulnerabilityID": "CVE-2026-26131",
+          "PkgName": "Microsoft.NETCore.App.Runtime.linux-x64",
+          "PkgPath": "usr/share/dotnet/shared/Microsoft.NETCore.App/8.0.22/Microsoft.NETCore.App.deps.json",
+          "InstalledVersion": "8.0.22",
+          "FixedVersion": "8.0.25"
         }
       ]
     }

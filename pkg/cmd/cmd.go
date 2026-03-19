@@ -28,27 +28,28 @@ import (
 )
 
 type patchArgs struct {
-	appImage          string
-	report            string
-	patchedTag        string
-	suffix            string
-	workingFolder     string
-	timeout           time.Duration
-	scanner           string
-	ignoreError       bool
-	format            string
-	output            string
-	bkOpts            buildkit.Opts
-	push              bool
-	platform          []string
-	loader            string
-	pkgTypes          string
-	libraryPatchLevel string
-	progress          string
-	ociDir            string
-	eolAPIBaseURL     string
-	exitOnEOL         bool
-	configFile        string
+	appImage            string
+	report              string
+	patchedTag          string
+	suffix              string
+	workingFolder       string
+	timeout             time.Duration
+	scanner             string
+	ignoreError         bool
+	format              string
+	output              string
+	bkOpts              buildkit.Opts
+	push                bool
+	platform            []string
+	loader              string
+	pkgTypes            string
+	libraryPatchLevel   string
+	toolchainPatchLevel string
+	progress            string
+	ociDir              string
+	eolAPIBaseURL       string
+	exitOnEOL           bool
+	configFile          string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -82,30 +83,31 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 			defer signal.Stop(forceQuitCh)
 
 			opts := &types.Options{
-				Image:             ua.appImage,
-				Report:            ua.report,
-				PatchedTag:        ua.patchedTag,
-				Suffix:            ua.suffix,
-				WorkingFolder:     ua.workingFolder,
-				Timeout:           ua.timeout,
-				Scanner:           ua.scanner,
-				IgnoreError:       ua.ignoreError,
-				Format:            ua.format,
-				Output:            ua.output,
-				BkAddr:            ua.bkOpts.Addr,
-				BkCACertPath:      ua.bkOpts.CACertPath,
-				BkCertPath:        ua.bkOpts.CertPath,
-				BkKeyPath:         ua.bkOpts.KeyPath,
-				Push:              ua.push,
-				Platforms:         ua.platform,
-				Loader:            ua.loader,
-				PkgTypes:          ua.pkgTypes,
-				LibraryPatchLevel: ua.libraryPatchLevel,
-				Progress:          progressui.DisplayMode(ua.progress),
-				OCIDir:            ua.ociDir,
-				EOLAPIBaseURL:     ua.eolAPIBaseURL,
-				ExitOnEOL:         ua.exitOnEOL,
-				ConfigFile:        ua.configFile,
+				Image:               ua.appImage,
+				Report:              ua.report,
+				PatchedTag:          ua.patchedTag,
+				Suffix:              ua.suffix,
+				WorkingFolder:       ua.workingFolder,
+				Timeout:             ua.timeout,
+				Scanner:             ua.scanner,
+				IgnoreError:         ua.ignoreError,
+				Format:              ua.format,
+				Output:              ua.output,
+				BkAddr:              ua.bkOpts.Addr,
+				BkCACertPath:        ua.bkOpts.CACertPath,
+				BkCertPath:          ua.bkOpts.CertPath,
+				BkKeyPath:           ua.bkOpts.KeyPath,
+				Push:                ua.push,
+				Platforms:           ua.platform,
+				Loader:              ua.loader,
+				PkgTypes:            ua.pkgTypes,
+				LibraryPatchLevel:   ua.libraryPatchLevel,
+				ToolchainPatchLevel: ua.toolchainPatchLevel,
+				Progress:            progressui.DisplayMode(ua.progress),
+				OCIDir:              ua.ociDir,
+				EOLAPIBaseURL:       ua.eolAPIBaseURL,
+				ExitOnEOL:           ua.exitOnEOL,
+				ConfigFile:          ua.configFile,
 			}
 
 			if ua.configFile == "" && ua.appImage == "" {
@@ -166,6 +168,11 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", utils.PatchTypePatch,
 			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
 				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
+		flags.StringVar(&ua.toolchainPatchLevel, "toolchain-patch-level", "",
+			"[EXPERIMENTAL] Upgrade the language toolchain (e.g., Go compiler) to fix stdlib vulnerabilities. "+
+				"Values: 'patch' (e.g., 1.23.0 -> 1.23.latest), 'minor' (e.g., 1.23 -> 1.25), 'major'. "+
+				"Currently supported for Go only. Requires 'library' in --pkg-types")
+		flags.Lookup("toolchain-patch-level").NoOptDefVal = utils.PatchTypePatch
 	} else {
 		// Set default values when experimental flags are not enabled
 		ua.pkgTypes = utils.PkgTypeOS

@@ -887,6 +887,7 @@ func TestTrivyParserParseWithPythonVenv(t *testing.T) {
 // TestTrivyParserParseWithDotNet tests that:
 //   - dotnet-core packages are parsed and use the composite (PkgName + PkgPath) key
 //   - Microsoft.Build.* packages are filtered out
+//   - .NET runtime/platform packages (e.g. Microsoft.AspNetCore.App.Runtime.*) are filtered out
 //   - same package at different paths becomes separate upgrade targets
 func TestTrivyParserParseWithDotNet(t *testing.T) {
 	parser := &TrivyParser{}
@@ -899,14 +900,18 @@ func TestTrivyParserParseWithDotNet(t *testing.T) {
 	// Expected entries:
 	//   - Microsoft.Identity.Web @ app/MyApp.deps.json  (1 entry)
 	//   - Microsoft.Build.Framework → filtered out
+	//   - Microsoft.AspNetCore.App.Runtime.linux-x64 → filtered out (DotnetPlatform package)
+	//   - Microsoft.NETCore.App.Runtime.linux-x64 → filtered out (DotnetPlatform package)
 	//   - System.Text.Json @ app/MyApp.deps.json        (1 entry)
 	//   - System.Text.Json @ app/OtherLib.deps.json     (1 entry)
 	assert.Equal(t, 3, len(manifest.LangUpdates))
 
-	// Verify Microsoft.Build.* is absent.
+	// Verify Microsoft.Build.* and runtime platform packages are absent.
 	for _, u := range manifest.LangUpdates {
 		assert.False(t, strings.HasPrefix(u.Name, "Microsoft.Build."),
 			"Microsoft.Build.* packages should be filtered out")
+		assert.False(t, isUnpatchableDotnetRuntimePackage(u.Name),
+			".NET runtime/platform packages should be filtered out, but found: %s", u.Name)
 		assert.Equal(t, utils.DotNetPackages, u.Type)
 		assert.NotEmpty(t, u.PkgPath)
 		assert.NotEmpty(t, u.FixedVersion)
@@ -923,4 +928,33 @@ func TestTrivyParserParseWithDotNet(t *testing.T) {
 		"app/MyApp.deps.json",
 		"app/OtherLib.deps.json",
 	}, jsonEntries, "same package at different paths should be separate upgrade targets")
+}
+
+func TestIsUnpatchableDotnetRuntimePackage(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected bool
+	}{
+		{"Microsoft.AspNetCore.App.Runtime.linux-x64", true},
+		{"Microsoft.AspNetCore.App.Runtime.linux-arm64", true},
+		{"Microsoft.AspNetCore.App.Runtime.win-x64", true},
+		{"Microsoft.NETCore.App.Runtime.linux-x64", true},
+		{"Microsoft.NETCore.App.Runtime.linux-arm64", true},
+		{"Microsoft.WindowsDesktop.App.Runtime.win-x64", true},
+		{"Microsoft.AspNetCore.App.Ref", true},
+		{"Microsoft.NETCore.App.Ref", true},
+		{"Microsoft.NETCore.App.Host.linux-x64", true},
+		// These should NOT be filtered
+		{"Newtonsoft.Json", false},
+		{"System.Text.Json", false},
+		{"Microsoft.Identity.Web", false},
+		{"Microsoft.Extensions.Logging", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isUnpatchableDotnetRuntimePackage(tt.name)
+			assert.Equal(t, tt.expected, result, "isUnpatchableDotnetRuntimePackage(%q)", tt.name)
+		})
+	}
 }
