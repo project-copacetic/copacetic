@@ -43,7 +43,7 @@ func Patch(ctx context.Context, opts *types.Options) error {
 	ch := make(chan error, 1)
 
 	go func() {
-		ch <- patchWithContext(timeoutCtx, ch, opts)
+		ch <- patchWithContext(timeoutCtx, opts)
 		close(ch)
 	}()
 	select {
@@ -79,7 +79,7 @@ func Patch(ctx context.Context, opts *types.Options) error {
 }
 
 // patchWithContext orchestrates the main patching workflow.
-func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) error {
+func patchWithContext(ctx context.Context, opts *types.Options) error {
 	// Configure EOL API if provided
 	if opts.EOLAPIBaseURL != "" {
 		utils.SetEOLAPIBaseURL(opts.EOLAPIBaseURL)
@@ -123,7 +123,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 			}
 
 			displaySingleArchPlan(opts, &patchPlatform)
-			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
+			result, err := patchSingleArchImage(ctx, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -153,7 +153,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 			}
 
 			displaySingleArchPlan(opts, &patchPlatform)
-			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
+			result, err := patchSingleArchImage(ctx, opts, patchPlatform, false, nil)
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -161,7 +161,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		}
 
 		log.Debugf("Detected multi-platform image with %d platforms", len(discoveredPlatforms))
-		return patchMultiPlatformImage(ctx, ch, opts, discoveredPlatforms)
+		return patchMultiPlatformImage(ctx, opts, discoveredPlatforms)
 	}
 
 	// Check if reportPath exists
@@ -182,7 +182,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 			log.Info("Platform flag ignored when report directory is provided")
 		}
 		// For report directory, we pass nil as discoveredPlatforms - the function will discover them internally
-		return patchMultiPlatformImage(ctx, ch, opts, nil)
+		return patchMultiPlatformImage(ctx, opts, nil)
 	}
 	// Handle file - single-platform patching
 	log.Debugf("Using report file: %s", reportPath)
@@ -194,7 +194,7 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 		patchPlatform.OS = LINUX
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
-	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
+	result, err := patchSingleArchImage(ctx, opts, patchPlatform, false, nil)
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}

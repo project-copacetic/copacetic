@@ -23,7 +23,6 @@ import (
 // patchMultiPlatformImage patches a multi-platform image across all discovered platforms.
 func patchMultiPlatformImage(
 	ctx context.Context,
-	ch chan error,
 	opts *types.Options,
 	discoveredPlatforms []types.PatchPlatform,
 ) error {
@@ -226,7 +225,7 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImage(gctx, ch, &patchOpts, p, true, sharedProgressCh)
+			res, err := patchSingleArchImage(gctx, &patchOpts, p, true, sharedProgressCh)
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {
