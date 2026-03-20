@@ -4,9 +4,11 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,8 +37,9 @@ func (v Vulnerability) Key() string {
 }
 
 func TestNodeJSPatching(t *testing.T) {
-	// Download Trivy DB once before running all sub-tests.
-	downloadTrivyDB(t)
+	// Download Trivy DB once to a shared cache directory.
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
 
 	var images []testImage
 	err := json.Unmarshal(testImages, &images)
@@ -46,6 +49,8 @@ func TestNodeJSPatching(t *testing.T) {
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
+			// Each parallel subtest gets its own cache dir to avoid Trivy lock contention
+			testCacheDir := copyCacheDir(t, sharedCacheDir)
 			dir := t.TempDir()
 
 			// Build the full image reference
@@ -57,7 +62,7 @@ func TestNodeJSPatching(t *testing.T) {
 			// 1. Scan the original image.
 			t.Log("scanning original image for baseline")
 			scanResultsFile := filepath.Join(dir, "scan.json")
-			vulnsBefore := scanAndParse(t, ref, scanResultsFile)
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, testCacheDir)
 
 			if len(vulnsBefore) == 0 {
 				t.Log("No fixable vulnerabilities found in original image, skipping patch test.")
@@ -72,7 +77,7 @@ func TestNodeJSPatching(t *testing.T) {
 			// 3. Scan the newly patched image.
 			t.Log("scanning patched image for verification")
 			patchedRef := img.Image + ":" + tagPatched
-			vulnsAfter := scanAndParse(t, patchedRef, "")
+			vulnsAfter := scanAndParse(t, patchedRef, "", testCacheDir)
 
 			// 4. Verify the patch was successful.
 			t.Logf("Comparing vulnerabilities: Before (%d) vs After (%d)", len(vulnsBefore), len(vulnsAfter))
@@ -89,15 +94,14 @@ func TestNodeJSPatching(t *testing.T) {
 	}
 }
 
-func downloadTrivyDB(t *testing.T) {
+func downloadTrivyDB(t *testing.T, cacheDir string) {
 	t.Helper()
-	cmd := exec.Command("trivy", "image", "--download-db-only")
+	cmd := exec.Command("trivy", "image", "--download-db-only", "--cache-dir="+cacheDir) //#nosec G204
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "Failed to download Trivy DB:\n%s", string(out))
 }
 
-// scanAndParse remains unchanged.
-func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vulnerability {
+func scanAndParse(t *testing.T, image string, outputFile string, cacheDir string) map[string]Vulnerability {
 	t.Helper()
 
 	if outputFile == "" {
@@ -115,12 +119,29 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 		"--pkg-types=library",
 		"--ignore-unfixed",
 		"--skip-db-update",
+		"--cache-dir=" + cacheDir,
 		image,
 	}
 
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
-	_, _ = cmd.CombinedOutput()
+	const maxRetries = 3
+	var output []byte
+	var err error
+	for attempt := range maxRetries {
+		cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+		cmd.Env = append(os.Environ(), "COPA_EXPERIMENTAL=1")
+		output, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !strings.Contains(string(output), "cache may be in use") || attempt == maxRetries-1 {
+			break
+		}
+		t.Logf("trivy scan attempt %d/%d failed with cache contention, retrying", attempt+1, maxRetries)
+	}
+	if err != nil {
+		t.Logf("trivy scan failed: %v\nOutput: %s", err, string(output))
+		require.NoError(t, err, "trivy scan failed")
+	}
 
 	reportBytes, err := os.ReadFile(outputFile)
 	require.NoError(t, err, "failed to read trivy report file")
@@ -175,6 +196,10 @@ func TestCustomBuildPatching(t *testing.T) {
 	imageTag := "copa-e2e-custom-vulnerable-app:latest"
 	patchedTag := "copa-e2e-custom-vulnerable-app:patched"
 
+	// Download Trivy DB to its own cache directory
+	cacheDir := filepath.Join(t.TempDir(), "trivy-cache")
+	downloadTrivyDB(t, cacheDir)
+
 	t.Cleanup(func() {
 		t.Logf("Cleaning up images: %s, %s", imageTag, patchedTag)
 		cmd := exec.Command("docker", "rmi", "-f", imageTag, patchedTag)
@@ -190,14 +215,14 @@ func TestCustomBuildPatching(t *testing.T) {
 
 	t.Log("Scanning original image for baseline")
 	scanResultsFile := filepath.Join(dir, "scan.json")
-	vulnsBefore := scanAndParse(t, imageTag, scanResultsFile)
+	vulnsBefore := scanAndParse(t, imageTag, scanResultsFile, cacheDir)
 	require.NotEmpty(t, vulnsBefore, "expected to find vulnerabilities in the custom-built image")
 
 	t.Log("Patching image")
 	copaOutput := patchImage(t, imageTag, patchedTag, scanResultsFile)
 
 	t.Logf("Scanning patched image for verification: %s", patchedTag)
-	vulnsAfter := scanAndParse(t, patchedTag, "")
+	vulnsAfter := scanAndParse(t, patchedTag, "", cacheDir)
 
 	t.Logf("Comparing vulnerabilities: Before (%d) vs After (%d)", len(vulnsBefore), len(vulnsAfter))
 
@@ -208,4 +233,31 @@ func TestCustomBuildPatching(t *testing.T) {
 	for key, vuln := range vulnsAfter {
 		assert.Contains(t, vulnsBefore, key, "no new vulnerabilities should be introduced. Found new vuln: %+v", vuln)
 	}
+}
+
+func copyCacheDir(t *testing.T, srcCacheDir string) string {
+	t.Helper()
+	dstCacheDir := filepath.Join(t.TempDir(), "trivy-cache")
+	require.NoError(t, os.MkdirAll(filepath.Join(dstCacheDir, "db"), 0o755))
+
+	entries, err := os.ReadDir(filepath.Join(srcCacheDir, "db"))
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(srcCacheDir, "db", entry.Name())
+		dst := filepath.Join(dstCacheDir, "db", entry.Name())
+
+		in, openErr := os.Open(src)
+		require.NoError(t, openErr)
+		out, createErr := os.Create(dst)
+		require.NoError(t, createErr)
+		_, copyErr := io.Copy(out, in)
+		in.Close()
+		out.Close()
+		require.NoError(t, copyErr)
+	}
+	return dstCacheDir
 }

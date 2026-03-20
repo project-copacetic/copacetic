@@ -21,6 +21,12 @@ linters:
     gocritic:
       enabled-tags:
         - performance
+    gosec:
+      excludes:
+        - G702  # Command injection via taint (false positives in CLI/infra code)
+        - G703  # Path traversal via taint (false positives in CLI/infra code)
+        - G704  # SSRF via taint (false positives in CLI/infra code)
+        - G705  # XSS via taint (false positives in CLI/infra code)
     lll:
       line-length: 200
     misspell:

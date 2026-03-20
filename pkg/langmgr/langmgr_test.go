@@ -21,7 +21,7 @@ func TestGetLanguageManagers(t *testing.T) {
 
 	// Test with empty manifest
 	emptyManifest := &unversioned.UpdateManifest{}
-	managers := GetLanguageManagers(config, workingFolder, emptyManifest)
+	managers := GetLanguageManagers(config, workingFolder, emptyManifest, "")
 	assert.Empty(t, managers, "Should return no managers for empty manifest")
 
 	// Test with invalid package type
@@ -33,7 +33,7 @@ func TestGetLanguageManagers(t *testing.T) {
 			},
 		},
 	}
-	managers = GetLanguageManagers(config, workingFolder, invalidManifest)
+	managers = GetLanguageManagers(config, workingFolder, invalidManifest, "")
 	assert.Empty(t, managers, "Should return no managers for invalid manifest")
 
 	// Test with Python packages
@@ -45,7 +45,7 @@ func TestGetLanguageManagers(t *testing.T) {
 			},
 		},
 	}
-	managers = GetLanguageManagers(config, workingFolder, manifestWithPython)
+	managers = GetLanguageManagers(config, workingFolder, manifestWithPython, "")
 
 	assert.NotEmpty(t, managers, "Should return at least one language manager")
 	assert.Len(t, managers, 1, "Should return only Python manager when only python packages present")
@@ -148,6 +148,40 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			ignoreErrors: false,
 			expectError:  true,
 		},
+		{
+			name: "same package at different PkgPaths - kept as separate entries",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "usr/lib/python3.12/site-packages"},
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+			comparer: mockVersionComparer(),
+			expected: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "usr/lib/python3.12/site-packages"},
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+		},
+		{
+			name: "same package at same PkgPath with different CVEs - merged to one entry with latest version",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "23.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+			comparer: mockVersionComparer(),
+			expected: unversioned.LangUpdatePackages{
+				{Name: "pip", FixedVersion: "24.0", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+			},
+		},
+		{
+			name: "packages without PkgPath still deduplicate by name (backward compat)",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "urllib3", FixedVersion: "1.26.0"},
+				{Name: "urllib3", FixedVersion: "1.27.0"},
+			},
+			comparer: mockVersionComparer(),
+			expected: unversioned.LangUpdatePackages{
+				{Name: "urllib3", FixedVersion: "1.27.0"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -155,11 +189,11 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 			result, err := GetUniqueLatestUpdates(tt.updates, tt.comparer, tt.ignoreErrors)
 
 			if tt.expectError {
-				assert.Error(t, err)
+				require.Error(t, err)
 				return
 			}
 
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.ElementsMatch(t, tt.expected, result)
 		})
 	}
@@ -229,17 +263,17 @@ func TestGetValidatedUpdatesMap(t *testing.T) {
 			result, err := GetValidatedUpdatesMap(tt.updates, comparer, tt.reader, tt.stagingPath)
 
 			if tt.expectError {
-				assert.Error(t, err)
+				require.Error(t, err)
 				return
 			}
 
 			if tt.expectNil {
-				assert.NoError(t, err)
+				require.NoError(t, err)
 				assert.Nil(t, result)
 				return
 			}
 
-			assert.NoError(t, err)
+			require.NoError(t, err)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

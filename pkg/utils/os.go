@@ -24,6 +24,7 @@ const (
 	OSTypeSLES         = "sles"
 	OSTypeOpenSUSELeap = "opensuse-leap"
 	OSTypeOpenSUSETW   = "opensuse-tumbleweed"
+	OSTypeArchLinux    = "archlinux"
 )
 
 // RPMDistros is a helper slice listing rpm-family OS identifiers.
@@ -95,7 +96,8 @@ func CanonicalOSType(osType string) string {
 		return OSTypeRocky
 	case strings.Contains(os, OSTypeOracle):
 		return OSTypeOracle
-
+	case strings.Contains(os, OSTypeArchLinux):
+		return OSTypeArchLinux
 	default:
 		return ""
 	}

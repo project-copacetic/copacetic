@@ -2,9 +2,12 @@ package common
 
 import (
 	_ "embed"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +24,7 @@ type ScannerCmd struct {
 	ExitCode     int
 	Platform     string
 	ImageSrc     string
+	CacheDir     string
 }
 
 func NewScanner() *ScannerCmd {
@@ -57,6 +61,11 @@ func (s *ScannerCmd) WithImageSrc(imageSrc string) *ScannerCmd {
 	return s
 }
 
+func (s *ScannerCmd) WithCacheDir(cacheDir string) *ScannerCmd {
+	s.CacheDir = cacheDir
+	return s
+}
+
 func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars ...string) {
 	args := []string{
 		"trivy",
@@ -85,14 +94,37 @@ func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars .
 	if s.ImageSrc != "" {
 		args = append(args, "--image-src="+s.ImageSrc)
 	}
+	if s.CacheDir != "" {
+		args = append(args, "--cache-dir="+s.CacheDir)
+	}
 
 	args = append(args, ref)
-	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
-	cmd.Env = append(cmd.Env, os.Environ()...)
-	cmd.Env = append(cmd.Env, envVars...)
-	out, err := cmd.CombinedOutput()
+
+	const maxRetries = 3
+	var out []byte
+	var err error
+	for attempt := range maxRetries {
+		cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+		cmd.Env = append(os.Environ(), envVars...)
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			break
+		}
+		if !isTransientScanError(string(out)) || attempt == maxRetries-1 {
+			break
+		}
+		t.Logf("trivy scan attempt %d/%d failed with transient error, retrying: %s", attempt+1, maxRetries, string(out))
+	}
 
 	assert.NoError(t, err, string(out))
+}
+
+// isTransientScanError returns true for network/IO errors that may succeed on retry.
+func isTransientScanError(output string) bool {
+	return strings.Contains(output, "unexpected EOF") ||
+		strings.Contains(output, "connection reset") ||
+		strings.Contains(output, "deadline exceeded") ||
+		strings.Contains(output, "cache may be in use")
 }
 
 func DownloadDB(t *testing.T, envVars ...string) {
@@ -107,4 +139,67 @@ func DownloadDB(t *testing.T, envVars ...string) {
 	cmd.Env = append(cmd.Env, envVars...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
+}
+
+// DownloadDBToDir downloads the Trivy vulnerability database to a specific cache directory.
+func DownloadDBToDir(t *testing.T, cacheDir string, envVars ...string) {
+	t.Helper()
+	args := []string{
+		"trivy",
+		"image",
+		"--download-db-only",
+		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
+		"--cache-dir=" + cacheDir,
+	}
+	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, envVars...)
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
+// CopyCacheDir creates a per-test copy of the Trivy cache directory to avoid
+// concurrent cache lock contention between parallel tests.
+// Uses hardlinks for data files to avoid expensive copies (the DB files are read-only during scans).
+func CopyCacheDir(t *testing.T, srcCacheDir string) string {
+	t.Helper()
+	dstCacheDir := filepath.Join(t.TempDir(), "trivy-cache")
+	require.NoError(t, os.MkdirAll(filepath.Join(dstCacheDir, "db"), 0o755))
+
+	entries, err := os.ReadDir(filepath.Join(srcCacheDir, "db"))
+	require.NoError(t, err)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		src := filepath.Join(srcCacheDir, "db", entry.Name())
+		dst := filepath.Join(dstCacheDir, "db", entry.Name())
+		// Use hardlink instead of copy - DB files are read-only during scans
+		// and hardlinks share the same inode, avoiding ~700MB copy per goroutine
+		if err := os.Link(src, dst); err != nil {
+			// Fall back to copy if hardlink fails (e.g., cross-device)
+			if err := copyFile(src, dst); err != nil {
+				require.NoError(t, err)
+			}
+		}
+	}
+	return dstCacheDir
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
 }

@@ -18,6 +18,28 @@ import (
 
 type TrivyParser struct{}
 
+// isUnpatchableDotnetRuntimePackage returns true for .NET runtime/platform packages
+// that have the DotnetPlatform NuGet package type and cannot be installed via
+// PackageReference in a .csproj file (dotnet restore fails with NU1213).
+// These packages are part of the .NET shared framework and are updated by
+// upgrading the runtime itself, not through NuGet.
+func isUnpatchableDotnetRuntimePackage(pkgName string) bool {
+	unpatchablePrefixes := []string{
+		"Microsoft.AspNetCore.App.Runtime.",
+		"Microsoft.NETCore.App.Runtime.",
+		"Microsoft.WindowsDesktop.App.Runtime.",
+		"Microsoft.AspNetCore.App.Ref",
+		"Microsoft.NETCore.App.Ref",
+		"Microsoft.NETCore.App.Host.",
+	}
+	for _, prefix := range unpatchablePrefixes {
+		if strings.HasPrefix(pkgName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // getSpecialPackagePatchLevels returns a map of package names to their special patch level handling rules.
 func getSpecialPackagePatchLevels() map[string]string {
 	return map[string]string{
@@ -431,7 +453,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		},
 	}
 
-	// Process Language packages - group by package name to find optimal fixed version
+	// Process Language packages - group by (name, pkgPath) to find optimal fixed version.
+	// Using a composite key ensures the same package at different locations (e.g. system
+	// Python vs a venv) is treated as a separate upgrade target.
 	langPackageVulns := make(map[string][]trivyTypes.DetectedVulnerability)
 	langPackageInfo := make(map[string]unversioned.UpdatePackage)
 	// track all vulnerability IDs per lang package for VEX emission
@@ -459,25 +483,27 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		// Process Language packages
 		if r.Class == utils.LangPackages {
-			// Check if this is a Python or Node.js related target
-			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages {
+			// Check if this is a Python, Node.js, or Go related target
+			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					if vuln.FixedVersion != "" {
-						if _, exists := langPackageVulns[vuln.PkgName]; !exists {
-							langPackageVulns[vuln.PkgName] = []trivyTypes.DetectedVulnerability{}
-							langPackageInfo[vuln.PkgName] = unversioned.UpdatePackage{
+						// Composite key: same package at different paths is a separate upgrade target.
+						key := vuln.PkgName + "\x00" + vuln.PkgPath
+						if _, exists := langPackageVulns[key]; !exists {
+							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
+							langPackageInfo[key] = unversioned.UpdatePackage{
 								Name:             vuln.PkgName,
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
-								PkgPath:          vuln.PkgPath, // Preserve package path from Trivy
+								PkgPath:          vuln.PkgPath,
 							}
-							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
+							langPackageVulnIDs[key] = make(map[string]struct{})
 						}
-						langPackageVulns[vuln.PkgName] = append(langPackageVulns[vuln.PkgName], *vuln)
+						langPackageVulns[key] = append(langPackageVulns[key], *vuln)
 						if vuln.VulnerabilityID != "" {
-							langPackageVulnIDs[vuln.PkgName][vuln.VulnerabilityID] = struct{}{}
+							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
 					}
 				}
@@ -487,24 +513,29 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			if r.Type == utils.DotNetPackages {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
-					// Skip Microsoft.Build.* packages as they are SDK/build-time dependencies, not runtime
-					if strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") {
+					// Skip packages that cannot be patched via NuGet PackageReference:
+					// - Microsoft.Build.* are SDK/build-time dependencies
+					// - *.App.Runtime.* are DotnetPlatform packages (e.g. Microsoft.AspNetCore.App.Runtime.linux-x64,
+					//   Microsoft.NETCore.App.Runtime.linux-x64) that fail dotnet restore with NU1213
+					if strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") || isUnpatchableDotnetRuntimePackage(vuln.PkgName) {
 						continue
 					}
 					if vuln.FixedVersion != "" {
-						if _, exists := langPackageVulns[vuln.PkgName]; !exists {
-							langPackageVulns[vuln.PkgName] = []trivyTypes.DetectedVulnerability{}
-							langPackageInfo[vuln.PkgName] = unversioned.UpdatePackage{
+						key := vuln.PkgName + "\x00" + vuln.PkgPath
+						if _, exists := langPackageVulns[key]; !exists {
+							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
+							langPackageInfo[key] = unversioned.UpdatePackage{
 								Name:             vuln.PkgName,
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
+								PkgPath:          vuln.PkgPath,
 							}
-							langPackageVulnIDs[vuln.PkgName] = make(map[string]struct{})
+							langPackageVulnIDs[key] = make(map[string]struct{})
 						}
-						langPackageVulns[vuln.PkgName] = append(langPackageVulns[vuln.PkgName], *vuln)
+						langPackageVulns[key] = append(langPackageVulns[key], *vuln)
 						if vuln.VulnerabilityID != "" {
-							langPackageVulnIDs[vuln.PkgName][vuln.VulnerabilityID] = struct{}{}
+							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
 					}
 				}
@@ -512,8 +543,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 	}
 
-	// Process Language packages to find optimal fixed versions
-	for pkgName, vulns := range langPackageVulns {
+	// Process Language packages to find optimal fixed versions.
+	// The key is a composite of PkgName + NUL + PkgPath.
+	for key, vulns := range langPackageVulns {
 		var fixedVersions []string
 
 		for i := range vulns {
@@ -534,20 +566,21 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 
 		if len(fixedVersions) > 0 {
-			info, ok := langPackageInfo[pkgName]
+			info, ok := langPackageInfo[key]
 			if !ok {
 				// Defensive: skip if info not recorded (shouldn't happen)
 				continue
 			}
 
-			// Determine patch level to use, with special handling for certain packages
+			// Determine patch level to use, with special handling for certain packages.
+			// Use info.Name (the actual package name) not the composite key.
 			patchLevelToUse := libraryPatchLevel
-			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[pkgName]; exists {
+			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[info.Name]; exists {
 				patchLevelToUse = specialPatchLevel
 			}
 
 			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)
-			if idsMap, ok2 := langPackageVulnIDs[pkgName]; ok2 {
+			if idsMap, ok2 := langPackageVulnIDs[key]; ok2 {
 				var ids []string
 				for id := range idsMap {
 					ids = append(ids, id)
@@ -565,6 +598,13 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			}
 		}
 	}
+
+	sort.SliceStable(updates.LangUpdates, func(i, j int) bool {
+		if updates.LangUpdates[i].Name != updates.LangUpdates[j].Name {
+			return updates.LangUpdates[i].Name < updates.LangUpdates[j].Name
+		}
+		return updates.LangUpdates[i].VulnerabilityID < updates.LangUpdates[j].VulnerabilityID
+	})
 
 	return &updates, nil
 }

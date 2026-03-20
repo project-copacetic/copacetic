@@ -6,13 +6,28 @@ title: FAQ
 
 Copa patches "OS level" vulnerabilities (e.g. `openssl`, `glibc`) managed by system package managers (`apt`, `yum/dnf`, `apk`, etc.).
 
-Additionally, Copa now supports (experimental) patching of Python packages installed via `pip` when they are present in the image filesystem. For more information, please see [application-level patching](app-level-patching).
+Additionally, Copa now supports (experimental) patching of:
+- **Python packages** installed via `pip` when they are present in the image filesystem
+- **Node.js packages** managed by `npm` in application directories
+- **Go modules** defined in `go.mod` files
+
+For more information, please see [application-level patching](app-level-patching).
 
 ## What kind of vulnerabilities can Copa not patch?
 
-Copa does not patch arbitrary application or source-level dependencies that require a project build context (e.g. Go modules, or compiled binaries built from source). If your application embeds a vulnerable Go module like `golang.org/x/net`, Copa cannot currently rebuild the application with a fixed dependency version.
+Copa has limited support for compiled binaries built from source. While Copa can update Go module dependencies in `go.mod` files, it **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa will update the `go.mod` file but the running binary will still contain the vulnerable code until it is rebuilt.
 
-To patch such application vulnerabilities, package the application itself into a system package (e.g. a `.deb` or `.rpm`) or ensure the base image provides updated language runtime packages that scanners recognize. Copa can then patch the packaged artifact at the OS package layer.
+For applications that are compiled binaries:
+- Copa updates `go.mod` and `go.sum` files with fixed dependency versions
+- The updated module files can be used for subsequent builds
+- The compiled binary itself is not automatically patched
+
+To fully patch compiled binary vulnerabilities:
+1. Use Copa to update the module dependencies
+2. Rebuild the application with the updated dependencies
+3. Replace the old binary with the newly built one
+
+Alternatively, package the application into a system package (e.g. a `.deb` or `.rpm`) so Copa can patch it at the OS package layer.
 
 ## My disk space is being filled up after using Copa. How can I fix this?
 
@@ -67,6 +82,21 @@ When updating Python packages:
     - Infer the Python version from the path (e.g. `python3.12`) and choose a matching tooling image: `docker.io/library/python:<major.minor>-slim` (e.g. `python:3.12-slim`).
     - Fallback to `docker.io/library/python:3-slim` if a version cannot be inferred.
 
+### Go
+
+When updating Go modules:
+
+1. If the target image already contains the Go toolchain (`go` command on PATH), Copa updates modules directly inside the image layer without pulling a separate tooling image.
+2. If the Go toolchain is absent (e.g., distroless images), Copa will:
+    - Detect the Go version using `go version` command or extract from image metadata
+    - Use a matching tooling image: `docker.io/library/golang:<version>-alpine` (e.g. `golang:1.23-alpine`)
+    - Fallback to `docker.io/library/golang:1.23-alpine` if a version cannot be detected
+    - Copy `go.mod`, `go.sum`, and `go.work` (if present) to the tooling container
+    - Perform module updates in the tooling container
+    - Copy updated files back to the target image
+
+**Note**: Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. See [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
+
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 
 After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.
@@ -110,6 +140,46 @@ For more information on source policies, see [Buildkit Source Policies](https://
 ## Can I use Dependabot with Copa patched images?
 
 Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
+
+## Why is bulk patching creating versioned tags like `1.25.3-patched-1`?
+
+When using [bulk image patching](./bulk-image-patching.md) with `--push`, Copa automatically avoids re-patching images that have no new vulnerabilities. When a re-patch is needed due to new vulnerabilities, Copa creates version-suffixed tags since registry tags are immutable:
+
+```
+nginx:1.25.3            ← original source image
+nginx:1.25.3-patched    ← initial patch (from 1.25.3)
+nginx:1.25.3-patched-1  ← first re-patch (from 1.25.3, not from 1.25.3-patched)
+nginx:1.25.3-patched-2  ← second re-patch (from 1.25.3, not from 1.25.3-patched-1)
+```
+
+**Note**: Each re-patch is created from the **original source image** (e.g., `nginx:1.25.3`), not from the previous patched image. This ensures comprehensive updates and prevents layer buildup, consistent with Copa's architecture.
+
+This automatic versioning:
+- Saves time and compute by skipping unnecessary patches
+- Preserves existing tags (registry tags cannot be overwritten)
+- Provides a clear history of patch iterations
+- Ensures each patch is comprehensive (all updates from original)
+- Works with custom tag templates (e.g., `{{ .SourceTag }}-fixed`)
+
+## How does bulk patching decide whether to skip an image?
+
+Copa uses vulnerability reports you provide to decide whether re-patching is needed. Reports are matched by reading the `ArtifactName` field from inside each JSON file:
+
+1. **No existing patched tag**: Proceeds with patching using the base tag
+2. **Existing patched tag exists**:
+   - If `-r` provided: Looks up the vulnerability report by `ArtifactName`
+     - Report shows no fixable vulnerabilities → skips patching (saves time)
+     - Report shows fixable vulnerabilities → re-patches with version-bumped tag
+     - Report not found (no matching `ArtifactName`) → proceeds with patching (fail-open)
+   - If `-r` not provided: Always proceeds with patching
+
+**Important**: The vulnerability report only determines whether to re-patch, not what to patch. When patching occurs, Copa still applies comprehensive updates to all packages (not selective patching based on specific CVEs).
+
+If Copa cannot complete the report check (e.g., no matching report, parse error, registry errors), it defaults to patching (fail-open behavior) to ensure scheduled jobs don't fail silently. See [troubleshooting](./troubleshooting.md#bulk-patching-images-not-being-skipped) for more details.
+
+### Scanner Agnostic
+
+Skip detection works with any scanner Copa supports (Trivy, native format, custom plugins). You provide the reports, Copa parses them. This maintains separation of concerns: you control when and how scanning happens.
 
 ## Does Copa cause a buildup of patched layers on each patch?
 
