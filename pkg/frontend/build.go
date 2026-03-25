@@ -145,12 +145,7 @@ func extractReportFromContext(ctx context.Context, client gwclient.Client, repor
 func extractReportFile(ctx context.Context, ref gwclient.Reference, reportPath string, fileSize int64) (string, error) {
 	const chunkSize = 8 * 1024 * 1024 // 8MB chunks to stay well under 16MB gRPC limit
 
-	// Ensure /tmp directory exists
-	if err := os.MkdirAll("/tmp", 0o1777); err != nil {
-		return "", errors.Wrap(err, "failed to create /tmp directory")
-	}
-
-	tmpDir, err := os.MkdirTemp("/", "copa-frontend-report-")
+	tmpDir, err := os.MkdirTemp("", "copa-frontend-report-")
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create temp dir for report file")
 	}

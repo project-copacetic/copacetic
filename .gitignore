@@ -35,3 +35,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .env
+.env.*
+
+# Private keys and certificates
+*.pem
+*.key
+*.p12

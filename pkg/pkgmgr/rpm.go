@@ -496,6 +496,12 @@ func parseManifestFile(file string) (map[string]string, error) {
 //   - sh and an appropriate tool installed on the image (yum, dnf, microdnf)
 //   - valid rpm database on the image
 func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+	}
+
 	pkgs := ""
 
 	imageStateCurrent := rm.config.ImageState
@@ -852,6 +858,12 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 }
 
 func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) { //nolint:lll
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+	}
+
 	pkgs := ""
 
 	// Use the patched image state if available (for re-patching scenarios)

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
@@ -72,6 +74,30 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 }
 
 // Utility functions for package manager implementations to share
+
+// validOSPackageNamePattern matches valid OS package names across dpkg, rpm, apk, and pacman.
+// Allows alphanumeric characters plus . + - : ~ _ (common in Debian epochs, RPM release tags, etc.).
+var validOSPackageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+\-:~_]*$`)
+
+// ValidateOSPackageNames validates that all package names in the update list are safe
+// for interpolation into shell commands. Returns an error if any name is invalid.
+func ValidateOSPackageNames(updates unversioned.UpdatePackages) error {
+	for _, u := range updates {
+		if u.Name == "" {
+			return fmt.Errorf("empty package name found in update list")
+		}
+		if len(u.Name) > 256 {
+			return fmt.Errorf("package name too long (max 256 characters): %s", u.Name)
+		}
+		if !validOSPackageNamePattern.MatchString(u.Name) {
+			return fmt.Errorf("invalid OS package name %q: must match %s", u.Name, validOSPackageNamePattern.String())
+		}
+		if strings.ContainsAny(u.Name, ";&|`$(){}[]<>\"'\\") {
+			return fmt.Errorf("OS package name contains unsafe shell characters: %s", u.Name)
+		}
+	}
+	return nil
+}
 
 type VersionComparer struct {
 	IsValid  func(string) bool

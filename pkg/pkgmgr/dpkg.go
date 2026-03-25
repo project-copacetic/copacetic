@@ -389,6 +389,9 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	var installCmd string
 	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
 		aptGetInstallTemplate := `sh -c "apt-get -o Acquire::Retries=3 install --no-install-recommends -y %s && apt-get clean -y"`
 		pkgStrings := []string{}
 		for _, u := range updates {
@@ -461,6 +464,12 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 }
 
 func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, ignoreErrors bool) (*llb.State, []byte, error) {
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+	}
+
 	imagePlatform, err := dm.config.ImageState.GetPlatform(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to get image platform %w", err)

@@ -86,7 +86,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 25m
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -124,7 +124,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 10m -run "Alpine"
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -162,7 +162,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 10m -run "Debian|Distroless"
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -200,7 +200,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 15m -run "Mariner|AzureLinux|AmazonLinux|Rocky|Alma|Redhat|Symlink"
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -238,7 +238,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 15m -run "ARM64|MultiPlatform"
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -276,7 +276,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 10m -run "LayerCount|Config"
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
         if: always()
         with:
           paths: "test-results.xml"

@@ -1190,6 +1190,11 @@ func (pm *pythonManager) upgradePackagesWithTooling(
 	if sitePkgsPath == "" {
 		return nil, nil, fmt.Errorf("unable to locate site-packages directory in target image (searched: %v)", candidatePaths)
 	}
+	// Validate sitePkgsPath to prevent shell injection via crafted image filesystem paths
+	validSitePackagesPath := regexp.MustCompile(`^/[a-zA-Z0-9/_.\-]+$`)
+	if !validSitePackagesPath.MatchString(sitePkgsPath) {
+		return nil, nil, fmt.Errorf("detected site-packages path contains invalid characters: %q", sitePkgsPath)
+	}
 	log.Infof("Detected Python site-packages path: %s", sitePkgsPath)
 
 	// Infer python version from path
