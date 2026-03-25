@@ -589,7 +589,7 @@ jobs:
   test-patch-local-multiplatform-oci-layout:
     needs: build
     name: Test multiplatform OCI layout creation
-    runs-on: ubuntu-latest
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     steps:
       - name: Harden Runner
@@ -841,7 +841,7 @@ jobs:
   test-patch-bulk:
     needs: build
     name: Test Bulk Patching
-    runs-on: ubuntu-latest
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     steps:
       - name: Harden Runner
@@ -885,7 +885,7 @@ jobs:
   test-nodejs:
     needs: build
     name: Test Node.js patching
-    runs-on: ubuntu-latest
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 10
     permissions: read-all
     steps:
@@ -930,7 +930,7 @@ jobs:
   test-dotnet:
     needs: build
     name: Test .NET patching
-    runs-on: ubuntu-latest
+    runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 10
     permissions: read-all
     steps:
