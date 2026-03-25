@@ -141,6 +141,12 @@ func (pm *pacmanManager) InstallUpdates(ctx context.Context, manifest *unversion
 }
 
 func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+	}
+
 	imageStateCurrent := pm.config.ImageState
 	if pm.config.PatchedConfigData != nil {
 		imageStateCurrent = pm.config.PatchedImageState

