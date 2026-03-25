@@ -10,6 +10,7 @@ set -eu -o pipefail
 TRIVY_EXPECTED_SHA256="a484057aafde31089cf2558ca0f79a4bc835125a5ee6834183a5bcf0735af358"
 curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.deb -o trivy.deb
 echo "${TRIVY_EXPECTED_SHA256}  trivy.deb" | sha256sum -c -
+gh attestation verify trivy.deb --repo aquasecurity/trivy
 sudo dpkg -i trivy.deb
 rm trivy.deb
 
