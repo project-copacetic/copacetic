@@ -76,8 +76,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -116,8 +114,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -156,8 +152,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -196,8 +190,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -236,8 +228,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -276,8 +266,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0

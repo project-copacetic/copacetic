@@ -125,8 +125,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -177,8 +175,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -304,8 +300,6 @@ jobs:
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -357,8 +351,6 @@ jobs:
         uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -436,8 +428,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Install multiplatform tooling
         shell: bash
@@ -499,8 +489,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -572,8 +560,6 @@ jobs:
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Install multiplatform tooling
         shell: bash
@@ -627,8 +613,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Install multiplatform tooling
         shell: bash
@@ -839,8 +823,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
@@ -883,8 +865,6 @@ jobs:
           check-latest: true
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -925,8 +905,6 @@ jobs:
           sudo systemctl restart docker
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -972,8 +950,6 @@ jobs:
           sudo systemctl restart docker
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -1021,8 +997,6 @@ jobs:
           sudo systemctl restart docker
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -1074,8 +1048,6 @@ jobs:
         uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
       - name: Install required tools
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: .github/workflows/scripts/download-tooling.sh
       - name: Download copa from build artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

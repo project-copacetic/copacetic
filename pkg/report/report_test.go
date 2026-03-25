@@ -245,10 +245,15 @@ func TestValidScannerNamePattern(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := customParseScanReport("testdata/trivy_valid.json", tt.scanner)
 			if tt.wantErr {
-				// Should get an error - either validation error or exec error (for valid names where binary doesn't exist)
 				assert.Error(t, err)
 				if !validScannerNamePattern.MatchString(tt.scanner) {
 					assert.Contains(t, err.Error(), "invalid scanner name")
+				}
+			} else {
+				// Valid scanner names pass validation but fail on exec (binary not found).
+				// Assert they are NOT rejected by validation.
+				if err != nil {
+					assert.NotContains(t, err.Error(), "invalid scanner name")
 				}
 			}
 		})
