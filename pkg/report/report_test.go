@@ -249,12 +249,10 @@ func TestValidScannerNamePattern(t *testing.T) {
 				if !validScannerNamePattern.MatchString(tt.scanner) {
 					assert.Contains(t, err.Error(), "invalid scanner name")
 				}
-			} else {
+			} else if err != nil {
 				// Valid scanner names pass validation but fail on exec (binary not found).
 				// Assert they are NOT rejected by validation.
-				if err != nil {
-					assert.NotContains(t, err.Error(), "invalid scanner name")
-				}
+				assert.NotContains(t, err.Error(), "invalid scanner name")
 			}
 		})
 	}
