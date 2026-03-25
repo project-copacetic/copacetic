@@ -159,6 +159,12 @@ func (am *apkManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 //   - sh and apk installed on the image
 //   - valid apk db state on the image
 func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.UpdatePackages, ignoreErrors bool) (*llb.State, []byte, error) {
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+	}
+
 	imageStateCurrent := am.config.ImageState
 	if am.config.PatchedConfigData != nil {
 		imageStateCurrent = am.config.PatchedImageState
