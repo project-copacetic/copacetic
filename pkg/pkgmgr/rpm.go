@@ -44,13 +44,14 @@ const (
 type rpmToolPaths map[string]string
 
 type rpmManager struct {
-	config        *buildkit.Config
-	workingFolder string
-	rpmTools      rpmToolPaths
-	isDistroless  bool
-	packageInfo   map[string]string
-	osType        string
-	osVersion     string
+	config         *buildkit.Config
+	workingFolder  string
+	rpmTools       rpmToolPaths
+	isDistroless   bool
+	isMissingTools bool // image has valid RPM DB but no package manager tools
+	packageInfo    map[string]string
+	osType         string
+	osVersion      string
 }
 
 type rpmDBType uint
@@ -157,6 +158,36 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 		imagePrefix = imageCachePrefix
 	}
 	return fmt.Sprintf("%s/%s:%s", imagePrefix, image, version)
+}
+
+// getChrootToolImage returns a tooling image suitable for chroot-based patching
+// of RPM images that lack their own package management tools. The tooling image
+// must contain dnf. We use the target image's own repo configuration via
+// --setopt=reposdir so exact repo compatibility of the tooling image is not
+// required; it only needs to provide the dnf binary.
+func getChrootToolImage(osType string, osVersion string) string {
+	majorVersion := strings.Split(osVersion, ".")[0]
+
+	switch osType {
+	case utils.OSTypeRedHat:
+		// AlmaLinux is binary-compatible with RHEL and freely available.
+		return fmt.Sprintf("almalinux:%s", majorVersion)
+	case utils.OSTypeCentOS:
+		return fmt.Sprintf("quay.io/centos/centos:stream%s", majorVersion)
+	case utils.OSTypeRocky:
+		return fmt.Sprintf("rockylinux:%s", majorVersion)
+	case utils.OSTypeAlma, utils.OSTypeAlmaLinux:
+		return fmt.Sprintf("almalinux:%s", majorVersion)
+	case utils.OSTypeAmazon:
+		return fmt.Sprintf("amazonlinux:%s", osVersion)
+	case utils.OSTypeOracle:
+		return fmt.Sprintf("oraclelinux:%s", majorVersion)
+	default:
+		// For any other RPM distro (e.g. Azure Linux, CBL-Mariner) that
+		// somehow ends up on this path, use AlmaLinux 9 as a safe default
+		// since the target's own repos will be used.
+		return "almalinux:9"
+	}
 }
 
 func parseRPMTools(b []byte) (rpmToolPaths, error) {
@@ -271,6 +302,13 @@ func (rm *rpmManager) InstallUpdates(ctx context.Context, manifest *unversioned.
 		}
 	case utils.IsSUSEImage(rm.osType):
 		updatedImageState, resultManifestBytes, err = rm.zypperChrootInstallUpdates(ctx, updates, toolImageName, imagePlatform, ignoreErrors)
+		if err != nil {
+			return nil, nil, err
+		}
+	case rm.isMissingTools:
+		chrootToolImage := getChrootToolImage(rm.osType, rm.osVersion)
+		log.Infof("Using chroot-based patching with tooling image %s for image missing RPM tools", chrootToolImage)
+		updatedImageState, resultManifestBytes, err = rm.dnfChrootInstallUpdates(ctx, updates, chrootToolImage, imagePlatform, ignoreErrors)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -409,19 +447,17 @@ func (rm *rpmManager) probeRPMStatus(ctx context.Context, toolImage string, plat
 			return err
 		}
 
-		var allErrors *multierror.Error
+		// If the image has no package managers or no rpm tool, fall back to
+		// chroot-based patching via the tooling image instead of failing.
 		if rpmTools["tdnf"] == "" && rpmTools["dnf"] == "" && rpmTools["yum"] == "" && rpmTools["microdnf"] == "" {
-			err = errors.New("image contains no RPM package managers needed for patching")
-			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
+			log.Warn("image contains no RPM package managers; will use chroot-based patching via tooling image")
+			rm.isMissingTools = true
+			return nil
 		}
 		if rpmTools["rpm"] == "" {
-			err = errors.New("image does not have the rpm tool needed for patch verification")
-			log.Error(err)
-			allErrors = multierror.Append(allErrors, err)
-		}
-		if allErrors != nil {
-			return allErrors.ErrorOrNil()
+			log.Warn("image does not have the rpm tool; will use chroot-based patching via tooling image")
+			rm.isMissingTools = true
+			return nil
 		}
 
 		rm.rpmTools = rpmTools
@@ -981,6 +1017,147 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 
 		// Merge previous and new patches into the base image
+		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
+
+		return &completePatchMerge, resultBytes, nil
+	}
+
+	// Diff the installed updates and merge that into the target image
+	patchDiff := llb.Diff(rm.config.ImageState, patchedState)
+	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
+
+	return &patchMerge, resultBytes, nil
+}
+
+// dnfChrootInstallUpdates patches an RPM-based image that has a valid RPM
+// database but lacks package management tools (dnf, yum, rpm, etc.) by using a
+// tooling image with dnf and mounting the target image as a chroot directory.
+// The target image's own repo configuration is used via --setopt=reposdir.
+func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
+	pkgs := ""
+
+	// Use the patched image state if available (for re-patching scenarios)
+	imageStateCurrent := rm.config.ImageState
+	if rm.config.PatchedConfigData != nil {
+		imageStateCurrent = rm.config.PatchedImageState
+	}
+
+	// First try with the specified platform, fallback to host platform if it fails
+	toolingBase, err := tryImage(ctx, toolImage, rm.config.Client, platform)
+	if err != nil {
+		log.Debugf("Failed to resolve tooling image %s with platform %v, falling back to host platform: %v", toolImage, platform, err)
+		toolingBase, err = tryImage(ctx, toolImage, rm.config.Client, nil)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to resolve tooling image %s even with host platform fallback: %w", toolImage, err)
+		}
+		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
+	}
+
+	chrootDir := "/tmp/rootfs"
+	manifestFile := "/tmp/manifest"
+
+	// If specific updates provided, parse into pkg names, else will update all
+	if updates != nil {
+		pkgStrings := []string{}
+		for _, u := range updates {
+			pkgStrings = append(pkgStrings, u.Name)
+		}
+		pkgs = strings.Join(pkgStrings, " ")
+	}
+
+	// Build the dnf command with error handling based on ignoreErrors.
+	// We use the target image's own repo configuration through --setopt=reposdir
+	// so the tooling image only needs to provide the dnf binary.
+	// --nogpgcheck is required for this chroot flow because dnf executes from the
+	// tooling image while using repo files mounted from the target rootfs.
+	// In minimal/toolless images, repo GPG key references (often file:// paths
+	// under /etc/pki in the target) may not resolve correctly in this execution
+	// context, causing signature checks to fail even when repos are valid.
+	updatesMarkerFile := "/tmp/updates_applied.txt"
+	var dnfCmd string
+	if ignoreErrors {
+		dnfCmd = `
+                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
+                output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
+                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --releasever="${COPA_RELEASE_VER}" \
+                    --nogpgcheck \
+                    upgrade -y %s 2>&1) || true
+                echo "$output"
+                if ! echo "$output" | grep -q "Nothing to do"; then
+                    echo "updates_applied" > "${COPA_UPDATES_MARKER}"
+                fi
+                dnf --installroot="${COPA_CHROOT_DIR}" \
+                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    clean all 2>/dev/null || true
+                rm -rf "${COPA_CHROOT_DIR}"/var/cache/dnf/* "${COPA_CHROOT_DIR}"/var/log/dnf.*
+                rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
+	`
+	} else {
+		dnfCmd = `
+                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
+                output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
+                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --releasever="${COPA_RELEASE_VER}" \
+                    --nogpgcheck \
+                    upgrade -y %s 2>&1)
+                dnf_exit=$?
+                echo "$output"
+                if [ $dnf_exit -ne 0 ]; then exit $dnf_exit; fi
+                if ! echo "$output" | grep -q "Nothing to do"; then
+                    echo "updates_applied" > "${COPA_UPDATES_MARKER}"
+                fi
+                dnf --installroot="${COPA_CHROOT_DIR}" \
+                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    clean all 2>/dev/null || true
+                rm -rf "${COPA_CHROOT_DIR}"/var/cache/dnf/* "${COPA_CHROOT_DIR}"/var/log/dnf.*
+                rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
+	`
+	}
+	dnfCmd = fmt.Sprintf(dnfCmd, pkgs, pkgs)
+
+	// Derive the release version (major.minor) for dnf --releasever
+	releaseVer := rm.osVersion
+	parts := strings.Split(rm.osVersion, ".")
+	if len(parts) >= 2 {
+		releaseVer = parts[0] + "." + parts[1]
+	}
+
+	run := toolingBase.Run(
+		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
+		llb.AddEnv("COPA_RELEASE_VER", releaseVer),
+		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
+		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
+		buildkit.Sh(dnfCmd),
+		llb.WithProxy(utils.GetProxy()),
+	)
+
+	downloaded := run.AddMount(chrootDir, imageStateCurrent)
+	toolingRoot := run.Root()
+
+	// For no-report mode, check if any updates were actually applied
+	if updates == nil {
+		_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile)
+		if err != nil {
+			log.Info("No upgradable packages found for this image (dnf chroot path).")
+			return nil, nil, types.ErrNoUpdatesFound
+		}
+	}
+
+	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &downloaded, manifestFile)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Remove the manifest file from the patched image
+	patchedState := downloaded.File(llb.Rm(manifestFile))
+
+	// If the image has been patched before, diff the base image and patched image to retain previous patches
+	if rm.config.PatchedConfigData != nil {
+		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
+		newPatchDiff := llb.Diff(rm.config.ImageState, patchedState)
+		combinedPatch := llb.Merge([]llb.State{prevPatchDiff, newPatchDiff})
+		squashedPatch := llb.Scratch().File(llb.Copy(combinedPatch, "/", "/"))
 		completePatchMerge := llb.Merge([]llb.State{rm.config.ImageState, squashedPatch})
 
 		return &completePatchMerge, resultBytes, nil

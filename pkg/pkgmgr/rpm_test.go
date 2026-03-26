@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -392,10 +393,11 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 
 func Test_rpmManager_GetPackageType(t *testing.T) {
 	type fields struct {
-		config        *buildkit.Config
-		workingFolder string
-		rpmTools      rpmToolPaths
-		isDistroless  bool
+		config         *buildkit.Config
+		workingFolder  string
+		rpmTools       rpmToolPaths
+		isDistroless   bool
+		isMissingTools bool
 	}
 	tests := []struct {
 		name   string
@@ -412,14 +414,26 @@ func Test_rpmManager_GetPackageType(t *testing.T) {
 			},
 			want: "rpm",
 		},
+		{
+			name: "rpm manager with missing tools",
+			fields: fields{
+				config:         &buildkit.Config{},
+				workingFolder:  utils.DefaultTempWorkingFolder,
+				rpmTools:       rpmToolPaths{},
+				isDistroless:   false,
+				isMissingTools: true,
+			},
+			want: "rpm",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rm := &rpmManager{
-				config:        tt.fields.config,
-				workingFolder: tt.fields.workingFolder,
-				rpmTools:      tt.fields.rpmTools,
-				isDistroless:  tt.fields.isDistroless,
+				config:         tt.fields.config,
+				workingFolder:  tt.fields.workingFolder,
+				rpmTools:       tt.fields.rpmTools,
+				isDistroless:   tt.fields.isDistroless,
+				isMissingTools: tt.fields.isMissingTools,
 			}
 			if got := rm.GetPackageType(); got != tt.want {
 				t.Errorf("rpmManager.GetPackageType() = %v, want %v", got, tt.want)
@@ -862,6 +876,214 @@ func Test_getJSONPackageData_RPM(t *testing.T) {
 			if !reflect.DeepEqual(result, tt.expectedResult) {
 				t.Errorf("getJSONPackageData() = %v, want %v", result, tt.expectedResult)
 			}
+		})
+	}
+}
+
+func TestGetChrootToolImage(t *testing.T) {
+	testCases := []struct {
+		name      string
+		osType    string
+		osVersion string
+		expected  string
+	}{
+		{
+			name:      "Red Hat 8",
+			osType:    utils.OSTypeRedHat,
+			osVersion: "8.9",
+			expected:  "almalinux:8",
+		},
+		{
+			name:      "Red Hat 9",
+			osType:    utils.OSTypeRedHat,
+			osVersion: "9.3",
+			expected:  "almalinux:9",
+		},
+		{
+			name:      "CentOS Stream 9",
+			osType:    utils.OSTypeCentOS,
+			osVersion: "9",
+			expected:  "quay.io/centos/centos:stream9",
+		},
+		{
+			name:      "Rocky Linux 9",
+			osType:    utils.OSTypeRocky,
+			osVersion: "9.3",
+			expected:  "rockylinux:9",
+		},
+		{
+			name:      "AlmaLinux 9",
+			osType:    utils.OSTypeAlmaLinux,
+			osVersion: "9.3",
+			expected:  "almalinux:9",
+		},
+		{
+			name:      "Alma (short name) 8",
+			osType:    utils.OSTypeAlma,
+			osVersion: "8.9",
+			expected:  "almalinux:8",
+		},
+		{
+			name:      "Amazon Linux 2",
+			osType:    utils.OSTypeAmazon,
+			osVersion: "2",
+			expected:  "amazonlinux:2",
+		},
+		{
+			name:      "Amazon Linux 2023",
+			osType:    utils.OSTypeAmazon,
+			osVersion: "2023",
+			expected:  "amazonlinux:2023",
+		},
+		{
+			name:      "Oracle Linux 8",
+			osType:    utils.OSTypeOracle,
+			osVersion: "8.9",
+			expected:  "oraclelinux:8",
+		},
+		{
+			name:      "Unknown RPM distro defaults to almalinux:9",
+			osType:    utils.OSTypeCBLMariner,
+			osVersion: "2.0",
+			expected:  "almalinux:9",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := getChrootToolImage(tc.osType, tc.osVersion)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func Test_dnfChrootInstallUpdates(t *testing.T) {
+	tests := []struct {
+		name           string
+		updates        unversioned.UpdatePackages
+		mockSetup      func(reference *mocks.MockReference)
+		toolImage      string
+		ignoreErrors   bool
+		usePatchedCfg  bool
+		expectedError  bool
+		expectedResult []byte
+	}{
+		{
+			name: "dnf chroot - Successful update with specific packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.2.3"},
+				{Name: "package2", FixedVersion: "2.3.4"},
+			},
+			toolImage:      "almalinux:9",
+			ignoreErrors:   false,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\n"),
+		},
+		{
+			name: "dnf chroot - Successful update all packages",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+			},
+			updates:        nil,
+			toolImage:      "almalinux:9",
+			ignoreErrors:   false,
+			expectedResult: []byte(""),
+			expectedError:  false,
+		},
+		{
+			name: "dnf chroot - Ignore errors during update",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.0.1\tx86_64\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "2.0.0"},
+			},
+			toolImage:      "almalinux:9",
+			ignoreErrors:   true,
+			usePatchedCfg:  false,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.0.1\tx86_64\n"),
+		},
+		{
+			name: "dnf chroot - re-patching path uses PatchedConfigData",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\n"), nil)
+			},
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.2.3"},
+			},
+			toolImage:      "almalinux:9",
+			ignoreErrors:   false,
+			usePatchedCfg:  true,
+			expectedError:  false,
+			expectedResult: []byte("package1\t1.2.3\tx86_64\n"),
+		},
+		{
+			name:      "dnf chroot - Solve error propagates",
+			mockSetup: nil,
+			updates: unversioned.UpdatePackages{
+				{Name: "package1", FixedVersion: "1.0.1"},
+			},
+			toolImage:      "almalinux:9",
+			ignoreErrors:   false,
+			usePatchedCfg:  false,
+			expectedError:  true,
+			expectedResult: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+
+			if tt.mockSetup != nil {
+				mockResult := &gwclient.Result{}
+				mockResult.SetRef(mockRef)
+				mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+				tt.mockSetup(mockRef)
+			} else {
+				mockClient.On("Solve", mock.Anything, mock.Anything).Return(nil, errors.New("solve failed"))
+			}
+
+			cfg := &buildkit.Config{
+				Client:     mockClient,
+				ImageState: llb.Scratch(),
+			}
+			if tt.usePatchedCfg {
+				cfg.PatchedConfigData = []byte(`{"previous":"patched"}`)
+				cfg.PatchedImageState = llb.Scratch()
+			}
+
+			rm := &rpmManager{
+				config:         cfg,
+				isMissingTools: true,
+				osType:         utils.OSTypeRedHat,
+				osVersion:      "9.3",
+			}
+
+			testPlatform := &ocispecs.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			}
+
+			result, resultBytes, err := rm.dnfChrootInstallUpdates(context.TODO(), tt.updates, tt.toolImage, testPlatform, tt.ignoreErrors)
+
+			if tt.expectedError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				assert.Nil(t, resultBytes)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, result)
+				assert.Equal(t, tt.expectedResult, resultBytes)
+			}
+
+			mockClient.AssertExpectations(t)
+			mockRef.AssertExpectations(t)
 		})
 	}
 }
