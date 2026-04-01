@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -36,11 +37,17 @@ func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unv
 	return customParseScanReport(file, scanner)
 }
 
+// validScannerNamePattern ensures the scanner name is safe for use in binary lookups.
+var validScannerNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
 func customParseScanReport(file, scanner string) (*unversioned.UpdateManifest, error) {
 	var scannerOutput []byte
 	var err error
 
 	if scanner != "native" {
+		if !validScannerNamePattern.MatchString(scanner) {
+			return nil, fmt.Errorf("invalid scanner name %q: must match %s", scanner, validScannerNamePattern.String())
+		}
 		// Execute the plugin binary
 		cmd := "copa-" + scanner
 		scannerCommand := exec.Command(cmd, file)

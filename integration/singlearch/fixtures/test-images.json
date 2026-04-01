@@ -224,5 +224,14 @@
         "description": "Valid rpm DB, no zypper",
         "ignoreErrors": false,
         "isManifestList": true
+    },
+    {
+        "image": "quay.io/quarkus/quarkus-micro-image",
+        "tag": "2.0-2024-05-12",
+        "digest": "sha256:35883c13f4f429388a0c4aedd5e2d4161948f05f5d86ac6773cd9bcf8be54247",
+        "distro": "Redhat",
+        "description": "Valid rpm DB, no package managers (chroot patching)",
+        "ignoreErrors": false,
+        "isManifestList": true
     }
 ]

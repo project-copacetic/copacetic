@@ -34,8 +34,6 @@ jobs:
       with:
         egress-policy: audit
 
-    - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+    - uses: golang/govulncheck-action@31f7c5463448f83528bd771c2d978d940080c9fd # post-v1.0.4 (SHA-pinned internal deps)
       with:
-        go-version: "1.25"
-        check-latest: true
-    - uses: golang/govulncheck-action@b625fbe08f3bccbe446d94fbf87fcc875a4f50ee # v1.0.4
+        go-version-input: "1.25"
