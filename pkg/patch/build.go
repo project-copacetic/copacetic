@@ -34,7 +34,7 @@ func createBuildConfig(
 	pipeW io.WriteCloser,
 ) (*BuildConfig, error) {
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	cfg := authprovider.DockerAuthProviderConfig{ConfigFile: dockerConfig}
+	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
 
 	// create solve options based on whether we're pushing to registry or loading to docker
