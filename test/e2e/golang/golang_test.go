@@ -27,6 +27,8 @@ type testImage struct {
 	ExpectedBinaryCount int      `json:"expectedBinaryCount"`
 	BinaryPaths         []string `json:"binaryPaths"`
 	LibraryPatchLevel   string   `json:"libraryPatchLevel"`
+	ToolchainPatchLevel string   `json:"toolchainPatchLevel"`
+	ExpectError         string   `json:"expectError"`
 }
 
 // patchLevel returns the library patch level for the image, defaulting to "major".
@@ -35,6 +37,15 @@ func (img *testImage) patchLevel() string {
 		return img.LibraryPatchLevel
 	}
 	return "major"
+}
+
+// extraPatchArgs returns additional copa patch arguments for this image (e.g. --toolchain-patch-level).
+func (img *testImage) extraPatchArgs() []string {
+	var args []string
+	if img.ToolchainPatchLevel != "" {
+		args = append(args, "--toolchain-patch-level="+img.ToolchainPatchLevel)
+	}
+	return args
 }
 
 // Vulnerability defines the fields we need to uniquely identify a vulnerability.
@@ -60,6 +71,9 @@ func TestGoBinaryPatching(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
+		if img.ExpectError != "" {
+			continue
+		}
 		t.Run(img.Description, func(t *testing.T) {
 			t.Parallel()
 
@@ -87,7 +101,7 @@ func TestGoBinaryPatching(t *testing.T) {
 			// 2. Patch the image.
 			t.Log("patching image")
 			tagPatched := img.Tag + "-patched"
-			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel())
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel(), img.extraPatchArgs()...)
 
 			// Log copa output for debugging
 			if testing.Verbose() {
@@ -151,6 +165,9 @@ func TestGoBinaryPatchingByCategory(t *testing.T) {
 	// Group images by category
 	categories := make(map[string][]testImage)
 	for _, img := range images {
+		if img.ExpectError != "" {
+			continue
+		}
 		categories[img.Category] = append(categories[img.Category], img)
 	}
 
@@ -174,7 +191,7 @@ func TestGoBinaryPatchingByCategory(t *testing.T) {
 
 					// Patch
 					tagPatched := img.Tag + "-patched-" + category
-					copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel())
+					copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel(), img.extraPatchArgs()...)
 					require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
 
 					// Verify
@@ -201,7 +218,7 @@ func TestMultiBinaryImages(t *testing.T) {
 	require.NoError(t, err)
 
 	for _, img := range images {
-		if img.ExpectedBinaryCount <= 1 {
+		if img.ExpectedBinaryCount <= 1 || img.ExpectError != "" {
 			continue
 		}
 
@@ -225,7 +242,7 @@ func TestMultiBinaryImages(t *testing.T) {
 
 			// Patch
 			tagPatched := img.Tag + "-multi-patched"
-			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel())
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel(), img.extraPatchArgs()...)
 			require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
 
 			// Verify binaries are mentioned in output
@@ -262,7 +279,7 @@ func TestDistrolessImages(t *testing.T) {
 	}
 
 	for _, img := range images {
-		if !distrolessCategories[img.Category] {
+		if !distrolessCategories[img.Category] || img.ExpectError != "" {
 			continue
 		}
 
@@ -285,7 +302,7 @@ func TestDistrolessImages(t *testing.T) {
 
 			// Patch - this should work without shell in target
 			tagPatched := img.Tag + "-distroless-patched"
-			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel())
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel(), img.extraPatchArgs()...)
 			require.NoError(t, patchErr, fmt.Sprintf("Copa patch failed:\n%s", copaOutput))
 
 			// Should not see shell-related errors
@@ -300,6 +317,68 @@ func TestDistrolessImages(t *testing.T) {
 				"expected fewer vulnerabilities in distroless image")
 
 			_ = exec.Command("docker", "rmi", patchedRef).Run()
+		})
+	}
+}
+
+// TestExpectedPatchFailures tests images where patching is expected to fail
+// (e.g. binaries built with -trimpath that lack VCS info for source cloning).
+func TestExpectedPatchFailures(t *testing.T) {
+	sharedCacheDir := filepath.Join(t.TempDir(), "trivy-shared-cache")
+	downloadTrivyDB(t, sharedCacheDir)
+
+	var images []testImage
+	err := json.Unmarshal(testImages, &images)
+	require.NoError(t, err)
+
+	for _, img := range images {
+		if img.ExpectError == "" {
+			continue
+		}
+
+		t.Run(img.Description, func(t *testing.T) {
+			t.Parallel()
+
+			testCacheDir := copyCacheDir(t, sharedCacheDir)
+			dir := t.TempDir()
+			ref := img.Image + ":" + img.Tag
+
+			// Scan original
+			scanResultsFile := filepath.Join(dir, "scan.json")
+			vulnsBefore := scanAndParse(t, ref, scanResultsFile, img.SkipMainModule, img.Image, testCacheDir)
+			require.NotEmpty(t, vulnsBefore, "expected vulnerabilities in the baseline scan")
+
+			// Build extra args
+			var extraArgs []string
+			if img.ToolchainPatchLevel != "" {
+				extraArgs = append(extraArgs, "--toolchain-patch-level="+img.ToolchainPatchLevel)
+			}
+
+			// Patch — should fail
+			tagPatched := img.Tag + "-patched"
+			copaOutput, patchErr := tryPatchImage(t, ref, tagPatched, scanResultsFile, img.patchLevel(), extraArgs...)
+
+			if testing.Verbose() {
+				t.Logf("Copa output:\n%s", copaOutput)
+			}
+
+			require.Error(t, patchErr, "expected patch to fail for %s", ref)
+			assert.Contains(t, copaOutput, img.ExpectError,
+				"expected error message to contain %q", img.ExpectError)
+
+			// Verify no patched image was created with placeholder binaries
+			for _, binaryPath := range img.BinaryPaths {
+				patchedRef := img.Image + ":" + tagPatched
+				checkCmd := exec.Command("docker", "run", "--rm", patchedRef, "head", "-1", binaryPath) //#nosec G204
+				checkOutput, checkErr := checkCmd.CombinedOutput()
+				if checkErr == nil {
+					assert.NotContains(t, string(checkOutput), "placeholder",
+						"binary %s should not be a placeholder script", binaryPath)
+				}
+			}
+
+			// Cleanup
+			_ = exec.Command("docker", "rmi", img.Image+":"+tagPatched).Run()
 		})
 	}
 }
@@ -396,7 +475,7 @@ func isMainModuleVuln(pkgName, image string) bool {
 	return strings.Contains(strings.ToLower(pkgName), strings.ToLower(imageName))
 }
 
-func tryPatchImage(t *testing.T, image, tag, reportFile, patchLevel string) (string, error) {
+func tryPatchImage(t *testing.T, image, tag, reportFile, patchLevel string, extraArgs ...string) (string, error) {
 	t.Helper()
 
 	args := []string{
@@ -409,6 +488,7 @@ func tryPatchImage(t *testing.T, image, tag, reportFile, patchLevel string) (str
 		"--timeout=15m",
 		"--debug",
 	}
+	args = append(args, extraArgs...)
 
 	if buildkitAddr != "" {
 		args = append(args, "-a="+buildkitAddr)
