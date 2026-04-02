@@ -76,11 +76,9 @@ if [ -n "$FIRST_DIR" ]; then
     exit $?
 fi
 
-# Nothing found - create placeholder so LLB does not fail
-echo "SKIP: no buildable Go source found for $BINARY_NAME"
-mkdir -p "$(dirname "$OUTPUT")"
-printf '#!/bin/sh\necho placeholder\n' > "$OUTPUT"
-chmod +x "$OUTPUT"
+# Nothing found - fail the build
+echo "ERROR: no buildable Go source found for $BINARY_NAME"
+exit 1
 `
 
 // normalizeVersion ensures a version string has the 'v' prefix required by Go modules.
@@ -206,7 +204,7 @@ func (r *Rebuilder) RebuildBinary(
 	binaryName := filepath.Base(binaryPath)
 	outputPath := "/output/" + binaryName
 
-	log.Infof("Rebuilding Go binary %s using %s strategy", binaryPath, result.Strategy)
+	log.Debugf("Rebuilding Go binary %s using %s strategy", binaryPath, result.Strategy)
 	log.Debugf("Binary details: module=%s, Go version=%s, %d dependencies",
 		buildInfo.ModulePath, buildInfo.GoVersion, len(buildInfo.Dependencies))
 
@@ -218,7 +216,7 @@ func (r *Rebuilder) RebuildBinary(
 		result.Warnings = append(result.Warnings, "No Go version found in binary info")
 		return llb.State{}, result, result.Error
 	}
-	log.Infof("Using base image: %s", baseImage)
+	log.Debugf("Using base image: %s", baseImage)
 
 	// Build the new binary with updated dependencies (outputs to /output/<name>)
 	buildState, err := r.buildBinaryWithUpdates(baseImage, buildInfo, updates, platform, outputPath)
@@ -230,7 +228,7 @@ func (r *Rebuilder) RebuildBinary(
 
 	// Copy the rebuilt binary from build container to target image
 	// This is a pure LLB operation - works on distroless images (no shell needed)
-	log.Infof("Copying rebuilt binary from %s to target at %s", outputPath, binaryPath)
+	log.Debugf("Copying rebuilt binary from %s to target at %s", outputPath, binaryPath)
 	copyInfo := &llb.CopyInfo{
 		CreateDestPath:      true,
 		AllowWildcard:       false,
@@ -292,7 +290,7 @@ func (r *Rebuilder) RebuildBinary(
 	result.BinariesRebuilt = 1
 	result.RebuiltBinaries[binaryPath] = true
 
-	log.Infof("Successfully merged rebuilt binary into target image")
+	log.Debug("Prepared LLB state for rebuilt binary")
 	return finalState, result, nil
 }
 
@@ -458,7 +456,7 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 		// conventions, not actual subdirectories in most repositories.
 		subpath = stripGoMajorVersionSuffix(derivedSubpath)
 		if derivedURL != "" {
-			log.Infof("Derived source repository from module path: %s (subpath: %q)", derivedURL, subpath)
+			log.Debugf("Derived source repository from module path: %s (subpath: %q)", derivedURL, subpath)
 		}
 	}
 
@@ -471,7 +469,7 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 		return llb.State{}, "", err
 	}
 
-	log.Infof("Cloning source from %s @ %s", repoURL, commit)
+	log.Debugf("Cloning source from %s @ %s", repoURL, commit)
 
 	gitRef := repoURL
 	if !strings.HasSuffix(gitRef, ".git") {
@@ -541,9 +539,9 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		sourceCloned = true
 		if subpath != "" {
 			workdir = filepath.Join(workdir, subpath)
-			log.Infof("Cloned source code from Git repository, using subpath: %s", subpath)
+			log.Debugf("Cloned source code from Git repository, using subpath: %s", subpath)
 		} else {
-			log.Info("Cloned source code from Git repository")
+			log.Debug("Cloned source code from Git repository")
 		}
 	} else {
 		log.Debugf("Could not clone source (will generate go.mod): %v", err)
@@ -560,7 +558,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		state = state.File(
 			llb.Mkfile(filepath.Join(workdir, "go.mod"), 0o644, []byte(goMod)),
 		)
-		log.Info("Generated go.mod from dependency information")
+		log.Debug("Generated go.mod from dependency information")
 	}
 
 	goBin := "/usr/local/go/bin/go"
@@ -589,7 +587,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 			return llb.State{}, fmt.Errorf("version contains unsafe characters: %s for module %s", version, module)
 		}
 		normalizedVersion := normalizeVersion(version)
-		log.Infof("Updating module %s: %s -> %s", module, buildInfo.Dependencies[module], normalizedVersion)
+		log.Debugf("Updating module %s: %s -> %s", module, buildInfo.Dependencies[module], normalizedVersion)
 
 		getCmd := fmt.Sprintf("%s get %s@%s", goBin, module, normalizedVersion)
 		getScript := retryScript(getCmd, 3)
@@ -644,7 +642,7 @@ fi
 
 	if sourceCloned {
 		binaryName := filepath.Base(outputPath)
-		log.Infof("Using discovery+build script for %s (explicit pkg: %s)", binaryName, mainPkg)
+		log.Debugf("Using discovery+build script for %s (explicit pkg: %s)", binaryName, mainPkg)
 
 		// Write the build command prefix to a file so the discovery script can
 		// read it without shell escaping issues (ldflags often contain quotes).
@@ -659,25 +657,18 @@ fi
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	} else {
-		// No source cloned (generated go.mod). Guard the build so failures don't
-		// cancel sibling binary builds running in parallel in the same LLB solve.
+		// No source cloned (generated go.mod). Let the build fail if it can't find the package.
 		buildCmd := buildPrefix + " " + mainPkg
-		guardedCmd := fmt.Sprintf(
-			"%s || { echo 'SKIP: build failed for %s, creating placeholder'; mkdir -p %s; printf '#!/bin/sh\\necho placeholder\\n' > %s; chmod +x %s; }",
-			buildCmd, filepath.Base(outputPath), filepath.Dir(outputPath), outputPath, outputPath,
-		)
-		log.Infof("Build command (guarded, no source): %s", buildCmd)
+		log.Debugf("Build command (no source): %s", buildCmd)
 		state = state.Run(
-			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(guardedCmd, "'", "'\"'\"'"))),
+			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(buildCmd, "'", "'\"'\"'"))),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	}
 
 	// Verify the rebuilt binary is a valid Go binary and is executable.
-	// If the build was skipped (placeholder created), verification will fail
-	// but the Copy step will still succeed - the caller handles this gracefully.
-	verifyCmd := fmt.Sprintf("test -s %s && %s version -m %s || echo 'WARN: binary %s was not rebuilt (skipped or failed)'",
-		outputPath, goBin, outputPath, outputPath)
+	verifyCmd := fmt.Sprintf("test -s %s && %s version -m %s > /dev/null 2>&1",
+		outputPath, goBin, outputPath)
 	log.Debug("Verifying rebuilt binary...")
 	state = state.Run(
 		llb.Shlex(fmt.Sprintf("sh -c '%s'", verifyCmd)),

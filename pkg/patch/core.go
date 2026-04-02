@@ -204,6 +204,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 
 	// Marshal the state for the target platform
+	log.Info("Building patched image...")
 	def, err := patchedImageState.Marshal(ctx, llb.Platform(opts.TargetPlatform.Platform))
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)

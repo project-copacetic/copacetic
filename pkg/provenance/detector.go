@@ -44,7 +44,7 @@ func (d *Detector) DetectGoBinaries(
 		return nil, fmt.Errorf("target state is nil")
 	}
 
-	log.Info("Detecting Go binaries in image using go version -m")
+	log.Debug("Detecting Go binaries in image using go version -m")
 	if platform != nil {
 		log.Debugf("Target platform: %s/%s", platform.OS, platform.Architecture)
 	}
@@ -155,7 +155,7 @@ touch "$OUTPUT"
 	if len(binaries) == 0 {
 		log.Debug("No Go binaries detected in the image")
 	} else {
-		log.Infof("Detected %d Go binaries in image", len(binaries))
+		log.Debugf("Detected %d Go binaries in image", len(binaries))
 		for _, bi := range binaries {
 			log.Debugf("  Binary: %s (Go %s, module: %s)", bi.Path, bi.GoVersion, bi.ModulePath)
 		}
