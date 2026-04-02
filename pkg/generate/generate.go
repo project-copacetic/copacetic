@@ -175,7 +175,7 @@ func extractPatchLayer(
 	progress progressui.DisplayMode,
 ) ([]byte, error) {
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	cfg := authprovider.DockerAuthProviderConfig{ConfigFile: dockerConfig}
+	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
 	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
 
 	// Channel to collect the patch layer data
