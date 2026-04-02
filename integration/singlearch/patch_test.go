@@ -283,7 +283,7 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	out, err := cmd.CombinedOutput()
 
 	if strings.Contains(ref, "oracle") && reportFile && !ignoreErrors {
-		assert.Contains(t, string(out), "Error: detected Oracle image passed in\n"+
+		assert.Contains(t, string(out), "detected Oracle image passed in\n"+
 			"Please read https://project-copacetic.github.io/copacetic/website/troubleshooting before patching your Oracle image")
 	} else {
 		require.NoError(t, err, string(out))

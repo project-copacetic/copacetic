@@ -51,7 +51,6 @@ func removeIfNotDebug(workingFolder string) {
 // If sharedProgressCh is non-nil, progress is forwarded to it with platform prefix instead of displaying locally.
 func patchSingleArchImage(
 	ctx context.Context,
-	ch chan error,
 	opts *types.Options,
 	//nolint:gocritic
 	targetPlatform types.PatchPlatform,
@@ -208,7 +207,8 @@ func patchSingleArchImage(
 	// Start the main build process and capture preserved states
 	var patchResult *Result
 	eg.Go(func() error {
-		result, err := executePatchBuild(ctx, ch, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+		defer pipeW.Close()
+		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel)
 		if err != nil {
 			return err
@@ -460,7 +460,6 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 // executePatchBuild executes the actual patch build process.
 func executePatchBuild(
 	ctx context.Context,
-	ch chan error,
 	bkClient *client.Client,
 	buildConfig *BuildConfig,
 	imageName reference.Named,
@@ -508,7 +507,6 @@ func executePatchBuild(
 			ValidatedUpdates:    validatedManifest,
 			WorkingFolder:       workingFolder,
 			IgnoreError:         ignoreError,
-			ErrorChannel:        ch,
 			ReturnState:         false, // Always solve for Docker export
 			ExitOnEOL:           exitOnEOL,
 			ToolchainPatchLevel: toolchainPatchLevel,
@@ -558,7 +556,6 @@ func executePatchBuild(
 		// vex document must contain at least one statement
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-				trySendError(ch, err)
 				return nil, err
 			}
 		}
