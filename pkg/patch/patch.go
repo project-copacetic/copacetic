@@ -15,6 +15,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
@@ -124,6 +125,9 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 
 			displaySingleArchPlan(opts, &patchPlatform)
 			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
+			if result != nil {
+				logPatchSummary(result.Summary)
+			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -154,6 +158,9 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 
 			displaySingleArchPlan(opts, &patchPlatform)
 			result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
+			if result != nil {
+				logPatchSummary(result.Summary)
+			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
@@ -195,10 +202,24 @@ func patchWithContext(ctx context.Context, ch chan error, opts *types.Options) e
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
 	result, err := patchSingleArchImage(ctx, ch, opts, patchPlatform, false, nil)
+	if result != nil {
+		logPatchSummary(result.Summary)
+	}
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
+}
+
+// logPatchSummary prints the patch summary if available.
+func logPatchSummary(summary *unversioned.PatchSummary) {
+	if summary == nil {
+		return
+	}
+	log.Infof("Patch Summary:")
+	log.Infof("  Total vulnerabilities considered: %d", summary.Total)
+	log.Infof("  Patched:                          %d", summary.Patched)
+	log.Infof("  Skipped (no fix available):        %d", summary.Skipped)
 }
 
 // displaySingleArchPlan shows a patching plan for single-arch images.

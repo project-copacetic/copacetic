@@ -1,6 +1,8 @@
 package report
 
 import (
+	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -8,6 +10,7 @@ import (
 	ftypes "github.com/aquasecurity/trivy/pkg/fanal/types"
 	trivyTypes "github.com/aquasecurity/trivy/pkg/types"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
@@ -957,4 +960,223 @@ func TestIsUnpatchableDotnetRuntimePackage(t *testing.T) {
 			assert.Equal(t, tt.expected, result, "isUnpatchableDotnetRuntimePackage(%q)", tt.name)
 		})
 	}
+}
+
+func TestPatchSummary_MixedReport(t *testing.T) {
+	parser := &TrivyParser{}
+	manifest, err := parser.ParseWithLibraryPatchLevel("testdata/trivy_valid.json", patchPatchLevel)
+	assert.NoError(t, err)
+	assert.NotNil(t, manifest.OSSummary)
+
+	// trivy_valid.json has 1 OS vuln with a fix
+	assert.Equal(t, 1, manifest.OSSummary.Total)
+	assert.Equal(t, 1, manifest.OSSummary.Patched)
+	assert.Equal(t, 0, manifest.OSSummary.Skipped)
+
+	combined := manifest.CombinedSummary()
+	assert.NotNil(t, combined)
+	assert.Equal(t, combined.Total, combined.Patched+combined.Skipped)
+}
+
+func TestPatchSummary_NoneFixable(t *testing.T) {
+	// Build an in-memory Trivy report where no vulns have a fix
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: trivyTypes.ClassOSPkg,
+				Type:  "alpine",
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{VulnerabilityID: "CVE-2099-0001", PkgName: "musl", InstalledVersion: "1.2.2-r0", FixedVersion: ""},
+					{VulnerabilityID: "CVE-2099-0002", PkgName: "busybox", InstalledVersion: "1.33.1-r0", FixedVersion: ""},
+				},
+			},
+		},
+	}
+	manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+	assert.Equal(t, 2, manifest.OSSummary.Total)
+	assert.Equal(t, 0, manifest.OSSummary.Patched)
+	assert.Equal(t, 2, manifest.OSSummary.Skipped)
+}
+
+func TestPatchSummary_AllFixable(t *testing.T) {
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: trivyTypes.ClassOSPkg,
+				Type:  "alpine",
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{VulnerabilityID: "CVE-2099-0001", PkgName: "musl", InstalledVersion: "1.2.2-r0", FixedVersion: "1.2.3-r0"},
+					{VulnerabilityID: "CVE-2099-0002", PkgName: "busybox", InstalledVersion: "1.33.1-r0", FixedVersion: "1.33.2-r0"},
+				},
+			},
+		},
+	}
+	manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+	assert.Equal(t, 2, manifest.OSSummary.Total)
+	assert.Equal(t, 2, manifest.OSSummary.Patched)
+	assert.Equal(t, 0, manifest.OSSummary.Skipped)
+}
+
+func TestPatchSummary_EmptyReport(t *testing.T) {
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{},
+	}
+	manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+	assert.Equal(t, 0, manifest.OSSummary.Total)
+	assert.Equal(t, 0, manifest.LibrarySummary.Total)
+
+	combined := manifest.CombinedSummary()
+	assert.NotNil(t, combined)
+	assert.Equal(t, 0, combined.Total)
+}
+
+func TestPatchSummary_PatchLevelSkipsLibrary(t *testing.T) {
+	// Library vuln whose fix requires a major version bump.
+	// With libraryPatchLevel="patch", the optimal version resolves to ""
+	// so the vuln should count as skipped.
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: utils.LangPackages,
+				Type:  utils.PythonPackages,
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{
+						VulnerabilityID:  "CVE-2099-0003",
+						PkgName:          "requests",
+						InstalledVersion: "2.25.0",
+						FixedVersion:     "3.0.0", // major bump
+					},
+				},
+			},
+		},
+	}
+	manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+	assert.Equal(t, 1, manifest.LibrarySummary.Total)
+	assert.Equal(t, 0, manifest.LibrarySummary.Patched)
+	assert.Equal(t, 1, manifest.LibrarySummary.Skipped)
+}
+
+func TestPatchSummary_PkgTypesFiltering(t *testing.T) {
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: trivyTypes.ClassOSPkg,
+				Type:  "alpine",
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{VulnerabilityID: "CVE-2099-0001", PkgName: "musl", InstalledVersion: "1.2.2-r0", FixedVersion: "1.2.3-r0"},
+				},
+			},
+			{
+				Class: utils.LangPackages,
+				Type:  utils.PythonPackages,
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{VulnerabilityID: "CVE-2099-0002", PkgName: "jinja2", InstalledVersion: "3.1.0", FixedVersion: "3.1.6"},
+				},
+			},
+		},
+	}
+
+	// Write report to temp file so we can call defaultParseScanReport
+	tmpFile := writeTempReport(t, report)
+
+	// Filter to OS only
+	manifest, err := defaultParseScanReport(tmpFile, utils.PkgTypeOS, patchPatchLevel)
+	assert.NoError(t, err)
+	assert.NotNil(t, manifest.OSSummary)
+	assert.Nil(t, manifest.LibrarySummary)
+
+	combined := manifest.CombinedSummary()
+	assert.Equal(t, 1, combined.Total)
+	assert.Equal(t, 1, combined.Patched)
+}
+
+func TestPatchSummary_DotNetUnpatchableSkipped(t *testing.T) {
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "debian", Name: "12"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: utils.LangPackages,
+				Type:  utils.DotNetPackages,
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{
+						VulnerabilityID:  "CVE-2099-0010",
+						PkgName:          "Microsoft.Build.Tasks.Core",
+						InstalledVersion: "17.0.0",
+						FixedVersion:     "17.0.1",
+					},
+					{
+						VulnerabilityID:  "CVE-2099-0011",
+						PkgName:          "Microsoft.AspNetCore.App.Runtime.linux-x64",
+						InstalledVersion: "8.0.0",
+						FixedVersion:     "8.0.1",
+					},
+					{
+						VulnerabilityID:  "CVE-2099-0012",
+						PkgName:          "Newtonsoft.Json",
+						InstalledVersion: "13.0.1",
+						FixedVersion:     "13.0.3",
+					},
+				},
+			},
+		},
+	}
+	manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+	// Microsoft.Build.* and runtime packages are skipped (2 vulns)
+	// Newtonsoft.Json is patchable (1 vuln)
+	assert.Equal(t, 3, manifest.LibrarySummary.Total)
+	assert.Equal(t, 1, manifest.LibrarySummary.Patched)
+	assert.Equal(t, 2, manifest.LibrarySummary.Skipped)
+}
+
+// parseReportToManifest is a test helper that serializes a trivyTypes.Report to a
+// temp file and parses it via TrivyParser, returning the resulting manifest.
+func parseReportToManifest(t *testing.T, report *trivyTypes.Report, libraryPatchLevel string) *unversioned.UpdateManifest {
+	t.Helper()
+	tmpFile := writeTempReport(t, report)
+	parser := &TrivyParser{}
+	manifest, err := parser.ParseWithLibraryPatchLevel(tmpFile, libraryPatchLevel)
+	assert.NoError(t, err)
+	assert.NotNil(t, manifest)
+	return manifest
+}
+
+// writeTempReport serializes a trivyTypes.Report to a temp JSON file and returns the path.
+func writeTempReport(t *testing.T, report *trivyTypes.Report) string {
+	t.Helper()
+	data, err := json.Marshal(report)
+	assert.NoError(t, err)
+	f, err := os.CreateTemp(t.TempDir(), "trivy-*.json")
+	assert.NoError(t, err)
+	_, err = f.Write(data)
+	assert.NoError(t, err)
+	assert.NoError(t, f.Close())
+	return f.Name()
 }

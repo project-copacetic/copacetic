@@ -90,10 +90,12 @@ func defaultParseScanReport(file, pkgTypes, libraryPatchLevel string) (*unversio
 				// Only process library updates if "library" is in pkg-types
 				if !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
 					manifest.LangUpdates = []unversioned.UpdatePackage{}
+					manifest.LibrarySummary = nil
 				}
 				// Only process OS updates if "os" is in pkg-types
 				if !strings.Contains(pkgTypes, utils.PkgTypeOS) {
 					manifest.OSUpdates = []unversioned.UpdatePackage{}
+					manifest.OSSummary = nil
 				}
 			}
 			return manifest, nil

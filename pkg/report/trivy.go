@@ -398,6 +398,11 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		},
 	}
 
+	// Summary counts, tracked separately for OS and library so that
+	// pkgTypes filtering in defaultParseScanReport can drop the irrelevant half.
+	osSummary := &unversioned.PatchSummary{}
+	libSummary := &unversioned.PatchSummary{}
+
 	// Process Language packages - group by (name, pkgPath) to find optimal fixed version.
 	// Using a composite key ensures the same package at different locations (e.g. system
 	// Python vs a venv) is treated as a separate upgrade target.
@@ -413,7 +418,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		if r.Class == "os-pkgs" {
 			for v := range r.Vulnerabilities {
 				vuln := &r.Vulnerabilities[v]
+				osSummary.Total++
 				if vuln.FixedVersion != "" {
+					osSummary.Patched++
 					updates.OSUpdates = append(updates.OSUpdates, unversioned.UpdatePackage{
 						Name:             vuln.PkgName,
 						Type:             string(r.Type),
@@ -422,6 +429,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 						InstalledVersion: vuln.InstalledVersion,
 						VulnerabilityID:  vuln.VulnerabilityID,
 					})
+				} else {
+					osSummary.Skipped++
 				}
 			}
 		}
@@ -432,6 +441,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
+					libSummary.Total++
 					if vuln.FixedVersion != "" {
 						// Composite key: same package at different paths is a separate upgrade target.
 						key := vuln.PkgName + "\x00" + vuln.PkgPath
@@ -450,6 +460,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 						if vuln.VulnerabilityID != "" {
 							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
+					} else {
+						libSummary.Skipped++
 					}
 				}
 			}
@@ -463,8 +475,11 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 					// - *.App.Runtime.* are DotnetPlatform packages (e.g. Microsoft.AspNetCore.App.Runtime.linux-x64,
 					//   Microsoft.NETCore.App.Runtime.linux-x64) that fail dotnet restore with NU1213
 					if strings.HasPrefix(vuln.PkgName, "Microsoft.Build.") || isUnpatchableDotnetRuntimePackage(vuln.PkgName) {
+						libSummary.Total++
+						libSummary.Skipped++
 						continue
 					}
+					libSummary.Total++
 					if vuln.FixedVersion != "" {
 						key := vuln.PkgName + "\x00" + vuln.PkgPath
 						if _, exists := langPackageVulns[key]; !exists {
@@ -482,6 +497,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 						if vuln.VulnerabilityID != "" {
 							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
+					} else {
+						libSummary.Skipped++
 					}
 				}
 			}
@@ -525,6 +542,20 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			}
 
 			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)
+
+			// Count CVEs in this package group for the library summary.
+			// If patch-level constraints prevent patching (optimalVersion == ""),
+			// these vulns had a fix but it couldn't be applied — count as skipped.
+			vulnCount := len(langPackageVulnIDs[key])
+			if vulnCount == 0 {
+				vulnCount = 1
+			}
+			if optimalVersion != "" {
+				libSummary.Patched += vulnCount
+			} else {
+				libSummary.Skipped += vulnCount
+			}
+
 			if idsMap, ok2 := langPackageVulnIDs[key]; ok2 {
 				var ids []string
 				for id := range idsMap {
@@ -550,6 +581,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 		return updates.LangUpdates[i].VulnerabilityID < updates.LangUpdates[j].VulnerabilityID
 	})
+
+	updates.OSSummary = osSummary
+	updates.LibrarySummary = libSummary
 
 	return &updates, nil
 }

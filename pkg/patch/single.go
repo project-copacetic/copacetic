@@ -148,6 +148,7 @@ func patchSingleArchImage(
 			// only when user explicitly requested some package types (default is OS) but none are patchable.
 			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
 				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+				res.Summary = updates.CombinedSummary()
 				return res, types.ErrNoUpdatesFound
 			}
 		}
@@ -248,13 +249,23 @@ func patchSingleArchImage(
 	if err := eg.Wait(); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
 			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			if updates != nil {
+				res.Summary = updates.CombinedSummary()
+			}
 			return res, types.ErrNoUpdatesFound
 		}
 		return nil, err
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	if err != nil {
+		return nil, err
+	}
+	if updates != nil {
+		result.Summary = updates.CombinedSummary()
+	}
+	return result, nil
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
