@@ -588,6 +588,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	// Track overall results
 	state := currentState
 	totalRebuilt := 0
+	totalAttempted := 0
 	var rebuildErrors []string
 
 	// Process each detected binary
@@ -683,6 +684,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 		}
 
 		// Attempt to rebuild this binary and merge into current state
+		totalAttempted++
 		newState, result, err := rebuilder.RebuildBinary(rebuildCtx, filteredUpdateMap, gm.config.Platform, state, binaryPath)
 		if err != nil {
 			log.Warnf("Failed to rebuild %s (skipping): %v", binaryPath, err)
@@ -713,10 +715,16 @@ func (gm *golangManager) attemptBinaryRebuild(
 		return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt")
 	}
 
-	if totalRebuilt < len(binaries) {
-		log.Warnf("Partial patch: %d/%d binaries rebuilt successfully. Failed: %v", totalRebuilt, len(binaries), rebuildErrors)
+	if totalRebuilt < totalAttempted {
+		log.Warnf("Partial patch: %d/%d attempted binaries rebuilt. Failed: %v", totalRebuilt, totalAttempted, rebuildErrors)
+		for _, errStr := range rebuildErrors {
+			// Extract the module name from error strings like "path: error"
+			if parts := strings.SplitN(errStr, ":", 2); len(parts) > 0 {
+				failedPackages = append(failedPackages, parts[0])
+			}
+		}
 	} else {
-		log.Infof("Prepared rebuild for %d/%d Go binaries", totalRebuilt, len(binaries))
+		log.Infof("Prepared rebuild for %d/%d Go binaries", totalRebuilt, totalAttempted)
 	}
 
 	return state, failedPackages, nil

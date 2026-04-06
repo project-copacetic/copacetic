@@ -275,6 +275,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				ModulePath:   "github.com/example/app",
 				CGOEnabled:   true,
 				Dependencies: map[string]string{},
+				BuildFlags:   []string{"-buildvcs=false"},
 				BuildArgs: map[string]string{
 					"_sourceRepo": "https://github.com/example/app",
 				},
@@ -295,6 +296,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				ModulePath:   "k8s.io/autoscaler/cluster-autoscaler",
 				CGOEnabled:   false,
 				Dependencies: map[string]string{},
+				BuildFlags:   []string{"-buildvcs=false"},
 				BuildArgs: map[string]string{
 					"_sourceRepo": "https://github.com/kubernetes/autoscaler",
 				},
@@ -315,6 +317,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				ModulePath:   "golang.org/x/tools/gopls",
 				CGOEnabled:   false,
 				Dependencies: map[string]string{},
+				BuildFlags:   []string{"-buildvcs=false"},
 				BuildArgs: map[string]string{
 					"_sourceRepo": "https://github.com/golang/tools",
 				},

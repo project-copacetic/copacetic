@@ -349,10 +349,7 @@ func TestExpectedPatchFailures(t *testing.T) {
 			require.NotEmpty(t, vulnsBefore, "expected vulnerabilities in the baseline scan")
 
 			// Build extra args
-			var extraArgs []string
-			if img.ToolchainPatchLevel != "" {
-				extraArgs = append(extraArgs, "--toolchain-patch-level="+img.ToolchainPatchLevel)
-			}
+			extraArgs := img.extraPatchArgs()
 
 			// Patch — should fail
 			tagPatched := img.Tag + "-patched"
@@ -362,14 +359,14 @@ func TestExpectedPatchFailures(t *testing.T) {
 				t.Logf("Copa output:\n%s", copaOutput)
 			}
 
-			require.Error(t, patchErr, "expected patch to fail for %s", ref)
-			assert.Contains(t, copaOutput, img.ExpectError,
+			require.Errorf(t, patchErr, "expected patch to fail for %s", ref)
+			assert.Containsf(t, copaOutput, img.ExpectError,
 				"expected error message to contain %q", img.ExpectError)
 
 			// Verify no patched image was created with placeholder binaries
 			for _, binaryPath := range img.BinaryPaths {
 				patchedRef := img.Image + ":" + tagPatched
-				checkCmd := exec.Command("docker", "run", "--rm", patchedRef, "head", "-1", binaryPath) //#nosec G204
+				checkCmd := exec.Command("docker", "run", "--rm", patchedRef, "cat", binaryPath) //#nosec G204
 				checkOutput, checkErr := checkCmd.CombinedOutput()
 				if checkErr == nil {
 					assert.NotContains(t, string(checkOutput), "placeholder",

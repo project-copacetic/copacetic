@@ -330,6 +330,16 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 	if ldflags, ok := bi.BuildSettings["-ldflags"]; ok {
 		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-ldflags="+ldflags)
 	}
+	// Preserve -trimpath if the original binary was built with it
+	if trimpath, ok := bi.BuildSettings["-trimpath"]; ok && trimpath == "true" {
+		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-trimpath")
+	}
+
+	// If the original binary had no VCS info, add -buildvcs=false to prevent
+	// Go from embedding pseudo-versions from the cloned git repo
+	if _, hasVCS := bi.VCS["vcs.revision"]; !hasVCS {
+		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-buildvcs=false")
+	}
 
 	// Extract VCS info for source identification
 	if rev, ok := bi.VCS["vcs.revision"]; ok {
