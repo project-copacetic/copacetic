@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	dockerClient "github.com/moby/moby/client"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	mobyimage "github.com/moby/moby/api/types/image"
+	dockerClient "github.com/moby/moby/client"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/stretchr/testify/mock"

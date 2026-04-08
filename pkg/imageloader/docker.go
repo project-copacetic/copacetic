@@ -25,7 +25,6 @@ type dockerLoader struct{ cli dockerAPIClient }
 func probeDocker(ctx context.Context) (Loader, bool) {
 	opts := []dockerClient.Opt{
 		dockerClient.FromEnv,
-		dockerClient.WithAPIVersionNegotiation(),
 	}
 
 	// If DOCKER_HOST is not set, try to resolve from docker context
@@ -38,7 +37,7 @@ func probeDocker(ctx context.Context) (Loader, bool) {
 		}
 	}
 
-	cli, err := dockerClient.NewClientWithOpts(opts...)
+	cli, err := dockerClient.New(opts...)
 	if err != nil {
 		return nil, false
 	}

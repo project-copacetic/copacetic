@@ -6,10 +6,10 @@ import (
 	"errors"
 	"os/exec"
 
-	dockerClient "github.com/moby/moby/client"
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	dockerClient "github.com/moby/moby/client"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	log "github.com/sirupsen/logrus"
 )
@@ -18,9 +18,8 @@ import (
 var (
 	remoteGet = remote.Get
 	newClient = func() (dockerClient.APIClient, error) {
-		return dockerClient.NewClientWithOpts(
+		return dockerClient.New(
 			dockerClient.FromEnv,
-			dockerClient.WithAPIVersionNegotiation(),
 		)
 	}
 )
