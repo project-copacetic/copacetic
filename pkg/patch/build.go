@@ -1,18 +1,20 @@
 package patch
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/docker/buildx/build"
 	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -78,7 +80,7 @@ func createBuildConfig(
 	}
 
 	// Set source policy
-	sourcePolicy, err := build.ReadSourcePolicy()
+	sourcePolicy, err := readSourcePolicy()
 	if err != nil {
 		return nil, err
 	}
@@ -119,4 +121,26 @@ func validateSourcePolicy(sourcePolicy *sourcepolicy.Policy) error {
 	}
 
 	return nil
+}
+
+// readSourcePolicy reads a BuildKit source policy from the file specified by
+// EXPERIMENTAL_BUILDKIT_SOURCE_POLICY. Inlined from docker/buildx/build to
+// avoid pulling in docker/docker as a transitive dependency.
+func readSourcePolicy() (*sourcepolicy.Policy, error) {
+	p := os.Getenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY")
+	if p == "" {
+		return nil, nil
+	}
+
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read source policy file: %w", err)
+	}
+	var pol sourcepolicy.Policy
+	if err := json.Unmarshal(data, &pol); err != nil {
+		if e2 := proto.Unmarshal(data, &pol); e2 != nil {
+			return nil, fmt.Errorf("failed to parse source policy: %w", err)
+		}
+	}
+	return &pol, nil
 }
