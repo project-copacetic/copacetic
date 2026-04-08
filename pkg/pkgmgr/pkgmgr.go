@@ -239,3 +239,12 @@ func tryImage(ctx context.Context, imageRef string, c client.Client, platform *o
 	}
 	return st, nil
 }
+
+func isMarkerMissingErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errString := strings.ToLower(err.Error())
+	return strings.Contains(errString, "no such file or directory") || strings.Contains(errString, "not found")
+}

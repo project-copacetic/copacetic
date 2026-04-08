@@ -361,6 +361,9 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
 		if err != nil {
+			if !isMarkerMissingErr(err) {
+				return nil, nil, fmt.Errorf("failed while checking for available apt updates: %w", err)
+			}
 			log.Info("No upgradable packages found for this image.")
 			return nil, nil, types.ErrNoUpdatesFound
 		}
