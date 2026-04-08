@@ -26,9 +26,11 @@ jobs:
 
       - name: Set Version Variables
         id: vars
+        env:
+          RAW_GITHUB_REF: ${{ github.ref }}
         run: |
           # Get the version without the 'refs/tags/v' prefix, e.g., "1.2.3"
-          VERSION_TAG_ONLY=$(echo "${{ github.ref }}" | sed 's,refs/tags/v,,')
+          VERSION_TAG_ONLY="${RAW_GITHUB_REF#refs/tags/v}"
           
           # Reconstruct the full pushed tag, e.g., "v1.2.3"
           PUSHED_TAG="v${VERSION_TAG_ONLY}"
@@ -50,9 +52,11 @@ jobs:
           PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
 
       - name: Create release branch
+        env:
+          VERSION_TAG_ONLY: ${{ steps.vars.outputs.version_tag }}
         run: |
           # Extract version from tag (e.g., v0.11.0 -> 0.11 or v0.12.0-rc.1 -> 0.12)
-          VERSION=$(echo "${{ steps.vars.outputs.version_tag }}" | cut -d'.' -f1,2)
+          VERSION=$(echo "${VERSION_TAG_ONLY}" | cut -d'.' -f1,2)
           BRANCH_NAME="release-${VERSION}"
           
           # Check if release branch already exists
@@ -99,9 +103,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa-action image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          tag="${{ steps.vars.outputs.version_tag }}"
-          image_owner="${{ github.repository_owner }}"
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
           docker buildx build --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
 
       - name: Checkout copa-extension repository
@@ -122,9 +129,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa-extension image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          tag="${{ steps.vars.outputs.version_tag }}"
-          image_owner="${{ github.repository_owner }}"
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
           docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
 
       - name: Set up Docker for copa frontend
@@ -138,9 +148,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa frontend image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          tag="${{ steps.vars.outputs.version_tag }}"
-          image_owner="${{ github.repository_owner }}"
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
           docker buildx build --push \
             --platform linux/amd64,linux/arm64 \
             -f frontend.Dockerfile \
