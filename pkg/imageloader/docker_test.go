@@ -123,10 +123,10 @@ func (m *mockDockerAPIClientImpl) Ping(ctx context.Context, options dockerClient
 }
 
 func (m *mockDockerAPIClientImpl) ImageLoad(ctx context.Context, input io.Reader, loadOpts ...dockerClient.ImageLoadOption) (dockerClient.ImageLoadResult, error) {
-	_, _ = io.Copy(io.Discard, input)
 	if m.imageLoadFunc != nil {
 		return m.imageLoadFunc(ctx, input, loadOpts...)
 	}
+	_, _ = io.Copy(io.Discard, input)
 	return io.NopCloser(strings.NewReader("{\"stream\":\"Default mock: Successfully loaded image\"}\n")), nil
 }
 

@@ -22,8 +22,8 @@ type mockDockerClient struct {
 	dockerClient.APIClient
 }
 
-func (m *mockDockerClient) ImageInspect(ctx context.Context, ref string, _ ...dockerClient.ImageInspectOption) (dockerClient.ImageInspectResult, error) {
-	args := m.Called(ctx, ref)
+func (m *mockDockerClient) ImageInspect(ctx context.Context, ref string, opts ...dockerClient.ImageInspectOption) (dockerClient.ImageInspectResult, error) {
+	args := m.Called(ctx, ref, opts)
 	di, _ := args.Get(0).(dockerClient.ImageInspectResult)
 	return di, args.Error(1)
 }
@@ -45,7 +45,7 @@ func (m *mockRemote) Get(ref name.Reference, opts ...remote.Option) (*remote.Des
 func TestLocalMediaType(t *testing.T) {
 	md := new(mockDockerClient)
 	fakeMediaType := "application/vnd.docker.distribution.manifest.v2+json"
-	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return().Return(
+	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return(
 		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
 			Descriptor: &ocispec.Descriptor{
 				MediaType: fakeMediaType,
