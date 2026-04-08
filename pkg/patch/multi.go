@@ -298,7 +298,12 @@ func patchMultiPlatformImage(
 	// Wait for the progress display to finish
 	_ = displayEg.Wait()
 
-	// Check if we should fail based on the results:
+	// With strict error handling, fail if any platform encountered an error.
+	if hasErrors && !ignoreError {
+		return fmt.Errorf("one or more platform patches failed, see summary for details")
+	}
+
+	// When ignoring errors, still fail if every real patch attempt failed.
 	// Only consider real patch attempts (exclude preserved).
 	if hasErrors && patchedAttempts > 0 && patchedSuccesses == 0 {
 		return fmt.Errorf("all platform patches failed, see summary for details")
