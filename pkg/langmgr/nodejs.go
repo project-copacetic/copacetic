@@ -75,6 +75,24 @@ func nodeDownloadScript(url, destFile string) string {
 	)
 }
 
+// safeTarExtractScript returns a shell snippet that validates and extracts an npm tarball safely.
+// It rejects absolute paths, path traversal entries, and symlink/hardlink members before extraction.
+func safeTarExtractScript(tarballFile, targetDir string) string {
+	return fmt.Sprintf(
+		`tar -tzf %s | while IFS= read -r entry; do `+
+			`entry="${entry#./}"; `+
+			`[ -z "$entry" ] && continue; `+
+			`case "$entry" in /*|..|../*|*/..|*/../*) echo "ERROR: unsafe tar entry: $entry" >&2; exit 1;; esac; `+
+			`done && `+
+			`if tar -tzvf %s | awk '\''substr($1,1,1) ~ /[lh]/ { exit 1 }'\''; then :; else echo "ERROR: tarball contains symlink/hardlink entries" >&2; exit 1; fi && `+
+			`tar xzf %s --no-same-owner --no-same-permissions --strip-components=1 -C %s`,
+		tarballFile,
+		tarballFile,
+		tarballFile,
+		targetDir,
+	)
+}
+
 // validateNodePackageName validates that a package name is safe for use in shell commands.
 func validateNodePackageName(name string) error {
 	if name == "" {
@@ -552,6 +570,7 @@ func (nm *nodejsManager) installNodePackages(
 			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+			safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
 
 			replaceCmd := fmt.Sprintf(
 				`sh -c 'cd %s && `+
@@ -560,7 +579,7 @@ func (nm *nodejsManager) installNodePackages(
 					`  echo "INFO: Replacing direct dependency %s with version %s" && `+
 					`  if %s; then `+
 					`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-					`    tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
+					`    %s && `+
 					`    rm -f %s && `+
 					`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
 					`  else `+
@@ -573,7 +592,7 @@ func (nm *nodejsManager) installNodePackages(
 				u.Name,
 				u.Name, u.FixedVersion,
 				downloadScript,
-				tarballFile,
+				safeExtractScript,
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
@@ -608,6 +627,7 @@ func (nm *nodejsManager) installNodePackages(
 			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 			replaceCmd := fmt.Sprintf(
 				`sh -c 'cd %s && `+
@@ -618,7 +638,7 @@ func (nm *nodejsManager) installNodePackages(
 					`    if [ -f "$dir/package.json" ]; then `+
 					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
 					`      rm -rf "$dir" && mkdir -p "$dir" && `+
-					`      tar xzf %s --strip-components=1 -C "$dir" && `+
+					`      %s && `+
 					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
 					`      FOUND=$((FOUND+1)); `+
 					`    fi; `+
@@ -632,7 +652,7 @@ func (nm *nodejsManager) installNodePackages(
 				downloadScript,
 				u.Name,
 				u.FixedVersion,
-				tarballFile,
+				safeExtractScript,
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
@@ -879,6 +899,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 			replaceCmd := fmt.Sprintf(
 				`sh -c 'NPM_ROOT=$(npm root -g) && `+
@@ -889,7 +910,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					`    if [ -f "$dir/package.json" ]; then `+
 					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
 					`      rm -rf "$dir" && mkdir -p "$dir" && `+
-					`      tar xzf %s --strip-components=1 -C "$dir" && `+
+					`      %s && `+
 					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
 					`      FOUND=$((FOUND+1)); `+
 					`    fi; `+
@@ -902,7 +923,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				downloadScript,
 				u.Name,
 				u.FixedVersion,
-				tarballFile,
+				safeExtractScript,
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
@@ -1008,6 +1029,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 				tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 				downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+				safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
 
 				replaceCmd := fmt.Sprintf(
 					`sh -c 'cd %s && `+
@@ -1016,7 +1038,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`  echo "INFO: Replacing direct dependency %s with version %s" && `+
 						`  if %s; then `+
 						`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-						`    tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
+						`    %s && `+
 						`    rm -f %s && `+
 						`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
 						`  else `+
@@ -1029,7 +1051,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					u.Name,
 					u.Name, u.FixedVersion,
 					downloadScript,
-					tarballFile,
+					safeExtractScript,
 					tarballFile,
 					u.Name,
 					u.Name, u.FixedVersion,
@@ -1057,6 +1079,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 				tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 				downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+				safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 				replaceCmd := fmt.Sprintf(
 					`sh -c 'cd %s && `+
@@ -1067,7 +1090,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`    if [ -f "$dir/package.json" ]; then `+
 						`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
 						`      rm -rf "$dir" && mkdir -p "$dir" && `+
-						`      tar xzf %s --strip-components=1 -C "$dir" && `+
+						`      %s && `+
 						`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
 						`      FOUND=$((FOUND+1)); `+
 						`    fi; `+
@@ -1081,7 +1104,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					downloadScript,
 					u.Name,
 					u.FixedVersion,
-					tarballFile,
+					safeExtractScript,
 					tarballFile,
 					u.Name,
 					u.Name, u.FixedVersion,
