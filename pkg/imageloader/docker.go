@@ -8,9 +8,7 @@ import (
 	"io"
 	"os"
 
-	dockerTypes "github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/image"
-	dockerClient "github.com/docker/docker/client"
+	dockerClient "github.com/moby/moby/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
 	log "github.com/sirupsen/logrus"
 )
@@ -18,34 +16,33 @@ import (
 // dockerAPIClient defines the interface for Docker client operations needed by dockerLoader.
 // This allows for easier mocking in tests.
 type dockerAPIClient interface {
-	Ping(ctx context.Context) (dockerTypes.Ping, error)
-	ImageLoad(ctx context.Context, input io.Reader, loadOpts ...dockerClient.ImageLoadOption) (image.LoadResponse, error)
+	Ping(ctx context.Context, options dockerClient.PingOptions) (dockerClient.PingResult, error)
+	ImageLoad(ctx context.Context, input io.Reader, loadOpts ...dockerClient.ImageLoadOption) (dockerClient.ImageLoadResult, error)
 }
 
 type dockerLoader struct{ cli dockerAPIClient }
 
 func probeDocker(ctx context.Context) (Loader, bool) {
-	hostOpt := func(c *dockerClient.Client) error {
-		if os.Getenv(dockerClient.EnvOverrideHost) != "" {
-			// Fallback to just keep dockerClient.FromEnv whatever was set from
-			return nil
-		}
+	opts := []dockerClient.Opt{
+		dockerClient.FromEnv,
+		dockerClient.WithAPIVersionNegotiation(),
+	}
+
+	// If DOCKER_HOST is not set, try to resolve from docker context
+	if os.Getenv(dockerClient.EnvOverrideHost) == "" {
 		addr, err := connhelpers.AddrFromDockerContext()
 		if err != nil {
 			log.WithError(err).Error("Error loading docker context, falling back to env")
-			return nil
+		} else if addr != "" {
+			opts = append(opts, dockerClient.WithHost(addr))
 		}
-		return dockerClient.WithHost(addr)(c)
 	}
-	cli, err := dockerClient.NewClientWithOpts(
-		dockerClient.FromEnv,
-		hostOpt,
-		dockerClient.WithAPIVersionNegotiation(),
-	)
+
+	cli, err := dockerClient.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, false
 	}
-	if _, err = cli.Ping(ctx); err != nil {
+	if _, err = cli.Ping(ctx, dockerClient.PingOptions{}); err != nil {
 		return nil, false
 	}
 	return &dockerLoader{cli: cli}, true
@@ -58,9 +55,9 @@ func (d *dockerLoader) Load(ctx context.Context, tar io.Reader, _ string) error 
 	if err != nil {
 		return fmt.Errorf("docker ImageLoad: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Close()
 
-	scanner := bufio.NewScanner(resp.Body)
+	scanner := bufio.NewScanner(resp)
 	lastLine := ""
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -71,23 +68,13 @@ func (d *dockerLoader) Load(ctx context.Context, tar io.Reader, _ string) error 
 		log.Warnf("error reading ImageLoad response: %v", err)
 	}
 
-	if resp.JSON && lastLine != "" {
+	if lastLine != "" {
 		var jsonResp struct {
-			ErrorResponse *dockerTypes.ErrorResponse `json:"errorResponse"`
-			Error         string                     `json:"error"`
+			Error string `json:"error"`
 		}
-		if err := json.Unmarshal([]byte(lastLine), &jsonResp); err == nil {
-			switch {
-			case jsonResp.ErrorResponse != nil:
-				return fmt.Errorf("ImageLoad error: %s", jsonResp.ErrorResponse.Message)
-			case jsonResp.Error != "":
-				return fmt.Errorf("ImageLoad error: %s", jsonResp.Error)
-			}
-		} else {
-			log.Debugf("final ImageLoad line (non-JSON): %s", lastLine)
+		if err := json.Unmarshal([]byte(lastLine), &jsonResp); err == nil && jsonResp.Error != "" {
+			return fmt.Errorf("ImageLoad error: %s", jsonResp.Error)
 		}
-	} else if lastLine != "" {
-		log.Debugf("final ImageLoad line (non-JSON): %s", lastLine)
 	}
 
 	log.Debug("image loaded successfully via Docker API")

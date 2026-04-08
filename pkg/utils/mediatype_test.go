@@ -5,13 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/registry"
-	dockerClient "github.com/docker/docker/client"
+	dockerClient "github.com/moby/moby/client"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
+	mobyimage "github.com/moby/moby/api/types/image"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/stretchr/testify/mock"
@@ -23,9 +22,9 @@ type mockDockerClient struct {
 	dockerClient.APIClient
 }
 
-func (m *mockDockerClient) ImageInspect(ctx context.Context, ref string, _ ...dockerClient.ImageInspectOption) (image.InspectResponse, error) {
+func (m *mockDockerClient) ImageInspect(ctx context.Context, ref string, _ ...dockerClient.ImageInspectOption) (dockerClient.ImageInspectResult, error) {
 	args := m.Called(ctx, ref)
-	di, _ := args.Get(0).(image.InspectResponse)
+	di, _ := args.Get(0).(dockerClient.ImageInspectResult)
 	return di, args.Error(1)
 }
 
@@ -47,11 +46,11 @@ func TestLocalMediaType(t *testing.T) {
 	md := new(mockDockerClient)
 	fakeMediaType := "application/vnd.docker.distribution.manifest.v2+json"
 	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return().Return(
-		image.InspectResponse{
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
 			Descriptor: &ocispec.Descriptor{
 				MediaType: fakeMediaType,
 			},
-		},
+		}},
 		nil,
 	)
 
@@ -67,7 +66,7 @@ func TestLocalMediaType(t *testing.T) {
 func TestLocalMediaTypeFailure(t *testing.T) {
 	md := new(mockDockerClient)
 	md.On("ImageInspect", mock.Anything, "bad:tag", mock.Anything).Return(
-		image.InspectResponse{},
+		dockerClient.ImageInspectResult{},
 		errors.New("failed to inspect"),
 	)
 
@@ -117,11 +116,11 @@ func TestGetMediaType_LocalSuccess(t *testing.T) {
 	md := new(mockDockerClient)
 	fakeLocalType := "application/vnd.docker.distribution.manifest.v2+json"
 	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return(
-		image.InspectResponse{
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
 			Descriptor: &ocispec.Descriptor{
 				MediaType: fakeLocalType,
 			},
-		},
+		}},
 		nil,
 	)
 
@@ -138,7 +137,7 @@ func TestGetMediaType_RemoteFallback(t *testing.T) {
 	// Force local lookup to fail
 	md := new(mockDockerClient)
 	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return(
-		registry.DistributionInspect{},
+		dockerClient.ImageInspectResult{},
 		errors.New("local lookup failed"),
 	)
 
@@ -201,9 +200,9 @@ func TestGetMediaType_PodmanRuntime(t *testing.T) {
 func TestLocalMediaType_NilDescriptor(t *testing.T) {
 	md := new(mockDockerClient)
 	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return(
-		image.InspectResponse{
-			Descriptor: nil, // Nil descriptor should return error
-		},
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: nil,
+		}},
 		nil,
 	)
 
