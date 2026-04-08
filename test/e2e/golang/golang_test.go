@@ -364,8 +364,8 @@ func TestExpectedPatchFailures(t *testing.T) {
 				"expected error message to contain %q", img.ExpectError)
 
 			// Verify no patched image was created with placeholder binaries
+			patchedRef := img.Image + ":" + tagPatched
 			for _, binaryPath := range img.BinaryPaths {
-				patchedRef := img.Image + ":" + tagPatched
 				checkCmd := exec.Command("docker", "run", "--rm", patchedRef, "cat", binaryPath) //#nosec G204
 				checkOutput, checkErr := checkCmd.CombinedOutput()
 				if checkErr == nil {
@@ -375,7 +375,7 @@ func TestExpectedPatchFailures(t *testing.T) {
 			}
 
 			// Cleanup
-			_ = exec.Command("docker", "rmi", img.Image+":"+tagPatched).Run()
+			_ = exec.Command("docker", "rmi", patchedRef).Run()
 		})
 	}
 }
