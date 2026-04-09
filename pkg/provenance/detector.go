@@ -283,6 +283,12 @@ func (d *Detector) parseGoVersionOutput(output string) []*BinaryInfo {
 
 // ConvertBinaryInfoToBuildInfo converts detected binary info to BuildInfo for rebuilding.
 func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
+	return d.ConvertBinaryInfoToBuildInfoWithLabels(bi, nil)
+}
+
+// ConvertBinaryInfoToBuildInfoWithLabels converts detected binary info to BuildInfo,
+// using OCI image labels as fallback when VCS info is missing (e.g. binaries built with -trimpath).
+func (d *Detector) ConvertBinaryInfoToBuildInfoWithLabels(bi *BinaryInfo, imageLabels map[string]string) *BuildInfo {
 	if bi == nil {
 		return nil
 	}
@@ -351,6 +357,22 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 		repoURL, _ := deriveRepoFromModulePath(buildInfo.ModulePath)
 		if repoURL != "" {
 			buildInfo.BuildArgs["_sourceRepo"] = repoURL
+		}
+	}
+
+	// Fall back to OCI image labels when VCS info is missing (e.g. -trimpath builds).
+	if imageLabels != nil {
+		if buildInfo.BuildArgs["_sourceCommit"] == "" {
+			if rev, ok := imageLabels["org.opencontainers.image.revision"]; ok && rev != "" {
+				buildInfo.BuildArgs["_sourceCommit"] = rev
+				log.Infof("Using OCI label org.opencontainers.image.revision as source commit: %s", rev)
+			}
+		}
+		if buildInfo.BuildArgs["_sourceRepo"] == "" {
+			if src, ok := imageLabels["org.opencontainers.image.source"]; ok && src != "" {
+				buildInfo.BuildArgs["_sourceRepo"] = src
+				log.Infof("Using OCI label org.opencontainers.image.source as source repo: %s", src)
+			}
 		}
 	}
 

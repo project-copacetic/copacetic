@@ -23,6 +23,54 @@ OUTPUT="$2"
 EXPLICIT_PKG="$3"
 BUILD_PREFIX="$(cat /tmp/copa_build_prefix)"
 
+# If the build prefix has no -ldflags and OCI labels are available,
+# scan Go source for version variables initialized to "UNKNOWN" and inject
+# OCI label values via -ldflags -X.
+inject_version_ldflags() {
+    case "$BUILD_PREFIX" in *-ldflags*) return ;; esac
+    [ -f /tmp/copa_oci_labels ] || return
+
+    OCI_VERSION="" OCI_REVISION="" OCI_SOURCE=""
+    while IFS='=' read -r key val; do
+        case "$key" in
+            OCI_VERSION)  OCI_VERSION="$val" ;;
+            OCI_REVISION) OCI_REVISION="$val" ;;
+            OCI_SOURCE)   OCI_SOURCE="$val" ;;
+        esac
+    done < /tmp/copa_oci_labels
+    [ -n "$OCI_VERSION$OCI_REVISION$OCI_SOURCE" ] || return
+
+    MOD_PATH=$(head -1 go.mod 2>/dev/null | awk '{print $2}')
+    [ -n "$MOD_PATH" ] || return
+
+    XFLAGS=""
+    for gofile in $(grep -rl '"UNKNOWN"' --include="*.go" . 2>/dev/null | grep -v vendor | head -5); do
+        dir=$(dirname "$gofile" | sed 's|^\./||')
+        if [ "$dir" = "." ]; then
+            pkg="$MOD_PATH"
+        else
+            pkg="$MOD_PATH/$dir"
+        fi
+        for varname in $(grep -oE '[A-Z_][A-Z_0-9]* *= *"UNKNOWN"' "$gofile" 2>/dev/null | sed 's/ *=.*//' | sort -u); do
+            val=""
+            lname=$(echo "$varname" | tr '[:upper:]' '[:lower:]')
+            case "$lname" in
+                release|version|tag)        val="$OCI_VERSION" ;;
+                commit|build|gitcommit|sha|revision|gitsha|commit_sha) val="$OCI_REVISION" ;;
+                repo|repository|source|url|repo_info) val="$OCI_SOURCE" ;;
+            esac
+            [ -n "$val" ] && XFLAGS="$XFLAGS -X $pkg.$varname=$val"
+        done
+    done
+
+    if [ -n "$XFLAGS" ]; then
+        echo "Copa: injecting version ldflags from OCI labels:$XFLAGS"
+        BUILD_PREFIX="$BUILD_PREFIX '-ldflags=$XFLAGS'"
+    fi
+}
+
+inject_version_ldflags
+
 run_build() {
     echo "Copa: building from $1"
     eval "$BUILD_PREFIX $1"
@@ -76,7 +124,7 @@ if [ -n "$FIRST_DIR" ]; then
     exit $?
 fi
 
-# Nothing found - fail the build
+# Nothing found
 echo "ERROR: no buildable Go source found for $BINARY_NAME"
 exit 1
 `
@@ -90,6 +138,25 @@ func normalizeVersion(version string) string {
 		return version
 	}
 	return "v" + version
+}
+
+// formatOCILabelsForScript formats OCI image labels as key=value lines for shell consumption.
+func formatOCILabelsForScript(labels map[string]string) string {
+	if labels == nil {
+		return ""
+	}
+	relevant := []struct{ key, envName string }{
+		{"org.opencontainers.image.version", "OCI_VERSION"},
+		{"org.opencontainers.image.revision", "OCI_REVISION"},
+		{"org.opencontainers.image.source", "OCI_SOURCE"},
+	}
+	var sb strings.Builder
+	for _, r := range relevant {
+		if v, ok := labels[r.key]; ok && v != "" {
+			fmt.Fprintf(&sb, "%s=%s\n", r.envName, v)
+		}
+	}
+	return sb.String()
 }
 
 // validateBinaryPath validates that a binary path is safe and absolute.
@@ -219,7 +286,7 @@ func (r *Rebuilder) RebuildBinary(
 	log.Debugf("Using base image: %s", baseImage)
 
 	// Build the new binary with updated dependencies (outputs to /output/<name>)
-	buildState, err := r.buildBinaryWithUpdates(baseImage, buildInfo, updates, platform, outputPath)
+	buildState, err := r.buildBinaryWithUpdates(baseImage, buildInfo, updates, platform, outputPath, rebuildCtx.ImageLabels)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to rebuild binary %s (module: %s, Go: %s): %w",
 			binaryPath, buildInfo.ModulePath, buildInfo.GoVersion, err)
@@ -510,6 +577,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 	updates map[string]string,
 	platform *specs.Platform,
 	outputPath string,
+	imageLabels map[string]string,
 ) (llb.State, error) {
 	log.Debugf("Building binary with base image: %s, output path: %s", baseImage, outputPath)
 	log.Debugf("Build info: module=%s, Go=%s, CGO=%v", buildInfo.ModulePath, buildInfo.GoVersion, buildInfo.CGOEnabled)
@@ -649,6 +717,14 @@ fi
 		state = state.File(
 			llb.Mkfile("/tmp/copa_build_prefix", 0o644, []byte(buildPrefix)),
 		)
+
+		// Write OCI image labels to a file so the discovery script can inject
+		// version metadata via -ldflags -X when the original binary has no ldflags.
+		ociLabelsContent := formatOCILabelsForScript(imageLabels)
+		state = state.File(
+			llb.Mkfile("/tmp/copa_oci_labels", 0o644, []byte(ociLabelsContent)),
+		)
+
 		state = state.File(
 			llb.Mkfile("/tmp/copa_discover_build.sh", 0o755, []byte(discoverAndBuildScript)),
 		)
@@ -769,7 +845,15 @@ func (r *Rebuilder) constructBuildCommandParts(buildInfo *BuildInfo, goBin strin
 		parts = append(parts, "-o", outputPath)
 	}
 
-	parts = append(parts, buildInfo.BuildFlags...)
+	// Quote build flags that contain spaces (e.g. "-ldflags=-s -w -X main.version=1.0")
+	// so that shell eval doesn't word-split them into separate arguments.
+	for _, flag := range buildInfo.BuildFlags {
+		if strings.Contains(flag, " ") {
+			parts = append(parts, "'"+strings.ReplaceAll(flag, "'", "'\"'\"'")+"'")
+		} else {
+			parts = append(parts, flag)
+		}
+	}
 
 	mainPkg := buildInfo.MainPackage
 	if mainPkg == "" {

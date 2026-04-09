@@ -200,7 +200,7 @@ func TestConstructBuildCommand(t *testing.T) {
 			},
 		},
 		{
-			name: "build with flags",
+			name: "build with flags - ldflags quoted",
 			buildInfo: &BuildInfo{
 				CGOEnabled:  false,
 				BuildFlags:  []string{"-trimpath", "-ldflags=-s -w"},
@@ -211,8 +211,32 @@ func TestConstructBuildCommand(t *testing.T) {
 				"CGO_ENABLED=0",
 				"-o /output/server",
 				"-trimpath",
-				"-ldflags=-s -w",
+				"'-ldflags=-s -w'",
 				"./cmd/server",
+			},
+		},
+		{
+			name: "build with X flags in ldflags",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-ldflags=-s -w -X main.version=1.0.0 -X main.commit=abc123"},
+				MainPackage: ".",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				"'-ldflags=-s -w -X main.version=1.0.0 -X main.commit=abc123'",
+			},
+		},
+		{
+			name: "single-word flag not quoted",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-trimpath"},
+				MainPackage: ".",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				" -trimpath ",
 			},
 		},
 		{

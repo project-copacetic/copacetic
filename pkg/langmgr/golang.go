@@ -596,8 +596,9 @@ func (gm *golangManager) attemptBinaryRebuild(
 		binaryPath := binaryInfo.Path
 		log.Debugf("Processing binary %d/%d: %s", i+1, len(binaries), binaryPath)
 
-		// Convert this binary's info to build info
-		buildInfo := detector.ConvertBinaryInfoToBuildInfo(binaryInfo)
+		// Convert this binary's info to build info, using OCI labels as fallback
+		// for source identification when VCS info is missing (e.g. -trimpath builds).
+		buildInfo := detector.ConvertBinaryInfoToBuildInfoWithLabels(binaryInfo, gm.config.ImageLabels)
 		if buildInfo == nil {
 			log.Warnf("Could not extract build info for %s, skipping", binaryPath)
 			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no build info", binaryPath))
@@ -678,9 +679,10 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 		// Create rebuild context for this binary
 		rebuildCtx := &provenance.RebuildContext{
-			Strategy:   provenance.RebuildStrategyHeuristic,
-			BuildInfo:  buildInfo,
-			BinaryInfo: []*provenance.BinaryInfo{binaryInfo},
+			Strategy:    provenance.RebuildStrategyHeuristic,
+			BuildInfo:   buildInfo,
+			BinaryInfo:  []*provenance.BinaryInfo{binaryInfo},
+			ImageLabels: gm.config.ImageLabels,
 		}
 
 		// Attempt to rebuild this binary and merge into current state

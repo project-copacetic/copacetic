@@ -64,6 +64,8 @@ type RebuildContext struct {
 	BuildInfo *BuildInfo
 	// BinaryInfo contains information from detected Go binaries.
 	BinaryInfo []*BinaryInfo
+	// ImageLabels contains OCI image labels for version metadata fallback.
+	ImageLabels map[string]string
 }
 
 // RebuildResult contains the outcome of a rebuild attempt.
