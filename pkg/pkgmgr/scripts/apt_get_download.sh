@@ -5,14 +5,15 @@ else
 fi
 
 if [ "$UPDATE_ALL" = "true" ]; then
-    packages="$(cat /var/cache/apt/archives/packages.txt)"
+    mapfile -t packages < /var/cache/apt/archives/packages.txt
 else
     packages="%s"
+    IFS=' ' read -r -a packages <<< "$packages"
 fi
 
 apt-get -o Acquire::Retries=3 update
 
-apt-get -o Acquire::Retries=3 download --no-install-recommends $packages
+apt-get -o Acquire::Retries=3 download --no-install-recommends -- "${packages[@]}"
 dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
 dpkg --root=/tmp/debian-rootfs --configure -a
 
