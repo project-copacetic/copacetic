@@ -33,6 +33,7 @@ permissions:
 jobs:
   unit-test:
     name: Unit Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -61,6 +62,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     permissions:
@@ -101,6 +103,7 @@ jobs:
   test-patch-trivy:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
@@ -151,6 +154,7 @@ jobs:
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
@@ -279,6 +283,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -326,6 +331,7 @@ jobs:
   test-push:
     needs: build
     name: Test push
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -377,6 +383,7 @@ jobs:
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     strategy:
@@ -465,6 +472,7 @@ jobs:
   test-generate:
     needs: build
     name: Test generate command ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     strategy:
@@ -511,6 +519,7 @@ jobs:
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     steps:
@@ -589,6 +598,7 @@ jobs:
   test-patch-local-multiplatform-oci-layout:
     needs: build
     name: Test multiplatform OCI layout creation
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     steps:
@@ -804,6 +814,7 @@ jobs:
   test-gateway:
     needs: build
     name: Gateway Integration Tests ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 20
     strategy:
@@ -841,6 +852,7 @@ jobs:
   test-patch-bulk:
     needs: build
     name: Test Bulk Patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     steps:
@@ -885,6 +897,7 @@ jobs:
   test-nodejs:
     needs: build
     name: Test Node.js patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 10
     permissions: read-all
@@ -930,6 +943,7 @@ jobs:
   test-dotnet:
     needs: build
     name: Test .NET patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 10
     permissions: read-all
@@ -977,6 +991,7 @@ jobs:
   test-golang:
     needs: build
     name: Test Go patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     permissions: read-all
@@ -1022,6 +1037,7 @@ jobs:
   test-frontend:
     needs: build
     name: Test BuildKit Frontend
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 20
     permissions: read-all
