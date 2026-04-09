@@ -204,8 +204,12 @@ func (gm *golangManager) InstallUpdates(
 
 	// Only act on stdlib vulns if user explicitly opted in via --toolchain-patch-level
 	if hasStdlib && gm.toolchainPatchLevel == "" {
-		log.Warn("Stdlib vulnerabilities found but --toolchain-patch-level not set, skipping. " +
-			"Use --toolchain-patch-level to rebuild binaries with an updated Go compiler.")
+		log.Warnf("Stdlib vulnerabilities found (requires Go >= %s) but --toolchain-patch-level not set. "+
+			"These vulnerabilities require rebuilding binaries with an updated Go compiler. "+
+			"Use --toolchain-patch-level=patch|minor|major to fix them.", stdlibFixedVersion)
+		if len(goUpdates) == 0 {
+			log.Warn("Only stdlib vulnerabilities detected — patching will have no effect without --toolchain-patch-level.")
+		}
 		hasStdlib = false
 		stdlibFixedVersion = ""
 	}
@@ -456,7 +460,14 @@ func (gm *golangManager) upgradePackages(
 		return currentState, rebuildFailedPkgs, rebuildErr
 	}
 
-	log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
+	// Check if rebuild failed due to missing source provenance
+	if strings.Contains(rebuildErr.Error(), "no source commit available") ||
+		strings.Contains(rebuildErr.Error(), "no VCS commit info") {
+		log.Warn("Binary rebuild failed because image binaries lack source provenance (no VCS info and no OCI labels). " +
+			"Falling back to go.mod/go.sum updates, which may not fix all vulnerabilities.")
+	} else {
+		log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
+	}
 
 	// Detect if Go toolchain exists in the target image
 	goExists, err := gm.detectGo(ctx, currentState)

@@ -688,13 +688,17 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 
 	// If source was cloned (may have vendor/), sync vendor directory to match updated go.mod.
 	// This prevents "inconsistent vendoring" errors when the project uses vendored dependencies.
-	// We check for vendor/modules.txt existence and run `go mod vendor` if found.
+	// Handle both regular modules (go mod vendor) and workspaces (go work vendor).
 	if sourceCloned {
 		log.Debug("Checking for vendor directory and syncing if present...")
 		vendorSyncScript := fmt.Sprintf(`
 if [ -f vendor/modules.txt ]; then
-    echo "Vendor directory detected, running go mod vendor..."
-    %s mod vendor
+    echo "Vendor directory detected, syncing..."
+    if [ -f go.work ]; then
+        %[1]s work vendor 2>/dev/null || echo "WARN: go work vendor failed, continuing without vendor sync"
+    else
+        %[1]s mod vendor 2>/dev/null || echo "WARN: go mod vendor failed, continuing without vendor sync"
+    fi
 else
     echo "No vendor directory found, skipping vendor sync"
 fi
