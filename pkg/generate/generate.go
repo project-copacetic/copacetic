@@ -32,9 +32,10 @@ import (
 )
 
 const (
-	copaProduct = "copa"
-	defaultTag  = "latest"
-	maxFileSize = 1 << 30 // 1GB
+	copaProduct       = "copa"
+	defaultTag        = "latest"
+	maxFileSize       = 1 << 30 // 1GB
+	maxPatchLayerSize = 1 << 30 // 1GB
 )
 
 // for testing.
@@ -213,10 +214,13 @@ func extractPatchLayer(
 				Type:  client.ExporterTar,
 				Attrs: map[string]string{},
 				Output: func(_ map[string]string) (io.WriteCloser, error) {
-					// Create a buffer to collect the tar data
+					// Create a size-limited buffer to collect the tar data
 					buf := &bytes.Buffer{}
 					writer := &tarWriter{
-						Writer: buf,
+						Writer: &limitedBufferWriter{
+							buf:   buf,
+							limit: maxPatchLayerSize,
+						},
 						onClose: func() {
 							patchChannel <- buf.Bytes()
 						},
@@ -371,6 +375,10 @@ func extractPatchLayer(
 }
 
 func createTarStream(image string, patchLayer []byte, outputPath string) error {
+	if len(patchLayer) > maxPatchLayerSize {
+		return errors.Errorf("patch layer exceeds maximum allowed size of 1GB")
+	}
+
 	// Open output writer
 	var w io.Writer = os.Stdout
 	if outputPath != "" {
@@ -519,4 +527,27 @@ func (tw *tarWriter) Close() error {
 		tw.onClose()
 	}
 	return nil
+}
+
+type limitedBufferWriter struct {
+	buf     *bytes.Buffer
+	written int64
+	limit   int64
+}
+
+func (w *limitedBufferWriter) Write(p []byte) (int, error) {
+	remaining := w.limit - w.written
+	if remaining <= 0 {
+		return 0, errors.Errorf("patch layer exceeds maximum allowed size of 1GB")
+	}
+
+	if int64(len(p)) > remaining {
+		n, _ := w.buf.Write(p[:remaining])
+		w.written += int64(n)
+		return n, errors.Errorf("patch layer exceeds maximum allowed size of 1GB")
+	}
+
+	n, err := w.buf.Write(p)
+	w.written += int64(n)
+	return n, err
 }

@@ -71,6 +71,19 @@ func TestTarWriter(t *testing.T) {
 	assert.True(t, closed, "onClose should have been called")
 }
 
+func TestLimitedBufferWriter_ExceedsLimit(t *testing.T) {
+	buf := &bytes.Buffer{}
+	w := &limitedBufferWriter{
+		buf:   buf,
+		limit: 4,
+	}
+
+	n, err := w.Write([]byte("12345"))
+	require.Error(t, err)
+	assert.Equal(t, 4, n)
+	assert.Equal(t, "1234", buf.String())
+}
+
 func TestCreateTarStream(t *testing.T) {
 	// Create a minimal patch layer tar
 	patchBuf := &bytes.Buffer{}
@@ -200,6 +213,12 @@ func TestCreateTarStream_LargeFile(t *testing.T) {
 	// Test is simplified since we can't easily create a 2GB file in tests
 	// The size check happens when reading the tar, not when creating it
 	t.Skip("Skipping large file test - requires 2GB of data")
+}
+
+func TestCreateTarStream_PatchLayerTooLarge(t *testing.T) {
+	err := createTarStream("ubuntu:22.04", make([]byte, maxPatchLayerSize+1), "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "patch layer exceeds maximum allowed size")
 }
 
 func TestGenerateWithContext_InvalidImage(t *testing.T) {
