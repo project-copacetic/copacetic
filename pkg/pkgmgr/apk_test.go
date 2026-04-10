@@ -3,6 +3,8 @@ package pkgmgr
 import (
 	"context"
 	_ "embed"
+	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,6 +17,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -222,13 +225,14 @@ func Test_apkManager_GetPackageType(t *testing.T) {
 
 func Test_InstallUpdates_APK(t *testing.T) {
 	tests := []struct {
-		name          string
-		manifest      *unversioned.UpdateManifest
-		ignoreErrors  bool
-		mockSetup     func(reference *mocks.MockReference)
-		expectedState bool
-		expectedPkgs  []string
-		expectedError string
+		name                  string
+		manifest              *unversioned.UpdateManifest
+		ignoreErrors          bool
+		mockSetup             func(reference *mocks.MockReference)
+		expectedState         bool
+		expectedPkgs          []string
+		expectNoUpdates       bool
+		expectedErrorContains string
 	}{
 		{
 			name: "Update specific packages",
@@ -244,7 +248,6 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			ignoreErrors:  false,
 			expectedState: true,
 			expectedPkgs:  nil,
-			expectedError: "",
 		},
 		{
 			name: "Nil manifest",
@@ -254,7 +257,30 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			manifest:      nil,
 			expectedState: true,
 			expectedPkgs:  nil,
-			expectedError: "",
+		},
+		{
+			name: "Nil manifest missing updates marker",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+					return req.Filename == "/updates.txt"
+				})).Return([]byte(nil), fmt.Errorf("failed to stat /updates.txt: no such file or directory"))
+			},
+			manifest:        nil,
+			expectedState:   false,
+			expectedPkgs:    nil,
+			expectNoUpdates: true,
+		},
+		{
+			name: "Nil manifest unrelated marker read failure",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+					return req.Filename == "/updates.txt"
+				})).Return([]byte(nil), fmt.Errorf("repository not found"))
+			},
+			manifest:              nil,
+			expectedState:         false,
+			expectedPkgs:          nil,
+			expectedErrorContains: "failed while checking for available apk updates: repository not found",
 		},
 		{
 			name: "Ignore errors",
@@ -269,7 +295,6 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			},
 			expectedState: true,
 			expectedPkgs:  []string{"package1"},
-			expectedError: "",
 		},
 	}
 
@@ -297,10 +322,16 @@ func Test_InstallUpdates_APK(t *testing.T) {
 
 			state, pkgs, err := am.InstallUpdates(context.TODO(), tt.manifest, tt.ignoreErrors)
 
-			if tt.expectedError != "" {
+			switch {
+			case tt.expectNoUpdates:
+				assert.ErrorIs(t, err, types.ErrNoUpdatesFound)
+			case tt.expectedErrorContains != "":
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedError)
-			} else {
+				if err != nil {
+					assert.Contains(t, err.Error(), tt.expectedErrorContains)
+				}
+				assert.False(t, errors.Is(err, types.ErrNoUpdatesFound))
+			default:
 				assert.NoError(t, err)
 			}
 
