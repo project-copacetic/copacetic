@@ -70,13 +70,29 @@ var DownloadChart = func(name, version, repository string) (*helmchart.Chart, er
 		return nil, fmt.Errorf("no chart archive found after pulling '%s'", name)
 	}
 
-	chartPath := tmpDir + "/" + entries[0].Name()
+	chartPath, err := findChartArchivePath(tmpDir, name)
+	if err != nil {
+		return nil, err
+	}
 	ch, err := loader.Load(chartPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load chart archive '%s': %w", chartPath, err)
 	}
 
 	return ch, nil
+}
+
+func findChartArchivePath(tmpDir, name string) (string, error) {
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		return "", fmt.Errorf("failed to read temp dir after chart pull: %w", err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".tgz") {
+			return tmpDir + "/" + entry.Name(), nil
+		}
+	}
+	return "", fmt.Errorf("no chart archive found after pulling '%s'", name)
 }
 
 // RenderChart renders a Helm chart to Kubernetes manifests using default values.

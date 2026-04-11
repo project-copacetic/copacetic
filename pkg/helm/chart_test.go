@@ -1,6 +1,8 @@
 package helm
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	helmchart "helm.sh/helm/v3/pkg/chart"
@@ -112,6 +114,16 @@ func TestDiscoverChartImages_EmptyChart(t *testing.T) {
 	images, err := DiscoverChartImages(mockChart, nil)
 	require.NoError(t, err)
 	assert.Empty(t, images)
+}
+
+func TestFindChartArchivePath_PicksTgzFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "README.txt"), []byte("x"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "chart-1.0.0.tgz"), []byte("chart"), 0o600))
+
+	chartPath, err := findChartArchivePath(tmpDir, "chart")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(tmpDir, "chart-1.0.0.tgz"), chartPath)
 }
 
 // join concatenates strings with a separator, helper for tests.

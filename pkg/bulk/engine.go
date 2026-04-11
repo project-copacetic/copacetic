@@ -96,12 +96,15 @@ func buildTargetRepository(sourceImage, targetRegistry string) (string, error) {
 }
 
 func resolveChartImagesWithCharts(ctx context.Context, charts []ChartSpec, overrides map[string]OverrideSpec) ([]ImageSpec, []chartResolution, error) {
-	_ = ctx
 	var allImages []helm.ChartImage
 	var resolutions []chartResolution
 	var errs *multierror.Error
 
 	for _, chartSpec := range charts {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+
 		log.Infof("Downloading Helm chart '%s' v%s from %s...", chartSpec.Name, chartSpec.Version, chartSpec.Repository)
 		ch, err := helm.DownloadChart(chartSpec.Name, chartSpec.Version, chartSpec.Repository)
 		if err != nil {

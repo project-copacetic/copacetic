@@ -150,7 +150,7 @@ copa patch --chart vector --chart-version 0.53.0 --chart-repo oci://ghcr.io/vect
 
 				log.Info("Starting in bulk image patching mode...")
 
-				return bulk.PatchFromConfig(context.Background(), ua.configFile, opts)
+				return bulk.PatchFromConfig(ctx, ua.configFile, opts)
 			}
 
 			if hasChart {
