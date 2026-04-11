@@ -853,6 +853,15 @@ func TestCloneSourceCodeFallbackChain(t *testing.T) {
 			rebuildCtx: &RebuildContext{ImageRef: "prometheus"},
 			wantError:  true,
 		},
+		{
+			name: "rejects non-semver tag like latest",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus",
+			},
+			rebuildCtx: &RebuildContext{ImageRef: "prometheus:latest"},
+			wantError:  true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -874,6 +883,31 @@ func TestCloneSourceCodeFallbackChain(t *testing.T) {
 			}
 			assert.Contains(t, blob.String(), tt.wantRepo)
 			assert.Contains(t, blob.String(), tt.wantRef)
+		})
+	}
+}
+
+func TestLooksLikeSemverTag(t *testing.T) {
+	tests := []struct {
+		tag  string
+		want bool
+	}{
+		{"v1.2.3", true},
+		{"1.45.0", true},
+		{"v3.9.1-rc1", true},
+		{"v0.1.0", true},
+		{"latest", false},
+		{"stable", false},
+		{"alpine", false},
+		{"v", false},
+		{"", false},
+		{"3", false},
+		{"sha-abc123", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			assert.Equal(t, tt.want, looksLikeSemverTag(tt.tag))
 		})
 	}
 }

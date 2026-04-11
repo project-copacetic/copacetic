@@ -648,6 +648,22 @@ func extractImageTag(imageRef string) string {
 	return imageRef[lastColon+1:]
 }
 
+// looksLikeSemverTag returns true if the tag looks like a version string
+// (e.g., "v1.2.3", "1.45.0", "v3.9.1-rc1"). This prevents the image tag
+// heuristic from trying non-version tags like "latest", "stable", or "alpine"
+// as git refs.
+func looksLikeSemverTag(tag string) bool {
+	t := strings.TrimPrefix(tag, "v")
+	if t == "" {
+		return false
+	}
+	// Must start with a digit and contain at least one dot (e.g., "1.2")
+	if t[0] < '0' || t[0] > '9' {
+		return false
+	}
+	return strings.Contains(t, ".")
+}
+
 func parseGoVCSURL(goVCSURL string) (string, string, error) {
 	if goVCSURL == "" {
 		return "", "", fmt.Errorf("go-vcs-url is empty")
@@ -661,7 +677,7 @@ func parseGoVCSURL(goVCSURL string) (string, string, error) {
 	if err := validateRepoURL(repoURL); err != nil {
 		return "", "", err
 	}
-	if err := validateShellSafe(ref, "go-vcs-url ref"); err != nil {
+	if err := validateShellSafeStrict(ref, "go-vcs-url ref"); err != nil {
 		return "", "", err
 	}
 	return repoURL, ref, nil
@@ -695,14 +711,15 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildCon
 		}
 	}
 
-	if overrideRepoURL != "" {
+	switch {
+	case overrideRepoURL != "":
 		repoURL = overrideRepoURL
 		ref = overrideRef
 		if err := validateRepoURL(repoURL); err != nil {
 			return llb.State{}, "", err
 		}
 		log.Infof("Using --go-vcs-url override: %s @ %s", repoURL, ref)
-	} else if commit != "" {
+	case commit != "":
 		if err := validateCommitHash(commit); err != nil {
 			return llb.State{}, "", fmt.Errorf("invalid source commit: %w", err)
 		}
@@ -717,18 +734,18 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildCon
 		}
 		ref = commit
 		log.Infof("Cloning source from binary VCS metadata %s @ %s", repoURL, ref)
-	} else {
+	default:
 		tag := ""
 		if rebuildCtx != nil {
 			tag = extractImageTag(rebuildCtx.ImageRef)
 		}
-		if tag == "" {
+		if tag == "" || !looksLikeSemverTag(tag) {
 			if repoURL != "" {
 				log.Warnf("No commit/tag specified for %s - skipping clone", repoURL)
 			}
 			return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
 		}
-		if err := validateShellSafe(tag, "image tag"); err != nil {
+		if err := validateShellSafeStrict(tag, "image tag"); err != nil {
 			return llb.State{}, "", fmt.Errorf("invalid image tag for source clone: %w", err)
 		}
 		if repoURL == "" {
