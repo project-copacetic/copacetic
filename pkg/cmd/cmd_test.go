@@ -19,13 +19,13 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			name:                  "FAIL: No flags provided",
 			args:                  []string{},
 			expectValidationError: true,
-			expectedErrorContains: "either --config or --image must be provided",
+			expectedErrorContains: "one of --image, --config, or --chart must be provided",
 		},
 		{
 			name:                  "FAIL: Conflicting flags (--config and --image)",
 			args:                  []string{"--config", "config.yaml", "--image", "alpine"},
 			expectValidationError: true,
-			expectedErrorContains: "--config cannot be used with --image or --tag",
+			expectedErrorContains: "--image, --config, and --chart are mutually exclusive",
 		},
 		{
 			name:                  "PASS: Single image mode validation",
