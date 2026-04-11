@@ -254,6 +254,12 @@ func TestParseImageRef(t *testing.T) {
 			wantTag:  "v1.7.0",
 		},
 		{
+			name:     "digest pinned image",
+			imageRef: "nginx@sha256:abc123",
+			wantRepo: "nginx",
+			wantTag:  "latest",
+		},
+		{
 			name:     "empty string returns empty",
 			imageRef: "",
 			wantRepo: "",

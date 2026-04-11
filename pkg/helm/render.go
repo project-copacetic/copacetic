@@ -119,6 +119,10 @@ func parseImageRef(imageRef string) (repo, tag string) {
 		return "", ""
 	}
 
+	if digestIndex := strings.Index(imageRef, "@sha256:"); digestIndex != -1 {
+		imageRef = imageRef[:digestIndex]
+	}
+
 	// Find the last colon to split repo from tag.
 	// Handle registry ports: "registry:5000/image" vs "image:tag".
 	// Strategy: the last colon that is NOT followed by a slash is the tag separator.

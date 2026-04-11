@@ -1,6 +1,7 @@
 package bulk
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -177,30 +178,21 @@ func TestResolveChiselRelease(t *testing.T) {
 		imageRelease   string
 		expected       string
 	}{
-		{
-			name: "both omitted use inference",
-		},
-		{
-			name:           "bulk default",
-			defaultRelease: "ubuntu-24.04",
-			expected:       "ubuntu-24.04",
-		},
-		{
-			name:         "image release without default",
-			imageRelease: "/releases/ubuntu-24.04",
-			expected:     "/releases/ubuntu-24.04",
-		},
-		{
-			name:           "image release overrides bulk default",
-			defaultRelease: "ubuntu-24.04",
-			imageRelease:   "https://example.com/releases.git#abc123",
-			expected:       "https://example.com/releases.git#abc123",
-		},
+		{name: "both omitted use inference"},
+		{name: "bulk default", defaultRelease: "ubuntu-24.04", expected: "ubuntu-24.04"},
+		{name: "image release without default", imageRelease: "/releases/ubuntu-24.04", expected: "/releases/ubuntu-24.04"},
+		{name: "image release overrides bulk default", defaultRelease: "ubuntu-24.04", imageRelease: "https://example.com/releases.git#abc123", expected: "https://example.com/releases.git#abc123"},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, resolveChiselRelease(tt.defaultRelease, tt.imageRelease))
 		})
 	}
+}
+
+func TestResolveChartImagesWithCharts_RespectsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := resolveChartImagesWithCharts(ctx, []ChartSpec{{Name: "chart", Version: "1.0.0", Repository: "oci://example.com/charts"}}, nil)
+	require.ErrorIs(t, err, context.Canceled)
 }
