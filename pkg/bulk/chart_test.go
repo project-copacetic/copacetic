@@ -14,6 +14,16 @@ import (
 	helmregistry "helm.sh/helm/v3/pkg/registry"
 )
 
+const testRedisManifest = `
+apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - image: redis:7.0
+`
+
 func TestValidateChartOpts(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -92,15 +102,7 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 		}, nil
 	}
 	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
-		return `
-apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-        - image: redis:7.0
-`, nil
+		return testRedisManifest, nil
 	}
 
 	var patchedImages []string
@@ -280,15 +282,7 @@ func TestPatchChart_PatchFailure_StopsWithoutIgnoreErrors(t *testing.T) {
 		}, nil
 	}
 	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
-		return `
-apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-        - image: redis:7.0
-`, nil
+		return testRedisManifest, nil
 	}
 
 	patchImage = func(_ context.Context, _ *types.Options) error {
@@ -324,15 +318,7 @@ func TestPatchChart_PatchFailure_ContinuesWithIgnoreErrors(t *testing.T) {
 		}, nil
 	}
 	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
-		return `
-apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-        - image: redis:7.0
-`, nil
+		return testRedisManifest, nil
 	}
 
 	patchImage = func(_ context.Context, _ *types.Options) error {
