@@ -96,8 +96,8 @@ func findRepositoryPaths(values map[string]interface{}, prefix string) []reposit
 			currentPath = prefix + "." + key
 		}
 
-		switch v := val.(type) {
-		case map[string]interface{}:
+		v, ok := val.(map[string]interface{})
+		if ok {
 			// Check if this map has a "repository" string key
 			if repoVal, ok := v["repository"]; ok {
 				if repoStr, ok := repoVal.(string); ok && repoStr != "" {

@@ -158,16 +158,18 @@ func chartImagesToSpecs(images []helm.ChartImage) []ImageSpec {
 	return specs
 }
 
-func mergeImageSpecs(config PatchConfig, chartImages []ImageSpec) PatchConfig {
+func mergeImageSpecs(config *PatchConfig, chartImages []ImageSpec) PatchConfig {
 	explicitRefs := make(map[string]struct{}, len(config.Images))
-	for _, img := range config.Images {
+	for i := range config.Images {
+		img := config.Images[i]
 		explicitRefs[img.Image] = struct{}{}
 	}
 
 	merged := make([]ImageSpec, len(config.Images))
 	copy(merged, config.Images)
 
-	for _, chartImg := range chartImages {
+	for i := range chartImages {
+		chartImg := chartImages[i]
 		if _, exists := explicitRefs[chartImg.Image]; exists {
 			log.Debugf("Skipping chart-discovered image '%s': overridden by explicit image spec", chartImg.Image)
 			continue
@@ -187,7 +189,7 @@ func mergeImageSpecs(config PatchConfig, chartImages []ImageSpec) PatchConfig {
 	}
 }
 
-func filterMappingsForChart(res chartResolution, mappings []ChartImageMapping) []ChartImageMapping {
+func filterMappingsForChart(res *chartResolution, mappings []ChartImageMapping) []ChartImageMapping {
 	type repoTag struct{ repo, tag string }
 	chartImages := make(map[repoTag]bool)
 	for _, img := range res.Images {
@@ -224,7 +226,7 @@ func toHelmImageMappings(mappings []ChartImageMapping) []helm.ImageMapping {
 	return result
 }
 
-func generateAndPushPatchedCharts(resolutions []chartResolution, mappings []ChartImageMapping, config PatchConfig) error {
+func generateAndPushPatchedCharts(resolutions []chartResolution, mappings []ChartImageMapping, config *PatchConfig) error {
 	if config.ChartTarget == nil || config.ChartTarget.Registry == "" {
 		return nil
 	}
@@ -238,7 +240,8 @@ func generateAndPushPatchedCharts(resolutions []chartResolution, mappings []Char
 
 	var errs *multierror.Error
 
-	for _, res := range resolutions {
+	for i := range resolutions {
+		res := &resolutions[i]
 		chartMappings := filterMappingsForChart(res, mappings)
 		if len(chartMappings) == 0 {
 			log.Infof("No successfully patched images for chart '%s', skipping chart generation", res.Spec.Name)
@@ -328,7 +331,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 		if err != nil {
 			return fmt.Errorf("failed to resolve chart images: %w", err)
 		}
-		config = mergeImageSpecs(config, chartImages)
+		config = mergeImageSpecs(&config, chartImages)
 	}
 
 	log.Debug("Discovering all tags to calculate total job count...")
@@ -523,7 +526,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	printSummary(results)
 
 	if config.ChartTarget != nil && len(chartResolutions) > 0 {
-		if err := generateAndPushPatchedCharts(chartResolutions, imageMappings, config); err != nil {
+		if err := generateAndPushPatchedCharts(chartResolutions, imageMappings, &config); err != nil {
 			log.Errorf("Failed to generate/push patched charts: %v", err)
 			multiErr = multierror.Append(multiErr, err)
 		}
