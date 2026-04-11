@@ -862,6 +862,43 @@ func TestCloneSourceCodeFallbackChain(t *testing.T) {
 			rebuildCtx: &RebuildContext{ImageRef: "prometheus:latest"},
 			wantError:  true,
 		},
+		{
+			name: "uses OCI source label when no VCS commit",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/VictoriaMetrics/VictoriaLogs",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "victoriametrics/victoria-logs:v1.45.0",
+				ImageSourceLabel: "https://github.com/VictoriaMetrics/VictoriaMetrics",
+			},
+			wantRepo: "github.com/VictoriaMetrics/VictoriaMetrics",
+			wantRef:  "v1.45.0",
+		},
+		{
+			name: "OCI label without semver tag fails",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/example/repo",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "example/repo:latest",
+				ImageSourceLabel: "https://github.com/example/repo",
+			},
+			wantError: true,
+		},
+		{
+			name: "OCI label with non-github URL rejected",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "gitlab.com/example/repo",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "example/repo:v1.0.0",
+				ImageSourceLabel: "https://gitlab.com/example/repo",
+			},
+			wantError: true,
+		},
 	}
 
 	for _, tt := range tests {

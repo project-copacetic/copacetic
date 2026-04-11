@@ -734,7 +734,31 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildCon
 		}
 		ref = commit
 		log.Infof("Cloning source from binary VCS metadata %s @ %s", repoURL, ref)
+	case rebuildCtx != nil && rebuildCtx.ImageSourceLabel != "":
+		// Step 3: OCI label org.opencontainers.image.source provides the source repo.
+		// Combine with image tag as the git ref.
+		labelURL := rebuildCtx.ImageSourceLabel
+		if !strings.HasPrefix(labelURL, "https://github.com/") {
+			return llb.State{}, "", fmt.Errorf("OCI source label URL not on github.com: %s", labelURL)
+		}
+		if err := validateRepoURL(labelURL); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid OCI source label URL: %w", err)
+		}
+		tag := ""
+		if rebuildCtx.ImageRef != "" {
+			tag = extractImageTag(rebuildCtx.ImageRef)
+		}
+		if tag == "" || !looksLikeSemverTag(tag) {
+			return llb.State{}, "", fmt.Errorf("OCI source label found (%s) but image has no semver tag for git ref", labelURL)
+		}
+		if err := validateShellSafeStrict(tag, "image tag"); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid image tag: %w", err)
+		}
+		repoURL = labelURL
+		ref = tag
+		log.Infof("Using OCI source label %s @ %s (from org.opencontainers.image.source)", repoURL, ref)
 	default:
+		// Step 4: Image tag heuristic — derive repo from module path, use image tag as ref.
 		tag := ""
 		if rebuildCtx != nil {
 			tag = extractImageTag(rebuildCtx.ImageRef)
@@ -771,7 +795,6 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildCon
 	}
 
 	log.Debugf("Cloning source from %s @ %s", repoURL, commit)
-
 
 	gitRef := repoURL
 	if !strings.HasSuffix(gitRef, ".git") {

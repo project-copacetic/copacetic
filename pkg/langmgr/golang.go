@@ -2,6 +2,7 @@ package langmgr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -695,12 +696,13 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 		// Create rebuild context for this binary
 		rebuildCtx := &provenance.RebuildContext{
-			Strategy:    provenance.RebuildStrategyHeuristic,
-			BuildInfo:   buildInfo,
-			BinaryInfo:  []*provenance.BinaryInfo{binaryInfo},
-			ImageLabels: gm.config.ImageLabels,
-			ImageRef:    gm.imageRef,
-			GoVCSURL:    gm.goVCSURL,
+			Strategy:         provenance.RebuildStrategyHeuristic,
+			BuildInfo:        buildInfo,
+			BinaryInfo:       []*provenance.BinaryInfo{binaryInfo},
+			ImageLabels:      gm.config.ImageLabels,
+			ImageRef:         gm.imageRef,
+			GoVCSURL:         gm.goVCSURL,
+			ImageSourceLabel: extractOCISourceLabel(gm.config),
 		}
 
 		// Attempt to rebuild this binary and merge into current state
@@ -956,4 +958,28 @@ func (gm *golangManager) upgradePackagesWithTooling(
 	log.Warn("Note: Go binaries are not automatically rebuilt in tooling container strategy. Updated go.mod/go.sum only.")
 
 	return &state, failedPackages, nil
+}
+
+// extractOCISourceLabel reads org.opencontainers.image.source from the image's OCI config labels.
+// Returns empty string if the label is not present or the config can't be parsed.
+func extractOCISourceLabel(config *buildkit.Config) string {
+	if config == nil || len(config.ConfigData) == 0 {
+		return ""
+	}
+
+	var imageConfig struct {
+		Config struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(config.ConfigData, &imageConfig); err != nil {
+		log.Debugf("Could not parse image config for OCI labels: %v", err)
+		return ""
+	}
+
+	source := imageConfig.Config.Labels["org.opencontainers.image.source"]
+	if source != "" {
+		log.Debugf("Found OCI label org.opencontainers.image.source: %s", source)
+	}
+	return source
 }
