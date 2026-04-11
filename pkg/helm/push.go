@@ -11,9 +11,7 @@ import (
 
 // SaveChart packages a chart to a .tgz archive in the given directory.
 // It is a function variable to allow test injection.
-var SaveChart = func(ch *helmchart.Chart, outDir string) (string, error) {
-	return chartutil.Save(ch, outDir)
-}
+var SaveChart = chartutil.Save
 
 // PushChart pushes a packaged chart (.tgz bytes) to an OCI registry.
 // The ref must be a full OCI reference (e.g., "oci://ghcr.io/myorg/charts/myapp:1.0.0").

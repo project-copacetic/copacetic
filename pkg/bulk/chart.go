@@ -12,9 +12,7 @@ import (
 
 // patchImage is the function used to patch a single image. It defaults to patch.Patch
 // and can be overridden in tests.
-var patchImage = func(ctx context.Context, opts *types.Options) error {
-	return patch.Patch(ctx, opts)
-}
+var patchImage = patch.Patch
 
 // imageRef holds a computed original→patched image reference pair.
 type imageRef struct {
@@ -125,7 +123,7 @@ func PatchChart(ctx context.Context, opts *types.Options) error {
 	config := PatchConfig{
 		ChartTarget: &ChartTargetSpec{Registry: opts.ChartRegistry},
 	}
-	if err := generateAndPushPatchedCharts(resolutions, mappings, config); err != nil {
+	if err := generateAndPushPatchedCharts(resolutions, mappings, &config); err != nil {
 		return fmt.Errorf("failed to generate/push patched chart: %w", err)
 	}
 

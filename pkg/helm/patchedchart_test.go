@@ -252,14 +252,30 @@ func TestBuildPatchedChart_MultipleImages(t *testing.T) {
 	ch, err := BuildPatchedChart(original, spec, mappings, valuePaths)
 	require.NoError(t, err)
 
-	appVals, ok := ch.Values["myapp"].(map[string]interface{})
+	appValsAny, ok := ch.Values["myapp"]
+	require.True(t, ok)
+	appVals, ok := appValsAny.(map[string]interface{})
 	require.True(t, ok)
 
-	webImage := appVals["web"].(map[string]interface{})["image"].(map[string]interface{})
+	webValsAny, ok := appVals["web"]
+	require.True(t, ok)
+	webVals, ok := webValsAny.(map[string]interface{})
+	require.True(t, ok)
+	webImageAny, ok := webVals["image"]
+	require.True(t, ok)
+	webImage, ok := webImageAny.(map[string]interface{})
+	require.True(t, ok)
 	assert.Equal(t, "ghcr.io/org/nginx", webImage["repository"])
 	assert.Equal(t, "1.25.0-patched", webImage["tag"])
 
-	cacheImage := appVals["cache"].(map[string]interface{})["image"].(map[string]interface{})
+	cacheValsAny, ok := appVals["cache"]
+	require.True(t, ok)
+	cacheVals, ok := cacheValsAny.(map[string]interface{})
+	require.True(t, ok)
+	cacheImageAny, ok := cacheVals["image"]
+	require.True(t, ok)
+	cacheImage, ok := cacheImageAny.(map[string]interface{})
+	require.True(t, ok)
 	assert.Equal(t, "ghcr.io/org/redis", cacheImage["repository"])
 	assert.Equal(t, "7.2.0-patched", cacheImage["tag"])
 }
