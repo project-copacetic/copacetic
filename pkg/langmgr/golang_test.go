@@ -563,7 +563,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			managers := GetLanguageManagers(config, workingFolder, tt.manifest, "")
+			managers := GetLanguageManagers(config, workingFolder, tt.manifest, "", "", "")
 			assert.Len(t, managers, tt.expectedCount, "Expected %d managers, got %d", tt.expectedCount, len(managers))
 
 			var hasGoMgr, hasPythonMgr, hasNodeMgr bool
@@ -591,7 +591,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
 			},
 		}
-		managers := GetLanguageManagers(config, workingFolder, manifest, "minor")
+		managers := GetLanguageManagers(config, workingFolder, manifest, "minor", "", "")
 		require.Len(t, managers, 1)
 		goMgr, ok := managers[0].(*golangManager)
 		require.True(t, ok, "Expected golangManager")
@@ -604,7 +604,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
 			},
 		}
-		managers := GetLanguageManagers(config, workingFolder, manifest, "")
+		managers := GetLanguageManagers(config, workingFolder, manifest, "", "", "")
 		require.Len(t, managers, 1)
 		goMgr, ok := managers[0].(*golangManager)
 		require.True(t, ok, "Expected golangManager")

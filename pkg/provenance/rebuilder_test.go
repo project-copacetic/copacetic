@@ -1,6 +1,8 @@
 package provenance
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -559,6 +561,36 @@ func TestDeriveRepoFromModulePath(t *testing.T) {
 			wantSubpath: "",
 		},
 		{
+			modulePath:  "cloud.google.com/go/storage",
+			wantRepoURL: "https://github.com/googleapis/google-cloud-go",
+			wantSubpath: "storage",
+		},
+		{
+			modulePath:  "go.uber.org/zap",
+			wantRepoURL: "https://github.com/uber-go/zap",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "go.etcd.io/etcd/client/v3",
+			wantRepoURL: "https://github.com/etcd-io/etcd",
+			wantSubpath: "client/v3",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/otel/exporters/otlp",
+			wantRepoURL: "https://github.com/open-telemetry/otel",
+			wantSubpath: "exporters/otlp",
+		},
+		{
+			modulePath:  "google.golang.org/grpc",
+			wantRepoURL: "https://github.com/grpc/grpc-go",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "google.golang.org/protobuf/encoding/protojson",
+			wantRepoURL: "https://github.com/protocolbuffers/protobuf-go",
+			wantSubpath: "encoding/protojson",
+		},
+		{
 			modulePath:  "",
 			wantRepoURL: "",
 			wantSubpath: "",
@@ -707,5 +739,141 @@ func TestIsSafeOCISource(t *testing.T) {
 	for input, want := range cases {
 		got := isSafeOCISource(input)
 		assert.Equal(t, want, got, "input=%q", input)
+	}
+}
+
+func TestExtractImageTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		imageRef string
+		want     string
+	}{
+		{name: "tagged image", imageRef: "prometheus:v3.9.1", want: "v3.9.1"},
+		{name: "registry with port", imageRef: "localhost:5000/prometheus:v3.9.1", want: "v3.9.1"},
+		{name: "digest only", imageRef: "ghcr.io/org/repo@sha256:abc", want: ""},
+		{name: "tag and digest", imageRef: "ghcr.io/org/repo:v1.2.3@sha256:abc", want: "v1.2.3"},
+		{name: "no tag", imageRef: "ghcr.io/org/repo", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractImageTag(tt.imageRef))
+		})
+	}
+}
+
+func TestParseGoVCSURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantRepo  string
+		wantRef   string
+		wantError bool
+	}{
+		{name: "tag ref", input: "https://github.com/org/repo@v1.2.3", wantRepo: "https://github.com/org/repo", wantRef: "v1.2.3"},
+		{name: "commit ref", input: "https://github.com/org/repo@d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d", wantRepo: "https://github.com/org/repo", wantRef: "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d"},
+		{name: "missing ref", input: "https://github.com/org/repo@", wantError: true},
+		{name: "missing separator", input: "https://github.com/org/repo", wantError: true},
+		{name: "untrusted host", input: "https://gitlab.com/org/repo@v1.0.0", wantError: true},
+		{name: "unsafe ref", input: "https://github.com/org/repo@v1.0.0;rm", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, ref, err := parseGoVCSURL(tt.input)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRepo, repo)
+			assert.Equal(t, tt.wantRef, ref)
+		})
+	}
+}
+
+func TestCloneSourceCodeFallbackChain(t *testing.T) {
+	rebuilder := NewRebuilder()
+
+	tests := []struct {
+		name        string
+		buildInfo   *BuildInfo
+		rebuildCtx  *RebuildContext
+		wantRef     string
+		wantRepo    string
+		wantSubpath string
+		wantError   bool
+	}{
+		{
+			name: "go-vcs-url override has highest priority",
+			buildInfo: &BuildInfo{
+				BuildArgs: map[string]string{
+					"_sourceRepo":   "https://github.com/source/repo",
+					"_sourceCommit": "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+				},
+				ModulePath: "github.com/source/repo/cmd/app",
+			},
+			rebuildCtx:  &RebuildContext{GoVCSURL: "https://github.com/override/repo@v1.2.3"},
+			wantRepo:    "https://github.com/override/repo",
+			wantRef:     "v1.2.3",
+			wantSubpath: "cmd/app",
+		},
+		{
+			name: "binary vcs commit is used when override absent",
+			buildInfo: &BuildInfo{
+				BuildArgs: map[string]string{
+					"_sourceRepo":   "https://github.com/source/repo",
+					"_sourceCommit": "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+				},
+				ModulePath: "github.com/source/repo/cmd/app",
+			},
+			rebuildCtx:  &RebuildContext{ImageRef: "repo:v9.9.9"},
+			wantRepo:    "https://github.com/source/repo",
+			wantRef:     "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+			wantSubpath: "cmd/app",
+		},
+		{
+			name: "image tag fallback when commit missing",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus/cmd/prometheus",
+				GoVersion:  "1.22",
+			},
+			rebuildCtx:  &RebuildContext{ImageRef: "prometheus:v3.9.1"},
+			wantRepo:    "https://github.com/prometheus/prometheus",
+			wantRef:     "v3.9.1",
+			wantSubpath: "cmd/prometheus",
+		},
+		{
+			name: "fails when no ref sources available",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus",
+			},
+			rebuildCtx: &RebuildContext{ImageRef: "prometheus"},
+			wantError:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state, subpath, err := rebuilder.cloneSourceCode(tt.buildInfo, tt.rebuildCtx)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSubpath, subpath)
+
+			def, marshalErr := state.Marshal(context.Background())
+			require.NoError(t, marshalErr)
+			blob := strings.Builder{}
+			for _, dt := range def.Def {
+				blob.Write(dt)
+			}
+			assert.Contains(t, blob.String(), tt.wantRepo)
+			assert.Contains(t, blob.String(), tt.wantRef)
+		})
 	}
 }

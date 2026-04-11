@@ -367,7 +367,7 @@ func (r *Rebuilder) RebuildBinary(
 	log.Debugf("Using base image: %s", baseImage)
 
 	// Build the new binary with updated dependencies (outputs to /output/<name>)
-	buildState, err := r.buildBinaryWithUpdates(baseImage, buildInfo, updates, platform, outputPath, rebuildCtx.ImageLabels)
+	buildState, err := r.buildBinaryWithUpdates(baseImage, rebuildCtx, buildInfo, updates, platform, outputPath)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to rebuild binary %s (module: %s, Go: %s): %w",
 			binaryPath, buildInfo.ModulePath, buildInfo.GoVersion, err)
@@ -520,6 +520,64 @@ func deriveRepoFromModulePath(modulePath string) (repoURL string, subpath string
 		}
 	}
 
+	if strings.HasPrefix(modulePath, "cloud.google.com/go/") || modulePath == "cloud.google.com/go" {
+		parts := strings.Split(modulePath, "/")
+		repoURL = "https://github.com/googleapis/google-cloud-go"
+		if len(parts) > 2 {
+			subpath = strings.Join(parts[2:], "/")
+		}
+		return repoURL, subpath
+	}
+
+	if strings.HasPrefix(modulePath, "go.uber.org/") {
+		parts := strings.SplitN(modulePath, "/", 3)
+		if len(parts) >= 2 {
+			repoURL = fmt.Sprintf("https://github.com/uber-go/%s", parts[1])
+			if len(parts) >= 3 {
+				subpath = parts[2]
+			}
+			return repoURL, subpath
+		}
+	}
+
+	if strings.HasPrefix(modulePath, "go.etcd.io/") {
+		parts := strings.SplitN(modulePath, "/", 3)
+		if len(parts) >= 2 {
+			repoURL = fmt.Sprintf("https://github.com/etcd-io/%s", parts[1])
+			if len(parts) >= 3 {
+				subpath = parts[2]
+			}
+			return repoURL, subpath
+		}
+	}
+
+	if strings.HasPrefix(modulePath, "go.opentelemetry.io/") {
+		parts := strings.SplitN(modulePath, "/", 3)
+		if len(parts) >= 2 {
+			repoURL = fmt.Sprintf("https://github.com/open-telemetry/%s", parts[1])
+			if len(parts) >= 3 {
+				subpath = parts[2]
+			}
+			return repoURL, subpath
+		}
+	}
+
+	if modulePath == "google.golang.org/grpc" || strings.HasPrefix(modulePath, "google.golang.org/grpc/") {
+		repoURL = "https://github.com/grpc/grpc-go"
+		if modulePath != "google.golang.org/grpc" {
+			subpath = strings.TrimPrefix(modulePath, "google.golang.org/grpc/")
+		}
+		return repoURL, subpath
+	}
+
+	if modulePath == "google.golang.org/protobuf" || strings.HasPrefix(modulePath, "google.golang.org/protobuf/") {
+		repoURL = "https://github.com/protocolbuffers/protobuf-go"
+		if modulePath != "google.golang.org/protobuf" {
+			subpath = strings.TrimPrefix(modulePath, "google.golang.org/protobuf/")
+		}
+		return repoURL, subpath
+	}
+
 	return "", ""
 }
 
@@ -574,38 +632,116 @@ func validateCommitHash(commit string) error {
 	return nil
 }
 
+func extractImageTag(imageRef string) string {
+	imageRef = strings.TrimSpace(imageRef)
+	if imageRef == "" {
+		return ""
+	}
+	if i := strings.Index(imageRef, "@"); i >= 0 {
+		imageRef = imageRef[:i]
+	}
+	lastSlash := strings.LastIndex(imageRef, "/")
+	lastColon := strings.LastIndex(imageRef, ":")
+	if lastColon <= lastSlash {
+		return ""
+	}
+	return imageRef[lastColon+1:]
+}
+
+func parseGoVCSURL(goVCSURL string) (string, string, error) {
+	if goVCSURL == "" {
+		return "", "", fmt.Errorf("go-vcs-url is empty")
+	}
+	i := strings.LastIndex(goVCSURL, "@")
+	if i <= 0 || i >= len(goVCSURL)-1 {
+		return "", "", fmt.Errorf("invalid go-vcs-url format, expected repo@ref")
+	}
+	repoURL := goVCSURL[:i]
+	ref := goVCSURL[i+1:]
+	if err := validateRepoURL(repoURL); err != nil {
+		return "", "", err
+	}
+	if err := validateShellSafe(ref, "go-vcs-url ref"); err != nil {
+		return "", "", err
+	}
+	return repoURL, ref, nil
+}
+
 // cloneSourceCode clones the source repository using BuildKit Git LLB.
-func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, error) {
+func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildContext) (llb.State, string, error) {
 	repoURL := buildInfo.BuildArgs["_sourceRepo"]
 	commit := buildInfo.BuildArgs["_sourceCommit"]
 	subpath := ""
+	ref := ""
 
-	// Without a specific commit/tag, don't attempt to clone
-	if commit == "" {
-		if repoURL != "" {
-			log.Warnf("No commit/tag specified for %s - skipping clone", repoURL)
+	var overrideRepoURL, overrideRef string
+	if rebuildCtx != nil && rebuildCtx.GoVCSURL != "" {
+		var err error
+		overrideRepoURL, overrideRef, err = parseGoVCSURL(rebuildCtx.GoVCSURL)
+		if err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid go-vcs-url override: %w", err)
 		}
-		return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
 	}
 
-	// Validate commit hash format to prevent injection via crafted binary metadata
-	if err := validateCommitHash(commit); err != nil {
-		return llb.State{}, "", fmt.Errorf("invalid source commit: %w", err)
-	}
-
-	// Always derive subpath from module path. For monorepo modules (e.g., k8s.io/autoscaler/cluster-autoscaler),
-	// the module root lives in a subdirectory of the repository and we need subpath to set the correct workdir.
+	derivedURL := ""
+	derivedSubpath := ""
 	if buildInfo.ModulePath != "" {
-		derivedURL, derivedSubpath := deriveRepoFromModulePath(buildInfo.ModulePath)
-		if repoURL == "" {
-			repoURL = derivedURL
-		}
+		derivedURL, derivedSubpath = deriveRepoFromModulePath(buildInfo.ModulePath)
 		// Strip Go major version suffixes (v2, v3, ...) since these are module path
 		// conventions, not actual subdirectories in most repositories.
 		subpath = stripGoMajorVersionSuffix(derivedSubpath)
 		if derivedURL != "" {
 			log.Debugf("Derived source repository from module path: %s (subpath: %q)", derivedURL, subpath)
 		}
+	}
+
+	if overrideRepoURL != "" {
+		repoURL = overrideRepoURL
+		ref = overrideRef
+		if err := validateRepoURL(repoURL); err != nil {
+			return llb.State{}, "", err
+		}
+		log.Infof("Using --go-vcs-url override: %s @ %s", repoURL, ref)
+	} else if commit != "" {
+		if err := validateCommitHash(commit); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid source commit: %w", err)
+		}
+		if repoURL == "" {
+			repoURL = derivedURL
+		}
+		if repoURL == "" {
+			return llb.State{}, "", fmt.Errorf("no source repository URL in build info")
+		}
+		if err := validateRepoURL(repoURL); err != nil {
+			return llb.State{}, "", err
+		}
+		ref = commit
+		log.Infof("Cloning source from binary VCS metadata %s @ %s", repoURL, ref)
+	} else {
+		tag := ""
+		if rebuildCtx != nil {
+			tag = extractImageTag(rebuildCtx.ImageRef)
+		}
+		if tag == "" {
+			if repoURL != "" {
+				log.Warnf("No commit/tag specified for %s - skipping clone", repoURL)
+			}
+			return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
+		}
+		if err := validateShellSafe(tag, "image tag"); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid image tag for source clone: %w", err)
+		}
+		if repoURL == "" {
+			repoURL = derivedURL
+		}
+		if repoURL == "" {
+			return llb.State{}, "", fmt.Errorf("no source repository URL in build info")
+		}
+		if err := validateRepoURL(repoURL); err != nil {
+			return llb.State{}, "", err
+		}
+		ref = tag
+		log.Infof("Cloning source using image tag fallback %s @ %s", repoURL, ref)
 	}
 
 	if repoURL == "" {
@@ -619,15 +755,16 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 
 	log.Debugf("Cloning source from %s @ %s", repoURL, commit)
 
+
 	gitRef := repoURL
 	if !strings.HasSuffix(gitRef, ".git") {
 		gitRef += ".git"
 	}
-	if commit != "" {
-		gitRef += "#" + commit
+	if ref != "" {
+		gitRef += "#" + ref
 	}
 
-	gitState := llb.Git(gitRef, commit, llb.KeepGitDir())
+	gitState := llb.Git(gitRef, ref, llb.KeepGitDir())
 	log.Debugf("Created Git LLB state for %s", gitRef)
 	return gitState, subpath, nil
 }
@@ -654,6 +791,7 @@ done
 // buildBinaryWithUpdates creates a BuildKit LLB state that rebuilds the binary.
 func (r *Rebuilder) buildBinaryWithUpdates(
 	baseImage string,
+	rebuildCtx *RebuildContext,
 	buildInfo *BuildInfo,
 	updates map[string]string,
 	platform *specs.Platform,
@@ -678,7 +816,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 
 	// Try to clone source code from Git
 	sourceCloned := false
-	sourceState, subpath, err := r.cloneSourceCode(buildInfo)
+	sourceState, subpath, err := r.cloneSourceCode(buildInfo, rebuildCtx)
 	if err == nil {
 		state = state.File(
 			llb.Copy(sourceState, "/", workdir, &llb.CopyInfo{

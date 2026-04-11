@@ -66,6 +66,8 @@ type RebuildContext struct {
 	BinaryInfo []*BinaryInfo
 	// ImageLabels contains OCI image labels for version metadata fallback.
 	ImageLabels map[string]string
+	ImageRef    string
+	GoVCSURL    string
 }
 
 // RebuildResult contains the outcome of a rebuild attempt.
