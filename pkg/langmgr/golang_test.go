@@ -786,56 +786,84 @@ func TestRebuildFailureSliceFormat(t *testing.T) {
 		"rebuildFailure slice must format identically to the old []string representation")
 }
 
+func TestCollectGoBinaryPaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates unversioned.LangUpdatePackages
+		want    []string
+	}{
+		{
+			name: "extracts paths from gobinary including stdlib",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary},
+				{Name: "golang.org/x/crypto", PkgPath: "manager", Type: utils.GoBinary},
+			},
+			want: []string{"manager"},
+		},
+		{
+			name: "multiple binary paths",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/crypto", PkgPath: "bin/consul", Type: utils.GoBinary},
+				{Name: "golang.org/x/net", PkgPath: "bin/consul-agent", Type: utils.GoBinary},
+			},
+			want: []string{"bin/consul", "bin/consul-agent"},
+		},
+		{
+			name:    "skips non-gobinary types",
+			updates: unversioned.LangUpdatePackages{{Name: "flask", PkgPath: "app/requirements.txt", Type: "pip"}},
+			want:    nil,
+		},
+		{
+			name:    "empty updates",
+			updates: unversioned.LangUpdatePackages{},
+			want:    nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := collectGoBinaryPaths(tt.updates)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
 func TestBuildSyntheticBinaryInfo(t *testing.T) {
 	tests := []struct {
 		name      string
-		updates   unversioned.LangUpdatePackages
+		paths     []string
 		goVCSURL  string
 		wantCount int
 		wantPaths []string
 		wantMod   string
 	}{
 		{
-			name: "single binary from Trivy report",
-			updates: unversioned.LangUpdatePackages{
-				{Name: "golang.org/x/crypto", PkgPath: "manager", Type: "gobinary"},
-				{Name: "golang.org/x/net", PkgPath: "manager", Type: "gobinary"},
-			},
+			name:      "single binary path",
+			paths:     []string{"manager"},
 			goVCSURL:  "https://github.com/grafana/grafana-operator@v5.22.0",
 			wantCount: 1,
 			wantPaths: []string{"/manager"},
 			wantMod:   "github.com/grafana/grafana-operator",
 		},
 		{
-			name: "multiple binaries with different paths",
-			updates: unversioned.LangUpdatePackages{
-				{Name: "golang.org/x/crypto", PkgPath: "bin/consul", Type: "gobinary"},
-				{Name: "golang.org/x/net", PkgPath: "bin/consul-agent", Type: "gobinary"},
-			},
+			name:      "multiple paths",
+			paths:     []string{"bin/consul", "bin/consul-agent"},
 			goVCSURL:  "https://github.com/hashicorp/consul@v1.22.4",
 			wantCount: 2,
 			wantPaths: []string{"/bin/consul", "/bin/consul-agent"},
 			wantMod:   "github.com/hashicorp/consul",
 		},
 		{
-			name: "path already has leading slash",
-			updates: unversioned.LangUpdatePackages{
-				{Name: "golang.org/x/crypto", PkgPath: "/usr/local/bin/app", Type: "gobinary"},
-			},
+			name:      "path already has leading slash",
+			paths:     []string{"/usr/local/bin/app"},
 			goVCSURL:  "https://github.com/example/app@v1.0.0",
 			wantCount: 1,
 			wantPaths: []string{"/usr/local/bin/app"},
 			wantMod:   "github.com/example/app",
 		},
 		{
-			name:      "no PkgPath in updates",
-			updates:   unversioned.LangUpdatePackages{{Name: "golang.org/x/crypto", Type: "gobinary"}},
-			goVCSURL:  "https://github.com/example/app@v1.0.0",
-			wantCount: 0,
-		},
-		{
-			name:      "empty updates",
-			updates:   unversioned.LangUpdatePackages{},
+			name:      "empty paths",
+			paths:     []string{},
 			goVCSURL:  "https://github.com/example/app@v1.0.0",
 			wantCount: 0,
 		},
@@ -843,7 +871,7 @@ func TestBuildSyntheticBinaryInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildSyntheticBinaryInfo(tt.updates, tt.goVCSURL)
+			result := buildSyntheticBinaryInfo(tt.paths, tt.goVCSURL)
 			assert.Len(t, result, tt.wantCount)
 
 			for i, wantPath := range tt.wantPaths {

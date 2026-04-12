@@ -42,6 +42,7 @@ type golangManager struct {
 	toolchainPatchLevel string
 	goVCSURL            string
 	imageRef            string
+	goBinaryPaths       []string // binary paths from all gobinary updates (including stdlib)
 }
 
 // validateGoPackageName validates a Go module name for safety and correctness.
@@ -184,6 +185,10 @@ func (gm *golangManager) InstallUpdates(
 	// Filter for Go packages only
 	goUpdates, stdlibFixedVersion := filterGoPackages(manifest.LangUpdates)
 	hasStdlib := stdlibFixedVersion != ""
+
+	// Collect binary paths from ALL gobinary updates (including stdlib) for
+	// the synthetic binary fallback on distroless images where detection fails.
+	gm.goBinaryPaths = collectGoBinaryPaths(manifest.LangUpdates)
 
 	// Only act on stdlib vulns if user explicitly opted in via --toolchain-patch-level
 	if hasStdlib && gm.toolchainPatchLevel == "" {
@@ -532,21 +537,30 @@ func (f rebuildFailure) String() string {
 	return fmt.Sprintf("%s: %s", f.binaryPath, f.reason)
 }
 
-// buildSyntheticBinaryInfo constructs BinaryInfo entries from Trivy report data
-// when go version -m detection fails (e.g., distroless/scratch images without a shell).
-// Binary paths come from UpdatePackage.PkgPath, which Trivy sets from the gobinary
-// scan result's Target field.
-func buildSyntheticBinaryInfo(updates unversioned.LangUpdatePackages, goVCSURL string) []*provenance.BinaryInfo {
+// collectGoBinaryPaths extracts unique binary paths from all gobinary updates,
+// including stdlib entries that filterGoPackages strips out. These paths are needed
+// for the synthetic binary fallback when go version -m detection fails.
+func collectGoBinaryPaths(langUpdates unversioned.LangUpdatePackages) []string {
 	seen := make(map[string]bool)
+	var paths []string
+	for _, u := range langUpdates {
+		if (u.Type == utils.GoBinary || u.Type == utils.GoModules) && u.PkgPath != "" && !seen[u.PkgPath] {
+			seen[u.PkgPath] = true
+			paths = append(paths, u.PkgPath)
+		}
+	}
+	return paths
+}
+
+// buildSyntheticBinaryInfo constructs BinaryInfo entries from collected binary paths
+// when go version -m detection fails (e.g., distroless/scratch images without a shell).
+// binaryPaths comes from collectGoBinaryPaths which includes paths from ALL gobinary
+// updates (including stdlib entries stripped by filterGoPackages).
+func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string) []*provenance.BinaryInfo {
 	var binaries []*provenance.BinaryInfo
 
-	for _, u := range updates {
-		if u.PkgPath == "" || seen[u.PkgPath] {
-			continue
-		}
-		seen[u.PkgPath] = true
-
-		path := u.PkgPath
+	for _, p := range binaryPaths {
+		path := p
 		if !strings.HasPrefix(path, "/") {
 			path = "/" + path
 		}
@@ -601,7 +615,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	// `go version -m` cannot run due to missing shell.
 	if (detectErr != nil || len(binaries) == 0) && gm.goVCSURL != "" {
 		log.Info("Binary detection unavailable (distroless/scratch image?), falling back to Trivy report + --go-vcs-url")
-		binaries = buildSyntheticBinaryInfo(updates, gm.goVCSURL)
+		binaries = buildSyntheticBinaryInfo(gm.goBinaryPaths, gm.goVCSURL)
 		if len(binaries) > 0 {
 			log.Infof("Constructed %d synthetic binary entries from Trivy report", len(binaries))
 		}
