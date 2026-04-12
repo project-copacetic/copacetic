@@ -785,3 +785,76 @@ func TestRebuildFailureSliceFormat(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("%v", oldStyle), fmt.Sprintf("%v", failures),
 		"rebuildFailure slice must format identically to the old []string representation")
 }
+
+func TestBuildSyntheticBinaryInfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		updates   unversioned.LangUpdatePackages
+		goVCSURL  string
+		wantCount int
+		wantPaths []string
+		wantMod   string
+	}{
+		{
+			name: "single binary from Trivy report",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/crypto", PkgPath: "manager", Type: "gobinary"},
+				{Name: "golang.org/x/net", PkgPath: "manager", Type: "gobinary"},
+			},
+			goVCSURL:  "https://github.com/grafana/grafana-operator@v5.22.0",
+			wantCount: 1,
+			wantPaths: []string{"/manager"},
+			wantMod:   "github.com/grafana/grafana-operator",
+		},
+		{
+			name: "multiple binaries with different paths",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/crypto", PkgPath: "bin/consul", Type: "gobinary"},
+				{Name: "golang.org/x/net", PkgPath: "bin/consul-agent", Type: "gobinary"},
+			},
+			goVCSURL:  "https://github.com/hashicorp/consul@v1.22.4",
+			wantCount: 2,
+			wantPaths: []string{"/bin/consul", "/bin/consul-agent"},
+			wantMod:   "github.com/hashicorp/consul",
+		},
+		{
+			name: "path already has leading slash",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/crypto", PkgPath: "/usr/local/bin/app", Type: "gobinary"},
+			},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 1,
+			wantPaths: []string{"/usr/local/bin/app"},
+			wantMod:   "github.com/example/app",
+		},
+		{
+			name:      "no PkgPath in updates",
+			updates:   unversioned.LangUpdatePackages{{Name: "golang.org/x/crypto", Type: "gobinary"}},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 0,
+		},
+		{
+			name:      "empty updates",
+			updates:   unversioned.LangUpdatePackages{},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildSyntheticBinaryInfo(tt.updates, tt.goVCSURL)
+			assert.Len(t, result, tt.wantCount)
+
+			for i, wantPath := range tt.wantPaths {
+				if i < len(result) {
+					assert.Equal(t, wantPath, result[i].Path)
+					assert.Equal(t, tt.wantMod, result[i].ModulePath)
+					assert.Equal(t, "0", result[i].BuildSettings["CGO_ENABLED"])
+					assert.Equal(t, "0755", result[i].FileMode)
+					assert.Equal(t, "0:0", result[i].FileOwner)
+				}
+			}
+		})
+	}
+}

@@ -532,6 +532,45 @@ func (f rebuildFailure) String() string {
 	return fmt.Sprintf("%s: %s", f.binaryPath, f.reason)
 }
 
+// buildSyntheticBinaryInfo constructs BinaryInfo entries from Trivy report data
+// when go version -m detection fails (e.g., distroless/scratch images without a shell).
+// Binary paths come from UpdatePackage.PkgPath, which Trivy sets from the gobinary
+// scan result's Target field.
+func buildSyntheticBinaryInfo(updates unversioned.LangUpdatePackages, goVCSURL string) []*provenance.BinaryInfo {
+	seen := make(map[string]bool)
+	var binaries []*provenance.BinaryInfo
+
+	for _, u := range updates {
+		if u.PkgPath == "" || seen[u.PkgPath] {
+			continue
+		}
+		seen[u.PkgPath] = true
+
+		path := u.PkgPath
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+
+		// Derive module path from VCS URL (e.g., "https://github.com/org/repo@ref" -> "github.com/org/repo")
+		modulePath := ""
+		if i := strings.LastIndex(goVCSURL, "@"); i > 0 {
+			modulePath = strings.TrimPrefix(goVCSURL[:i], "https://")
+		}
+
+		log.Infof("  Synthetic binary: %s (module: %s)", path, modulePath)
+		binaries = append(binaries, &provenance.BinaryInfo{
+			Path:          path,
+			ModulePath:    modulePath,
+			Dependencies:  make(map[string]string),
+			BuildSettings: map[string]string{"CGO_ENABLED": "0"},
+			VCS:           make(map[string]string),
+			FileMode:      "0755",
+			FileOwner:     "0:0",
+		})
+	}
+	return binaries
+}
+
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
 // When stdlibFixedVersion is set, only binaries built with a Go version older than
 // that version are rebuilt for stdlib fixes. Binaries already on a new enough Go
@@ -554,14 +593,28 @@ func (gm *golangManager) attemptBinaryRebuild(
 	binaries, detectErr := detector.DetectGoBinaries(ctx, gm.config.Client, currentState, gm.config.Platform)
 	if detectErr != nil {
 		log.Debugf("Binary detection failed: %v", detectErr)
-		return currentState, failedPackages, fmt.Errorf("binary detection failed: %w", detectErr)
+	}
+
+	// Fallback: when detection fails but --go-vcs-url is provided,
+	// construct synthetic BinaryInfo from Trivy report data (PkgPath field).
+	// This enables Go binary patching on distroless/scratch images where
+	// `go version -m` cannot run due to missing shell.
+	if (detectErr != nil || len(binaries) == 0) && gm.goVCSURL != "" {
+		log.Info("Binary detection unavailable (distroless/scratch image?), falling back to Trivy report + --go-vcs-url")
+		binaries = buildSyntheticBinaryInfo(updates, gm.goVCSURL)
+		if len(binaries) > 0 {
+			log.Infof("Constructed %d synthetic binary entries from Trivy report", len(binaries))
+		}
 	}
 
 	if len(binaries) == 0 {
+		if detectErr != nil {
+			return currentState, failedPackages, fmt.Errorf("binary detection failed: %w", detectErr)
+		}
 		return currentState, failedPackages, fmt.Errorf("no Go binaries detected in image")
 	}
 
-	log.Infof("Detected %d Go binaries via go version -m", len(binaries))
+	log.Infof("Processing %d Go binaries for rebuild", len(binaries))
 
 	// Log what we found
 	for _, bi := range binaries {
