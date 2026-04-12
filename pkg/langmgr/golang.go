@@ -43,6 +43,7 @@ type golangManager struct {
 	goVCSURL            string
 	imageRef            string
 	goBinaryPaths       []string // binary paths from all gobinary updates (including stdlib)
+	goBinaryGoVersion   string   // Go version from stdlib entries (e.g., "1.26.0")
 }
 
 // validateGoPackageName validates a Go module name for safety and correctness.
@@ -188,7 +189,7 @@ func (gm *golangManager) InstallUpdates(
 
 	// Collect binary paths from ALL gobinary updates (including stdlib) for
 	// the synthetic binary fallback on distroless images where detection fails.
-	gm.goBinaryPaths = collectGoBinaryPaths(manifest.LangUpdates)
+	gm.goBinaryPaths, gm.goBinaryGoVersion = collectGoBinaryInfo(manifest.LangUpdates)
 
 	// Only act on stdlib vulns if user explicitly opted in via --toolchain-patch-level
 	if hasStdlib && gm.toolchainPatchLevel == "" {
@@ -537,26 +538,31 @@ func (f rebuildFailure) String() string {
 	return fmt.Sprintf("%s: %s", f.binaryPath, f.reason)
 }
 
-// collectGoBinaryPaths extracts unique binary paths from all gobinary updates,
-// including stdlib entries that filterGoPackages strips out. These paths are needed
-// for the synthetic binary fallback when go version -m detection fails.
-func collectGoBinaryPaths(langUpdates unversioned.LangUpdatePackages) []string {
+// collectGoBinaryInfo extracts unique binary paths and the installed Go version
+// from all gobinary updates, including stdlib entries that filterGoPackages strips.
+func collectGoBinaryInfo(langUpdates unversioned.LangUpdatePackages) (paths []string, goVersion string) {
 	seen := make(map[string]bool)
-	var paths []string
 	for _, u := range langUpdates {
-		if (u.Type == utils.GoBinary || u.Type == utils.GoModules) && u.PkgPath != "" && !seen[u.PkgPath] {
+		if u.Type != utils.GoBinary && u.Type != utils.GoModules {
+			continue
+		}
+		// Extract Go version from stdlib entries (e.g., "v1.26.0" → "1.26.0")
+		if u.Name == "stdlib" && goVersion == "" && u.InstalledVersion != "" {
+			goVersion = strings.TrimPrefix(u.InstalledVersion, "v")
+		}
+		if u.PkgPath != "" && !seen[u.PkgPath] {
 			seen[u.PkgPath] = true
 			paths = append(paths, u.PkgPath)
 		}
 	}
-	return paths
+	return
 }
 
 // buildSyntheticBinaryInfo constructs BinaryInfo entries from collected binary paths
 // when go version -m detection fails (e.g., distroless/scratch images without a shell).
 // binaryPaths comes from collectGoBinaryPaths which includes paths from ALL gobinary
 // updates (including stdlib entries stripped by filterGoPackages).
-func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string) []*provenance.BinaryInfo {
+func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string, goVersion string) []*provenance.BinaryInfo {
 	var binaries []*provenance.BinaryInfo
 
 	for _, p := range binaryPaths {
@@ -574,6 +580,7 @@ func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string) []*provenan
 		log.Infof("  Synthetic binary: %s (module: %s)", path, modulePath)
 		binaries = append(binaries, &provenance.BinaryInfo{
 			Path:          path,
+			GoVersion:     goVersion, // from stdlib InstalledVersion or empty
 			ModulePath:    modulePath,
 			Dependencies:  make(map[string]string),
 			BuildSettings: map[string]string{"CGO_ENABLED": "0"},
@@ -615,7 +622,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	// `go version -m` cannot run due to missing shell.
 	if (detectErr != nil || len(binaries) == 0) && gm.goVCSURL != "" {
 		log.Info("Binary detection unavailable (distroless/scratch image?), falling back to Trivy report + --go-vcs-url")
-		binaries = buildSyntheticBinaryInfo(gm.goBinaryPaths, gm.goVCSURL)
+		binaries = buildSyntheticBinaryInfo(gm.goBinaryPaths, gm.goVCSURL, gm.goBinaryGoVersion)
 		if len(binaries) > 0 {
 			log.Infof("Constructed %d synthetic binary entries from Trivy report", len(binaries))
 		}
@@ -703,7 +710,12 @@ func (gm *golangManager) attemptBinaryRebuild(
 		binaryNeedsStdlib := false
 		if stdlibFixedVersion != "" {
 			binaryGoVersion := strings.TrimPrefix(binaryInfo.GoVersion, "go")
-			if isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion) {
+			if binaryGoVersion == "" {
+				// Synthetic binaries from distroless fallback have no Go version info.
+				// Assume they need stdlib rebuild since we can't prove otherwise.
+				binaryNeedsStdlib = true
+				log.Infof("  Binary %s has unknown Go version (synthetic), assuming stdlib rebuild needed", binaryPath)
+			} else if isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion) {
 				binaryNeedsStdlib = true
 				log.Debugf("  Binary %s (Go %s) needs stdlib upgrade to >= %s", binaryPath, binaryGoVersion, stdlibFixedVersion)
 			} else {

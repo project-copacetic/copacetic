@@ -786,44 +786,43 @@ func TestRebuildFailureSliceFormat(t *testing.T) {
 		"rebuildFailure slice must format identically to the old []string representation")
 }
 
-func TestCollectGoBinaryPaths(t *testing.T) {
+func TestCollectGoBinaryInfo(t *testing.T) {
 	tests := []struct {
-		name    string
-		updates unversioned.LangUpdatePackages
-		want    []string
+		name        string
+		updates     unversioned.LangUpdatePackages
+		wantPaths   []string
+		wantVersion string
 	}{
 		{
-			name: "extracts paths from gobinary including stdlib",
+			name: "extracts paths and Go version from stdlib",
 			updates: unversioned.LangUpdatePackages{
-				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary},
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary, InstalledVersion: "v1.26.0"},
 				{Name: "golang.org/x/crypto", PkgPath: "manager", Type: utils.GoBinary},
 			},
-			want: []string{"manager"},
+			wantPaths:   []string{"manager"},
+			wantVersion: "1.26.0",
 		},
 		{
-			name: "multiple binary paths",
+			name: "multiple paths no stdlib",
 			updates: unversioned.LangUpdatePackages{
 				{Name: "golang.org/x/crypto", PkgPath: "bin/consul", Type: utils.GoBinary},
 				{Name: "golang.org/x/net", PkgPath: "bin/consul-agent", Type: utils.GoBinary},
 			},
-			want: []string{"bin/consul", "bin/consul-agent"},
+			wantPaths:   []string{"bin/consul", "bin/consul-agent"},
+			wantVersion: "",
 		},
 		{
-			name:    "skips non-gobinary types",
-			updates: unversioned.LangUpdatePackages{{Name: "flask", PkgPath: "app/requirements.txt", Type: "pip"}},
-			want:    nil,
-		},
-		{
-			name:    "empty updates",
-			updates: unversioned.LangUpdatePackages{},
-			want:    nil,
+			name:      "skips non-gobinary",
+			updates:   unversioned.LangUpdatePackages{{Name: "flask", PkgPath: "app/requirements.txt", Type: "pip"}},
+			wantPaths: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := collectGoBinaryPaths(tt.updates)
-			assert.Equal(t, tt.want, result)
+			paths, goVersion := collectGoBinaryInfo(tt.updates)
+			assert.Equal(t, tt.wantPaths, paths)
+			assert.Equal(t, tt.wantVersion, goVersion)
 		})
 	}
 }
@@ -871,7 +870,7 @@ func TestBuildSyntheticBinaryInfo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := buildSyntheticBinaryInfo(tt.paths, tt.goVCSURL)
+			result := buildSyntheticBinaryInfo(tt.paths, tt.goVCSURL, "1.26.0")
 			assert.Len(t, result, tt.wantCount)
 
 			for i, wantPath := range tt.wantPaths {
