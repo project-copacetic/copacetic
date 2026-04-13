@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/provenance"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -168,6 +169,7 @@ func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.L
 				continue
 			}
 			goPackages = append(goPackages, pkg)
+			log.Debugf("filterGoPackages: keeping %s@%s → %s (type=%s, path=%s)", pkg.Name, pkg.InstalledVersion, pkg.FixedVersion, pkg.Type, pkg.PkgPath)
 		}
 	}
 	return goPackages, stdlibFixedVersion
@@ -650,6 +652,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 	// Build update map from updates (shared across all binaries)
 	updateMap := make(map[string]string)
+	log.Debugf("[updateMap] building from %d updates", len(updates))
 	for _, update := range updates {
 		if update.FixedVersion == "" {
 			log.Debugf("Skipping %s: no fixed version available", update.Name)
@@ -799,7 +802,25 @@ func (gm *golangManager) attemptBinaryRebuild(
 			continue
 		}
 
-		// Success - update state for next iteration
+		// Verify the rebuild actually works by doing an intermediate Solve.
+		// RebuildBinary only constructs the LLB graph — it doesn't execute it.
+		// Without this check, Copa logs success but the build may fail later.
+		verifyDef, verifyErr := newState.Marshal(ctx)
+		if verifyErr != nil {
+			log.Warnf("Failed to marshal rebuild state for %s (skipping): %v", binaryPath, verifyErr)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("marshal error: %v", verifyErr)})
+			continue
+		}
+		_, solveErr := gm.config.Client.Solve(ctx, gwclient.SolveRequest{
+			Definition: verifyDef.ToPB(),
+		})
+		if solveErr != nil {
+			log.Warnf("Binary rebuild for %s built LLB successfully but execution failed (skipping): %v", binaryPath, solveErr)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("build execution failed: %v", solveErr)})
+			continue
+		}
+
+		// Verified — update state for next iteration
 		state = &newState
 		totalRebuilt++
 		log.Debugf("Prepared rebuild for binary: %s", binaryPath)
