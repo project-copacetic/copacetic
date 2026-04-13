@@ -224,6 +224,7 @@ func Test_apkManager_GetPackageType(t *testing.T) {
 }
 
 func Test_InstallUpdates_APK(t *testing.T) {
+	const updatesMarker = "/updates.txt"
 	tests := []struct {
 		name                  string
 		manifest              *unversioned.UpdateManifest
@@ -262,7 +263,7 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			name: "Nil manifest missing updates marker",
 			mockSetup: func(mr *mocks.MockReference) {
 				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
-					return req.Filename == "/updates.txt"
+					return req.Filename == updatesMarker
 				})).Return([]byte(nil), fmt.Errorf("failed to stat /updates.txt: no such file or directory"))
 			},
 			manifest:        nil,
@@ -274,7 +275,7 @@ func Test_InstallUpdates_APK(t *testing.T) {
 			name: "Nil manifest unrelated marker read failure",
 			mockSetup: func(mr *mocks.MockReference) {
 				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
-					return req.Filename == "/updates.txt"
+					return req.Filename == updatesMarker
 				})).Return([]byte(nil), fmt.Errorf("repository not found"))
 			},
 			manifest:              nil,

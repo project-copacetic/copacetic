@@ -561,6 +561,7 @@ func TestParseManifestFile(t *testing.T) {
 }
 
 func Test_installUpdates_RPM(t *testing.T) {
+	const updatesMarker = "/updates.txt"
 	tests := []struct {
 		name                  string
 		updates               unversioned.UpdatePackages
@@ -585,7 +586,7 @@ func Test_installUpdates_RPM(t *testing.T) {
 			name: "DNF update all packages missing updates marker",
 			mockSetup: func(mr *mocks.MockReference) {
 				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
-					return req.Filename == "/updates.txt"
+					return req.Filename == updatesMarker
 				})).Return([]byte(nil), fmt.Errorf("failed to stat /updates.txt: no such file or directory"))
 			},
 			rpmTools: rpmToolPaths{
@@ -597,7 +598,7 @@ func Test_installUpdates_RPM(t *testing.T) {
 			name: "DNF update all packages unrelated marker read failure",
 			mockSetup: func(mr *mocks.MockReference) {
 				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
-					return req.Filename == "/updates.txt"
+					return req.Filename == updatesMarker
 				})).Return([]byte(nil), fmt.Errorf("repository not found"))
 			},
 			rpmTools: rpmToolPaths{
