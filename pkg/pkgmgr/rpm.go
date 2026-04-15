@@ -1042,6 +1042,13 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		imageStateCurrent = rm.config.PatchedImageState
 	}
 
+	// Validate package names before interpolating them into shell commands.
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	// First try with the specified platform, fallback to host platform if it fails
 	toolingBase, err := tryImage(ctx, toolImage, rm.config.Client, platform)
 	if err != nil {
