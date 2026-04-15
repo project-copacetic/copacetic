@@ -223,6 +223,16 @@ func validateShellSafeStrict(value, label string) error {
 	return nil
 }
 
+func validateGoModuleName(module string) error {
+	if strings.ContainsAny(module, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
+		return fmt.Errorf("module name contains unsafe characters: %s", module)
+	}
+	if strings.HasPrefix(module, "-") {
+		return fmt.Errorf("module name cannot start with '-': %s", module)
+	}
+	return nil
+}
+
 // Rebuilder orchestrates the Go binary rebuild process using heuristic detection.
 type Rebuilder struct{}
 
@@ -648,8 +658,8 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 	// Apply updates with retry for each module.
 	// Validate module names and versions before constructing shell commands to prevent injection.
 	for module, version := range updates {
-		if strings.ContainsAny(module, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
-			return llb.State{}, fmt.Errorf("module name contains unsafe characters: %s", module)
+		if err := validateGoModuleName(module); err != nil {
+			return llb.State{}, err
 		}
 		if strings.ContainsAny(version, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
 			return llb.State{}, fmt.Errorf("version contains unsafe characters: %s for module %s", version, module)

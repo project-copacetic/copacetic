@@ -89,6 +89,11 @@ func validateGoPackageName(name string) error {
 		return fmt.Errorf("package name contains whitespace: %s", name)
 	}
 
+	// Module names must not start with '-' to prevent go tool flag injection.
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("package name cannot start with '-': %s", name)
+	}
+
 	return nil
 }
 
@@ -755,6 +760,9 @@ func (gm *golangManager) updateGoModule(
 			if strings.ContainsAny(u.Name, shellUnsafeChars) {
 				return state, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
 			}
+			if strings.HasPrefix(u.Name, "-") {
+				return state, fmt.Errorf("package name cannot start with '-': %s", u.Name)
+			}
 			if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
 				return state, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
 			}
@@ -875,6 +883,9 @@ func (gm *golangManager) upgradePackagesWithTooling(
 			if u.FixedVersion != "" {
 				if strings.ContainsAny(u.Name, shellUnsafeChars) {
 					return currentState, nil, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
+				}
+				if strings.HasPrefix(u.Name, "-") {
+					return currentState, nil, fmt.Errorf("package name cannot start with '-': %s", u.Name)
 				}
 				if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
 					return currentState, nil, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)

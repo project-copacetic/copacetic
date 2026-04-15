@@ -430,6 +430,45 @@ func TestStripGoMajorVersionSuffix(t *testing.T) {
 	}
 }
 
+func TestValidateGoModuleName(t *testing.T) {
+	tests := []struct {
+		name    string
+		module  string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid module name",
+			module:  "github.com/example/module",
+			wantErr: false,
+		},
+		{
+			name:    "unsafe shell characters",
+			module:  "github.com/example/module;rm -rf /",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "leading dash rejected",
+			module:  "-modfile=/tmp/pwn.mod",
+			wantErr: true,
+			errMsg:  "cannot start with '-'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGoModuleName(tt.module)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidateRepoURL(t *testing.T) {
 	tests := []struct {
 		url     string
