@@ -346,3 +346,28 @@ func TestGetNpmTarballURL(t *testing.T) {
 		})
 	}
 }
+
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "simple path",
+			in:   "/app",
+			want: "'/app'",
+		},
+		{
+			name: "path with single quote",
+			in:   "/tmp/o'hare/app",
+			want: "'/tmp/o'\"'\"'hare/app'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shellQuote(tt.in))
+		})
+	}
+}
