@@ -216,10 +216,7 @@ func logPatchSummary(summary *unversioned.PatchSummary) {
 	if summary == nil {
 		return
 	}
-	log.Infof("Patch Summary:")
-	log.Infof("  Total vulnerabilities considered: %d", summary.Total)
-	log.Infof("  Patched:                          %d", summary.Patched)
-	log.Infof("  Skipped (no fix available):        %d", summary.Skipped)
+	log.Infof("Patch Summary: %d total, %d patched, %d skipped", summary.Total, summary.Patched, summary.Skipped)
 }
 
 // displaySingleArchPlan shows a patching plan for single-arch images.

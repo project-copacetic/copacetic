@@ -548,6 +548,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			// these vulns had a fix but it couldn't be applied — count as skipped.
 			vulnCount := len(langPackageVulnIDs[key])
 			if vulnCount == 0 {
+				// Defensive: langPackageVulnIDs is populated alongside langPackageVulns,
+				// so this key should always have at least one entry. Guard against
+				// unexpected desync to ensure we never silently drop a count.
 				vulnCount = 1
 			}
 			if optimalVersion != "" {
