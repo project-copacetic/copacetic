@@ -112,6 +112,9 @@ func patchMultiPlatformImage(
 	// Start the unified progress display
 	displayEg, displayCtx := errgroup.WithContext(ctx)
 	common.DisplayProgress(displayCtx, displayEg, sharedProgressCh, opts.Progress)
+	if patchingPlatformCount == 0 {
+		closeProgressOnce.Do(func() { close(sharedProgressCh) })
+	}
 
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
