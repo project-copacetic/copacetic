@@ -141,22 +141,93 @@ func normalizeVersion(version string) string {
 }
 
 // formatOCILabelsForScript formats OCI image labels as key=value lines for shell consumption.
+// Values are validated against a strict allowlist per-label-type before being written,
+// since they end up interpolated into shell variables in the rebuild script (BUILD_PREFIX
+// via -ldflags -X). Untrusted label values that fail validation are skipped rather than
+// included verbatim, which would allow command injection via a crafted image.
 func formatOCILabelsForScript(labels map[string]string) string {
 	if labels == nil {
 		return ""
 	}
-	relevant := []struct{ key, envName string }{
-		{"org.opencontainers.image.version", "OCI_VERSION"},
-		{"org.opencontainers.image.revision", "OCI_REVISION"},
-		{"org.opencontainers.image.source", "OCI_SOURCE"},
+	relevant := []struct {
+		key     string
+		envName string
+		valid   func(string) bool
+	}{
+		{"org.opencontainers.image.version", "OCI_VERSION", isSafeOCIVersion},
+		{"org.opencontainers.image.revision", "OCI_REVISION", isSafeOCIRevision},
+		{"org.opencontainers.image.source", "OCI_SOURCE", isSafeOCISource},
 	}
 	var sb strings.Builder
 	for _, r := range relevant {
-		if v, ok := labels[r.key]; ok && v != "" {
-			fmt.Fprintf(&sb, "%s=%s\n", r.envName, v)
+		v, ok := labels[r.key]
+		if !ok || v == "" {
+			continue
 		}
+		if !r.valid(v) {
+			log.Warnf("Skipping OCI label %s: value %q fails safety validation, would not be safe to interpolate into shell", r.key, v)
+			continue
+		}
+		fmt.Fprintf(&sb, "%s=%s\n", r.envName, v)
 	}
 	return sb.String()
+}
+
+// isSafeOCIVersion allows semver-like and common version strings:
+// alphanumerics, dot, dash, plus, underscore. No shell metacharacters, no whitespace.
+func isSafeOCIVersion(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-' || r == '+' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeOCIRevision allows git commit hashes (hex) and tag-like revisions
+// (alphanumerics, dot, dash, underscore, slash). No shell metacharacters.
+func isSafeOCIRevision(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-' || r == '_' || r == '/':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeOCISource allows URL-like strings: alphanumerics, common URL punctuation.
+// Blocks shell metacharacters, whitespace, and quote characters.
+func isSafeOCISource(s string) bool {
+	if s == "" || len(s) > 512 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == ':' || r == '/' || r == '.' || r == '-' || r == '_' || r == '+' || r == '@' || r == '%' || r == '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validateBinaryPath validates that a binary path is safe and absolute.

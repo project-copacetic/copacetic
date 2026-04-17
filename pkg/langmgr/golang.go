@@ -2,7 +2,6 @@ package langmgr
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -23,25 +22,6 @@ const (
 	ociAnnotationSource   = "org.opencontainers.image.source"
 	ociAnnotationRevision = "org.opencontainers.image.revision"
 )
-
-// extractSourceFromImageConfig reads OCI standard labels from the image config
-// to recover source repository and revision when VCS info is missing from the binary
-// (e.g. built with -trimpath or -buildvcs=false).
-func extractSourceFromImageConfig(configData []byte) (sourceURL, revision string) {
-	if len(configData) == 0 {
-		return "", ""
-	}
-	var config struct {
-		Config struct {
-			Labels map[string]string `json:"Labels"`
-		} `json:"config"`
-	}
-	if json.Unmarshal(configData, &config) == nil && config.Config.Labels != nil {
-		sourceURL = config.Config.Labels[ociAnnotationSource]
-		revision = config.Config.Labels[ociAnnotationRevision]
-	}
-	return sourceURL, revision
-}
 
 const (
 	goCheckFile        = "/copa-go-check"
@@ -658,11 +638,13 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 		// Resolve source repository and commit for cloning.
 		// Primary: VCS metadata embedded in binary (go version -m).
-		// Fallback: OCI standard image labels (org.opencontainers.image.source/revision).
+		// Fallback: OCI standard image labels, already extracted once into gm.config.ImageLabels
+		// by buildkit.Config setup — avoid re-parsing the raw image config here.
 		sourceRepo := buildInfo.BuildArgs["_sourceRepo"]
 		sourceCommit := buildInfo.BuildArgs["_sourceCommit"]
-		if sourceCommit == "" {
-			ociSource, ociRevision := extractSourceFromImageConfig(gm.config.ConfigData)
+		if sourceCommit == "" && gm.config.ImageLabels != nil {
+			ociRevision := gm.config.ImageLabels[ociAnnotationRevision]
+			ociSource := gm.config.ImageLabels[ociAnnotationSource]
 			if ociRevision != "" {
 				log.Infof("  Binary %s has no VCS info; using OCI image label revision: %s", binaryPath, ociRevision)
 				sourceCommit = ociRevision

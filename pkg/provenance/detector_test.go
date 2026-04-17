@@ -464,3 +464,42 @@ func TestRetryScript(t *testing.T) {
 	assert.Contains(t, script, "sleep $delay")
 	assert.Contains(t, script, "retry=$((retry+1))")
 }
+
+func TestStripOuterQuotes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`"-s -w -X main.version=1.0"`, `-s -w -X main.version=1.0`},
+		{`'single quoted'`, `single quoted`},
+		{`no quotes`, `no quotes`},
+		{`""`, ``},
+		{`''`, ``},
+		{`"unterminated`, `"unterminated`},
+		{`unterminated"`, `unterminated"`},
+		{`"`, `"`},
+		{``, ``},
+		{`a`, `a`},
+		{`"mixed'`, `"mixed'`},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, stripOuterQuotes(tc.in), "input=%q", tc.in)
+	}
+}
+
+func TestConvertBinaryInfoToBuildInfo_StripsLdflagsQuotes(t *testing.T) {
+	detector := NewDetector()
+	bi := &BinaryInfo{
+		Path:       "/coredns",
+		GoVersion:  "go1.21.0",
+		ModulePath: "github.com/coredns/coredns",
+		BuildSettings: map[string]string{
+			"CGO_ENABLED": "0",
+			// go version -m reports ldflags with literal outer quotes —
+			// detector must strip them so `go build` does not reject the flag.
+			"-ldflags": `"-s -w -X github.com/coredns/coredns/coremain.GitCommit=ae2bbc2"`,
+		},
+	}
+	result := detector.ConvertBinaryInfoToBuildInfoWithLabels(bi, nil)
+	require.NotNil(t, result)
+	require.Len(t, result.BuildFlags, 2) // -ldflags + -buildvcs=false (no VCS info)
+	assert.Equal(t, `-ldflags=-s -w -X github.com/coredns/coredns/coremain.GitCommit=ae2bbc2`, result.BuildFlags[0],
+		"detector must strip outer quotes from ldflags")
+}

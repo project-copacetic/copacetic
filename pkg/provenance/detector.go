@@ -29,6 +29,21 @@ func NewDetector() *Detector {
 	return &Detector{}
 }
 
+// stripOuterQuotes removes balanced surrounding double or single quotes from a string.
+// `go version -m` reports build setting values like ldflags with embedded outer quotes
+// (e.g. `"-s -w -X main.version=1.0"`), but they should be passed to `go build` without
+// literal quotes, otherwise go rejects the flag.
+func stripOuterQuotes(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+	first, last := s[0], s[len(s)-1]
+	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // DetectGoBinaries detects all Go binaries in an image using a single BuildKit operation.
 // It mounts the target image and runs `go version -m` on all executable files.
 func (d *Detector) DetectGoBinaries(
@@ -332,9 +347,12 @@ func (d *Detector) ConvertBinaryInfoToBuildInfoWithLabels(bi *BinaryInfo, imageL
 		buildInfo.BuildArgs["GOARCH"] = goarch
 	}
 
-	// Extract ldflags if present
+	// Extract ldflags if present.
+	// `go version -m` reports ldflags with literal outer quotes (e.g. `"-s -w -X ..."`).
+	// Strip them so the value is passed to `go build` as a plain flag value, otherwise
+	// go rejects the flag with "parameter may not start with quote character".
 	if ldflags, ok := bi.BuildSettings["-ldflags"]; ok {
-		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-ldflags="+ldflags)
+		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-ldflags="+stripOuterQuotes(ldflags))
 	}
 	// Preserve -trimpath if the original binary was built with it
 	if trimpath, ok := bi.BuildSettings["-trimpath"]; ok && trimpath == "true" {
