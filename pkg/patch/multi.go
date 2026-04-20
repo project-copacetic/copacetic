@@ -303,13 +303,13 @@ func patchMultiPlatformImage(
 
 	// With strict error handling, fail if any platform encountered an error.
 	if hasErrors && !ignoreError {
-		return fmt.Errorf("one or more platform patches failed, see summary for details")
+		return fmt.Errorf("one or more platform patches failed")
 	}
 
 	// When ignoring errors, still fail if every real patch attempt failed.
 	// Only consider real patch attempts (exclude preserved).
 	if hasErrors && patchedAttempts > 0 && patchedSuccesses == 0 {
-		return fmt.Errorf("all platform patches failed, see summary for details")
+		return fmt.Errorf("all platform patches failed")
 	}
 
 	// resolve image ref
