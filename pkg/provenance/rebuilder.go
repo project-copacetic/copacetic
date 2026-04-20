@@ -552,13 +552,24 @@ func deriveRepoFromModulePath(modulePath string) (repoURL string, subpath string
 	}
 
 	if strings.HasPrefix(modulePath, "go.opentelemetry.io/") {
+		// OpenTelemetry does not follow the github.com/open-telemetry/<name>
+		// naming convention. Map known top-level modules to their actual repos.
+		otelRepos := map[string]string{
+			"otel":          "https://github.com/open-telemetry/opentelemetry-go",
+			"contrib":       "https://github.com/open-telemetry/opentelemetry-go-contrib",
+			"collector":     "https://github.com/open-telemetry/opentelemetry-collector",
+			"ebpf-profiler": "https://github.com/open-telemetry/opentelemetry-ebpf-profiler",
+		}
 		parts := strings.SplitN(modulePath, "/", 3)
 		if len(parts) >= 2 {
-			repoURL = fmt.Sprintf("https://github.com/open-telemetry/%s", parts[1])
-			if len(parts) >= 3 {
-				subpath = parts[2]
+			if mapped, ok := otelRepos[parts[1]]; ok {
+				repoURL = mapped
+				if len(parts) >= 3 {
+					subpath = parts[2]
+				}
+				return repoURL, subpath
 			}
-			return repoURL, subpath
+			// Unknown top-level module, fall through to generic derivation.
 		}
 	}
 

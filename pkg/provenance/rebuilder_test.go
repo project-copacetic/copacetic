@@ -577,8 +577,18 @@ func TestDeriveRepoFromModulePath(t *testing.T) {
 		},
 		{
 			modulePath:  "go.opentelemetry.io/otel/exporters/otlp",
-			wantRepoURL: "https://github.com/open-telemetry/otel",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-go",
 			wantSubpath: "exporters/otlp",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-go-contrib",
+			wantSubpath: "instrumentation/net/http/otelhttp",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/collector/component",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-collector",
+			wantSubpath: "component",
 		},
 		{
 			modulePath:  "google.golang.org/grpc",
