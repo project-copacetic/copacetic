@@ -673,6 +673,12 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+	}
+
 	// Spin up a build tooling container to fetch and unpack packages to create patch layer.
 	// Pull family:version -> need to create version to base image map
 
@@ -1040,6 +1046,13 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	imageStateCurrent := rm.config.ImageState
 	if rm.config.PatchedConfigData != nil {
 		imageStateCurrent = rm.config.PatchedImageState
+	}
+
+	// Validate package names before interpolating them into shell commands.
+	if updates != nil {
+		if err := ValidateOSPackageNames(updates); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// First try with the specified platform, fallback to host platform if it fails
