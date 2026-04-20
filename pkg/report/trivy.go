@@ -449,7 +449,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
-							PkgPath:          pkgPath,
+								PkgPath:          pkgPath,
 							}
 							langPackageVulnIDs[key] = make(map[string]struct{})
 						}

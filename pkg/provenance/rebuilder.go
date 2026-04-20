@@ -367,7 +367,7 @@ func (r *Rebuilder) RebuildBinary(
 	log.Debugf("Using base image: %s", baseImage)
 
 	// Build the new binary with updated dependencies (outputs to /output/<name>)
-	buildState, err := r.buildBinaryWithUpdates(baseImage, rebuildCtx, buildInfo, updates, platform, outputPath)
+	buildState, err := r.buildBinaryWithUpdates(baseImage, rebuildCtx, buildInfo, updates, platform, outputPath, rebuildCtx.ImageLabels)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to rebuild binary %s (module: %s, Go: %s): %w",
 			binaryPath, buildInfo.ModulePath, buildInfo.GoVersion, err)
@@ -734,16 +734,12 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildCon
 		}
 		ref = commit
 		log.Infof("Cloning source from binary VCS metadata %s @ %s", repoURL, ref)
-	case rebuildCtx != nil && rebuildCtx.ImageSourceLabel != "":
+	case rebuildCtx != nil && rebuildCtx.ImageSourceLabel != "" && validateRepoURL(rebuildCtx.ImageSourceLabel) == nil:
 		// Step 3: OCI label org.opencontainers.image.source provides the source repo.
 		// Combine with image tag as the git ref.
+		// Only fires when the label URL is on a trusted host; otherwise falls through
+		// to the tag heuristic so users on GitLab/Gitea/self-hosted forges are not blocked.
 		labelURL := rebuildCtx.ImageSourceLabel
-		if !strings.HasPrefix(labelURL, "https://github.com/") {
-			return llb.State{}, "", fmt.Errorf("OCI source label URL not on github.com: %s", labelURL)
-		}
-		if err := validateRepoURL(labelURL); err != nil {
-			return llb.State{}, "", fmt.Errorf("invalid OCI source label URL: %w", err)
-		}
 		tag := ""
 		if rebuildCtx.ImageRef != "" {
 			tag = extractImageTag(rebuildCtx.ImageRef)

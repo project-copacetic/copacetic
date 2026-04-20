@@ -713,15 +713,16 @@ func (gm *golangManager) attemptBinaryRebuild(
 		binaryNeedsStdlib := false
 		if stdlibFixedVersion != "" {
 			binaryGoVersion := strings.TrimPrefix(binaryInfo.GoVersion, "go")
-			if binaryGoVersion == "" {
+			switch {
+			case binaryGoVersion == "":
 				// Synthetic binaries from distroless fallback have no Go version info.
 				// Assume they need stdlib rebuild since we can't prove otherwise.
 				binaryNeedsStdlib = true
 				log.Infof("  Binary %s has unknown Go version (synthetic), assuming stdlib rebuild needed", binaryPath)
-			} else if isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion) {
+			case isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion):
 				binaryNeedsStdlib = true
-				log.Debugf("  Binary %s (Go %s) needs stdlib upgrade to >= %s", binaryPath, binaryGoVersion, stdlibFixedVersion)
-			} else {
+				log.Infof("  Binary %s (Go %s) needs stdlib upgrade to >= %s", binaryPath, binaryGoVersion, stdlibFixedVersion)
+			default:
 				log.Debugf("  Binary %s (Go %s) already has stdlib >= %s, no stdlib rebuild needed", binaryPath, binaryGoVersion, stdlibFixedVersion)
 			}
 		}

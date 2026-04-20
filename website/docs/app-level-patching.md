@@ -373,6 +373,7 @@ copa patch \
     --toolchain-patch-level
 
 # Provide source repo for stripped binaries (no embedded VCS info)
+# Note: --go-vcs-url is experimental and requires COPA_EXPERIMENTAL=1
 copa patch \
     -i $IMAGE \
     -r scan.json \
@@ -410,7 +411,7 @@ Copa analyzes Go binaries in the image and rebuilds them using embedded build me
 
 1. **Binary detection**: Runs `go version -m` on each binary in the image to extract embedded build metadata (module path, dependency versions, build flags, VCS info)
 2. **Source derivation**: Derives the source repository URL from the module path (e.g., `github.com/example/repo`), with built-in mappings for vanity imports (`k8s.io`, `golang.org/x`, `cloud.google.com/go`, `go.uber.org`, `go.etcd.io`, `go.opentelemetry.io`, `google.golang.org/grpc`, `google.golang.org/protobuf`)
-3. **Source resolution**: Resolves the git ref to clone using a 3-step fallback chain (see [Source Resolution Chain](#source-resolution-chain) below)
+3. **Source resolution**: Resolves the git ref to clone using a 4-step fallback chain (see [Source Resolution Chain](#source-resolution-chain) below)
 4. **Build reconstruction**: Reconstructs build flags from the embedded build settings (`-ldflags`, `-tags`, `CGO_ENABLED`, etc.)
 5. **Dependency update**: Applies `go get module@version` for each vulnerable dependency, runs `go mod tidy`
 6. **Main package discovery**: Locates the main package in the cloned source using multiple strategies (explicit path, `cmd/` directory, binary name matching)
@@ -418,15 +419,16 @@ Copa analyzes Go binaries in the image and rebuilds them using embedded build me
 
 ##### Source Resolution Chain
 
-Copa resolves where to clone source code using a 3-step fallback chain. Each step is tried in order; the first success wins:
+Copa resolves where to clone source code using a 4-step fallback chain. Each step is tried in order; the first success wins:
 
 | Priority | Method | When it fires |
 |---|---|---|
-| 1 | `--go-vcs-url` override | User explicitly provides `repo@ref` |
+| 1 | `--go-vcs-url` override | User explicitly provides `repo@ref` (requires `COPA_EXPERIMENTAL=1`) |
 | 2 | VCS commit from binary | Binary has embedded `vcs.revision` |
-| 3 | Image tag heuristic | No VCS info, but image has a semver-like tag (e.g., `v1.2.3`) |
+| 3 | OCI source label | Image has `org.opencontainers.image.source` label pointing at a trusted host, combined with a semver-like image tag |
+| 4 | Image tag heuristic | No VCS info and no usable label, but image has a semver-like tag (e.g., `v1.2.3`) |
 
-**Step 1: `--go-vcs-url` override** — Highest priority. The user provides the source repository and git ref directly. Useful for stripped binaries where neither VCS metadata nor tag heuristic works (e.g., the Docker Hub image name doesn't match the GitHub org).
+**Step 1: `--go-vcs-url` override** — Highest priority. The user provides the source repository and git ref directly. Useful for stripped binaries where neither VCS metadata nor tag heuristic works (e.g., the Docker Hub image name doesn't match the GitHub org). This flag is gated behind `COPA_EXPERIMENTAL=1` along with the rest of the library/application patching workflow.
 
 ```bash
 # Format: repo@ref
@@ -436,9 +438,11 @@ copa patch -i calico/node:v3.31.4 --pkg-types library \
 
 **Step 2: VCS commit from binary** — If the binary has `vcs.revision` embedded (the default since Go 1.18 when `.git` is present at build time), Copa clones the source at the exact commit. This is the most precise method.
 
-**Step 3: Image tag heuristic** — When VCS info is missing, Copa extracts the tag from the image reference (e.g., `prometheus:v3.9.1` → `v3.9.1`) and tries it as a git ref. This works for the common convention where image tags match git tags.
+**Step 3: OCI source label** — If the image carries an `org.opencontainers.image.source` annotation pointing at a trusted source host, Copa uses the label URL as the repository and the image's semver-like tag as the git ref. Images without a semver-like tag, or with a label URL on an untrusted host, fall through to step 4.
 
-If all three steps fail, Copa falls back to generating a synthetic `go.mod` from the binary's embedded dependency list, which may produce a partial rebuild.
+**Step 4: Image tag heuristic** — When VCS info is missing, Copa extracts the tag from the image reference (e.g., `prometheus:v3.9.1` → `v3.9.1`) and tries it as a git ref. This works for the common convention where image tags match git tags.
+
+If all four steps fail, Copa falls back to generating a synthetic `go.mod` from the binary's embedded dependency list, which may produce a partial rebuild.
 
 ##### Recommended: Embed VCS Metadata
 
