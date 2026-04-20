@@ -14,7 +14,6 @@ import (
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -138,9 +137,7 @@ func readSourcePolicy() (*sourcepolicy.Policy, error) {
 	}
 	var pol sourcepolicy.Policy
 	if err := json.Unmarshal(data, &pol); err != nil {
-			return nil, fmt.Errorf("failed to parse source policy: %w", e2)
-			return nil, fmt.Errorf("failed to parse source policy: %w", err)
-		}
+		return nil, fmt.Errorf("failed to parse source policy: %w", err)
 	}
 	return &pol, nil
 }
