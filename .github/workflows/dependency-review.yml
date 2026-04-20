@@ -36,4 +36,4 @@ jobs:
 
     - uses: golang/govulncheck-action@31f7c5463448f83528bd771c2d978d940080c9fd # post-v1.0.4 (SHA-pinned internal deps)
       with:
-        go-version-file: go.mod
+        go-version-input: "1.25.9"
