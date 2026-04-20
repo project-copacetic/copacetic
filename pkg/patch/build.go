@@ -138,7 +138,7 @@ func readSourcePolicy() (*sourcepolicy.Policy, error) {
 	}
 	var pol sourcepolicy.Policy
 	if err := json.Unmarshal(data, &pol); err != nil {
-		if e2 := proto.Unmarshal(data, &pol); e2 != nil {
+			return nil, fmt.Errorf("failed to parse source policy: %w", e2)
 			return nil, fmt.Errorf("failed to parse source policy: %w", err)
 		}
 	}
