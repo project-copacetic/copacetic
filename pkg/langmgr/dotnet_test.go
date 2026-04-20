@@ -1,6 +1,7 @@
 package langmgr
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -308,4 +309,39 @@ func TestBuildUpdateDepsJsonScript_NoValidUpdates(t *testing.T) {
 
 	script := dnm.buildUpdateDepsJsonScript(updates)
 	assert.Equal(t, `echo "No valid updates to apply to deps.json"`, script)
+}
+
+func TestBuildPatchCsproj(t *testing.T) {
+	refs := `    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />` + "\n" +
+		`    <PackageReference Include="NuGet.Packaging" Version="7.3.1" />` + "\n"
+
+	got := buildPatchCsproj("net8.0", refs)
+
+	assert.Contains(t, got, `<TargetFramework>net8.0</TargetFramework>`,
+		"target framework should be included")
+	assert.Contains(t, got, `<OutputType>Library</OutputType>`,
+		"output type should be Library")
+	assert.Contains(t, got, `<NoWarn>NU1605</NoWarn>`,
+		"NU1605 must be suppressed so transitive-dependency minimums do not fail restore")
+	assert.Contains(t, got,
+		`<PackageReference Include="Newtonsoft.Json" Version="13.0.1" />`,
+		"Newtonsoft.Json reference should be present")
+	assert.Contains(t, got,
+		`<PackageReference Include="NuGet.Packaging" Version="7.3.1" />`,
+		"NuGet.Packaging reference should be present")
+
+	assert.True(t, strings.Contains(got, "</Project>"), "project should be closed")
+	propStart := strings.Index(got, "<PropertyGroup>")
+	propEnd := strings.Index(got, "</PropertyGroup>")
+	noWarn := strings.Index(got, "<NoWarn>NU1605</NoWarn>")
+	assert.True(t, propStart >= 0 && propEnd > propStart && noWarn > propStart && noWarn < propEnd,
+		"<NoWarn> must live inside <PropertyGroup>")
+}
+
+func TestBuildPatchCsproj_EmptyPackageRefs(t *testing.T) {
+	got := buildPatchCsproj("net9.0", "")
+	assert.Contains(t, got, `<TargetFramework>net9.0</TargetFramework>`)
+	assert.Contains(t, got, `<NoWarn>NU1605</NoWarn>`)
+	assert.Contains(t, got, "<ItemGroup>\n  </ItemGroup>",
+		"empty ItemGroup should still be well-formed")
 }

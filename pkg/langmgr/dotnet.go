@@ -79,6 +79,31 @@ func escapeXMLAttribute(s string) string {
 	return replacer.Replace(s)
 }
 
+// buildPatchCsproj renders the minimal csproj used to download patched
+// NuGet packages inside the SDK container.
+//
+// NU1605 is suppressed because Trivy reports a minimum fixed version per
+// package, but different fixed packages can have transitive dependencies on
+// each other with higher minimum versions (e.g. NuGet.Packaging 7.3.1 depends
+// transitively on Newtonsoft.Json >= 13.0.3 while Trivy also pins
+// Newtonsoft.Json to 13.0.1 as its direct fix). Without NoWarn NuGet flags
+// that as a "downgrade" and dotnet restore fails with NU1605.
+// Letting NuGet's highest-wins resolution pick the transitive minimum is
+// strictly safer than the Trivy-suggested fix - the resolved version is
+// always >= the Trivy fix, never below a known good version.
+func buildPatchCsproj(targetFramework, packageRefs string) string {
+	return fmt.Sprintf(`<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>%s</TargetFramework>
+    <OutputType>Library</OutputType>
+    <NoWarn>NU1605</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+%s  </ItemGroup>
+</Project>
+`, targetFramework, packageRefs)
+}
+
 // isValidDotnetVersion checks if a version string is a valid NuGet version.
 // NuGet supports Major.Minor.Patch[.Revision][-prerelease][+buildmetadata].
 func isValidDotnetVersion(v string) bool {
@@ -359,18 +384,10 @@ func (dnm *dotnetManager) patchRuntimeImage(
 	}
 	targetFramework := fmt.Sprintf("net%s", tfmVersion)
 
-	// Create complete project file in one command
+	patchCsproj := buildPatchCsproj(targetFramework, packageRefs.String())
 	createProjectCmd := fmt.Sprintf(`sh -c 'mkdir -p /patch && cat > /patch/patch.csproj << "EOF"
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>%s</TargetFramework>
-    <OutputType>Library</OutputType>
-  </PropertyGroup>
-  <ItemGroup>
-%s  </ItemGroup>
-</Project>
-EOF
-cat /patch/patch.csproj'`, targetFramework, packageRefs.String())
+%sEOF
+cat /patch/patch.csproj'`, patchCsproj)
 
 	projectCreated := sdkState.Run(
 		llb.Shlex(createProjectCmd),
