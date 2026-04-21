@@ -268,3 +268,44 @@ func TestGetLanguageManagers_DotnetOnly(t *testing.T) {
 	_, ok := managers[0].(*dotnetManager)
 	assert.True(t, ok, "expected first manager to be dotnetManager")
 }
+
+func TestBuildUpdateDepsJsonScript_FiltersUnsafeUpdates(t *testing.T) {
+	dnm := &dotnetManager{}
+	updates := unversioned.LangUpdatePackages{
+		{
+			Name:             "Newtonsoft.Json",
+			InstalledVersion: "12.0.3",
+			FixedVersion:     "13.0.1",
+		},
+		{
+			Name:             `bad"; touch /tmp/pwned; #`,
+			InstalledVersion: "1.0.0",
+			FixedVersion:     "1.0.1",
+		},
+		{
+			Name:             "System.Text.Json",
+			InstalledVersion: `1.0.0"; touch /tmp/pwned; #`,
+			FixedVersion:     "1.0.1",
+		},
+	}
+
+	script := dnm.buildUpdateDepsJsonScript(updates)
+	assert.Contains(t, script, "Newtonsoft.Json")
+	assert.NotContains(t, script, "touch /tmp/pwned")
+	assert.NotContains(t, script, `bad";`)
+	assert.NotContains(t, script, `1.0.0";`)
+}
+
+func TestBuildUpdateDepsJsonScript_NoValidUpdates(t *testing.T) {
+	dnm := &dotnetManager{}
+	updates := unversioned.LangUpdatePackages{
+		{
+			Name:             `bad"; touch /tmp/pwned; #`,
+			InstalledVersion: "1.0.0",
+			FixedVersion:     "1.0.1",
+		},
+	}
+
+	script := dnm.buildUpdateDepsJsonScript(updates)
+	assert.Equal(t, `echo "No valid updates to apply to deps.json"`, script)
+}
