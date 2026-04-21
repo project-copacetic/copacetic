@@ -578,51 +578,75 @@ echo "Generated target framework: $GEN_TARGET_KEY"
 	for _, update := range safeUpdates {
 		packageName := update.Name
 		oldVersion := update.InstalledVersion
-		newVersion := update.FixedVersion
+		trivyPin := update.FixedVersion
 
+		// Resolve the actual package key from the generated deps.json rather than
+		// assuming it is "Name/TrivyPin". NU1605 is suppressed in the generated
+		// patch.csproj (see buildPatchCsproj), so NuGet's highest-wins resolution
+		// can legitimately produce a higher version than Trivy requested when a
+		// transitive dependency requires it. Looking up by "Name/TrivyPin"
+		// in that case returns empty and the deps.json merge is skipped, leaving
+		// stale hashPath/sha512 referencing the old version while the DLL on
+		// disk has been upgraded - an inconsistent manifest.
 		fmt.Fprintf(&script, `
-# Update %s from %s to %s
-echo "Updating %s: %s -> %s"
+# Update %s (Trivy requested >= %s, actual resolved version looked up from generated deps.json)
+echo "Updating %s: %s -> (resolve from generated deps.json, Trivy pin %s)"
 
-# Extract just the package entries from generated deps.json
-NEW_TARGET=$(jq -r ".targets[\"$GEN_TARGET_KEY\"][\"%s/%s\"] // empty" /output/patch.deps.json 2>/dev/null)
-NEW_LIBRARY=$(jq -r '.libraries["%s/%s"] // empty' /output/patch.deps.json 2>/dev/null)
+# Find the actual resolved package key in the generated deps.json. NU1605 is
+# suppressed during restore so NuGet may have resolved to a version newer than
+# the Trivy pin if a transitive dep required it.
+RESOLVED_KEY=$(jq -r --arg name "%s" '.targets[$GEN_TARGET_KEY] | keys[] | select(startswith($name + "/"))' /output/patch.deps.json 2>/dev/null | head -1)
+RESOLVED_LIB_KEY=$(jq -r --arg name "%s" '.libraries | keys[] | select(startswith($name + "/"))' /output/patch.deps.json 2>/dev/null | head -1)
 
-if [ -n "$NEW_TARGET" ] && [ "$NEW_TARGET" != "null" ] && [ -n "$NEW_LIBRARY" ] && [ "$NEW_LIBRARY" != "null" ]; then
+if [ -n "$RESOLVED_KEY" ] && [ "$RESOLVED_KEY" != "null" ] && [ -n "$RESOLVED_LIB_KEY" ] && [ "$RESOLVED_LIB_KEY" != "null" ]; then
+	RESOLVED_VERSION="${RESOLVED_KEY#%s/}"
+	echo "  Resolved version: $RESOLVED_VERSION"
+	NEW_TARGET=$(jq -r --arg key "$RESOLVED_KEY" '.targets[$GEN_TARGET_KEY][$key]' /output/patch.deps.json 2>/dev/null)
+	NEW_LIBRARY=$(jq -r --arg key "$RESOLVED_LIB_KEY" '.libraries[$key]' /output/patch.deps.json 2>/dev/null)
 	echo "  Extracted package metadata from generated deps.json"
 
-	# Update targets section: remove old package entry, add new one with correct metadata
-	jq --argjson newTarget "$NEW_TARGET" --arg targetKey "$ORIG_TARGET_KEY" '
+	# Update targets section: remove old package entry, add resolved one with correct metadata
+	jq --argjson newTarget "$NEW_TARGET" \
+	   --arg targetKey "$ORIG_TARGET_KEY" \
+	   --arg oldKey "%s/%s" \
+	   --arg newKey "$RESOLVED_KEY" '
 		.targets[$targetKey] |= (
-			del(.["%s/%s"]) |
-			. + {"%s/%s": $newTarget}
+			del(.[$oldKey]) |
+			. + {($newKey): $newTarget}
 		)
 	' "$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
 
-	# Update libraries section: remove old entry, add new one with correct sha512, hashPath, etc.
-	jq --argjson newLib "$NEW_LIBRARY" '
+	# Update libraries section: remove old entry, add resolved one with correct sha512, hashPath, etc.
+	jq --argjson newLib "$NEW_LIBRARY" \
+	   --arg oldKey "%s/%s" \
+	   --arg newKey "$RESOLVED_LIB_KEY" '
 		.libraries |= (
-			del(.["%s/%s"]) |
-			. + {"%s/%s": $newLib}
+			del(.[$oldKey]) |
+			. + {($newKey): $newLib}
 		)
 	' "$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
 
 	# Update dependency version references throughout all targets
-	jq '(.targets[][].dependencies // {}) |= with_entries(if .key == "%s" then .value = "%s" else . end)' \
-		"$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
+	jq --arg name "%s" --arg ver "$RESOLVED_VERSION" '
+		(.targets[][].dependencies // {}) |= with_entries(if .key == $name then .value = $ver else . end)
+	' "$UPDATED_DEPS" > "${UPDATED_DEPS}.tmp" && mv "${UPDATED_DEPS}.tmp" "$UPDATED_DEPS"
 
-	echo "  Updated %s to %s with correct metadata (sha512, hashPath, assemblyVersion, fileVersion)"
+	echo "  Updated %s to $RESOLVED_VERSION with correct metadata (sha512, hashPath, assemblyVersion, fileVersion)"
 else
-	echo "  ERROR: Could not extract package metadata for %s/%s from generated deps.json"
+	echo "  ERROR: Could not find %s in generated deps.json (Trivy pin was %s)"
 fi
-`, packageName, oldVersion, newVersion, packageName, oldVersion, newVersion,
-			packageName, newVersion, // NEW_TARGET extraction
-			packageName, newVersion, // NEW_LIBRARY extraction
-			packageName, oldVersion, packageName, newVersion, // targets update
-			packageName, oldVersion, packageName, newVersion, // libraries update
-			packageName, newVersion, // dependency update
-			packageName, newVersion, // success message
-			packageName, newVersion) // error message
+`,
+			packageName, trivyPin, // comment
+			packageName, oldVersion, trivyPin, // echo
+			packageName,             // RESOLVED_KEY --arg name
+			packageName,             // RESOLVED_LIB_KEY --arg name
+			packageName,             // RESOLVED_VERSION prefix strip
+			packageName, oldVersion, // --arg oldKey (targets)
+			packageName, oldVersion, // --arg oldKey (libraries)
+			packageName,           // --arg name (dependencies update)
+			packageName,           // success echo
+			packageName, trivyPin, // error echo
+		)
 	}
 
 	script.WriteString(`

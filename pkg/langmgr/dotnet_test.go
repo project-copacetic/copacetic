@@ -345,3 +345,61 @@ func TestBuildPatchCsproj_EmptyPackageRefs(t *testing.T) {
 	assert.Contains(t, got, "<ItemGroup>\n  </ItemGroup>",
 		"empty ItemGroup should still be well-formed")
 }
+
+func TestBuildUpdateDepsJsonScript_ResolvesActualVersion(t *testing.T) {
+	dnm := &dotnetManager{}
+	updates := unversioned.LangUpdatePackages{
+		{
+			Name:             "Newtonsoft.Json",
+			InstalledVersion: "12.0.1",
+			FixedVersion:     "13.0.1",
+			Type:             "dotnet-core",
+		},
+	}
+
+	got := dnm.buildUpdateDepsJsonScript(updates)
+
+	assert.Contains(t, got, `RESOLVED_KEY=`,
+		"script must resolve the actual package key from the generated deps.json")
+	assert.Contains(t, got, `select(startswith($name + "/"))`,
+		"script must look up by Name prefix, not Name/TrivyPin")
+	assert.Contains(t, got, `RESOLVED_VERSION="${RESOLVED_KEY#Newtonsoft.Json/}"`,
+		"script must strip the package name prefix to extract the resolved version")
+	assert.Contains(t, got, `--arg newKey "$RESOLVED_KEY"`,
+		"targets insertion must use the resolved key, not Name/TrivyPin")
+	assert.Contains(t, got, `--arg newKey "$RESOLVED_LIB_KEY"`,
+		"libraries insertion must use the resolved key, not Name/TrivyPin")
+	assert.Contains(t, got, `--arg ver "$RESOLVED_VERSION"`,
+		"dependency version updates must use the resolved version, not Trivy's pin")
+	assert.Contains(t, got, `"Newtonsoft.Json/12.0.1"`,
+		"old entry must still be deleted using the installed version from Trivy")
+}
+
+func TestBuildUpdateDepsJsonScript_HardcodedTrivyPinRemoved(t *testing.T) {
+	dnm := &dotnetManager{}
+	updates := unversioned.LangUpdatePackages{
+		{
+			Name:             "NuGet.Packaging",
+			InstalledVersion: "6.11.1",
+			FixedVersion:     "7.3.1",
+			Type:             "dotnet-core",
+		},
+	}
+
+	got := dnm.buildUpdateDepsJsonScript(updates)
+
+	assert.NotContains(t, got, `"NuGet.Packaging/7.3.1": $newTarget`,
+		"new target entry must not hardcode Trivy's requested version - transitive deps can force a higher one")
+	assert.NotContains(t, got, `"NuGet.Packaging/7.3.1": $newLib`,
+		"new library entry must not hardcode Trivy's requested version")
+	assert.NotContains(t, got,
+		`jq '(.targets[][].dependencies // {}) |= with_entries(if .key == "NuGet.Packaging" then .value = "7.3.1"`,
+		"dependency version rewrite must not hardcode Trivy's requested version")
+}
+
+func TestBuildUpdateDepsJsonScript_EmptyUpdates(t *testing.T) {
+	dnm := &dotnetManager{}
+	got := dnm.buildUpdateDepsJsonScript(unversioned.LangUpdatePackages{})
+	assert.Equal(t, `echo "No updates to apply to deps.json"`, got,
+		"empty updates should produce a no-op script")
+}
