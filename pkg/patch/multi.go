@@ -301,10 +301,36 @@ func patchMultiPlatformImage(
 	// Wait for the progress display to finish
 	_ = displayEg.Wait()
 
-	// Check if we should fail based on the results:
+	// Render the per-platform summary before any early error returns so users
+	// can see which platforms failed and why.
+	var summaries []tui.PlatformSummary
+	for _, p := range platforms {
+		platformKey := buildkit.PlatformKey(p.Platform)
+		s := summaryMap[platformKey]
+		if s != nil {
+			ref := s.Ref
+			if ref == "" {
+				ref = "-"
+			}
+			summaries = append(summaries, tui.PlatformSummary{
+				Platform: s.Platform,
+				Status:   s.Status,
+				Ref:      ref,
+				Message:  s.Message,
+			})
+		}
+	}
+	fmt.Fprintln(os.Stderr, tui.RenderPatchSummary(summaries))
+
+	// With strict error handling, fail if any platform encountered an error.
+	if hasErrors && !ignoreError {
+		return fmt.Errorf("one or more platform patches failed")
+	}
+
+	// When ignoring errors, still fail if every real patch attempt failed.
 	// Only consider real patch attempts (exclude preserved).
 	if hasErrors && patchedAttempts > 0 && patchedSuccesses == 0 {
-		return fmt.Errorf("all platform patches failed, see summary for details")
+		return fmt.Errorf("all platform patches failed")
 	}
 
 	// resolve image ref
@@ -382,26 +408,6 @@ func patchMultiPlatformImage(
 		}
 		// If no patches were needed (all up-to-date), that's fine - don't return an error
 	}
-
-	// Build summary for styled output
-	var summaries []tui.PlatformSummary
-	for _, p := range platforms {
-		platformKey := buildkit.PlatformKey(p.Platform)
-		s := summaryMap[platformKey]
-		if s != nil {
-			ref := s.Ref
-			if ref == "" {
-				ref = "-"
-			}
-			summaries = append(summaries, tui.PlatformSummary{
-				Platform: s.Platform,
-				Status:   s.Status,
-				Ref:      ref,
-				Message:  s.Message,
-			})
-		}
-	}
-	fmt.Fprintln(os.Stderr, tui.RenderPatchSummary(summaries))
 
 	anySuccesses := false
 	for _, summary := range summaryMap {
