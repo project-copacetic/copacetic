@@ -524,6 +524,12 @@ func (nm *nodejsManager) upgradePackages(
 	return &updatedState, nil
 }
 
+// shellQuote wraps s in single quotes and escapes embedded single quotes so it can be
+// safely passed as a shell argument.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
 // installNodePackages updates both direct and transitive dependencies.
 // It uses npm install for direct dependencies and npm overrides for transitive dependencies.
 func (nm *nodejsManager) installNodePackages(
@@ -548,10 +554,10 @@ func (nm *nodejsManager) installNodePackages(
 	// This ensures production images don't include development dependencies
 	log.Debugf("Removing devDependencies from package.json in %s", workDir)
 	removeDevDepsCmd := fmt.Sprintf(
-		`sh -c 'cd %s && `+
+		`sh -c 'cd -- "$1" && `+
 			`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
-			`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"'`,
-		workDir,
+			`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"' -- %s`,
+		shellQuote(workDir),
 	)
 	state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
 
@@ -573,7 +579,7 @@ func (nm *nodejsManager) installNodePackages(
 			safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
 
 			replaceCmd := fmt.Sprintf(
-				`sh -c 'cd %s && `+
+				`sh -c 'cd -- "$1" && `+
 					`PKG_DIR="node_modules/%s" && `+
 					`if [ -d "$PKG_DIR" ]; then `+
 					`  echo "INFO: Replacing direct dependency %s with version %s" && `+
@@ -587,8 +593,7 @@ func (nm *nodejsManager) installNodePackages(
 					`  fi; `+
 					`else `+
 					`  echo "WARN: %s not found in node_modules, skipping"; `+
-					`fi'`,
-				workDir,
+					`fi' -- %s`,
 				u.Name,
 				u.Name, u.FixedVersion,
 				downloadScript,
@@ -597,6 +602,7 @@ func (nm *nodejsManager) installNodePackages(
 				u.Name,
 				u.Name, u.FixedVersion,
 				u.Name,
+				shellQuote(workDir),
 			)
 
 			log.Infof("Replacing direct dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
@@ -630,7 +636,7 @@ func (nm *nodejsManager) installNodePackages(
 			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 			replaceCmd := fmt.Sprintf(
-				`sh -c 'cd %s && `+
+				`sh -c 'cd -- "$1" && `+
 					`if %s; then `+
 					`  PKG_NAME="%s" && `+
 					`  FOUND=0 && `+
@@ -647,8 +653,7 @@ func (nm *nodejsManager) installNodePackages(
 					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
 					`else `+
 					`  echo "WARN: failed to download %s@%s, skipping"; `+
-					`fi'`,
-				workDir,
+					`fi' -- %s`,
 				downloadScript,
 				u.Name,
 				u.FixedVersion,
@@ -656,6 +661,7 @@ func (nm *nodejsManager) installNodePackages(
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
+				shellQuote(workDir),
 			)
 
 			log.Infof("Replacing transitive dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
@@ -669,11 +675,11 @@ func (nm *nodejsManager) installNodePackages(
 	// == Step 3: Final Cleanup ==
 	log.Infof("Running final cleanup for %s...", workDir)
 	cleanupCmd := fmt.Sprintf(
-		`sh -c 'cd %s && `+
+		`sh -c 'cd -- "$1" && `+
 			`npm prune --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
 			`npm dedupe --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
-			`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
-		workDir,
+			`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")' -- %s`,
+		shellQuote(workDir),
 	)
 	state = state.Run(
 		llb.Shlex(cleanupCmd),
@@ -998,10 +1004,10 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		// This ensures global packages don't include development dependencies
 		log.Debugf("Removing devDependencies from package.json for global package %s", pkgName)
 		removeDevDepsCmd := fmt.Sprintf(
-			`sh -c 'cd %s && `+
+			`sh -c 'cd -- "$1" && `+
 				`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
-				`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"'`,
-			pkgPath,
+				`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"' -- %s`,
+			shellQuote(pkgPath),
 		)
 		state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
 
@@ -1032,7 +1038,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
 
 				replaceCmd := fmt.Sprintf(
-					`sh -c 'cd %s && `+
+					`sh -c 'cd -- "$1" && `+
 						`PKG_DIR="node_modules/%s" && `+
 						`if [ -d "$PKG_DIR" ]; then `+
 						`  echo "INFO: Replacing direct dependency %s with version %s" && `+
@@ -1046,8 +1052,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`  fi; `+
 						`else `+
 						`  echo "WARN: %s not found in node_modules, skipping"; `+
-						`fi'`,
-					pkgPath,
+						`fi' -- %s`,
 					u.Name,
 					u.Name, u.FixedVersion,
 					downloadScript,
@@ -1056,6 +1061,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					u.Name,
 					u.Name, u.FixedVersion,
 					u.Name,
+					shellQuote(pkgPath),
 				)
 
 				log.Infof("Replacing direct dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)
@@ -1082,7 +1088,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 				replaceCmd := fmt.Sprintf(
-					`sh -c 'cd %s && `+
+					`sh -c 'cd -- "$1" && `+
 						`if %s; then `+
 						`  PKG_NAME="%s" && `+
 						`  FOUND=0 && `+
@@ -1099,8 +1105,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
 						`else `+
 						`  echo "WARN: failed to download %s@%s, skipping"; `+
-						`fi'`,
-					pkgPath,
+						`fi' -- %s`,
 					downloadScript,
 					u.Name,
 					u.FixedVersion,
@@ -1108,6 +1113,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					tarballFile,
 					u.Name,
 					u.Name, u.FixedVersion,
+					shellQuote(pkgPath),
 				)
 
 				log.Infof("Replacing transitive dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)

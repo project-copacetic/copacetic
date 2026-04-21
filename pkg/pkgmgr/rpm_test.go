@@ -1033,6 +1033,18 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 			expectedError:  true,
 			expectedResult: nil,
 		},
+		{
+			name:      "dnf chroot - invalid package name is rejected",
+			mockSetup: nil,
+			updates: unversioned.UpdatePackages{
+				{Name: "curl; touch /tmp/pwned", FixedVersion: "1.0.1"},
+			},
+			toolImage:      "almalinux:9",
+			ignoreErrors:   false,
+			usePatchedCfg:  false,
+			expectedError:  true,
+			expectedResult: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1045,8 +1057,10 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 				mockResult.SetRef(mockRef)
 				mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
 				tt.mockSetup(mockRef)
-			} else {
+			} else if tt.name != "dnf chroot - invalid package name is rejected" {
 				mockClient.On("Solve", mock.Anything, mock.Anything).Return(nil, errors.New("solve failed"))
+			} else {
+				// Validation should fail before any Solve call.
 			}
 
 			cfg := &buildkit.Config{
