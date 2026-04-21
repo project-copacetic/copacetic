@@ -55,7 +55,7 @@ jobs:
         env:
           VERSION_TAG_ONLY: ${{ steps.vars.outputs.version_tag }}
         run: |
-          # Extract version from tag (e.g., v0.11.0 -> 0.11 or v0.12.0-rc.1 -> 0.12)
+          # Extract version from tag without the leading 'v' (e.g., 0.11.0 -> 0.11 or 0.12.0-rc.1 -> 0.12)
           VERSION=$(echo "${VERSION_TAG_ONLY}" | cut -d'.' -f1,2)
           BRANCH_NAME="release-${VERSION}"
           
@@ -109,7 +109,7 @@ jobs:
         run: |
           tag="${RELEASE_TAG}"
           image_owner="${IMAGE_OWNER}"
-          docker buildx build --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
+          docker buildx build --build-arg copa_version="${tag}" -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
 
       - name: Checkout copa-extension repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -135,7 +135,7 @@ jobs:
         run: |
           tag="${RELEASE_TAG}"
           image_owner="${IMAGE_OWNER}"
-          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
+          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version="${tag}" -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
 
       - name: Set up Docker for copa frontend
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
