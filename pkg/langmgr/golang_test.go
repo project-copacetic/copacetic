@@ -207,6 +207,11 @@ func TestValidateGoPackageName(t *testing.T) {
 			packageName: "github.com/user/repo\n",
 			expectError: true,
 		},
+		{
+			name:        "package name starting with dash",
+			packageName: "-modfile=/tmp/pwn/mod",
+			expectError: true,
+		},
 	}
 
 	for _, tt := range tests {
