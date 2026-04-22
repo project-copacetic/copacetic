@@ -595,13 +595,13 @@ echo "Updating %s: %s -> (resolve from generated deps.json, Trivy pin %s)"
 # Find the actual resolved package key in the generated deps.json. NU1605 is
 # suppressed during restore so NuGet may have resolved to a version newer than
 # the Trivy pin if a transitive dep required it.
-RESOLVED_KEY=$(jq -r --arg name "%s" '.targets[$GEN_TARGET_KEY] | keys[] | select(startswith($name + "/"))' /output/patch.deps.json 2>/dev/null | head -1)
+RESOLVED_KEY=$(jq -r --arg name "%s" --arg targetKey "$GEN_TARGET_KEY" '.targets[$targetKey] | keys[] | select(startswith($name + "/"))' /output/patch.deps.json 2>/dev/null | head -1)
 RESOLVED_LIB_KEY=$(jq -r --arg name "%s" '.libraries | keys[] | select(startswith($name + "/"))' /output/patch.deps.json 2>/dev/null | head -1)
 
 if [ -n "$RESOLVED_KEY" ] && [ "$RESOLVED_KEY" != "null" ] && [ -n "$RESOLVED_LIB_KEY" ] && [ "$RESOLVED_LIB_KEY" != "null" ]; then
 	RESOLVED_VERSION="${RESOLVED_KEY#%s/}"
 	echo "  Resolved version: $RESOLVED_VERSION"
-	NEW_TARGET=$(jq -r --arg key "$RESOLVED_KEY" '.targets[$GEN_TARGET_KEY][$key]' /output/patch.deps.json 2>/dev/null)
+	NEW_TARGET=$(jq -r --arg key "$RESOLVED_KEY" --arg targetKey "$GEN_TARGET_KEY" '.targets[$targetKey][$key]' /output/patch.deps.json 2>/dev/null)
 	NEW_LIBRARY=$(jq -r --arg key "$RESOLVED_LIB_KEY" '.libraries[$key]' /output/patch.deps.json 2>/dev/null)
 	echo "  Extracted package metadata from generated deps.json"
 
