@@ -488,6 +488,22 @@ func (gm *golangManager) upgradePackages(
 	return &state, failedPackages, nil
 }
 
+// rebuildFailure captures a single Go binary rebuild failure with the
+// binary path and failure reason as separate fields. Using a struct
+// rather than a []string of "path: reason" strings avoids fragile
+// string parsing in downstream consumers.
+type rebuildFailure struct {
+	binaryPath string
+	reason     string
+}
+
+// String implements fmt.Stringer so that slices of rebuildFailure
+// produce the same "path: reason" format as the previous []string
+// accumulator when formatted with %v.
+func (f rebuildFailure) String() string {
+	return fmt.Sprintf("%s: %s", f.binaryPath, f.reason)
+}
+
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
 // When stdlibFixedVersion is set, only binaries built with a Go version older than
 // that version are rebuilt for stdlib fixes. Binaries already on a new enough Go
@@ -559,7 +575,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	// Track overall results
 	state := currentState
 	totalRebuilt := 0
-	var rebuildErrors []string
+	var rebuildFailures []rebuildFailure
 
 	// Process each detected binary
 	for i, binaryInfo := range binaries {
@@ -570,7 +586,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 		buildInfo := detector.ConvertBinaryInfoToBuildInfo(binaryInfo)
 		if buildInfo == nil {
 			log.Warnf("Could not extract build info for %s, skipping", binaryPath)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no build info", binaryPath))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no build info"})
 			continue
 		}
 
@@ -638,13 +654,13 @@ func (gm *golangManager) attemptBinaryRebuild(
 		newState, result, err := rebuilder.RebuildBinary(rebuildCtx, filteredUpdateMap, gm.config.Platform, state, binaryPath)
 		if err != nil {
 			log.Warnf("Failed to rebuild %s (skipping): %v", binaryPath, err)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, err))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("%v", err)})
 			continue
 		}
 
 		if !result.Success {
 			log.Warnf("Rebuild unsuccessful for %s (skipping): %v", binaryPath, result.Error)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, result.Error))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("%v", result.Error)})
 			continue
 		}
 
@@ -659,14 +675,14 @@ func (gm *golangManager) attemptBinaryRebuild(
 		for module := range updateMap {
 			failedPackages = append(failedPackages, module)
 		}
-		if len(rebuildErrors) > 0 {
-			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildErrors)
+		if len(rebuildFailures) > 0 {
+			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildFailures)
 		}
 		return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt")
 	}
 
 	if totalRebuilt < len(binaries) {
-		log.Warnf("Partial patch: %d/%d binaries rebuilt successfully. Failed: %v", totalRebuilt, len(binaries), rebuildErrors)
+		log.Warnf("Partial patch: %d/%d binaries rebuilt successfully. Failed: %v", totalRebuilt, len(binaries), rebuildFailures)
 	} else {
 		log.Infof("Binary rebuild complete: %d/%d binaries rebuilt successfully", totalRebuilt, len(binaries))
 	}
