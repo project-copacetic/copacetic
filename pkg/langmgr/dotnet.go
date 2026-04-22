@@ -510,6 +510,29 @@ func (dnm *dotnetManager) buildUpdateDepsJsonScript(updates unversioned.LangUpda
 		return `echo "No updates to apply to deps.json"`
 	}
 
+	safeUpdates := make(unversioned.LangUpdatePackages, 0, len(updates))
+	for _, update := range updates {
+		if update.InstalledVersion == "" || update.FixedVersion == "" {
+			continue
+		}
+		if err := validateDotnetPackageName(update.Name); err != nil {
+			log.Warnf("Skipping deps.json update for invalid package name %q: %v", update.Name, err)
+			continue
+		}
+		if err := validateDotnetVersion(update.InstalledVersion); err != nil {
+			log.Warnf("Skipping deps.json update for package %q due to invalid installed version %q: %v", update.Name, update.InstalledVersion, err)
+			continue
+		}
+		if err := validateDotnetVersion(update.FixedVersion); err != nil {
+			log.Warnf("Skipping deps.json update for package %q due to invalid fixed version %q: %v", update.Name, update.FixedVersion, err)
+			continue
+		}
+		safeUpdates = append(safeUpdates, update)
+	}
+	if len(safeUpdates) == 0 {
+		return `echo "No valid updates to apply to deps.json"`
+	}
+
 	var script strings.Builder
 	script.WriteString(`
 ORIGINAL_DEPS="/runtime-tmp/original.deps.json"
@@ -535,11 +558,7 @@ echo "Generated target framework: $GEN_TARGET_KEY"
 `)
 
 	// Build jq commands to merge package entries from generated deps.json
-	for _, update := range updates {
-		if update.InstalledVersion == "" || update.FixedVersion == "" {
-			continue
-		}
-
+	for _, update := range safeUpdates {
 		packageName := update.Name
 		oldVersion := update.InstalledVersion
 		newVersion := update.FixedVersion
@@ -596,12 +615,10 @@ echo "deps.json update complete"
 echo "Verifying updates in $UPDATED_DEPS:"
 `)
 
-	for _, update := range updates {
-		if update.FixedVersion != "" {
-			fmt.Fprintf(&script,
-				"grep -o '\"%s/%s\"' \"$UPDATED_DEPS\" | head -1 && echo \"  %s/%s found\" || echo \"  WARNING: %s/%s not found\"\n",
-				update.Name, update.FixedVersion, update.Name, update.FixedVersion, update.Name, update.FixedVersion)
-		}
+	for _, update := range safeUpdates {
+		fmt.Fprintf(&script,
+			"grep -o '\"%s/%s\"' \"$UPDATED_DEPS\" | head -1 && echo \"  %s/%s found\" || echo \"  WARNING: %s/%s not found\"\n",
+			update.Name, update.FixedVersion, update.Name, update.FixedVersion, update.Name, update.FixedVersion)
 	}
 
 	return script.String()
