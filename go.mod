@@ -31,7 +31,7 @@ require (
 	github.com/openvex/go-vex v0.2.7
 	github.com/parthivsaikia/go-pacman-version v0.0.0-20260212091406-8640ae78daee
 	github.com/pkg/errors v0.9.1
-	github.com/quay/claircore v1.5.49
+	github.com/quay/claircore v1.5.52
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -115,7 +115,7 @@ require (
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.15.2 // indirect
-	github.com/package-url/packageurl-go v0.1.3 // indirect
+	github.com/package-url/packageurl-go v0.1.5 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
