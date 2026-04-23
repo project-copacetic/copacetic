@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -68,7 +68,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -82,7 +82,7 @@ jobs:
           make build
           make archive
       - name: Upload copa to build artifacts
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: copa_edge_linux_amd64.tar.gz
           path: dist/linux_amd64/release/copa_edge_linux_amd64.tar.gz
@@ -109,7 +109,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -159,7 +159,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -283,7 +283,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -330,7 +330,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -348,7 +348,7 @@ jobs:
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
@@ -385,7 +385,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -398,7 +398,7 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm/v5,linux/arm64,linux/386,linux/mips64le
       - name: Install oras CLI
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -473,7 +473,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -515,7 +515,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -529,7 +529,7 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm64
       - name: Install oras CLI
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -593,7 +593,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -812,7 +812,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -845,7 +845,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -890,7 +890,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -935,7 +935,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -982,7 +982,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -1027,7 +1027,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -1045,7 +1045,7 @@ jobs:
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6 # v1.2.4
+        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
