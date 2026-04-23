@@ -2,7 +2,7 @@
 <html lang="en" dir="ltr" class="docs-wrapper plugin-docs plugin-id-default docs-version-v0.10.x docs-doc-page docs-doc-id-release" data-has-hydrated="false">
 <head>
 <meta charset="UTF-8">
-<meta name="generator" content="Docusaurus v3.9.2">
+<meta name="generator" content="Docusaurus v3.10.0">
 <title data-rh="true">Release Process | Copacetic</title><meta data-rh="true" name="viewport" content="width=device-width,initial-scale=1"><meta data-rh="true" name="twitter:card" content="summary_large_image"><meta data-rh="true" property="og:url" content="https://project-copacetic.github.io/copacetic/website/v0.10.x/release"><meta data-rh="true" property="og:locale" content="en"><meta data-rh="true" name="docusaurus_locale" content="en"><meta data-rh="true" name="docsearch:language" content="en"><meta data-rh="true" name="docusaurus_version" content="v0.10.x"><meta data-rh="true" name="docusaurus_tag" content="docs-default-v0.10.x"><meta data-rh="true" name="docsearch:version" content="v0.10.x"><meta data-rh="true" name="docsearch:docusaurus_tag" content="docs-default-v0.10.x"><meta data-rh="true" property="og:title" content="Release Process | Copacetic"><meta data-rh="true" name="description" content="Overview"><meta data-rh="true" property="og:description" content="Overview"><link data-rh="true" rel="icon" href="/copacetic/website/img/favicon.ico"><link data-rh="true" rel="canonical" href="https://project-copacetic.github.io/copacetic/website/v0.10.x/release"><link data-rh="true" rel="alternate" href="https://project-copacetic.github.io/copacetic/website/v0.10.x/release" hreflang="en"><link data-rh="true" rel="alternate" href="https://project-copacetic.github.io/copacetic/website/v0.10.x/release" hreflang="x-default"><link data-rh="true" rel="preconnect" href="https://V764HJRQUN-dsn.algolia.net" crossorigin="anonymous"><script data-rh="true" type="application/ld+json">{"@context":"https://schema.org","@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Release Process","item":"https://project-copacetic.github.io/copacetic/website/v0.10.x/release"}]}</script><link rel="preconnect" href="https://www.google-analytics.com">
 <link rel="preconnect" href="https://www.googletagmanager.com">
 <script async src="https://www.googletagmanager.com/gtag/js?id=G-3RC20QPKNS"></script>
@@ -10,11 +10,11 @@
 
 
 
-<link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.d407da98.css">
-<script src="/copacetic/website/assets/js/runtime~main.a477241e.js" defer="defer"></script>
-<script src="/copacetic/website/assets/js/main.74e1eab8.js" defer="defer"></script>
+<link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.a473579e.css">
+<script src="/copacetic/website/assets/js/runtime~main.a56e45e5.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/main.f0388eb5.js" defer="defer"></script>
 </head>
-<body class="navigation-with-keyboard">
+<body>
 <svg style="display: none;"><defs>
 <symbol id="theme-svg-external-link" viewBox="0 0 24 24"><path fill="currentColor" d="M21 13v10h-21v-19h12v2h-10v15h17v-8h2zm3-12h-10.988l4.035 4-6.977 7.07 2.828 2.828 6.977-7.07 4.125 4.172v-11z"/></symbol>
 </defs></svg>
@@ -49,11 +49,11 @@
 <ol>
 <li class="">
 <p><strong>Prepare the Release Branch</strong></p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout &lt;BRANCH NAME&gt;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git pull origin &lt;BRANCH NAME&gt;</span><br></span></code></pre></div></div>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">git checkout &lt;BRANCH NAME&gt;</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">git pull origin &lt;BRANCH NAME&gt;</span><br></div></code></pre></div></div>
 </li>
 <li class="">
 <p><strong>Create and Push the Tag</strong></p>
-<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><span class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a &lt;NEW VERSION&gt; -m &#x27;&lt;NEW VERSION&gt;&#x27;</span><br></span><span class="token-line" style="color:#F8F8F2"><span class="token plain">git push origin &lt;NEW VERSION&gt;</span><br></span></code></pre></div></div>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a &lt;NEW VERSION&gt; -m &#x27;&lt;NEW VERSION&gt;&#x27;</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">git push origin &lt;NEW VERSION&gt;</span><br></div></code></pre></div></div>
 </li>
 <li class="">
 <p><strong>Publishing</strong></p>
