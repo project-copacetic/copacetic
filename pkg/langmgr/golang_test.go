@@ -1,6 +1,7 @@
 package langmgr
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -741,4 +742,46 @@ func TestGetUniqueLatestUpdates_Go(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRebuildFailureString(t *testing.T) {
+	tests := []struct {
+		name     string
+		failure  rebuildFailure
+		expected string
+	}{
+		{
+			name:     "no build info",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/foo", reason: "no build info"},
+			expected: "/usr/bin/foo: no build info",
+		},
+		{
+			name:     "error reason",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/bar", reason: "exit status 1"},
+			expected: "/usr/bin/bar: exit status 1",
+		},
+		{
+			name:     "empty reason",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/baz", reason: ""},
+			expected: "/usr/bin/baz: ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.failure.String())
+		})
+	}
+}
+
+func TestRebuildFailureSliceFormat(t *testing.T) {
+	failures := []rebuildFailure{
+		{binaryPath: "/usr/bin/foo", reason: "no build info"},
+		{binaryPath: "/usr/bin/bar", reason: "exit status 1"},
+	}
+	oldStyle := []string{
+		"/usr/bin/foo: no build info",
+		"/usr/bin/bar: exit status 1",
+	}
+	assert.Equal(t, fmt.Sprintf("%v", oldStyle), fmt.Sprintf("%v", failures),
+		"rebuildFailure slice must format identically to the old []string representation")
 }
