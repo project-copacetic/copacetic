@@ -45,6 +45,8 @@ type Config struct {
 	Platform          *specs.Platform
 	ImageState        llb.State
 	PatchedImageState llb.State
+	// ImageLabels contains OCI labels from the image config (e.g. org.opencontainers.image.*).
+	ImageLabels map[string]string
 }
 
 type Opts struct {
@@ -131,7 +133,24 @@ func InitializeBuildkitConfig(
 
 	config.Client = c
 
+	// Extract OCI labels from image config for use by language managers
+	// (e.g. org.opencontainers.image.revision for Go binary source cloning).
+	config.ImageLabels = extractLabelsFromConfig(configData)
+
 	return &config, nil
+}
+
+// extractLabelsFromConfig parses OCI image config JSON and returns the labels map.
+func extractLabelsFromConfig(configData []byte) map[string]string {
+	var parsed struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(configData, &parsed); err != nil {
+		return nil
+	}
+	return parsed.Config.Labels
 }
 
 func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatform, error) {
