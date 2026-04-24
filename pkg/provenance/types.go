@@ -64,11 +64,14 @@ type RebuildContext struct {
 	BuildInfo *BuildInfo
 	// BinaryInfo contains information from detected Go binaries.
 	BinaryInfo []*BinaryInfo
+	// ImageLabels contains OCI image labels for version metadata fallback.
+	ImageLabels map[string]string
 }
 
 // RebuildResult contains the outcome of a rebuild attempt.
 type RebuildResult struct {
-	// Success indicates if the rebuild was successful.
+	// Success indicates if the rebuild LLB graph was constructed successfully.
+	// The actual build is executed later during BuildKit Solve.
 	Success bool
 	// Strategy is the strategy that was used.
 	Strategy string
