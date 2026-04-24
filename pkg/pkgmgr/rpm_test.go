@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
@@ -560,14 +561,16 @@ func TestParseManifestFile(t *testing.T) {
 }
 
 func Test_installUpdates_RPM(t *testing.T) {
+	const updatesMarker = "/updates.txt"
 	tests := []struct {
-		name           string
-		updates        unversioned.UpdatePackages
-		ignoreErrors   bool
-		mockSetup      func(reference *mocks.MockReference)
-		rpmTools       rpmToolPaths
-		expectedResult []byte
-		expectedError  string
+		name                  string
+		updates               unversioned.UpdatePackages
+		ignoreErrors          bool
+		mockSetup             func(reference *mocks.MockReference)
+		rpmTools              rpmToolPaths
+		expectedResult        []byte
+		expectNoUpdates       bool
+		expectedErrorContains string
 	}{
 		{
 			name: "DNF update all packages",
@@ -578,6 +581,30 @@ func Test_installUpdates_RPM(t *testing.T) {
 				"dnf": "/usr/bin/dnf",
 			},
 			expectedResult: nil,
+		},
+		{
+			name: "DNF update all packages missing updates marker",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+					return req.Filename == updatesMarker
+				})).Return([]byte(nil), fmt.Errorf("failed to stat /updates.txt: no such file or directory"))
+			},
+			rpmTools: rpmToolPaths{
+				"dnf": "/usr/bin/dnf",
+			},
+			expectNoUpdates: true,
+		},
+		{
+			name: "DNF update all packages unrelated marker read failure",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+					return req.Filename == updatesMarker
+				})).Return([]byte(nil), fmt.Errorf("repository not found"))
+			},
+			rpmTools: rpmToolPaths{
+				"dnf": "/usr/bin/dnf",
+			},
+			expectedErrorContains: "failed while checking for available rpm updates: repository not found",
 		},
 		{
 			name: "YUM update all packages",
@@ -618,9 +645,9 @@ func Test_installUpdates_RPM(t *testing.T) {
 			expectedResult: []byte("package1-1.0.1\npackage2-2.0.2\n"),
 		},
 		{
-			name:          "No package manager available",
-			rpmTools:      rpmToolPaths{},
-			expectedError: "unexpected: no package manager tools were found for patching",
+			name:                  "No package manager available",
+			rpmTools:              rpmToolPaths{},
+			expectedErrorContains: "unexpected: no package manager tools were found for patching",
 		},
 	}
 
@@ -650,11 +677,20 @@ func Test_installUpdates_RPM(t *testing.T) {
 
 			updatedState, resultBytes, err := rm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
 
-			if tt.expectedError != "" {
-				assert.EqualError(t, err, tt.expectedError)
+			switch {
+			case tt.expectNoUpdates:
+				assert.ErrorIs(t, err, types.ErrNoUpdatesFound)
 				assert.Nil(t, updatedState)
 				assert.Nil(t, resultBytes)
-			} else {
+			case tt.expectedErrorContains != "":
+				assert.Error(t, err)
+				if err != nil {
+					assert.Contains(t, err.Error(), tt.expectedErrorContains)
+				}
+				assert.False(t, errors.Is(err, types.ErrNoUpdatesFound))
+				assert.Nil(t, updatedState)
+				assert.Nil(t, resultBytes)
+			default:
 				assert.NoError(t, err)
 				assert.NotNil(t, updatedState)
 				assert.Equal(t, tt.expectedResult, resultBytes)

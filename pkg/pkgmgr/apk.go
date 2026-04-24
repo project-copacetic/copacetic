@@ -185,8 +185,11 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 			llb.WithCustomName("Checking for available updates"),
 		).Root()
 
-		_, err := buildkit.ExtractFileFromState(ctx, am.config.Client, &stateWithCheck, updatesAvailableMarker)
+		_, err := buildkit.TryExtractFileFromState(ctx, am.config.Client, &stateWithCheck, updatesAvailableMarker)
 		if err != nil {
+			if !isMarkerMissingErr(err, updatesAvailableMarker) {
+				return nil, nil, fmt.Errorf("failed while checking for available apk updates: %w", err)
+			}
 			log.Info("No upgradable packages found for this image.")
 			return nil, nil, types.ErrNoUpdatesFound
 		}

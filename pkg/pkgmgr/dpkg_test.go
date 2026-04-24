@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/mock"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -450,12 +451,13 @@ func Test_GetPackageInfo(t *testing.T) {
 
 func Test_installUpdates_DPKG(t *testing.T) {
 	tests := []struct {
-		name           string
-		updates        unversioned.UpdatePackages
-		ignoreErrors   bool
-		mockSetup      func(reference *mocks.MockReference)
-		expectedResult []byte
-		expectedError  string
+		name                  string
+		updates               unversioned.UpdatePackages
+		ignoreErrors          bool
+		mockSetup             func(reference *mocks.MockReference)
+		expectedResult        []byte
+		expectNoUpdates       bool
+		expectedErrorContains string
 	}{
 		{
 			name: "Update all packages",
@@ -464,6 +466,24 @@ func Test_installUpdates_DPKG(t *testing.T) {
 			},
 			ignoreErrors:   false,
 			expectedResult: nil,
+		},
+		{
+			name: "Update all packages missing updates marker",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+					return req.Filename == "/updates.txt"
+				})).Return([]byte(nil), fmt.Errorf("failed to stat /updates.txt: no such file or directory"))
+			},
+			expectNoUpdates: true,
+		},
+		{
+			name: "Update all packages unrelated marker read failure",
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+					return req.Filename == "/updates.txt"
+				})).Return([]byte(nil), fmt.Errorf("repository not found"))
+			},
+			expectedErrorContains: "failed while checking for available apt updates: repository not found",
 		},
 		{
 			name: "Update specific packages",
@@ -502,11 +522,20 @@ func Test_installUpdates_DPKG(t *testing.T) {
 
 			updatedState, resultBytes, err := dm.installUpdates(context.TODO(), tt.updates, tt.ignoreErrors)
 
-			if tt.expectedError != "" {
-				assert.EqualError(t, err, tt.expectedError)
+			switch {
+			case tt.expectNoUpdates:
+				assert.ErrorIs(t, err, types.ErrNoUpdatesFound)
 				assert.Nil(t, updatedState)
 				assert.Nil(t, resultBytes)
-			} else {
+			case tt.expectedErrorContains != "":
+				assert.Error(t, err)
+				if err != nil {
+					assert.Contains(t, err.Error(), tt.expectedErrorContains)
+				}
+				assert.False(t, errors.Is(err, types.ErrNoUpdatesFound))
+				assert.Nil(t, updatedState)
+				assert.Nil(t, resultBytes)
+			default:
 				assert.NoError(t, err)
 				assert.NotNil(t, updatedState)
 				assert.Equal(t, tt.expectedResult, resultBytes)
