@@ -513,6 +513,22 @@ func (gm *golangManager) upgradePackages(
 	return &state, failedPackages, nil
 }
 
+// rebuildFailure captures a single Go binary rebuild failure with the
+// binary path and failure reason as separate fields. Using a struct
+// rather than a []string of "path: reason" strings avoids fragile
+// string parsing in downstream consumers.
+type rebuildFailure struct {
+	binaryPath string
+	reason     string
+}
+
+// String implements fmt.Stringer so that slices of rebuildFailure
+// produce the same "path: reason" format as the previous []string
+// accumulator when formatted with %v.
+func (f rebuildFailure) String() string {
+	return fmt.Sprintf("%s: %s", f.binaryPath, f.reason)
+}
+
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
 // When stdlibFixedVersion is set, only binaries built with a Go version older than
 // that version are rebuilt for stdlib fixes. Binaries already on a new enough Go
@@ -585,7 +601,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 	state := currentState
 	totalRebuilt := 0
 	totalAttempted := 0
-	var rebuildErrors []string
+	var rebuildFailures []rebuildFailure
 
 	// Process each detected binary
 	for i, binaryInfo := range binaries {
@@ -597,7 +613,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 		buildInfo := detector.ConvertBinaryInfoToBuildInfoWithLabels(binaryInfo, gm.config.ImageLabels)
 		if buildInfo == nil {
 			log.Warnf("Could not extract build info for %s, skipping", binaryPath)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no build info", binaryPath))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no build info"})
 			continue
 		}
 
@@ -660,12 +676,12 @@ func (gm *golangManager) attemptBinaryRebuild(
 		case sourceCommit == "":
 			log.Warnf("  Binary %s has no VCS commit info and no OCI revision label. "+
 				"Cannot rebuild without source.", binaryPath)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no source commit available", binaryPath))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source commit available"})
 			continue
 		case sourceRepo == "":
 			log.Warnf("  Binary %s has commit %s but no source repo could be derived. "+
 				"Cannot rebuild without source.", binaryPath, sourceCommit)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no source repo", binaryPath))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source repo"})
 			continue
 		default:
 			log.Debugf("  Source: %s @ %s", sourceRepo, sourceCommit)
@@ -688,13 +704,13 @@ func (gm *golangManager) attemptBinaryRebuild(
 		newState, result, err := rebuilder.RebuildBinary(rebuildCtx, filteredUpdateMap, gm.config.Platform, state, binaryPath)
 		if err != nil {
 			log.Warnf("Failed to rebuild %s (skipping): %v", binaryPath, err)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, err))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("%v", err)})
 			continue
 		}
 
 		if !result.Success {
 			log.Warnf("Rebuild unsuccessful for %s (skipping): %v", binaryPath, result.Error)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, result.Error))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("%v", result.Error)})
 			continue
 		}
 
@@ -709,19 +725,16 @@ func (gm *golangManager) attemptBinaryRebuild(
 		for module := range updateMap {
 			failedPackages = append(failedPackages, module)
 		}
-		if len(rebuildErrors) > 0 {
-			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildErrors)
+		if len(rebuildFailures) > 0 {
+			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildFailures)
 		}
 		return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt")
 	}
 
 	if totalRebuilt < totalAttempted {
-		log.Warnf("Partial patch: %d/%d attempted binaries rebuilt. Failed: %v", totalRebuilt, totalAttempted, rebuildErrors)
-		for _, errStr := range rebuildErrors {
-			// Extract the module name from error strings like "path: error"
-			if parts := strings.SplitN(errStr, ":", 2); len(parts) > 0 {
-				failedPackages = append(failedPackages, parts[0])
-			}
+		log.Warnf("Partial patch: %d/%d attempted binaries rebuilt. Failed: %v", totalRebuilt, totalAttempted, rebuildFailures)
+		for _, f := range rebuildFailures {
+			failedPackages = append(failedPackages, f.binaryPath)
 		}
 	} else {
 		log.Infof("Prepared rebuild for %d/%d Go binaries", totalRebuilt, totalAttempted)
