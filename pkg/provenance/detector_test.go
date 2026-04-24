@@ -275,6 +275,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				ModulePath:   "github.com/example/app",
 				CGOEnabled:   true,
 				Dependencies: map[string]string{},
+				BuildFlags:   []string{"-buildvcs=false"},
 				BuildArgs: map[string]string{
 					"_sourceRepo": "https://github.com/example/app",
 				},
@@ -295,6 +296,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				ModulePath:   "k8s.io/autoscaler/cluster-autoscaler",
 				CGOEnabled:   false,
 				Dependencies: map[string]string{},
+				BuildFlags:   []string{"-buildvcs=false"},
 				BuildArgs: map[string]string{
 					"_sourceRepo": "https://github.com/kubernetes/autoscaler",
 				},
@@ -315,6 +317,7 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 				ModulePath:   "golang.org/x/tools/gopls",
 				CGOEnabled:   false,
 				Dependencies: map[string]string{},
+				BuildFlags:   []string{"-buildvcs=false"},
 				BuildArgs: map[string]string{
 					"_sourceRepo": "https://github.com/golang/tools",
 				},
@@ -384,6 +387,74 @@ func TestConvertBinaryInfoToBuildInfo(t *testing.T) {
 	}
 }
 
+func TestConvertBinaryInfoToBuildInfoWithLabels(t *testing.T) {
+	detector := NewDetector()
+
+	t.Run("OCI labels fill missing VCS info", func(t *testing.T) {
+		bi := &BinaryInfo{
+			Path:       "/nginx-ingress-controller",
+			GoVersion:  "go1.25.3",
+			ModulePath: "k8s.io/ingress-nginx/cmd/nginx",
+			Main:       "k8s.io/ingress-nginx@(devel)",
+			Dependencies: map[string]string{
+				"golang.org/x/net": "v0.46.0",
+			},
+			BuildSettings: map[string]string{
+				"CGO_ENABLED": "0",
+				"GOOS":        "linux",
+				"GOARCH":      "amd64",
+				"-trimpath":   "true",
+			},
+			VCS: map[string]string{},
+		}
+		labels := map[string]string{
+			"org.opencontainers.image.revision": "52c0a83ac9bc72e9",
+			"org.opencontainers.image.source":   "https://github.com/kubernetes/ingress-nginx",
+		}
+
+		result := detector.ConvertBinaryInfoToBuildInfoWithLabels(bi, labels)
+		require.NotNil(t, result)
+		assert.Equal(t, "52c0a83ac9bc72e9", result.BuildArgs["_sourceCommit"])
+		// Source repo derived from module path takes precedence
+		assert.Equal(t, "https://github.com/kubernetes/ingress-nginx", result.BuildArgs["_sourceRepo"])
+	})
+
+	t.Run("VCS info takes precedence over OCI labels", func(t *testing.T) {
+		bi := &BinaryInfo{
+			Path:          "/app",
+			GoVersion:     "go1.21.0",
+			ModulePath:    "github.com/example/app",
+			Dependencies:  map[string]string{},
+			BuildSettings: map[string]string{},
+			VCS: map[string]string{
+				"vcs.revision": "from-binary",
+			},
+		}
+		labels := map[string]string{
+			"org.opencontainers.image.revision": "from-label",
+		}
+
+		result := detector.ConvertBinaryInfoToBuildInfoWithLabels(bi, labels)
+		require.NotNil(t, result)
+		assert.Equal(t, "from-binary", result.BuildArgs["_sourceCommit"])
+	})
+
+	t.Run("nil labels behaves like ConvertBinaryInfoToBuildInfo", func(t *testing.T) {
+		bi := &BinaryInfo{
+			Path:          "/app",
+			GoVersion:     "go1.21.0",
+			ModulePath:    "github.com/example/app",
+			Dependencies:  map[string]string{},
+			BuildSettings: map[string]string{},
+			VCS:           map[string]string{},
+		}
+
+		result := detector.ConvertBinaryInfoToBuildInfoWithLabels(bi, nil)
+		require.NotNil(t, result)
+		assert.Equal(t, "", result.BuildArgs["_sourceCommit"])
+	})
+}
+
 func TestRetryScript(t *testing.T) {
 	script := retryScript("go mod download", 3)
 
@@ -392,4 +463,43 @@ func TestRetryScript(t *testing.T) {
 	assert.Contains(t, script, "go mod download")
 	assert.Contains(t, script, "sleep $delay")
 	assert.Contains(t, script, "retry=$((retry+1))")
+}
+
+func TestStripOuterQuotes(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`"-s -w -X main.version=1.0"`, `-s -w -X main.version=1.0`},
+		{`'single quoted'`, `single quoted`},
+		{`no quotes`, `no quotes`},
+		{`""`, ``},
+		{`''`, ``},
+		{`"unterminated`, `"unterminated`},
+		{`unterminated"`, `unterminated"`},
+		{`"`, `"`},
+		{``, ``},
+		{`a`, `a`},
+		{`"mixed'`, `"mixed'`},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, stripOuterQuotes(tc.in), "input=%q", tc.in)
+	}
+}
+
+func TestConvertBinaryInfoToBuildInfo_StripsLdflagsQuotes(t *testing.T) {
+	detector := NewDetector()
+	bi := &BinaryInfo{
+		Path:       "/coredns",
+		GoVersion:  "go1.21.0",
+		ModulePath: "github.com/coredns/coredns",
+		BuildSettings: map[string]string{
+			"CGO_ENABLED": "0",
+			// go version -m reports ldflags with literal outer quotes —
+			// detector must strip them so `go build` does not reject the flag.
+			"-ldflags": `"-s -w -X github.com/coredns/coredns/coremain.GitCommit=ae2bbc2"`,
+		},
+	}
+	result := detector.ConvertBinaryInfoToBuildInfoWithLabels(bi, nil)
+	require.NotNil(t, result)
+	require.Len(t, result.BuildFlags, 2) // -ldflags + -buildvcs=false (no VCS info)
+	assert.Equal(t, `-ldflags=-s -w -X github.com/coredns/coredns/coremain.GitCommit=ae2bbc2`, result.BuildFlags[0],
+		"detector must strip outer quotes from ldflags")
 }
