@@ -240,8 +240,13 @@ func tryImage(ctx context.Context, imageRef string, c client.Client, platform *o
 	return st, nil
 }
 
-func isMarkerMissingErr(err error, markerPath string) bool {
-	if err == nil || markerPath == "" {
+// isMarkerMissingErr returns true only when a marker-file extraction failed
+// during ReadFile (not during c.Solve). This guarantees the error text we
+// inspect came from the file-read phase only and cannot contain shell command
+// text from the preceding graph, so a path/basename match reliably identifies
+// a missing marker rather than an unrelated "not found" in a command string.
+func isMarkerMissingErr(err *buildkit.ReadFileErr, markerPath string) bool {
+	if err == nil || !err.ReadFailed || markerPath == "" {
 		return false
 	}
 

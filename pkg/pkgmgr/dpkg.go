@@ -359,7 +359,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 			llb.WithCustomName("Checking for upgradable packages"),
 		).Root()
 
-		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
+		_, err := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
 		if err != nil {
 			if !isMarkerMissingErr(err, updatesAvailableMarker) {
 				return nil, nil, fmt.Errorf("failed while checking for available apt updates: %w", err)

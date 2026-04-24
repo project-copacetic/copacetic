@@ -676,7 +676,7 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 		llb.WithCustomName("Checking for available updates")).Root()
 
 	const updatesAvailableMarker = "/updates.txt"
-	_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, updatesAvailableMarker)
+	_, err := buildkit.TryExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, updatesAvailableMarker)
 	if err != nil {
 		if isMarkerMissingErr(err, updatesAvailableMarker) {
 			return types.ErrNoUpdatesFound
