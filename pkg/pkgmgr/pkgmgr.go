@@ -239,3 +239,24 @@ func tryImage(ctx context.Context, imageRef string, c client.Client, platform *o
 	}
 	return st, nil
 }
+
+// isMarkerMissingErr returns true only when a marker-file extraction failed
+// during ReadFile (not during c.Solve). This guarantees the error text we
+// inspect came from the file-read phase only and cannot contain shell command
+// text from the preceding graph, so a path/basename match reliably identifies
+// a missing marker rather than an unrelated "not found" in a command string.
+func isMarkerMissingErr(err *buildkit.ReadFileErr, markerPath string) bool {
+	if err == nil || !err.ReadFailed || markerPath == "" {
+		return false
+	}
+
+	errString := strings.ToLower(err.Error())
+	if !strings.Contains(errString, "no such file or directory") && !strings.Contains(errString, "not found") {
+		return false
+	}
+
+	markerPath = strings.ToLower(markerPath)
+	markerBase := strings.ToLower(filepath.Base(markerPath))
+
+	return strings.Contains(errString, markerPath) || strings.Contains(errString, markerBase)
+}

@@ -1,6 +1,7 @@
 package pkgmgr
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -336,6 +337,93 @@ func TestValidateOSPackageNames(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+// TestIsMarkerMissingErr verifies that isMarkerMissingErr only classifies
+// failures coming from ref.ReadFile (ReadFailed=true) as missing markers,
+// and never misclassifies solve-time errors — even when the solve error
+// text embeds the marker path (which happens when the check command itself
+// contains it).
+func TestIsMarkerMissingErr(t *testing.T) {
+	const marker = "/updates.txt"
+
+	tests := []struct {
+		name   string
+		err    *buildkit.ReadFileErr
+		marker string
+		want   bool
+	}{
+		{
+			name:   "nil err",
+			err:    nil,
+			marker: marker,
+			want:   false,
+		},
+		{
+			name: "empty marker path",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("failed to stat /updates.txt: no such file or directory"),
+				ReadFailed: true,
+			},
+			marker: "",
+			want:   false,
+		},
+		{
+			name: "read phase: explicit missing file with marker path",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("failed to stat /updates.txt: no such file or directory"),
+				ReadFailed: true,
+			},
+			marker: marker,
+			want:   true,
+		},
+		{
+			name: "read phase: missing file with basename only",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("file not found: updates.txt"),
+				ReadFailed: true,
+			},
+			marker: marker,
+			want:   true,
+		},
+		{
+			name: "read phase: unrelated read error (no 'not found' phrasing)",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("permission denied: /updates.txt"),
+				ReadFailed: true,
+			},
+			marker: marker,
+			want:   false,
+		},
+		{
+			name: "solve phase: error text contains marker path and 'not found' (must NOT misclassify)",
+			err: &buildkit.ReadFileErr{
+				// Simulates a solve-time failure where the vertex command
+				// string embeds the marker path — exactly the false-positive
+				// scenario that the Codex P1 review surfaced.
+				Err:         fmt.Errorf("failed to solve: process \"sh -c 'if apk list | grep upgradable; then touch /updates.txt; fi'\" did not complete successfully: command not found"),
+				SolveFailed: true,
+			},
+			marker: marker,
+			want:   false,
+		},
+		{
+			name: "solve phase: plain solve failure",
+			err: &buildkit.ReadFileErr{
+				Err:         fmt.Errorf("failed to solve: exit code 1"),
+				SolveFailed: true,
+			},
+			marker: marker,
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isMarkerMissingErr(tt.err, tt.marker)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
