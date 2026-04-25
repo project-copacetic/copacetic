@@ -816,6 +816,24 @@ func TestCollectGoBinaryInfo(t *testing.T) {
 			updates:   unversioned.LangUpdatePackages{{Name: "flask", PkgPath: "app/requirements.txt", Type: "pip"}},
 			wantPaths: nil,
 		},
+		{
+			name: "skips gomod entries even if PkgPath set",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/foo/bar", PkgPath: "src/go.mod", Type: utils.GoModules},
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary, InstalledVersion: "v1.26.0"},
+			},
+			wantPaths:   []string{"manager"},
+			wantVersion: "1.26.0",
+		},
+		{
+			name: "all gomod, no binary paths returned",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/foo/bar", PkgPath: "src/go.mod", Type: utils.GoModules},
+				{Name: "github.com/baz/qux", PkgPath: "src/go.sum", Type: utils.GoModules},
+			},
+			wantPaths:   nil,
+			wantVersion: "",
+		},
 	}
 
 	for _, tt := range tests {

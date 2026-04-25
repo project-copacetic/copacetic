@@ -801,7 +801,7 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildCon
 		return llb.State{}, "", err
 	}
 
-	log.Debugf("Cloning source from %s @ %s", repoURL, commit)
+	log.Debugf("Cloning source from %s @ %s", repoURL, ref)
 
 	gitRef := repoURL
 	if !strings.HasSuffix(gitRef, ".git") {

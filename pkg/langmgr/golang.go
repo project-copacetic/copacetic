@@ -545,10 +545,12 @@ func (f rebuildFailure) String() string {
 func collectGoBinaryInfo(langUpdates unversioned.LangUpdatePackages) (paths []string, goVersion string) {
 	seen := make(map[string]bool)
 	for _, u := range langUpdates {
-		if u.Type != utils.GoBinary && u.Type != utils.GoModules {
+		// Only gobinary entries carry binary paths via PkgPath. GoModules entries' PkgPath
+		// points at go.mod/go.sum locations which are not useful for synthetic BinaryInfo.
+		if u.Type != utils.GoBinary {
 			continue
 		}
-		// Extract Go version from stdlib entries (e.g., "v1.26.0" → "1.26.0")
+		// Extract Go version from stdlib entries (e.g., "v1.26.0" -> "1.26.0").
 		if u.Name == "stdlib" && goVersion == "" && u.InstalledVersion != "" {
 			goVersion = strings.TrimPrefix(u.InstalledVersion, "v")
 		}
@@ -683,6 +685,10 @@ func (gm *golangManager) attemptBinaryRebuild(
 	totalAttempted := 0
 	var rebuildFailures []rebuildFailure
 
+	// Image-level metadata reused across every binary in this image. Parse once to avoid
+	// re-unmarshalling the OCI config for every binary.
+	imageSourceLabel := extractOCISourceLabel(gm.config)
+
 	// Process each detected binary
 	for i, binaryInfo := range binaries {
 		binaryPath := binaryInfo.Path
@@ -758,26 +764,34 @@ func (gm *golangManager) attemptBinaryRebuild(
 			}
 		}
 
+		// Resolution paths cloneSourceCode supports: VCS metadata (sourceCommit + sourceRepo),
+		// --go-vcs-url override, OCI source label + image tag, or image-tag heuristic. Only
+		// fail-fast here when none of these can fire; otherwise let cloneSourceCode try and
+		// produce its specific error if every fallback ultimately fails.
+		hasFallback := gm.goVCSURL != "" || imageSourceLabel != "" || gm.imageRef != ""
 		switch {
-		case sourceCommit == "":
-			log.Warnf("  Binary %s has no VCS commit info and no OCI revision label. "+
-				"Cannot rebuild without source.", binaryPath)
-			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source commit available"})
+		case sourceCommit == "" && sourceRepo == "" && !hasFallback:
+			log.Warnf("  Binary %s has no VCS info, no --go-vcs-url, no OCI source label, "+
+				"and no image tag. Cannot rebuild without source.", binaryPath)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source resolution path"})
 			continue
-		case sourceRepo == "":
-			log.Warnf("  Binary %s has commit %s but no source repo could be derived. "+
+		case sourceCommit != "" && sourceRepo == "" && !hasFallback:
+			log.Warnf("  Binary %s has commit %s but no source repo and no fallback. "+
 				"Cannot rebuild without source.", binaryPath, sourceCommit)
 			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source repo"})
 			continue
 		default:
-			log.Debugf("  Source: %s @ %s", sourceRepo, sourceCommit)
+			if sourceCommit != "" && sourceRepo != "" {
+				log.Debugf("  Source: %s @ %s", sourceRepo, sourceCommit)
+			} else {
+				log.Debugf("  Source: deferring resolution to cloneSourceCode (fallback path)")
+			}
 		}
 
 		for module, version := range filteredUpdateMap {
 			log.Debugf("  Will update %s to %s", module, version)
 		}
 
-		// Create rebuild context for this binary
 		rebuildCtx := &provenance.RebuildContext{
 			Strategy:         provenance.RebuildStrategyHeuristic,
 			BuildInfo:        buildInfo,
@@ -785,7 +799,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 			ImageLabels:      gm.config.ImageLabels,
 			ImageRef:         gm.imageRef,
 			GoVCSURL:         gm.goVCSURL,
-			ImageSourceLabel: extractOCISourceLabel(gm.config),
+			ImageSourceLabel: imageSourceLabel,
 		}
 
 		// Attempt to rebuild this binary and merge into current state
