@@ -81,7 +81,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           "@id": "pkg:oci/foo.io/bar:latest",
           "subcomponents": [
             {
-              "@id": "pkg:apk/alpine/test1@1.1?arch=x86_64"
+              "@id": "pkg:apk/alpine/test1@1.0?arch=x86_64"
             }
           ]
         }
@@ -147,10 +147,10 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           "@id": "pkg:oci/foo.io/bar:latest",
           "subcomponents": [
             {
-	              "@id": "pkg:deb/debian/test1@1.1?arch=x86_64"
+	              "@id": "pkg:deb/debian/test1@1.0?arch=x86_64"
             },
             {
-              "@id": "pkg:deb/debian/test2@1.2?arch=x86_64"
+              "@id": "pkg:deb/debian/test2@1.0?arch=x86_64"
             }
           ]
         }
@@ -166,7 +166,7 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
           "@id": "pkg:oci/foo.io/bar:latest",
           "subcomponents": [
             {
-              "@id": "pkg:deb/debian/test3@1.3?arch=x86_64"
+              "@id": "pkg:deb/debian/test3@1.0?arch=x86_64"
             }
           ]
         }
@@ -250,7 +250,7 @@ func TestOpenVex_CreateVEXDocument_LangUpdates(t *testing.T) {
 	}
 
 	// Minimal assertions: ensure vulnerability id present and python package id included, and skipped entry absent.
-	if !containsAll(got, []string{"GHSA-xxxx-yyyy-zzzz", "pkg:pypi/requests@2.32.3"}) {
+	if !containsAll(got, []string{"GHSA-xxxx-yyyy-zzzz", "pkg:pypi/requests@2.31.0"}) {
 		t.Errorf("expected lang update identifiers not found in output: %s", got)
 	}
 	if strings.Contains(got, "pkg:pypi/idna@3.7") {
@@ -282,19 +282,19 @@ func TestOpenVex_PurlPerOSType(t *testing.T) {
 
 	cases := []tc{
 		// apk based
-		{name: "alpine->apk", osType: utils.OSTypeAlpine, pkgMgrType: "apk", expectedPurl: "pkg:apk/alpine/pkgA@1.2.3?arch=x86_64"},
+		{name: "alpine->apk", osType: utils.OSTypeAlpine, pkgMgrType: "apk", expectedPurl: "pkg:apk/alpine/pkgA@1.0.0?arch=x86_64"},
 		// deb based
-		{name: "debian->deb", osType: utils.OSTypeDebian, pkgMgrType: "deb", expectedPurl: "pkg:deb/debian/pkgA@1.2.3?arch=x86_64"},
-		{name: "ubuntu->deb", osType: utils.OSTypeUbuntu, pkgMgrType: "deb", expectedPurl: "pkg:deb/ubuntu/pkgA@1.2.3?arch=x86_64"},
+		{name: "debian->deb", osType: utils.OSTypeDebian, pkgMgrType: "deb", expectedPurl: "pkg:deb/debian/pkgA@1.0.0?arch=x86_64"},
+		{name: "ubuntu->deb", osType: utils.OSTypeUbuntu, pkgMgrType: "deb", expectedPurl: "pkg:deb/ubuntu/pkgA@1.0.0?arch=x86_64"},
 		// rpm based
-		{name: "cbl-mariner->rpm", osType: utils.OSTypeCBLMariner, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/cbl-mariner/pkgA@1.2.3?arch=x86_64"},
-		{name: "azurelinux->rpm", osType: utils.OSTypeAzureLinux, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/azurelinux/pkgA@1.2.3?arch=x86_64"},
-		{name: "centos->rpm", osType: utils.OSTypeCentOS, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/centos/pkgA@1.2.3?arch=x86_64"},
-		{name: "oracle->rpm", osType: utils.OSTypeOracle, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/oracle/pkgA@1.2.3?arch=x86_64"},
-		{name: "redhat->rpm", osType: utils.OSTypeRedHat, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/redhat/pkgA@1.2.3?arch=x86_64"},
-		{name: "rocky->rpm", osType: utils.OSTypeRocky, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/rocky/pkgA@1.2.3?arch=x86_64"},
-		{name: "amazon->rpm", osType: utils.OSTypeAmazon, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/amazon/pkgA@1.2.3?arch=x86_64"},
-		{name: "alma->rpm", osType: utils.OSTypeAlma, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/alma/pkgA@1.2.3?arch=x86_64"},
+		{name: "cbl-mariner->rpm", osType: utils.OSTypeCBLMariner, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/cbl-mariner/pkgA@1.0.0?arch=x86_64"},
+		{name: "azurelinux->rpm", osType: utils.OSTypeAzureLinux, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/azurelinux/pkgA@1.0.0?arch=x86_64"},
+		{name: "centos->rpm", osType: utils.OSTypeCentOS, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/centos/pkgA@1.0.0?arch=x86_64"},
+		{name: "oracle->rpm", osType: utils.OSTypeOracle, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/oracle/pkgA@1.0.0?arch=x86_64"},
+		{name: "redhat->rpm", osType: utils.OSTypeRedHat, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/redhat/pkgA@1.0.0?arch=x86_64"},
+		{name: "rocky->rpm", osType: utils.OSTypeRocky, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/rocky/pkgA@1.0.0?arch=x86_64"},
+		{name: "amazon->rpm", osType: utils.OSTypeAmazon, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/amazon/pkgA@1.0.0?arch=x86_64"},
+		{name: "alma->rpm", osType: utils.OSTypeAlma, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/alma/pkgA@1.0.0?arch=x86_64"},
 	}
 
 	for _, cse := range cases {
@@ -322,6 +322,68 @@ func TestOpenVex_PurlPerOSType(t *testing.T) {
 				t.Fatalf("expected purl %s not found in output: %s", cse.expectedPurl, got)
 			}
 		})
+	}
+}
+
+// TestOpenVex_DistroQualifier verifies that the distro qualifier is included in
+// subcomponent PURLs when OS.Version is set, and omitted when it is empty.
+func TestOpenVex_DistroQualifier(t *testing.T) {
+	t.Setenv("COPA_VEX_AUTHOR", "distro test")
+	backupNow := now
+	now = func() time.Time { return time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC) }
+	defer func() { now = backupNow }()
+	backupID := generateID
+	generateID = func(_ *vex.VEX) (string, error) { return "https://openvex.dev/distro", nil }
+	defer func() { generateID = backupID }()
+
+	// With OS.Version set — distro qualifier should appear.
+	updates := &unversioned.UpdateManifest{
+		OSUpdates: []unversioned.UpdatePackage{{
+			Name:             "bsdutils",
+			InstalledVersion: "2.36.1-8+deb11u1",
+			FixedVersion:     "2.36.1-8+deb11u2",
+			VulnerabilityID:  "CVE-2024-0001",
+		}},
+		Metadata: unversioned.Metadata{
+			OS:     unversioned.OS{Type: utils.OSTypeDebian, Version: "11.3"},
+			Config: unversioned.Config{Arch: "amd64"},
+		},
+	}
+	got, err := (&OpenVex{}).CreateVEXDocument(updates, "example.io/img:patched", "deb")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should use InstalledVersion and include distro qualifier.
+	if !strings.Contains(got, "pkg:deb/debian/bsdutils@2.36.1-8+deb11u1") {
+		t.Errorf("expected InstalledVersion in PURL, got: %s", got)
+	}
+	if !strings.Contains(got, "distro=debian-11.3") {
+		t.Errorf("expected distro qualifier, got: %s", got)
+	}
+	// Should NOT contain FixedVersion in PURL.
+	if strings.Contains(got, "bsdutils@2.36.1-8+deb11u2") {
+		t.Errorf("PURL should use InstalledVersion not FixedVersion, got: %s", got)
+	}
+
+	// Without OS.Version — distro qualifier should be absent.
+	updatesNoVer := &unversioned.UpdateManifest{
+		OSUpdates: []unversioned.UpdatePackage{{
+			Name:             "pkgX",
+			InstalledVersion: "1.0",
+			FixedVersion:     "1.1",
+			VulnerabilityID:  "CVE-2024-0002",
+		}},
+		Metadata: unversioned.Metadata{
+			OS:     unversioned.OS{Type: utils.OSTypeAlpine},
+			Config: unversioned.Config{Arch: "x86_64"},
+		},
+	}
+	got2, err := (&OpenVex{}).CreateVEXDocument(updatesNoVer, "example.io/img:patched", "apk")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got2, "distro=") {
+		t.Errorf("distro qualifier should be absent when OS.Version is empty, got: %s", got2)
 	}
 }
 

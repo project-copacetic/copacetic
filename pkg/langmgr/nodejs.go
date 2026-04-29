@@ -75,6 +75,24 @@ func nodeDownloadScript(url, destFile string) string {
 	)
 }
 
+// safeTarExtractScript returns a shell snippet that validates and extracts an npm tarball safely.
+// It rejects absolute paths, path traversal entries, and symlink/hardlink members before extraction.
+func safeTarExtractScript(tarballFile, targetDir string) string {
+	return fmt.Sprintf(
+		`tar -tzf %s | while IFS= read -r entry; do `+
+			`entry="${entry#./}"; `+
+			`[ -z "$entry" ] && continue; `+
+			`case "$entry" in /*|..|../*|*/..|*/../*) echo "ERROR: unsafe tar entry: $entry" >&2; exit 1;; esac; `+
+			`done && `+
+			`if tar -tzvf %s | awk '\''substr($1,1,1) ~ /[lh]/ { exit 1 }'\''; then :; else echo "ERROR: tarball contains symlink/hardlink entries" >&2; exit 1; fi && `+
+			`tar xzf %s --no-same-owner --no-same-permissions --strip-components=1 -C %s`,
+		tarballFile,
+		tarballFile,
+		tarballFile,
+		targetDir,
+	)
+}
+
 // validateNodePackageName validates that a package name is safe for use in shell commands.
 func validateNodePackageName(name string) error {
 	if name == "" {
@@ -506,6 +524,12 @@ func (nm *nodejsManager) upgradePackages(
 	return &updatedState, nil
 }
 
+// shellQuote wraps s in single quotes and escapes embedded single quotes so it can be
+// safely passed as a shell argument.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
+}
+
 // installNodePackages updates both direct and transitive dependencies.
 // It uses npm install for direct dependencies and npm overrides for transitive dependencies.
 func (nm *nodejsManager) installNodePackages(
@@ -530,10 +554,10 @@ func (nm *nodejsManager) installNodePackages(
 	// This ensures production images don't include development dependencies
 	log.Debugf("Removing devDependencies from package.json in %s", workDir)
 	removeDevDepsCmd := fmt.Sprintf(
-		`sh -c 'cd %s && `+
+		`sh -c 'cd -- "$1" && `+
 			`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
-			`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"'`,
-		workDir,
+			`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"' -- %s`,
+		shellQuote(workDir),
 	)
 	state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
 
@@ -552,15 +576,16 @@ func (nm *nodejsManager) installNodePackages(
 			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+			safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
 
 			replaceCmd := fmt.Sprintf(
-				`sh -c 'cd %s && `+
+				`sh -c 'cd -- "$1" && `+
 					`PKG_DIR="node_modules/%s" && `+
 					`if [ -d "$PKG_DIR" ]; then `+
 					`  echo "INFO: Replacing direct dependency %s with version %s" && `+
 					`  if %s; then `+
 					`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-					`    tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
+					`    %s && `+
 					`    rm -f %s && `+
 					`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
 					`  else `+
@@ -568,16 +593,16 @@ func (nm *nodejsManager) installNodePackages(
 					`  fi; `+
 					`else `+
 					`  echo "WARN: %s not found in node_modules, skipping"; `+
-					`fi'`,
-				workDir,
+					`fi' -- %s`,
 				u.Name,
 				u.Name, u.FixedVersion,
 				downloadScript,
-				tarballFile,
+				safeExtractScript,
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
 				u.Name,
+				shellQuote(workDir),
 			)
 
 			log.Infof("Replacing direct dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
@@ -608,9 +633,10 @@ func (nm *nodejsManager) installNodePackages(
 			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 			replaceCmd := fmt.Sprintf(
-				`sh -c 'cd %s && `+
+				`sh -c 'cd -- "$1" && `+
 					`if %s; then `+
 					`  PKG_NAME="%s" && `+
 					`  FOUND=0 && `+
@@ -618,7 +644,7 @@ func (nm *nodejsManager) installNodePackages(
 					`    if [ -f "$dir/package.json" ]; then `+
 					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
 					`      rm -rf "$dir" && mkdir -p "$dir" && `+
-					`      tar xzf %s --strip-components=1 -C "$dir" && `+
+					`      %s && `+
 					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
 					`      FOUND=$((FOUND+1)); `+
 					`    fi; `+
@@ -627,15 +653,15 @@ func (nm *nodejsManager) installNodePackages(
 					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
 					`else `+
 					`  echo "WARN: failed to download %s@%s, skipping"; `+
-					`fi'`,
-				workDir,
+					`fi' -- %s`,
 				downloadScript,
 				u.Name,
 				u.FixedVersion,
-				tarballFile,
+				safeExtractScript,
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
+				shellQuote(workDir),
 			)
 
 			log.Infof("Replacing transitive dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
@@ -649,11 +675,11 @@ func (nm *nodejsManager) installNodePackages(
 	// == Step 3: Final Cleanup ==
 	log.Infof("Running final cleanup for %s...", workDir)
 	cleanupCmd := fmt.Sprintf(
-		`sh -c 'cd %s && `+
+		`sh -c 'cd -- "$1" && `+
 			`npm prune --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
 			`npm dedupe --omit=dev --legacy-peer-deps 2>&1 | grep -v "^npm warn" || true && `+
-			`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")'`,
-		workDir,
+			`(rm -rf /root/.npm ~/.npm /home/*/.npm /tmp/npm-* 2>&1 || echo "WARN: Cache cleanup failed")' -- %s`,
+		shellQuote(workDir),
 	)
 	state = state.Run(
 		llb.Shlex(cleanupCmd),
@@ -879,6 +905,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 			replaceCmd := fmt.Sprintf(
 				`sh -c 'NPM_ROOT=$(npm root -g) && `+
@@ -889,7 +916,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					`    if [ -f "$dir/package.json" ]; then `+
 					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
 					`      rm -rf "$dir" && mkdir -p "$dir" && `+
-					`      tar xzf %s --strip-components=1 -C "$dir" && `+
+					`      %s && `+
 					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
 					`      FOUND=$((FOUND+1)); `+
 					`    fi; `+
@@ -902,7 +929,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				downloadScript,
 				u.Name,
 				u.FixedVersion,
-				tarballFile,
+				safeExtractScript,
 				tarballFile,
 				u.Name,
 				u.Name, u.FixedVersion,
@@ -977,10 +1004,10 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		// This ensures global packages don't include development dependencies
 		log.Debugf("Removing devDependencies from package.json for global package %s", pkgName)
 		removeDevDepsCmd := fmt.Sprintf(
-			`sh -c 'cd %s && `+
+			`sh -c 'cd -- "$1" && `+
 				`node -e "const fs=require('\''fs'\''); const pkg=JSON.parse(fs.readFileSync('\''package.json'\'')); `+
-				`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"'`,
-			pkgPath,
+				`delete pkg.devDependencies; fs.writeFileSync('\''package.json'\'', JSON.stringify(pkg, null, 2));"' -- %s`,
+			shellQuote(pkgPath),
 		)
 		state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
 
@@ -1008,15 +1035,16 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 				tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 				downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+				safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
 
 				replaceCmd := fmt.Sprintf(
-					`sh -c 'cd %s && `+
+					`sh -c 'cd -- "$1" && `+
 						`PKG_DIR="node_modules/%s" && `+
 						`if [ -d "$PKG_DIR" ]; then `+
 						`  echo "INFO: Replacing direct dependency %s with version %s" && `+
 						`  if %s; then `+
 						`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-						`    tar xzf %s --strip-components=1 -C "$PKG_DIR" && `+
+						`    %s && `+
 						`    rm -f %s && `+
 						`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
 						`  else `+
@@ -1024,16 +1052,16 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`  fi; `+
 						`else `+
 						`  echo "WARN: %s not found in node_modules, skipping"; `+
-						`fi'`,
-					pkgPath,
+						`fi' -- %s`,
 					u.Name,
 					u.Name, u.FixedVersion,
 					downloadScript,
-					tarballFile,
+					safeExtractScript,
 					tarballFile,
 					u.Name,
 					u.Name, u.FixedVersion,
 					u.Name,
+					shellQuote(pkgPath),
 				)
 
 				log.Infof("Replacing direct dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)
@@ -1057,9 +1085,10 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 				tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
 				tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
 				downloadScript := nodeDownloadScript(tarballURL, tarballFile)
+				safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
 
 				replaceCmd := fmt.Sprintf(
-					`sh -c 'cd %s && `+
+					`sh -c 'cd -- "$1" && `+
 						`if %s; then `+
 						`  PKG_NAME="%s" && `+
 						`  FOUND=0 && `+
@@ -1067,7 +1096,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`    if [ -f "$dir/package.json" ]; then `+
 						`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
 						`      rm -rf "$dir" && mkdir -p "$dir" && `+
-						`      tar xzf %s --strip-components=1 -C "$dir" && `+
+						`      %s && `+
 						`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
 						`      FOUND=$((FOUND+1)); `+
 						`    fi; `+
@@ -1076,15 +1105,15 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
 						`else `+
 						`  echo "WARN: failed to download %s@%s, skipping"; `+
-						`fi'`,
-					pkgPath,
+						`fi' -- %s`,
 					downloadScript,
 					u.Name,
 					u.FixedVersion,
-					tarballFile,
+					safeExtractScript,
 					tarballFile,
 					u.Name,
 					u.Name, u.FixedVersion,
+					shellQuote(pkgPath),
 				)
 
 				log.Infof("Replacing transitive dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)

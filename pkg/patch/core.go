@@ -41,6 +41,7 @@ type Options struct {
 
 	// Toolchain patch level (e.g., "patch", "minor", "major"; empty = disabled)
 	ToolchainPatchLevel string
+	GoVCSURL            string
 
 	// EOL configuration
 	ExitOnEOL bool
@@ -133,7 +134,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// For normal Docker export, continue with solving but preserve states
 	// Handle Language Specific Updates
 	if updates != nil && len(updates.LangUpdates) > 0 {
-		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates, opts.ToolchainPatchLevel)
+		languageManagers := langmgr.GetLanguageManagers(config, workingFolder, updates, opts.ToolchainPatchLevel, opts.GoVCSURL, opts.ImageName)
 		var langErrPkgsFromAllManagers []string
 		var combinedLangError error
 
@@ -204,6 +205,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 
 	// Marshal the state for the target platform
+	log.Info("Building patched image...")
 	def, err := patchedImageState.Marshal(ctx, llb.Platform(opts.TargetPlatform.Platform))
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)

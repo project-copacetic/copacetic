@@ -48,6 +48,7 @@ type Options struct {
 
 	// Toolchain patch level (e.g., Go stdlib upgrade)
 	ToolchainPatchLevel string
+	GoVCSURL            string
 
 	// Generate specific
 	OutputContext string
