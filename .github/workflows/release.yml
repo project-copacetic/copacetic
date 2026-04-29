@@ -154,9 +154,21 @@ jobs:
         run: |
           tag="${RELEASE_TAG}"
           image_owner="${IMAGE_OWNER}"
+          # Derive Go toolchain version from go.mod so the frontend image
+          # never drifts from the module's required Go version.
+          go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          echo "Building copacetic-frontend with Go ${go_version}"
+          # Only tag :latest on final releases, never on -rc.* tags.
+          extra_tags=()
+          if [[ "${tag}" != *-* ]]; then
+            extra_tags+=(-t "ghcr.io/${image_owner}/copacetic-frontend:latest")
+          else
+            echo "Skipping :latest tag for pre-release ${tag}"
+          fi
           docker buildx build --push \
             --platform linux/amd64,linux/arm64 \
+            --build-arg "GO_VERSION=${go_version}" \
             -f frontend.Dockerfile \
             -t "ghcr.io/${image_owner}/copacetic-frontend:v${tag}" \
-            -t "ghcr.io/${image_owner}/copacetic-frontend:latest" \
+            "${extra_tags[@]}" \
             .

@@ -1,6 +1,14 @@
 
 # syntax=docker/dockerfile:1
-FROM golang:1.25.5-alpine3.23 AS builder
+
+# GO_VERSION should be kept in sync with the `go` directive in go.mod.
+# The release workflow passes this automatically via --build-arg
+# GO_VERSION=$(awk '/^go /{print $2}' go.mod). This default is a fallback
+# for local builds and should match go.mod.
+ARG GO_VERSION=1.25.9
+ARG ALPINE_VERSION=3.23
+
+FROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS builder
 
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
