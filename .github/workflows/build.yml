@@ -33,6 +33,7 @@ permissions:
 jobs:
   unit-test:
     name: Unit Test
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -44,7 +45,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -61,6 +62,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     permissions:
@@ -74,7 +76,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Build copa
         shell: bash
@@ -101,6 +103,7 @@ jobs:
   test-patch-trivy:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
@@ -121,7 +124,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -151,6 +154,7 @@ jobs:
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
@@ -171,7 +175,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -279,6 +283,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -290,12 +295,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash
         run: |
-          go install github.com/project-copacetic/scanner-plugin-template@latest
+          go install github.com/project-copacetic/scanner-plugin-template@v0.0.0-20240403201223-d6c20d3078c2
           mv $(go env GOPATH)/bin/scanner-plugin-template $(go env GOPATH)/bin/copa-fake
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Install required tools
@@ -326,6 +331,7 @@ jobs:
   test-push:
     needs: build
     name: Test push
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -337,7 +343,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -377,6 +383,7 @@ jobs:
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     strategy:
@@ -424,7 +431,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -465,6 +472,7 @@ jobs:
   test-generate:
     needs: build
     name: Test generate command ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     strategy:
@@ -485,7 +493,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -511,6 +519,7 @@ jobs:
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     steps:
@@ -550,12 +559,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install scanner-plugin-template
         shell: bash
         run: |
-          go install github.com/project-copacetic/scanner-plugin-template@latest
+          go install github.com/project-copacetic/scanner-plugin-template@v0.0.0-20240403201223-d6c20d3078c2
           mv $(go env GOPATH)/bin/scanner-plugin-template $(go env GOPATH)/bin/copa-fake
           mv $(go env GOPATH)/bin/copa-fake /usr/local/bin
       - name: Install required tools
@@ -589,6 +598,7 @@ jobs:
   test-patch-local-multiplatform-oci-layout:
     needs: build
     name: Test multiplatform OCI layout creation
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     steps:
@@ -609,7 +619,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -804,6 +814,7 @@ jobs:
   test-gateway:
     needs: build
     name: Gateway Integration Tests ${{ matrix.buildkit_mode }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 20
     strategy:
@@ -819,7 +830,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -841,6 +852,7 @@ jobs:
   test-patch-bulk:
     needs: build
     name: Test Bulk Patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     steps:
@@ -861,7 +873,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Install required tools
         shell: bash
@@ -885,6 +897,7 @@ jobs:
   test-nodejs:
     needs: build
     name: Test Node.js patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 10
     permissions: read-all
@@ -897,7 +910,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -930,6 +943,7 @@ jobs:
   test-dotnet:
     needs: build
     name: Test .NET patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 10
     permissions: read-all
@@ -942,7 +956,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -977,6 +991,7 @@ jobs:
   test-golang:
     needs: build
     name: Test Go patching
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     permissions: read-all
@@ -989,7 +1004,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Add containerd-snapshotter to docker daemon
         run: |
@@ -1022,6 +1037,7 @@ jobs:
   test-frontend:
     needs: build
     name: Test BuildKit Frontend
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 20
     permissions: read-all
@@ -1034,7 +1050,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version: "1.25.9"
           check-latest: true
       - name: Change docker daemon config
         run: |

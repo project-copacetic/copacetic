@@ -432,9 +432,16 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
+					// For gobinary results, Trivy puts the binary path in the Result's Target
+					// field but may leave PkgPath empty (especially for stdlib vulns).
+					// Fall back to Target so Copa can locate the binary for rebuilding.
+					pkgPath := vuln.PkgPath
+					if pkgPath == "" && r.Type == utils.GoBinary {
+						pkgPath = string(r.Target)
+					}
 					if vuln.FixedVersion != "" {
 						// Composite key: same package at different paths is a separate upgrade target.
-						key := vuln.PkgName + "\x00" + vuln.PkgPath
+						key := vuln.PkgName + "\x00" + pkgPath
 						if _, exists := langPackageVulns[key]; !exists {
 							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
 							langPackageInfo[key] = unversioned.UpdatePackage{
@@ -442,7 +449,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 								Type:             string(r.Type),
 								Class:            string(r.Class),
 								InstalledVersion: vuln.InstalledVersion,
-								PkgPath:          vuln.PkgPath,
+								PkgPath:          pkgPath,
 							}
 							langPackageVulnIDs[key] = make(map[string]struct{})
 						}

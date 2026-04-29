@@ -371,6 +371,14 @@ copa patch \
     -r scan.json \
     --pkg-types library \
     --toolchain-patch-level
+
+# Provide source repo for stripped binaries (no embedded VCS info)
+# Note: --go-vcs-url is experimental and requires COPA_EXPERIMENTAL=1
+copa patch \
+    -i $IMAGE \
+    -r scan.json \
+    --pkg-types library \
+    --go-vcs-url https://github.com/org/repo@v1.2.3
 ```
 
 ##### The `--toolchain-patch-level` Flag
@@ -402,22 +410,45 @@ copa patch \
 Copa analyzes Go binaries in the image and rebuilds them using embedded build metadata:
 
 1. **Binary detection**: Runs `go version -m` on each binary in the image to extract embedded build metadata (module path, dependency versions, build flags, VCS info)
-2. **Source derivation**: Derives the source repository URL from the module path (e.g., `github.com/example/repo`)
-3. **Source cloning**: Uses the embedded VCS commit hash (`vcs.revision`) to clone the exact source at the correct commit
+2. **Source derivation**: Derives the source repository URL from the module path (e.g., `github.com/example/repo`), with built-in mappings for vanity imports (`k8s.io`, `golang.org/x`, `cloud.google.com/go`, `go.uber.org`, `go.etcd.io`, `go.opentelemetry.io`, `google.golang.org/grpc`, `google.golang.org/protobuf`)
+3. **Source resolution**: Resolves the git ref to clone using a 4-step fallback chain (see [Source Resolution Chain](#source-resolution-chain) below)
 4. **Build reconstruction**: Reconstructs build flags from the embedded build settings (`-ldflags`, `-tags`, `CGO_ENABLED`, etc.)
 5. **Dependency update**: Applies `go get module@version` for each vulnerable dependency, runs `go mod tidy`
 6. **Main package discovery**: Locates the main package in the cloned source using multiple strategies (explicit path, `cmd/` directory, binary name matching)
 7. **Rebuild and replace**: Rebuilds the binary with updated dependencies and copies it back to its original location in the image
 
-##### Key Requirement: VCS Commit Hash
+##### Source Resolution Chain
 
-:::danger Critical Requirement
-Go binaries **must have a VCS commit hash embedded** for Copa to clone the source and rebuild. This is the most important requirement for binary rebuilding to work.
-:::
+Copa resolves where to clone source code using a 4-step fallback chain. Each step is tried in order; the first success wins:
 
-The Go toolchain automatically embeds VCS metadata (commit hash, timestamp, dirty flag) when building inside a git repository (default since Go 1.18). However, many Dockerfiles exclude the `.git` directory via `.dockerignore` or by not copying it, which prevents VCS embedding.
+| Priority | Method | When it fires |
+|---|---|---|
+| 1 | `--go-vcs-url` override | User explicitly provides `repo@ref` (requires `COPA_EXPERIMENTAL=1`) |
+| 2 | VCS commit from binary | Binary has embedded `vcs.revision` |
+| 3 | OCI source label | Image has `org.opencontainers.image.source` label pointing at a trusted host, combined with a semver-like image tag |
+| 4 | Image tag heuristic | No VCS info and no usable label, but image has a semver-like tag (e.g., `v1.2.3`) |
 
-**Recommended: Use a multi-stage build with `.git` in the builder stage.** The `.git` directory is only needed during compilation and never ends up in the final image, so there is no size penalty:
+**Step 1: `--go-vcs-url` override** — Highest priority. The user provides the source repository and git ref directly. Useful for stripped binaries where neither VCS metadata nor tag heuristic works (e.g., the Docker Hub image name doesn't match the GitHub org). This flag is gated behind `COPA_EXPERIMENTAL=1` along with the rest of the library/application patching workflow.
+
+```bash
+# Format: repo@ref
+copa patch -i calico/node:v3.31.4 --pkg-types library \
+    --go-vcs-url https://github.com/projectcalico/calico@v3.31.4
+```
+
+**Step 2: VCS commit from binary** — If the binary has `vcs.revision` embedded (the default since Go 1.18 when `.git` is present at build time), Copa clones the source at the exact commit. This is the most precise method.
+
+**Step 3: OCI source label** — If the image carries an `org.opencontainers.image.source` annotation pointing at a trusted source host, Copa uses the label URL as the repository and the image's semver-like tag as the git ref. Images without a semver-like tag, or with a label URL on an untrusted host, fall through to step 4.
+
+**Step 4: Image tag heuristic** — When VCS info is missing, Copa extracts the tag from the image reference (e.g., `prometheus:v3.9.1` → `v3.9.1`) and tries it as a git ref. This works for the common convention where image tags match git tags.
+
+If all four steps fail, Copa falls back to generating a synthetic `go.mod` from the binary's embedded dependency list, which may produce a partial rebuild.
+
+##### Recommended: Embed VCS Metadata
+
+While Copa now has fallbacks for stripped binaries, embedding VCS metadata remains the recommended approach for the most reliable rebuilds. The Go toolchain automatically embeds VCS metadata when building inside a git repository (default since Go 1.18).
+
+**Use a multi-stage build with `.git` in the builder stage.** The `.git` directory is only needed during compilation and never ends up in the final image:
 
 ```dockerfile
 # GOOD: Multi-stage build preserves VCS metadata at zero cost
@@ -432,17 +463,6 @@ COPY --from=builder /app /app
 # Final image has no .git, but the binary has VCS info embedded
 ```
 
-If your `.dockerignore` excludes `.git`, remove that line -- in a multi-stage build it only affects the builder stage and won't bloat your final image.
-
-```dockerfile
-# BAD: No .git means no VCS metadata in the binary
-FROM golang:1.23 AS builder
-COPY . /src
-# .git excluded by .dockerignore or never copied
-RUN go build -o /app ./cmd/myapp
-# Binary has no vcs.revision -- Copa cannot rebuild it
-```
-
 You can verify whether a binary has VCS info embedded:
 
 ```bash
@@ -453,17 +473,15 @@ go version -m /path/to/binary | grep vcs
 #   build   vcs.time=2024-01-01T00:00:00Z
 ```
 
-If `vcs.revision` is missing, the binary was built without git context and Copa cannot rebuild it.
-
 ##### Binary Rebuild Requirements
 
-- **VCS commit hash**: The Go binary must have `vcs.revision` embedded (requires `.git` directory present at build time)
-- **Public source repository**: Source code must be accessible on GitHub at the embedded commit
+- **Source resolution**: At least one of: `--go-vcs-url` override, embedded `vcs.revision`, or a semver-like image tag that matches a git tag
+- **Public source repository**: Source code must be accessible on GitHub at the resolved commit/tag
 - **Standard Go build**: The binary must be buildable with the standard Go toolchain
 
 ##### Binary Rebuild Limitations
 
-1. **VCS metadata required**: Binaries built without `.git` present (or with `-buildvcs=false`) cannot be rebuilt. This is the most common cause of failure, as many production Go container images lack embedded VCS metadata.
+1. **Source resolution failure**: If the binary has no VCS metadata, the image has no usable tag, and no `--go-vcs-url` is provided, Copa falls back to a synthetic `go.mod` which may produce incomplete rebuilds.
 
 2. **Private repositories**: Currently only public GitHub repositories are supported for source cloning.
 
@@ -471,7 +489,7 @@ If `vcs.revision` is missing, the binary was built without git context and Copa 
 
 4. **Monorepo builds**: Images containing multiple binaries from the same repository may have binaries at non-standard source locations. Copa uses a multi-strategy discovery approach but may not find all main packages.
 
-5. **Module download failures**: Some projects use private modules, vanity import paths, or vendored dependencies that cannot be resolved in the rebuild environment.
+5. **Vanity import resolution**: While Copa handles common vanity imports (`k8s.io`, `golang.org/x`, `cloud.google.com/go`, `go.uber.org`, `go.etcd.io`, `go.opentelemetry.io`, `google.golang.org/grpc`, `google.golang.org/protobuf`), other custom vanity import paths may not resolve correctly. Use `--go-vcs-url` as a workaround.
 
 6. **Build reproducibility**: Rebuilt binaries may differ from originals due to timestamps, Go version differences, or non-deterministic build steps.
 
@@ -509,7 +527,19 @@ INFO   Source: github.com/example/repo @ abc123
 INFO   Will update golang.org/x/net to v0.33.0
 ```
 
-When a binary lacks VCS metadata:
+When using the image tag heuristic (no VCS metadata):
+
+```text
+INFO Cloning source using image tag fallback https://github.com/example/repo @ v1.2.3
+```
+
+When using `--go-vcs-url`:
+
+```text
+INFO Using --go-vcs-url override: https://github.com/org/repo @ v1.2.3
+```
+
+When all resolution methods fail:
 
 ```text
 WARN   Binary /usr/bin/mybinary has no VCS commit info (likely built without .git directory).

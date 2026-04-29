@@ -36,5 +36,16 @@
     "skipMainModule": true,
     "expectedBinaryCount": 1,
     "binaryPaths": ["/nats-server"]
+  },
+  {
+    "image": "registry.k8s.io/ingress-nginx/controller",
+    "tag": "v1.14.0",
+    "description": "ingress-nginx - trimpath binaries with OCI label fallback",
+    "category": "trimpath",
+    "skipMainModule": true,
+    "expectedBinaryCount": 3,
+    "binaryPaths": ["/nginx-ingress-controller", "/dbg", "/wait-shutdown"],
+    "libraryPatchLevel": "major",
+    "toolchainPatchLevel": "major"
   }
 ]
