@@ -430,6 +430,51 @@ func Test_GetPackageInfo(t *testing.T) {
 				errMsg:  "no package name found for package",
 			},
 		},
+		{
+			name: "rejects leading dash (apt option injection)",
+			file: "Package: -malicious\nVersion: 1.0",
+			want: fields{
+				name:    "",
+				version: "",
+				errMsg:  `invalid package name "-malicious"`,
+			},
+		},
+		{
+			name: "rejects double dash",
+			file: "Package: --force-all\nVersion: 1.0",
+			want: fields{
+				name:    "",
+				version: "",
+				errMsg:  `invalid package name "--force-all"`,
+			},
+		},
+		{
+			name: "rejects whitespace in name",
+			file: "Package: foo bar\nVersion: 1.0",
+			want: fields{
+				name:    "",
+				version: "",
+				errMsg:  `invalid package name "foo bar"`,
+			},
+		},
+		{
+			name: "accepts name with plus signs",
+			file: "Package: g++\nVersion: 4:10.2.1",
+			want: fields{
+				name:    "g++",
+				version: "4:10.2.1",
+				errMsg:  "",
+			},
+		},
+		{
+			name: "accepts name with digits and dots",
+			file: "Package: libssl1.1\nVersion: 1.1.1n-0+deb11u5",
+			want: fields{
+				name:    "libssl1.1",
+				version: "1.1.1n-0+deb11u5",
+				errMsg:  "",
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

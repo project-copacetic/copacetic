@@ -335,9 +335,11 @@ func GetPackageInfo(file string) (string, string, error) {
 	return packageName, packageVersion, nil
 }
 
+// debPkgNameRE matches valid Debian package names: lowercase, digits, plus, hyphen, period.
+var debPkgNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
+
 func isValidDebianPackageName(name string) bool {
-	// Debian package names are lowercase and may contain digits, plus, hyphen, and period.
-	return regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`).MatchString(name)
+	return debPkgNameRE.MatchString(name)
 }
 
 // Patch a regular debian image with:
