@@ -32,11 +32,15 @@ import (
 )
 
 const (
-	copaProduct       = "copa"
-	defaultTag        = "latest"
-	maxFileSize       = 1 << 30 // 1GB
-	maxPatchLayerSize = 1 << 30 // 1GB
+	copaProduct = "copa"
+	defaultTag  = "latest"
+	maxFileSize = 1 << 30 // 1GB
 )
+
+// maxPatchLayerSize caps the buffered patch layer to mitigate memory DoS.
+// It is a var (not const) so tests can temporarily lower it without
+// allocating gigabyte-sized buffers.
+var maxPatchLayerSize int64 = 1 << 30 // 1GB
 
 // for testing.
 var (
@@ -375,8 +379,8 @@ func extractPatchLayer(
 }
 
 func createTarStream(image string, patchLayer []byte, outputPath string) error {
-	if len(patchLayer) > maxPatchLayerSize {
-		return errors.Errorf("patch layer exceeds maximum allowed size of 1GB")
+	if int64(len(patchLayer)) > maxPatchLayerSize {
+		return errors.Errorf("patch layer exceeds maximum allowed size of %d bytes", maxPatchLayerSize)
 	}
 
 	// Open output writer
@@ -536,15 +540,11 @@ type limitedBufferWriter struct {
 }
 
 func (w *limitedBufferWriter) Write(p []byte) (int, error) {
-	remaining := w.limit - w.written
-	if remaining <= 0 {
-		return 0, errors.Errorf("patch layer exceeds maximum allowed size of 1GB")
-	}
-
-	if int64(len(p)) > remaining {
-		n, _ := w.buf.Write(p[:remaining])
-		w.written += int64(n)
-		return n, errors.Errorf("patch layer exceeds maximum allowed size of 1GB")
+	// If a write would exceed the limit, refuse it entirely rather than
+	// writing a partial chunk: a partial write would leave a corrupt tar
+	// in the buffer that downstream consumers might still try to use.
+	if int64(len(p))+w.written > w.limit {
+		return 0, errors.Errorf("patch layer exceeds maximum allowed size of %d bytes", w.limit)
 	}
 
 	n, err := w.buf.Write(p)

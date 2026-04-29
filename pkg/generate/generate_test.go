@@ -78,10 +78,18 @@ func TestLimitedBufferWriter_ExceedsLimit(t *testing.T) {
 		limit: 4,
 	}
 
-	n, err := w.Write([]byte("12345"))
+	// Write within the limit succeeds.
+	n, err := w.Write([]byte("12"))
+	require.NoError(t, err)
+	assert.Equal(t, 2, n)
+	assert.Equal(t, "12", buf.String())
+
+	// A write that would exceed the limit is refused atomically:
+	// no partial bytes are written and the buffer remains valid.
+	n, err = w.Write([]byte("345"))
 	require.Error(t, err)
-	assert.Equal(t, 4, n)
-	assert.Equal(t, "1234", buf.String())
+	assert.Equal(t, 0, n)
+	assert.Equal(t, "12", buf.String(), "buffer should not contain partial writes")
 }
 
 func TestCreateTarStream(t *testing.T) {
@@ -216,6 +224,12 @@ func TestCreateTarStream_LargeFile(t *testing.T) {
 }
 
 func TestCreateTarStream_PatchLayerTooLarge(t *testing.T) {
+	// Temporarily lower the cap so we can exercise the size guard
+	// without allocating a real >1GB buffer in CI.
+	prev := maxPatchLayerSize
+	maxPatchLayerSize = 1024
+	t.Cleanup(func() { maxPatchLayerSize = prev })
+
 	err := createTarStream("ubuntu:22.04", make([]byte, maxPatchLayerSize+1), "")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "patch layer exceeds maximum allowed size")
