@@ -2,10 +2,12 @@ package langmgr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/provenance"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -16,6 +18,12 @@ import (
 
 // shellUnsafeChars are characters that must not appear in values interpolated into shell commands.
 const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
+
+// OCI annotation keys for source provenance (https://github.com/opencontainers/image-spec/blob/main/annotations.md).
+const (
+	ociAnnotationSource   = "org.opencontainers.image.source"
+	ociAnnotationRevision = "org.opencontainers.image.revision"
+)
 
 const (
 	goCheckFile        = "/copa-go-check"
@@ -33,6 +41,10 @@ type golangManager struct {
 	config              *buildkit.Config
 	workingFolder       string
 	toolchainPatchLevel string
+	goVCSURL            string
+	imageRef            string
+	goBinaryPaths       []string // binary paths from all gobinary updates (including stdlib)
+	goBinaryGoVersion   string   // Go version from stdlib entries (e.g., "1.26.0")
 }
 
 // validateGoPackageName validates a Go module name for safety and correctness.
@@ -61,6 +73,11 @@ func validateGoPackageName(name string) error {
 	// Basic validation: module paths should not have spaces
 	if strings.ContainsAny(name, " \t\n\r") {
 		return fmt.Errorf("package name contains whitespace: %s", name)
+	}
+
+	// Module names must not start with '-' to prevent go tool flag injection.
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("package name cannot start with '-': %s", name)
 	}
 
 	return nil
@@ -148,10 +165,11 @@ func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.L
 				if fixVer != "" && (stdlibFixedVersion == "" || isLessThanGoVersion(stdlibFixedVersion, fixVer)) {
 					stdlibFixedVersion = fixVer
 				}
-				log.Infof("Found stdlib vulnerability: %s → %s (will fix via Go compiler upgrade)", pkg.InstalledVersion, pkg.FixedVersion)
+				log.Debugf("Found stdlib vulnerability: %s → %s (will fix via Go compiler upgrade)", pkg.InstalledVersion, pkg.FixedVersion)
 				continue
 			}
 			goPackages = append(goPackages, pkg)
+			log.Debugf("filterGoPackages: keeping %s@%s → %s (type=%s, path=%s)", pkg.Name, pkg.InstalledVersion, pkg.FixedVersion, pkg.Type, pkg.PkgPath)
 		}
 	}
 	return goPackages, stdlibFixedVersion
@@ -171,10 +189,18 @@ func (gm *golangManager) InstallUpdates(
 	goUpdates, stdlibFixedVersion := filterGoPackages(manifest.LangUpdates)
 	hasStdlib := stdlibFixedVersion != ""
 
+	// Collect binary paths from ALL gobinary updates (including stdlib) for
+	// the synthetic binary fallback on distroless images where detection fails.
+	gm.goBinaryPaths, gm.goBinaryGoVersion = collectGoBinaryInfo(manifest.LangUpdates)
+
 	// Only act on stdlib vulns if user explicitly opted in via --toolchain-patch-level
 	if hasStdlib && gm.toolchainPatchLevel == "" {
-		log.Warn("Stdlib vulnerabilities found but --toolchain-patch-level not set, skipping. " +
-			"Use --toolchain-patch-level to rebuild binaries with an updated Go compiler.")
+		log.Warnf("Stdlib vulnerabilities found (requires Go >= %s) but --toolchain-patch-level not set. "+
+			"These vulnerabilities require rebuilding binaries with an updated Go compiler. "+
+			"Use --toolchain-patch-level=patch|minor|major to fix them.", stdlibFixedVersion)
+		if len(goUpdates) == 0 {
+			log.Warn("Only stdlib vulnerabilities detected — patching will have no effect without --toolchain-patch-level.")
+		}
 		hasStdlib = false
 		stdlibFixedVersion = ""
 	}
@@ -185,10 +211,10 @@ func (gm *golangManager) InstallUpdates(
 	}
 
 	if hasStdlib {
-		log.Infof("Stdlib vulnerabilities detected - binaries built with Go < %s will be rebuilt", stdlibFixedVersion)
+		log.Debugf("Stdlib vulnerabilities detected - binaries built with Go < %s will be rebuilt", stdlibFixedVersion)
 	}
 
-	log.Infof("Found %d Go package updates to process (stdlib=%v)", len(goUpdates), hasStdlib)
+	log.Debugf("Found %d Go package updates to process (stdlib=%v)", len(goUpdates), hasStdlib)
 
 	// Get unique latest updates using Go version comparer
 	goComparer := VersionComparer{isValidGoVersion, isLessThanGoVersion}
@@ -261,9 +287,9 @@ func (gm *golangManager) InstallUpdates(
 	errPkgsReported = append(errPkgsReported, failedPkgs...)
 
 	if len(errPkgsReported) > 0 {
-		log.Infof("Go packages with issues: %v", errPkgsReported)
+		log.Debugf("Go packages with issues: %v", errPkgsReported)
 	} else {
-		log.Info("All Go packages successfully updated.")
+		log.Debug("All Go packages prepared for update.")
 	}
 
 	return updatedImageState, errPkgsReported, nil
@@ -328,7 +354,7 @@ func (gm *golangManager) detectGoModules(ctx context.Context, currentState *llb.
 	}
 
 	paths := strings.Fields(pathsStr)
-	log.Infof("Detected go.mod files in: %v", paths)
+	log.Debugf("Detected go.mod files in: %v", paths)
 	return paths, nil
 }
 
@@ -351,7 +377,7 @@ func (gm *golangManager) detectGoWorkspace(ctx context.Context, currentState *ll
 
 	workPath := strings.TrimSpace(string(pathBytes))
 	if workPath != "" {
-		log.Infof("Detected go.work workspace at: %s", workPath)
+		log.Debugf("Detected go.work workspace at: %s", workPath)
 	}
 	return workPath, nil
 }
@@ -390,7 +416,7 @@ func (gm *golangManager) detectGoVersion(ctx context.Context, currentState *llb.
 	if err == nil {
 		version := strings.TrimSpace(string(versionBytes))
 		if version != "" {
-			log.Infof("Detected Go version: %s", version)
+			log.Debugf("Detected Go version: %s", version)
 			return version
 		}
 	}
@@ -411,13 +437,28 @@ func (gm *golangManager) upgradePackages(
 
 	// Attempt binary rebuild for GoBinary packages. If it fails, fall back to
 	// go.mod/go.sum updates which is the standard approach for GoModules packages.
-	log.Info("Attempting Go binary rebuild with updated dependencies")
+	log.Debug("Attempting Go binary rebuild with updated dependencies")
 	rebuiltState, rebuildFailedPkgs, rebuildErr := gm.attemptBinaryRebuild(ctx, currentState, updates, stdlibFixedVersion)
 	if rebuildErr == nil {
-		log.Info("Successfully rebuilt Go binaries with updated dependencies")
+		log.Debug("Go binary rebuild LLB graph constructed successfully")
 		return rebuiltState, rebuildFailedPkgs, nil
 	}
-	log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
+
+	// If the only updates are stdlib vulns (which require binary rebuild), don't
+	// fall back to go.mod updates — they can't fix compiled binaries.
+	if len(updates) == 0 && stdlibFixedVersion != "" {
+		log.Warnf("Binary rebuild failed and only stdlib updates were requested: %v", rebuildErr)
+		return currentState, rebuildFailedPkgs, rebuildErr
+	}
+
+	// Check if rebuild failed due to missing source provenance
+	if strings.Contains(rebuildErr.Error(), "no source commit available") ||
+		strings.Contains(rebuildErr.Error(), "no VCS commit info") {
+		log.Warn("Binary rebuild failed because image binaries lack source provenance (no VCS info and no OCI labels). " +
+			"Falling back to go.mod/go.sum updates, which may not fix all vulnerabilities.")
+	} else {
+		log.Warnf("Binary rebuild failed, falling back to go.mod/go.sum updates: %v", rebuildErr)
+	}
 
 	// Detect if Go toolchain exists in the target image
 	goExists, err := gm.detectGo(ctx, currentState)
@@ -427,11 +468,11 @@ func (gm *golangManager) upgradePackages(
 	}
 
 	if !goExists {
-		log.Info("Go toolchain not found in target image. Using tooling container strategy.")
+		log.Debug("Go toolchain not found in target image. Using tooling container strategy.")
 		return gm.upgradePackagesWithTooling(ctx, currentState, updates, ignoreErrors)
 	}
 
-	log.Info("Go toolchain found in target image. Updating modules in-place.")
+	log.Debug("Go toolchain found in target image. Updating modules in-place.")
 
 	// Detect go.mod locations
 	goModPaths, err := gm.detectGoModules(ctx, currentState)
@@ -440,7 +481,7 @@ func (gm *golangManager) upgradePackages(
 		for _, u := range updates {
 			failedPackages = append(failedPackages, u.Name)
 		}
-		return currentState, failedPackages, nil
+		return currentState, failedPackages, fmt.Errorf("no go.mod files detected in image; cannot update Go modules")
 	}
 
 	// Check for workspace
@@ -450,7 +491,7 @@ func (gm *golangManager) upgradePackages(
 
 	// If workspace exists, update from workspace root
 	if workspacePath != "" {
-		log.Infof("Updating Go workspace at %s", workspacePath)
+		log.Debugf("Updating Go workspace at %s", workspacePath)
 		state, err = gm.updateGoModule(ctx, &state, workspacePath, updates, true, ignoreErrors)
 		if err != nil {
 			log.Errorf("Failed to update workspace: %v", err)
@@ -464,7 +505,7 @@ func (gm *golangManager) upgradePackages(
 	} else {
 		// Update each module independently
 		for _, modPath := range goModPaths {
-			log.Infof("Updating Go module at %s", modPath)
+			log.Debugf("Updating Go module at %s", modPath)
 			newState, modErr := gm.updateGoModule(ctx, &state, modPath, updates, false, ignoreErrors)
 			if modErr != nil {
 				log.Errorf("Failed to update module at %s: %v", modPath, modErr)
@@ -483,6 +524,78 @@ func (gm *golangManager) upgradePackages(
 	return &state, failedPackages, nil
 }
 
+// rebuildFailure captures a single Go binary rebuild failure with the
+// binary path and failure reason as separate fields. Using a struct
+// rather than a []string of "path: reason" strings avoids fragile
+// string parsing in downstream consumers.
+type rebuildFailure struct {
+	binaryPath string
+	reason     string
+}
+
+// String implements fmt.Stringer so that slices of rebuildFailure
+// produce the same "path: reason" format as the previous []string
+// accumulator when formatted with %v.
+func (f rebuildFailure) String() string {
+	return fmt.Sprintf("%s: %s", f.binaryPath, f.reason)
+}
+
+// collectGoBinaryInfo extracts unique binary paths and the installed Go version
+// from all gobinary updates, including stdlib entries that filterGoPackages strips.
+func collectGoBinaryInfo(langUpdates unversioned.LangUpdatePackages) (paths []string, goVersion string) {
+	seen := make(map[string]bool)
+	for _, u := range langUpdates {
+		// Only gobinary entries carry binary paths via PkgPath. GoModules entries' PkgPath
+		// points at go.mod/go.sum locations which are not useful for synthetic BinaryInfo.
+		if u.Type != utils.GoBinary {
+			continue
+		}
+		// Extract Go version from stdlib entries (e.g., "v1.26.0" -> "1.26.0").
+		if u.Name == "stdlib" && goVersion == "" && u.InstalledVersion != "" {
+			goVersion = strings.TrimPrefix(u.InstalledVersion, "v")
+		}
+		if u.PkgPath != "" && !seen[u.PkgPath] {
+			seen[u.PkgPath] = true
+			paths = append(paths, u.PkgPath)
+		}
+	}
+	return
+}
+
+// buildSyntheticBinaryInfo constructs BinaryInfo entries from collected binary paths
+// when go version -m detection fails (e.g., distroless/scratch images without a shell).
+// binaryPaths comes from collectGoBinaryPaths which includes paths from ALL gobinary
+// updates (including stdlib entries stripped by filterGoPackages).
+func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string, goVersion string) []*provenance.BinaryInfo {
+	var binaries []*provenance.BinaryInfo
+
+	for _, p := range binaryPaths {
+		path := p
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+
+		// Derive module path from VCS URL (e.g., "https://github.com/org/repo@ref" -> "github.com/org/repo")
+		modulePath := ""
+		if i := strings.LastIndex(goVCSURL, "@"); i > 0 {
+			modulePath = strings.TrimPrefix(goVCSURL[:i], "https://")
+		}
+
+		log.Infof("  Synthetic binary: %s (module: %s)", path, modulePath)
+		binaries = append(binaries, &provenance.BinaryInfo{
+			Path:          path,
+			GoVersion:     goVersion, // from stdlib InstalledVersion or empty
+			ModulePath:    modulePath,
+			Dependencies:  make(map[string]string),
+			BuildSettings: map[string]string{"CGO_ENABLED": "0"},
+			VCS:           make(map[string]string),
+			FileMode:      "0755",
+			FileOwner:     "0:0",
+		})
+	}
+	return binaries
+}
+
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
 // When stdlibFixedVersion is set, only binaries built with a Go version older than
 // that version are rebuilt for stdlib fixes. Binaries already on a new enough Go
@@ -495,7 +608,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 ) (*llb.State, []string, error) {
 	var failedPackages []string
 
-	log.Info("Attempting Go binary rebuild via heuristic detection")
+	log.Debug("Attempting Go binary rebuild via heuristic detection")
 
 	// Create rebuilder and detector
 	rebuilder := provenance.NewRebuilder()
@@ -505,18 +618,32 @@ func (gm *golangManager) attemptBinaryRebuild(
 	binaries, detectErr := detector.DetectGoBinaries(ctx, gm.config.Client, currentState, gm.config.Platform)
 	if detectErr != nil {
 		log.Debugf("Binary detection failed: %v", detectErr)
-		return currentState, failedPackages, fmt.Errorf("binary detection failed: %w", detectErr)
+	}
+
+	// Fallback: when detection fails but --go-vcs-url is provided,
+	// construct synthetic BinaryInfo from Trivy report data (PkgPath field).
+	// This enables Go binary patching on distroless/scratch images where
+	// `go version -m` cannot run due to missing shell.
+	if (detectErr != nil || len(binaries) == 0) && gm.goVCSURL != "" {
+		log.Info("Binary detection unavailable (distroless/scratch image?), falling back to Trivy report + --go-vcs-url")
+		binaries = buildSyntheticBinaryInfo(gm.goBinaryPaths, gm.goVCSURL, gm.goBinaryGoVersion)
+		if len(binaries) > 0 {
+			log.Infof("Constructed %d synthetic binary entries from Trivy report", len(binaries))
+		}
 	}
 
 	if len(binaries) == 0 {
+		if detectErr != nil {
+			return currentState, failedPackages, fmt.Errorf("binary detection failed: %w", detectErr)
+		}
 		return currentState, failedPackages, fmt.Errorf("no Go binaries detected in image")
 	}
 
-	log.Infof("Detected %d Go binaries via go version -m", len(binaries))
+	log.Infof("Processing %d Go binaries for rebuild", len(binaries))
 
 	// Log what we found
 	for _, bi := range binaries {
-		log.Infof("  Found: %s (%s, %d deps)", bi.Path, bi.GoVersion, len(bi.Dependencies))
+		log.Debugf("  Found: %s (%s, %d deps)", bi.Path, bi.GoVersion, len(bi.Dependencies))
 		if cgo, ok := bi.BuildSettings["CGO_ENABLED"]; ok {
 			log.Debugf("    CGO_ENABLED=%s", cgo)
 		}
@@ -527,6 +654,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 	// Build update map from updates (shared across all binaries)
 	updateMap := make(map[string]string)
+	log.Debugf("[updateMap] building from %d updates", len(updates))
 	for _, update := range updates {
 		if update.FixedVersion == "" {
 			log.Debugf("Skipping %s: no fixed version available", update.Name)
@@ -548,24 +676,30 @@ func (gm *golangManager) attemptBinaryRebuild(
 	}
 
 	if stdlibFixedVersion != "" {
-		log.Infof("Stdlib fix requires Go >= %s - will check each binary individually", stdlibFixedVersion)
+		log.Debugf("Stdlib fix requires Go >= %s - will check each binary individually", stdlibFixedVersion)
 	}
 
 	// Track overall results
 	state := currentState
 	totalRebuilt := 0
-	var rebuildErrors []string
+	totalAttempted := 0
+	var rebuildFailures []rebuildFailure
+
+	// Image-level metadata reused across every binary in this image. Parse once to avoid
+	// re-unmarshalling the OCI config for every binary.
+	imageSourceLabel := extractOCISourceLabel(gm.config)
 
 	// Process each detected binary
 	for i, binaryInfo := range binaries {
 		binaryPath := binaryInfo.Path
-		log.Infof("Processing binary %d/%d: %s", i+1, len(binaries), binaryPath)
+		log.Debugf("Processing binary %d/%d: %s", i+1, len(binaries), binaryPath)
 
-		// Convert this binary's info to build info
-		buildInfo := detector.ConvertBinaryInfoToBuildInfo(binaryInfo)
+		// Convert this binary's info to build info, using OCI labels as fallback
+		// for source identification when VCS info is missing (e.g. -trimpath builds).
+		buildInfo := detector.ConvertBinaryInfoToBuildInfoWithLabels(binaryInfo, gm.config.ImageLabels)
 		if buildInfo == nil {
 			log.Warnf("Could not extract build info for %s, skipping", binaryPath)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: no build info", binaryPath))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no build info"})
 			continue
 		}
 
@@ -585,10 +719,16 @@ func (gm *golangManager) attemptBinaryRebuild(
 		binaryNeedsStdlib := false
 		if stdlibFixedVersion != "" {
 			binaryGoVersion := strings.TrimPrefix(binaryInfo.GoVersion, "go")
-			if isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion) {
+			switch {
+			case binaryGoVersion == "":
+				// Synthetic binaries from distroless fallback have no Go version info.
+				// Assume they need stdlib rebuild since we can't prove otherwise.
+				binaryNeedsStdlib = true
+				log.Infof("  Binary %s has unknown Go version (synthetic), assuming stdlib rebuild needed", binaryPath)
+			case isValidGoVersion(binaryGoVersion) && isLessThanGoVersion(binaryGoVersion, stdlibFixedVersion):
 				binaryNeedsStdlib = true
 				log.Infof("  Binary %s (Go %s) needs stdlib upgrade to >= %s", binaryPath, binaryGoVersion, stdlibFixedVersion)
-			} else {
+			default:
 				log.Debugf("  Binary %s (Go %s) already has stdlib >= %s, no stdlib rebuild needed", binaryPath, binaryGoVersion, stdlibFixedVersion)
 			}
 		}
@@ -599,54 +739,106 @@ func (gm *golangManager) attemptBinaryRebuild(
 		}
 
 		// Log what information we have for this binary
-		log.Infof("  Build info: Go %s, module: %s, CGO: %v",
+		log.Debugf("  Build info: Go %s, module: %s, CGO: %v",
 			buildInfo.GoVersion,
 			buildInfo.ModulePath,
 			buildInfo.CGOEnabled)
 
-		// Warn when source cannot be cloned due to missing VCS metadata
+		// Resolve source repository and commit for cloning.
+		// Primary: VCS metadata embedded in binary (go version -m).
+		// Fallback: OCI standard image labels, already extracted once into gm.config.ImageLabels
+		// by buildkit.Config setup — avoid re-parsing the raw image config here.
 		sourceRepo := buildInfo.BuildArgs["_sourceRepo"]
 		sourceCommit := buildInfo.BuildArgs["_sourceCommit"]
+		if sourceCommit == "" && gm.config.ImageLabels != nil {
+			ociRevision := gm.config.ImageLabels[ociAnnotationRevision]
+			ociSource := gm.config.ImageLabels[ociAnnotationSource]
+			if ociRevision != "" {
+				log.Infof("  Binary %s has no VCS info; using OCI image label revision: %s", binaryPath, ociRevision)
+				sourceCommit = ociRevision
+				buildInfo.BuildArgs["_sourceCommit"] = ociRevision
+				if sourceRepo == "" && ociSource != "" {
+					sourceRepo = ociSource
+					buildInfo.BuildArgs["_sourceRepo"] = ociSource
+				}
+			}
+		}
+
+		// Resolution paths cloneSourceCode supports: VCS metadata (sourceCommit + sourceRepo),
+		// --go-vcs-url override, OCI source label + image tag, or image-tag heuristic. Only
+		// fail-fast here when none of these can fire; otherwise let cloneSourceCode try and
+		// produce its specific error if every fallback ultimately fails.
+		hasFallback := gm.goVCSURL != "" || imageSourceLabel != "" || gm.imageRef != ""
 		switch {
-		case sourceCommit == "":
-			log.Warnf("  Binary %s has no VCS commit info (likely built with -trimpath or -buildvcs=false). "+
-				"Source clone will not be possible; rebuild may fail.", binaryPath)
-		case sourceRepo == "":
-			log.Warnf("  Binary %s has commit %s but no source repo could be derived. "+
-				"Source clone will not be possible.", binaryPath, sourceCommit)
+		case sourceCommit == "" && sourceRepo == "" && !hasFallback:
+			log.Warnf("  Binary %s has no VCS info, no --go-vcs-url, no OCI source label, "+
+				"and no image tag. Cannot rebuild without source.", binaryPath)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source resolution path"})
+			continue
+		case sourceCommit != "" && sourceRepo == "" && !hasFallback:
+			log.Warnf("  Binary %s has commit %s but no source repo and no fallback. "+
+				"Cannot rebuild without source.", binaryPath, sourceCommit)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: "no source repo"})
+			continue
 		default:
-			log.Infof("  Source: %s @ %s", sourceRepo, sourceCommit)
+			if sourceCommit != "" && sourceRepo != "" {
+				log.Debugf("  Source: %s @ %s", sourceRepo, sourceCommit)
+			} else {
+				log.Debugf("  Source: deferring resolution to cloneSourceCode (fallback path)")
+			}
 		}
 
 		for module, version := range filteredUpdateMap {
-			log.Infof("  Will update %s to %s", module, version)
+			log.Debugf("  Will update %s to %s", module, version)
 		}
 
-		// Create rebuild context for this binary
 		rebuildCtx := &provenance.RebuildContext{
-			Strategy:   provenance.RebuildStrategyHeuristic,
-			BuildInfo:  buildInfo,
-			BinaryInfo: []*provenance.BinaryInfo{binaryInfo},
+			Strategy:         provenance.RebuildStrategyHeuristic,
+			BuildInfo:        buildInfo,
+			BinaryInfo:       []*provenance.BinaryInfo{binaryInfo},
+			ImageLabels:      gm.config.ImageLabels,
+			ImageRef:         gm.imageRef,
+			GoVCSURL:         gm.goVCSURL,
+			ImageSourceLabel: imageSourceLabel,
 		}
 
 		// Attempt to rebuild this binary and merge into current state
+		totalAttempted++
 		newState, result, err := rebuilder.RebuildBinary(rebuildCtx, filteredUpdateMap, gm.config.Platform, state, binaryPath)
 		if err != nil {
 			log.Warnf("Failed to rebuild %s (skipping): %v", binaryPath, err)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, err))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("%v", err)})
 			continue
 		}
 
 		if !result.Success {
 			log.Warnf("Rebuild unsuccessful for %s (skipping): %v", binaryPath, result.Error)
-			rebuildErrors = append(rebuildErrors, fmt.Sprintf("%s: %v", binaryPath, result.Error))
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("%v", result.Error)})
 			continue
 		}
 
-		// Success - update state for next iteration
+		// Verify the rebuild actually works by doing an intermediate Solve.
+		// RebuildBinary only constructs the LLB graph — it doesn't execute it.
+		// Without this check, Copa logs success but the build may fail later.
+		verifyDef, verifyErr := newState.Marshal(ctx)
+		if verifyErr != nil {
+			log.Warnf("Failed to marshal rebuild state for %s (skipping): %v", binaryPath, verifyErr)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("marshal error: %v", verifyErr)})
+			continue
+		}
+		_, solveErr := gm.config.Client.Solve(ctx, gwclient.SolveRequest{
+			Definition: verifyDef.ToPB(),
+		})
+		if solveErr != nil {
+			log.Warnf("Binary rebuild for %s built LLB successfully but execution failed (skipping): %v", binaryPath, solveErr)
+			rebuildFailures = append(rebuildFailures, rebuildFailure{binaryPath: binaryPath, reason: fmt.Sprintf("build execution failed: %v", solveErr)})
+			continue
+		}
+
+		// Verified — update state for next iteration
 		state = &newState
 		totalRebuilt++
-		log.Infof("Successfully rebuilt binary: %s", binaryPath)
+		log.Debugf("Prepared rebuild for binary: %s", binaryPath)
 	}
 
 	// Check if we rebuilt anything
@@ -654,16 +846,19 @@ func (gm *golangManager) attemptBinaryRebuild(
 		for module := range updateMap {
 			failedPackages = append(failedPackages, module)
 		}
-		if len(rebuildErrors) > 0 {
-			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildErrors)
+		if len(rebuildFailures) > 0 {
+			return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt: %v", rebuildFailures)
 		}
 		return currentState, failedPackages, fmt.Errorf("no binaries were successfully rebuilt")
 	}
 
-	if totalRebuilt < len(binaries) {
-		log.Warnf("Partial patch: %d/%d binaries rebuilt successfully. Failed: %v", totalRebuilt, len(binaries), rebuildErrors)
+	if totalRebuilt < totalAttempted {
+		log.Warnf("Partial patch: %d/%d attempted binaries rebuilt. Failed: %v", totalRebuilt, totalAttempted, rebuildFailures)
+		for _, f := range rebuildFailures {
+			failedPackages = append(failedPackages, f.binaryPath)
+		}
 	} else {
-		log.Infof("Binary rebuild complete: %d/%d binaries rebuilt successfully", totalRebuilt, len(binaries))
+		log.Infof("Prepared rebuild for %d/%d Go binaries", totalRebuilt, totalAttempted)
 	}
 
 	return state, failedPackages, nil
@@ -691,6 +886,9 @@ func (gm *golangManager) updateGoModule(
 		if u.FixedVersion != "" {
 			if strings.ContainsAny(u.Name, shellUnsafeChars) {
 				return state, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
+			}
+			if strings.HasPrefix(u.Name, "-") {
+				return state, fmt.Errorf("package name cannot start with '-': %s", u.Name)
 			}
 			if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
 				return state, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
@@ -728,7 +926,7 @@ func (gm *golangManager) updateGoModule(
 	// Check for vendor directory and update if present
 	hasVendor, _ := gm.detectVendor(ctx, &state, modPath)
 	if hasVendor {
-		log.Infof("Vendor directory detected, running 'go mod vendor' at %s", modPath)
+		log.Debugf("Vendor directory detected, running 'go mod vendor' at %s", modPath)
 		vendorCmd := fmt.Sprintf(`sh -c 'cd %s && go mod vendor'`, modPath)
 		state = state.Run(
 			llb.Shlex(vendorCmd),
@@ -766,14 +964,14 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		for _, u := range updates {
 			failedPackages = append(failedPackages, u.Name)
 		}
-		return currentState, failedPackages, nil
+		return currentState, failedPackages, fmt.Errorf("no go.mod files detected in image; cannot update Go modules")
 	}
 
 	// Detect Go version (or use default)
 	goVersion := gm.detectGoVersion(ctx, currentState)
 	toolingImage := fmt.Sprintf(toolingGoTemplate, goVersion)
 
-	log.Infof("Using tooling container: %s", toolingImage)
+	log.Debugf("Using tooling container: %s", toolingImage)
 
 	state := *currentState
 
@@ -782,7 +980,7 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		if strings.ContainsAny(modPath, shellUnsafeChars) {
 			return currentState, nil, fmt.Errorf("go.mod path contains unsafe characters: %s", modPath)
 		}
-		log.Infof("Updating Go module at %s using tooling container", modPath)
+		log.Debugf("Updating Go module at %s using tooling container", modPath)
 
 		// Create tooling container state with target platform
 		var toolingState llb.State
@@ -813,6 +1011,9 @@ func (gm *golangManager) upgradePackagesWithTooling(
 				if strings.ContainsAny(u.Name, shellUnsafeChars) {
 					return currentState, nil, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
 				}
+				if strings.HasPrefix(u.Name, "-") {
+					return currentState, nil, fmt.Errorf("package name cannot start with '-': %s", u.Name)
+				}
 				if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
 					return currentState, nil, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
 				}
@@ -842,7 +1043,7 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		// Check if vendor exists in original and update if so
 		hasVendor, _ := gm.detectVendor(ctx, &state, modPath)
 		if hasVendor {
-			log.Info("Vendor directory detected, running 'go mod vendor' in tooling container")
+			log.Debug("Vendor directory detected, running 'go mod vendor' in tooling container")
 			vendorCmd := `sh -c 'cd /workspace && go mod vendor'`
 			toolingState = toolingState.Dir("/workspace").Run(
 				llb.Shlex(vendorCmd),
@@ -872,4 +1073,28 @@ func (gm *golangManager) upgradePackagesWithTooling(
 	log.Warn("Note: Go binaries are not automatically rebuilt in tooling container strategy. Updated go.mod/go.sum only.")
 
 	return &state, failedPackages, nil
+}
+
+// extractOCISourceLabel reads org.opencontainers.image.source from the image's OCI config labels.
+// Returns empty string if the label is not present or the config can't be parsed.
+func extractOCISourceLabel(config *buildkit.Config) string {
+	if config == nil || len(config.ConfigData) == 0 {
+		return ""
+	}
+
+	var imageConfig struct {
+		Config struct {
+			Labels map[string]string `json:"labels"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(config.ConfigData, &imageConfig); err != nil {
+		log.Debugf("Could not parse image config for OCI labels: %v", err)
+		return ""
+	}
+
+	source := imageConfig.Config.Labels["org.opencontainers.image.source"]
+	if source != "" {
+		log.Debugf("Found OCI label org.opencontainers.image.source: %s", source)
+	}
+	return source
 }

@@ -23,6 +23,54 @@ OUTPUT="$2"
 EXPLICIT_PKG="$3"
 BUILD_PREFIX="$(cat /tmp/copa_build_prefix)"
 
+# If the build prefix has no -ldflags and OCI labels are available,
+# scan Go source for version variables initialized to "UNKNOWN" and inject
+# OCI label values via -ldflags -X.
+inject_version_ldflags() {
+    case "$BUILD_PREFIX" in *-ldflags*) return ;; esac
+    [ -f /tmp/copa_oci_labels ] || return
+
+    OCI_VERSION="" OCI_REVISION="" OCI_SOURCE=""
+    while IFS='=' read -r key val; do
+        case "$key" in
+            OCI_VERSION)  OCI_VERSION="$val" ;;
+            OCI_REVISION) OCI_REVISION="$val" ;;
+            OCI_SOURCE)   OCI_SOURCE="$val" ;;
+        esac
+    done < /tmp/copa_oci_labels
+    [ -n "$OCI_VERSION$OCI_REVISION$OCI_SOURCE" ] || return
+
+    MOD_PATH=$(head -1 go.mod 2>/dev/null | awk '{print $2}')
+    [ -n "$MOD_PATH" ] || return
+
+    XFLAGS=""
+    for gofile in $(grep -rl '"UNKNOWN"' --include="*.go" . 2>/dev/null | grep -v vendor | head -5); do
+        dir=$(dirname "$gofile" | sed 's|^\./||')
+        if [ "$dir" = "." ]; then
+            pkg="$MOD_PATH"
+        else
+            pkg="$MOD_PATH/$dir"
+        fi
+        for varname in $(grep -oE '[A-Z_][A-Z_0-9]* *= *"UNKNOWN"' "$gofile" 2>/dev/null | sed 's/ *=.*//' | sort -u); do
+            val=""
+            lname=$(echo "$varname" | tr '[:upper:]' '[:lower:]')
+            case "$lname" in
+                release|version|tag)        val="$OCI_VERSION" ;;
+                commit|build|gitcommit|sha|revision|gitsha|commit_sha) val="$OCI_REVISION" ;;
+                repo|repository|source|url|repo_info) val="$OCI_SOURCE" ;;
+            esac
+            [ -n "$val" ] && XFLAGS="$XFLAGS -X $pkg.$varname=$val"
+        done
+    done
+
+    if [ -n "$XFLAGS" ]; then
+        echo "Copa: injecting version ldflags from OCI labels:$XFLAGS"
+        BUILD_PREFIX="$BUILD_PREFIX '-ldflags=$XFLAGS'"
+    fi
+}
+
+inject_version_ldflags
+
 run_build() {
     echo "Copa: building from $1"
     eval "$BUILD_PREFIX $1"
@@ -76,11 +124,9 @@ if [ -n "$FIRST_DIR" ]; then
     exit $?
 fi
 
-# Nothing found - create placeholder so LLB does not fail
-echo "SKIP: no buildable Go source found for $BINARY_NAME"
-mkdir -p "$(dirname "$OUTPUT")"
-printf '#!/bin/sh\necho placeholder\n' > "$OUTPUT"
-chmod +x "$OUTPUT"
+# Nothing found
+echo "ERROR: no buildable Go source found for $BINARY_NAME"
+exit 1
 `
 
 // normalizeVersion ensures a version string has the 'v' prefix required by Go modules.
@@ -92,6 +138,96 @@ func normalizeVersion(version string) string {
 		return version
 	}
 	return "v" + version
+}
+
+// formatOCILabelsForScript formats OCI image labels as key=value lines for shell consumption.
+// Values are validated against a strict allowlist per-label-type before being written,
+// since they end up interpolated into shell variables in the rebuild script (BUILD_PREFIX
+// via -ldflags -X). Untrusted label values that fail validation are skipped rather than
+// included verbatim, which would allow command injection via a crafted image.
+func formatOCILabelsForScript(labels map[string]string) string {
+	if labels == nil {
+		return ""
+	}
+	relevant := []struct {
+		key     string
+		envName string
+		valid   func(string) bool
+	}{
+		{"org.opencontainers.image.version", "OCI_VERSION", isSafeOCIVersion},
+		{"org.opencontainers.image.revision", "OCI_REVISION", isSafeOCIRevision},
+		{"org.opencontainers.image.source", "OCI_SOURCE", isSafeOCISource},
+	}
+	var sb strings.Builder
+	for _, r := range relevant {
+		v, ok := labels[r.key]
+		if !ok || v == "" {
+			continue
+		}
+		if !r.valid(v) {
+			log.Warnf("Skipping OCI label %s: value %q fails safety validation, would not be safe to interpolate into shell", r.key, v)
+			continue
+		}
+		fmt.Fprintf(&sb, "%s=%s\n", r.envName, v)
+	}
+	return sb.String()
+}
+
+// isSafeOCIVersion allows semver-like and common version strings:
+// alphanumerics, dot, dash, plus, underscore. No shell metacharacters, no whitespace.
+func isSafeOCIVersion(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-' || r == '+' || r == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeOCIRevision allows git commit hashes (hex) and tag-like revisions
+// (alphanumerics, dot, dash, underscore, slash). No shell metacharacters.
+func isSafeOCIRevision(s string) bool {
+	if s == "" || len(s) > 128 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '.' || r == '-' || r == '_' || r == '/':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeOCISource allows URL-like strings: alphanumerics, common URL punctuation.
+// Blocks shell metacharacters, whitespace, and quote characters.
+func isSafeOCISource(s string) bool {
+	if s == "" || len(s) > 512 {
+		return false
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == ':' || r == '/' || r == '.' || r == '-' || r == '_' || r == '+' || r == '@' || r == '%' || r == '~':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // validateBinaryPath validates that a binary path is safe and absolute.
@@ -158,6 +294,16 @@ func validateShellSafeStrict(value, label string) error {
 	return nil
 }
 
+func validateGoModuleName(module string) error {
+	if strings.ContainsAny(module, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
+		return fmt.Errorf("module name contains unsafe characters: %s", module)
+	}
+	if strings.HasPrefix(module, "-") {
+		return fmt.Errorf("module name cannot start with '-': %s", module)
+	}
+	return nil
+}
+
 // Rebuilder orchestrates the Go binary rebuild process using heuristic detection.
 type Rebuilder struct{}
 
@@ -206,7 +352,7 @@ func (r *Rebuilder) RebuildBinary(
 	binaryName := filepath.Base(binaryPath)
 	outputPath := "/output/" + binaryName
 
-	log.Infof("Rebuilding Go binary %s using %s strategy", binaryPath, result.Strategy)
+	log.Debugf("Rebuilding Go binary %s using %s strategy", binaryPath, result.Strategy)
 	log.Debugf("Binary details: module=%s, Go version=%s, %d dependencies",
 		buildInfo.ModulePath, buildInfo.GoVersion, len(buildInfo.Dependencies))
 
@@ -218,10 +364,10 @@ func (r *Rebuilder) RebuildBinary(
 		result.Warnings = append(result.Warnings, "No Go version found in binary info")
 		return llb.State{}, result, result.Error
 	}
-	log.Infof("Using base image: %s", baseImage)
+	log.Debugf("Using base image: %s", baseImage)
 
 	// Build the new binary with updated dependencies (outputs to /output/<name>)
-	buildState, err := r.buildBinaryWithUpdates(baseImage, buildInfo, updates, platform, outputPath)
+	buildState, err := r.buildBinaryWithUpdates(baseImage, rebuildCtx, buildInfo, updates, platform, outputPath, rebuildCtx.ImageLabels)
 	if err != nil {
 		result.Error = fmt.Errorf("failed to rebuild binary %s (module: %s, Go: %s): %w",
 			binaryPath, buildInfo.ModulePath, buildInfo.GoVersion, err)
@@ -230,7 +376,7 @@ func (r *Rebuilder) RebuildBinary(
 
 	// Copy the rebuilt binary from build container to target image
 	// This is a pure LLB operation - works on distroless images (no shell needed)
-	log.Infof("Copying rebuilt binary from %s to target at %s", outputPath, binaryPath)
+	log.Debugf("Copying rebuilt binary from %s to target at %s", outputPath, binaryPath)
 	copyInfo := &llb.CopyInfo{
 		CreateDestPath:      true,
 		AllowWildcard:       false,
@@ -292,7 +438,7 @@ func (r *Rebuilder) RebuildBinary(
 	result.BinariesRebuilt = 1
 	result.RebuiltBinaries[binaryPath] = true
 
-	log.Infof("Successfully merged rebuilt binary into target image")
+	log.Debug("Prepared LLB state for rebuilt binary")
 	return finalState, result, nil
 }
 
@@ -374,6 +520,75 @@ func deriveRepoFromModulePath(modulePath string) (repoURL string, subpath string
 		}
 	}
 
+	if strings.HasPrefix(modulePath, "cloud.google.com/go/") || modulePath == "cloud.google.com/go" {
+		parts := strings.Split(modulePath, "/")
+		repoURL = "https://github.com/googleapis/google-cloud-go"
+		if len(parts) > 2 {
+			subpath = strings.Join(parts[2:], "/")
+		}
+		return repoURL, subpath
+	}
+
+	if strings.HasPrefix(modulePath, "go.uber.org/") {
+		parts := strings.SplitN(modulePath, "/", 3)
+		if len(parts) >= 2 {
+			repoURL = fmt.Sprintf("https://github.com/uber-go/%s", parts[1])
+			if len(parts) >= 3 {
+				subpath = parts[2]
+			}
+			return repoURL, subpath
+		}
+	}
+
+	if strings.HasPrefix(modulePath, "go.etcd.io/") {
+		parts := strings.SplitN(modulePath, "/", 3)
+		if len(parts) >= 2 {
+			repoURL = fmt.Sprintf("https://github.com/etcd-io/%s", parts[1])
+			if len(parts) >= 3 {
+				subpath = parts[2]
+			}
+			return repoURL, subpath
+		}
+	}
+
+	if strings.HasPrefix(modulePath, "go.opentelemetry.io/") {
+		// OpenTelemetry does not follow the github.com/open-telemetry/<name>
+		// naming convention. Map known top-level modules to their actual repos.
+		otelRepos := map[string]string{
+			"otel":          "https://github.com/open-telemetry/opentelemetry-go",
+			"contrib":       "https://github.com/open-telemetry/opentelemetry-go-contrib",
+			"collector":     "https://github.com/open-telemetry/opentelemetry-collector",
+			"ebpf-profiler": "https://github.com/open-telemetry/opentelemetry-ebpf-profiler",
+		}
+		parts := strings.SplitN(modulePath, "/", 3)
+		if len(parts) >= 2 {
+			if mapped, ok := otelRepos[parts[1]]; ok {
+				repoURL = mapped
+				if len(parts) >= 3 {
+					subpath = parts[2]
+				}
+				return repoURL, subpath
+			}
+			// Unknown top-level module, fall through to generic derivation.
+		}
+	}
+
+	if modulePath == "google.golang.org/grpc" || strings.HasPrefix(modulePath, "google.golang.org/grpc/") {
+		repoURL = "https://github.com/grpc/grpc-go"
+		if modulePath != "google.golang.org/grpc" {
+			subpath = strings.TrimPrefix(modulePath, "google.golang.org/grpc/")
+		}
+		return repoURL, subpath
+	}
+
+	if modulePath == "google.golang.org/protobuf" || strings.HasPrefix(modulePath, "google.golang.org/protobuf/") {
+		repoURL = "https://github.com/protocolbuffers/protobuf-go"
+		if modulePath != "google.golang.org/protobuf" {
+			subpath = strings.TrimPrefix(modulePath, "google.golang.org/protobuf/")
+		}
+		return repoURL, subpath
+	}
+
 	return "", ""
 }
 
@@ -428,38 +643,153 @@ func validateCommitHash(commit string) error {
 	return nil
 }
 
+func extractImageTag(imageRef string) string {
+	imageRef = strings.TrimSpace(imageRef)
+	if imageRef == "" {
+		return ""
+	}
+	if i := strings.Index(imageRef, "@"); i >= 0 {
+		imageRef = imageRef[:i]
+	}
+	lastSlash := strings.LastIndex(imageRef, "/")
+	lastColon := strings.LastIndex(imageRef, ":")
+	if lastColon <= lastSlash {
+		return ""
+	}
+	return imageRef[lastColon+1:]
+}
+
+// looksLikeSemverTag returns true if the tag looks like a version string
+// (e.g., "v1.2.3", "1.45.0", "v3.9.1-rc1"). This prevents the image tag
+// heuristic from trying non-version tags like "latest", "stable", or "alpine"
+// as git refs.
+func looksLikeSemverTag(tag string) bool {
+	t := strings.TrimPrefix(tag, "v")
+	if t == "" {
+		return false
+	}
+	// Must start with a digit and contain at least one dot (e.g., "1.2")
+	if t[0] < '0' || t[0] > '9' {
+		return false
+	}
+	return strings.Contains(t, ".")
+}
+
+func parseGoVCSURL(goVCSURL string) (string, string, error) {
+	if goVCSURL == "" {
+		return "", "", fmt.Errorf("go-vcs-url is empty")
+	}
+	i := strings.LastIndex(goVCSURL, "@")
+	if i <= 0 || i >= len(goVCSURL)-1 {
+		return "", "", fmt.Errorf("invalid go-vcs-url format, expected repo@ref")
+	}
+	repoURL := goVCSURL[:i]
+	ref := goVCSURL[i+1:]
+	if err := validateRepoURL(repoURL); err != nil {
+		return "", "", err
+	}
+	if err := validateShellSafeStrict(ref, "go-vcs-url ref"); err != nil {
+		return "", "", err
+	}
+	return repoURL, ref, nil
+}
+
 // cloneSourceCode clones the source repository using BuildKit Git LLB.
-func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, error) {
+func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo, rebuildCtx *RebuildContext) (llb.State, string, error) {
 	repoURL := buildInfo.BuildArgs["_sourceRepo"]
 	commit := buildInfo.BuildArgs["_sourceCommit"]
 	subpath := ""
+	ref := ""
 
-	// Without a specific commit/tag, don't attempt to clone
-	if commit == "" {
-		if repoURL != "" {
-			log.Warnf("No commit/tag specified for %s - skipping clone", repoURL)
+	var overrideRepoURL, overrideRef string
+	if rebuildCtx != nil && rebuildCtx.GoVCSURL != "" {
+		var err error
+		overrideRepoURL, overrideRef, err = parseGoVCSURL(rebuildCtx.GoVCSURL)
+		if err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid go-vcs-url override: %w", err)
 		}
-		return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
 	}
 
-	// Validate commit hash format to prevent injection via crafted binary metadata
-	if err := validateCommitHash(commit); err != nil {
-		return llb.State{}, "", fmt.Errorf("invalid source commit: %w", err)
-	}
-
-	// Always derive subpath from module path. For monorepo modules (e.g., k8s.io/autoscaler/cluster-autoscaler),
-	// the module root lives in a subdirectory of the repository and we need subpath to set the correct workdir.
+	derivedURL := ""
+	derivedSubpath := ""
 	if buildInfo.ModulePath != "" {
-		derivedURL, derivedSubpath := deriveRepoFromModulePath(buildInfo.ModulePath)
-		if repoURL == "" {
-			repoURL = derivedURL
-		}
+		derivedURL, derivedSubpath = deriveRepoFromModulePath(buildInfo.ModulePath)
 		// Strip Go major version suffixes (v2, v3, ...) since these are module path
 		// conventions, not actual subdirectories in most repositories.
 		subpath = stripGoMajorVersionSuffix(derivedSubpath)
 		if derivedURL != "" {
-			log.Infof("Derived source repository from module path: %s (subpath: %q)", derivedURL, subpath)
+			log.Debugf("Derived source repository from module path: %s (subpath: %q)", derivedURL, subpath)
 		}
+	}
+
+	switch {
+	case overrideRepoURL != "":
+		repoURL = overrideRepoURL
+		ref = overrideRef
+		if err := validateRepoURL(repoURL); err != nil {
+			return llb.State{}, "", err
+		}
+		log.Infof("Using --go-vcs-url override: %s @ %s", repoURL, ref)
+	case commit != "":
+		if err := validateCommitHash(commit); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid source commit: %w", err)
+		}
+		if repoURL == "" {
+			repoURL = derivedURL
+		}
+		if repoURL == "" {
+			return llb.State{}, "", fmt.Errorf("no source repository URL in build info")
+		}
+		if err := validateRepoURL(repoURL); err != nil {
+			return llb.State{}, "", err
+		}
+		ref = commit
+		log.Infof("Cloning source from binary VCS metadata %s @ %s", repoURL, ref)
+	case rebuildCtx != nil && rebuildCtx.ImageSourceLabel != "" && validateRepoURL(rebuildCtx.ImageSourceLabel) == nil:
+		// Step 3: OCI label org.opencontainers.image.source provides the source repo.
+		// Combine with image tag as the git ref.
+		// Only fires when the label URL is on a trusted host; otherwise falls through
+		// to the tag heuristic so users on GitLab/Gitea/self-hosted forges are not blocked.
+		labelURL := rebuildCtx.ImageSourceLabel
+		tag := ""
+		if rebuildCtx.ImageRef != "" {
+			tag = extractImageTag(rebuildCtx.ImageRef)
+		}
+		if tag == "" || !looksLikeSemverTag(tag) {
+			return llb.State{}, "", fmt.Errorf("OCI source label found (%s) but image has no semver tag for git ref", labelURL)
+		}
+		if err := validateShellSafeStrict(tag, "image tag"); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid image tag: %w", err)
+		}
+		repoURL = labelURL
+		ref = tag
+		log.Infof("Using OCI source label %s @ %s (from org.opencontainers.image.source)", repoURL, ref)
+	default:
+		// Step 4: Image tag heuristic — derive repo from module path, use image tag as ref.
+		tag := ""
+		if rebuildCtx != nil {
+			tag = extractImageTag(rebuildCtx.ImageRef)
+		}
+		if tag == "" || !looksLikeSemverTag(tag) {
+			if repoURL != "" {
+				log.Warnf("No commit/tag specified for %s - skipping clone", repoURL)
+			}
+			return llb.State{}, "", fmt.Errorf("no commit/tag specified for source clone")
+		}
+		if err := validateShellSafeStrict(tag, "image tag"); err != nil {
+			return llb.State{}, "", fmt.Errorf("invalid image tag for source clone: %w", err)
+		}
+		if repoURL == "" {
+			repoURL = derivedURL
+		}
+		if repoURL == "" {
+			return llb.State{}, "", fmt.Errorf("no source repository URL in build info")
+		}
+		if err := validateRepoURL(repoURL); err != nil {
+			return llb.State{}, "", err
+		}
+		ref = tag
+		log.Infof("Cloning source using image tag fallback %s @ %s", repoURL, ref)
 	}
 
 	if repoURL == "" {
@@ -471,17 +801,17 @@ func (r *Rebuilder) cloneSourceCode(buildInfo *BuildInfo) (llb.State, string, er
 		return llb.State{}, "", err
 	}
 
-	log.Infof("Cloning source from %s @ %s", repoURL, commit)
+	log.Debugf("Cloning source from %s @ %s", repoURL, ref)
 
 	gitRef := repoURL
 	if !strings.HasSuffix(gitRef, ".git") {
 		gitRef += ".git"
 	}
-	if commit != "" {
-		gitRef += "#" + commit
+	if ref != "" {
+		gitRef += "#" + ref
 	}
 
-	gitState := llb.Git(gitRef, commit, llb.KeepGitDir())
+	gitState := llb.Git(gitRef, ref, llb.KeepGitDir())
 	log.Debugf("Created Git LLB state for %s", gitRef)
 	return gitState, subpath, nil
 }
@@ -508,10 +838,12 @@ done
 // buildBinaryWithUpdates creates a BuildKit LLB state that rebuilds the binary.
 func (r *Rebuilder) buildBinaryWithUpdates(
 	baseImage string,
+	rebuildCtx *RebuildContext,
 	buildInfo *BuildInfo,
 	updates map[string]string,
 	platform *specs.Platform,
 	outputPath string,
+	imageLabels map[string]string,
 ) (llb.State, error) {
 	log.Debugf("Building binary with base image: %s, output path: %s", baseImage, outputPath)
 	log.Debugf("Build info: module=%s, Go=%s, CGO=%v", buildInfo.ModulePath, buildInfo.GoVersion, buildInfo.CGOEnabled)
@@ -531,7 +863,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 
 	// Try to clone source code from Git
 	sourceCloned := false
-	sourceState, subpath, err := r.cloneSourceCode(buildInfo)
+	sourceState, subpath, err := r.cloneSourceCode(buildInfo, rebuildCtx)
 	if err == nil {
 		state = state.File(
 			llb.Copy(sourceState, "/", workdir, &llb.CopyInfo{
@@ -541,9 +873,9 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		sourceCloned = true
 		if subpath != "" {
 			workdir = filepath.Join(workdir, subpath)
-			log.Infof("Cloned source code from Git repository, using subpath: %s", subpath)
+			log.Debugf("Cloned source code from Git repository, using subpath: %s", subpath)
 		} else {
-			log.Info("Cloned source code from Git repository")
+			log.Debug("Cloned source code from Git repository")
 		}
 	} else {
 		log.Debugf("Could not clone source (will generate go.mod): %v", err)
@@ -560,7 +892,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		state = state.File(
 			llb.Mkfile(filepath.Join(workdir, "go.mod"), 0o644, []byte(goMod)),
 		)
-		log.Info("Generated go.mod from dependency information")
+		log.Debug("Generated go.mod from dependency information")
 	}
 
 	goBin := "/usr/local/go/bin/go"
@@ -582,14 +914,14 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 	// Apply updates with retry for each module.
 	// Validate module names and versions before constructing shell commands to prevent injection.
 	for module, version := range updates {
-		if strings.ContainsAny(module, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
-			return llb.State{}, fmt.Errorf("module name contains unsafe characters: %s", module)
+		if err := validateGoModuleName(module); err != nil {
+			return llb.State{}, err
 		}
 		if strings.ContainsAny(version, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
 			return llb.State{}, fmt.Errorf("version contains unsafe characters: %s for module %s", version, module)
 		}
 		normalizedVersion := normalizeVersion(version)
-		log.Infof("Updating module %s: %s -> %s", module, buildInfo.Dependencies[module], normalizedVersion)
+		log.Debugf("Updating module %s: %s -> %s", module, buildInfo.Dependencies[module], normalizedVersion)
 
 		getCmd := fmt.Sprintf("%s get %s@%s", goBin, module, normalizedVersion)
 		getScript := retryScript(getCmd, 3)
@@ -612,13 +944,17 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 
 	// If source was cloned (may have vendor/), sync vendor directory to match updated go.mod.
 	// This prevents "inconsistent vendoring" errors when the project uses vendored dependencies.
-	// We check for vendor/modules.txt existence and run `go mod vendor` if found.
+	// Handle both regular modules (go mod vendor) and workspaces (go work vendor).
 	if sourceCloned {
 		log.Debug("Checking for vendor directory and syncing if present...")
 		vendorSyncScript := fmt.Sprintf(`
 if [ -f vendor/modules.txt ]; then
-    echo "Vendor directory detected, running go mod vendor..."
-    %s mod vendor
+    echo "Vendor directory detected, syncing..."
+    if [ -f go.work ]; then
+        %[1]s work vendor 2>/dev/null || echo "WARN: go work vendor failed, continuing without vendor sync"
+    else
+        %[1]s mod vendor 2>/dev/null || echo "WARN: go mod vendor failed, continuing without vendor sync"
+    fi
 else
     echo "No vendor directory found, skipping vendor sync"
 fi
@@ -644,13 +980,21 @@ fi
 
 	if sourceCloned {
 		binaryName := filepath.Base(outputPath)
-		log.Infof("Using discovery+build script for %s (explicit pkg: %s)", binaryName, mainPkg)
+		log.Debugf("Using discovery+build script for %s (explicit pkg: %s)", binaryName, mainPkg)
 
 		// Write the build command prefix to a file so the discovery script can
 		// read it without shell escaping issues (ldflags often contain quotes).
 		state = state.File(
 			llb.Mkfile("/tmp/copa_build_prefix", 0o644, []byte(buildPrefix)),
 		)
+
+		// Write OCI image labels to a file so the discovery script can inject
+		// version metadata via -ldflags -X when the original binary has no ldflags.
+		ociLabelsContent := formatOCILabelsForScript(imageLabels)
+		state = state.File(
+			llb.Mkfile("/tmp/copa_oci_labels", 0o644, []byte(ociLabelsContent)),
+		)
+
 		state = state.File(
 			llb.Mkfile("/tmp/copa_discover_build.sh", 0o755, []byte(discoverAndBuildScript)),
 		)
@@ -659,28 +1003,28 @@ fi
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	} else {
-		// No source cloned (generated go.mod). Guard the build so failures don't
-		// cancel sibling binary builds running in parallel in the same LLB solve.
+		// No source cloned (generated go.mod). Let the build fail if it can't find the package.
 		buildCmd := buildPrefix + " " + mainPkg
-		guardedCmd := fmt.Sprintf(
-			"%s || { echo 'SKIP: build failed for %s, creating placeholder'; mkdir -p %s; printf '#!/bin/sh\\necho placeholder\\n' > %s; chmod +x %s; }",
-			buildCmd, filepath.Base(outputPath), filepath.Dir(outputPath), outputPath, outputPath,
-		)
-		log.Infof("Build command (guarded, no source): %s", buildCmd)
+		log.Debugf("Build command (no source): %s", buildCmd)
 		state = state.Run(
-			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(guardedCmd, "'", "'\"'\"'"))),
+			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(buildCmd, "'", "'\"'\"'"))),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	}
 
-	// Verify the rebuilt binary is a valid Go binary and is executable.
-	// If the build was skipped (placeholder created), verification will fail
-	// but the Copy step will still succeed - the caller handles this gracefully.
-	verifyCmd := fmt.Sprintf("test -s %s && %s version -m %s || echo 'WARN: binary %s was not rebuilt (skipped or failed)'",
-		outputPath, goBin, outputPath, outputPath)
+	// Verify the rebuilt binary is a valid Go binary.
+	verifyScript := fmt.Sprintf(`
+if ! %s version -m %s > /dev/null 2>&1; then
+  echo "ERROR: rebuilt binary %s is not a valid Go binary"
+  exit 1
+fi
+`, goBin, outputPath, outputPath)
 	log.Debug("Verifying rebuilt binary...")
+	state = state.File(
+		llb.Mkfile("/tmp/copa_verify.sh", 0o755, []byte(verifyScript)),
+	)
 	state = state.Run(
-		llb.Shlex(fmt.Sprintf("sh -c '%s'", verifyCmd)),
+		llb.Shlex("sh /tmp/copa_verify.sh"),
 	).Root()
 
 	return state, nil
@@ -778,7 +1122,15 @@ func (r *Rebuilder) constructBuildCommandParts(buildInfo *BuildInfo, goBin strin
 		parts = append(parts, "-o", outputPath)
 	}
 
-	parts = append(parts, buildInfo.BuildFlags...)
+	// Quote build flags that contain spaces (e.g. "-ldflags=-s -w -X main.version=1.0")
+	// so that shell eval doesn't word-split them into separate arguments.
+	for _, flag := range buildInfo.BuildFlags {
+		if strings.Contains(flag, " ") {
+			parts = append(parts, "'"+strings.ReplaceAll(flag, "'", "'\"'\"'")+"'")
+		} else {
+			parts = append(parts, flag)
+		}
+	}
 
 	mainPkg := buildInfo.MainPackage
 	if mainPkg == "" {
