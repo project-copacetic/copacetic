@@ -320,6 +320,9 @@ func GetPackageInfo(file string) (string, string, error) {
 	} else {
 		return "", "", fmt.Errorf("no package name found for package")
 	}
+	if !isValidDebianPackageName(packageName) {
+		return "", "", fmt.Errorf("invalid package name %q", packageName)
+	}
 
 	versionPattern := regexp.MustCompile(`Version:\s*(.*)`)
 	match = versionPattern.FindStringSubmatch(file)
@@ -330,6 +333,13 @@ func GetPackageInfo(file string) (string, string, error) {
 	}
 
 	return packageName, packageVersion, nil
+}
+
+// debPkgNameRE matches valid Debian package names: lowercase, digits, plus, hyphen, period.
+var debPkgNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
+
+func isValidDebianPackageName(name string) bool {
+	return debPkgNameRE.MatchString(name)
 }
 
 // Patch a regular debian image with:
@@ -359,8 +369,11 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 			llb.WithCustomName("Checking for upgradable packages"),
 		).Root()
 
-		_, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
+		_, err := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
 		if err != nil {
+			if !isMarkerMissingErr(err, updatesAvailableMarker) {
+				return nil, nil, fmt.Errorf("failed while checking for available apt updates: %w", err)
+			}
 			log.Info("No upgradable packages found for this image.")
 			return nil, nil, types.ErrNoUpdatesFound
 		}
@@ -516,17 +529,17 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
                             while IFS=':' read -r package version; do
                                 pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
                                 pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-                                latest_version=$(apt show $pkg_name 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
+                                latest_version=$(apt show -- "$pkg_name" 2>/dev/null | awk -F ': ' '/Version:/{print $2}')
 
                                 if [ "$latest_version" != "$pkg_version" ]; then
-                                    update_packages="$update_packages $pkg_name"
+                                    update_packages="${update_packages}${pkg_name}\n"
                                 fi
                             done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
                             if [ -n "$update_packages" ]; then
                                 mkdir -p /var/cache/apt/archives
                                 cd /var/cache/apt/archives
-                                echo "$update_packages" > packages.txt
+                                printf "%b" "$update_packages" > packages.txt
                                 touch /updates.txt
                             fi
                     `,
@@ -557,7 +570,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
 							while IFS=':' read -r package version; do
 								pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
-								apt-get -o Acquire::Retries=3 install --reinstall -y $pkg_name
+								apt-get -o Acquire::Retries=3 install --reinstall -y -- "$pkg_name"
 							done <<< "$(echo "$json_str" | tr -d '{}\n' | tr ',' '\n')"
 
 							apt --fix-broken install

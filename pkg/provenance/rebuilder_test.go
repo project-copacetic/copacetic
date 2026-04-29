@@ -1,6 +1,8 @@
 package provenance
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -200,7 +202,7 @@ func TestConstructBuildCommand(t *testing.T) {
 			},
 		},
 		{
-			name: "build with flags",
+			name: "build with flags - ldflags quoted",
 			buildInfo: &BuildInfo{
 				CGOEnabled:  false,
 				BuildFlags:  []string{"-trimpath", "-ldflags=-s -w"},
@@ -211,8 +213,32 @@ func TestConstructBuildCommand(t *testing.T) {
 				"CGO_ENABLED=0",
 				"-o /output/server",
 				"-trimpath",
-				"-ldflags=-s -w",
+				"'-ldflags=-s -w'",
 				"./cmd/server",
+			},
+		},
+		{
+			name: "build with X flags in ldflags",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-ldflags=-s -w -X main.version=1.0.0 -X main.commit=abc123"},
+				MainPackage: ".",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				"'-ldflags=-s -w -X main.version=1.0.0 -X main.commit=abc123'",
+			},
+		},
+		{
+			name: "single-word flag not quoted",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-trimpath"},
+				MainPackage: ".",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				" -trimpath ",
 			},
 		},
 		{
@@ -406,6 +432,45 @@ func TestStripGoMajorVersionSuffix(t *testing.T) {
 	}
 }
 
+func TestValidateGoModuleName(t *testing.T) {
+	tests := []struct {
+		name    string
+		module  string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid module name",
+			module:  "github.com/example/module",
+			wantErr: false,
+		},
+		{
+			name:    "unsafe shell characters",
+			module:  "github.com/example/module;rm -rf /",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "leading dash rejected",
+			module:  "-modfile=/tmp/pwn.mod",
+			wantErr: true,
+			errMsg:  "cannot start with '-'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGoModuleName(tt.module)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestValidateRepoURL(t *testing.T) {
 	tests := []struct {
 		url     string
@@ -496,6 +561,46 @@ func TestDeriveRepoFromModulePath(t *testing.T) {
 			wantSubpath: "",
 		},
 		{
+			modulePath:  "cloud.google.com/go/storage",
+			wantRepoURL: "https://github.com/googleapis/google-cloud-go",
+			wantSubpath: "storage",
+		},
+		{
+			modulePath:  "go.uber.org/zap",
+			wantRepoURL: "https://github.com/uber-go/zap",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "go.etcd.io/etcd/client/v3",
+			wantRepoURL: "https://github.com/etcd-io/etcd",
+			wantSubpath: "client/v3",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/otel/exporters/otlp",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-go",
+			wantSubpath: "exporters/otlp",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-go-contrib",
+			wantSubpath: "instrumentation/net/http/otelhttp",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/collector/component",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-collector",
+			wantSubpath: "component",
+		},
+		{
+			modulePath:  "google.golang.org/grpc",
+			wantRepoURL: "https://github.com/grpc/grpc-go",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "google.golang.org/protobuf/encoding/protojson",
+			wantRepoURL: "https://github.com/protocolbuffers/protobuf-go",
+			wantSubpath: "encoding/protojson",
+		},
+		{
 			modulePath:  "",
 			wantRepoURL: "",
 			wantSubpath: "",
@@ -507,6 +612,349 @@ func TestDeriveRepoFromModulePath(t *testing.T) {
 			repoURL, subpath := deriveRepoFromModulePath(tt.modulePath)
 			assert.Equal(t, tt.wantRepoURL, repoURL)
 			assert.Equal(t, tt.wantSubpath, subpath)
+		})
+	}
+}
+
+func TestFormatOCILabelsForScript(t *testing.T) {
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		want     string
+		wantSkip []string // substrings expected NOT to appear
+	}{
+		{
+			name:   "nil labels",
+			labels: nil,
+			want:   "",
+		},
+		{
+			name: "all valid labels",
+			labels: map[string]string{
+				"org.opencontainers.image.version":  "v1.2.3",
+				"org.opencontainers.image.revision": "ae2bbc2abcdef0123456789",
+				"org.opencontainers.image.source":   "https://github.com/foo/bar",
+			},
+			want: "OCI_VERSION=v1.2.3\nOCI_REVISION=ae2bbc2abcdef0123456789\nOCI_SOURCE=https://github.com/foo/bar\n",
+		},
+		{
+			name: "injection attempt in revision is rejected",
+			labels: map[string]string{
+				"org.opencontainers.image.revision": "abc123; rm -rf /",
+			},
+			want:     "",
+			wantSkip: []string{"rm -rf", ";"},
+		},
+		{
+			name: "injection attempt in version via command substitution is rejected",
+			labels: map[string]string{
+				"org.opencontainers.image.version": "v1.0.0$(whoami)",
+			},
+			want:     "",
+			wantSkip: []string{"whoami", "$("},
+		},
+		{
+			name: "injection attempt in source via backticks is rejected",
+			labels: map[string]string{
+				"org.opencontainers.image.source": "https://github.com/foo/bar`id`",
+			},
+			want:     "",
+			wantSkip: []string{"`", "id"},
+		},
+		{
+			name: "mixed valid and invalid - valid entries pass through",
+			labels: map[string]string{
+				"org.opencontainers.image.version":  "v1.2.3",
+				"org.opencontainers.image.revision": "abc123\nexport X=y",
+			},
+			want: "OCI_VERSION=v1.2.3\n",
+		},
+		{
+			name: "empty values skipped",
+			labels: map[string]string{
+				"org.opencontainers.image.version":  "",
+				"org.opencontainers.image.revision": "abc123",
+			},
+			want: "OCI_REVISION=abc123\n",
+		},
+		{
+			name: "unrelated label ignored",
+			labels: map[string]string{
+				"some.other.label":                 "value; with; semis",
+				"org.opencontainers.image.version": "v1.0.0",
+			},
+			want: "OCI_VERSION=v1.0.0\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatOCILabelsForScript(tt.labels)
+			assert.Equal(t, tt.want, got)
+			for _, s := range tt.wantSkip {
+				assert.NotContains(t, got, s, "injection substring should not pass validation")
+			}
+		})
+	}
+}
+
+func TestIsSafeOCIVersion(t *testing.T) {
+	cases := map[string]bool{
+		"v1.2.3":             true,
+		"1.2.3":              true,
+		"v1.2.3-rc1":         true,
+		"v1.2.3+build123":    true,
+		"v1.0.0_snapshot":    true,
+		"":                   false,
+		"v1.0.0$(whoami)":    false,
+		"v1; rm -rf /":       false,
+		"v1 2 3":             false,
+		"v1.0.0\nexport X=y": false,
+		"v1.0.0`id`":         false,
+		"v1.0.0\"malicious":  false,
+	}
+	for input, want := range cases {
+		assert.Equal(t, want, isSafeOCIVersion(input), "input=%q", input)
+	}
+}
+
+func TestIsSafeOCIRevision(t *testing.T) {
+	cases := map[string]bool{
+		"abc123":                  true,
+		"ae2bbc2abcdef0123456789": true,
+		"v1.2.3":                  true,
+		"refs/tags/v1.2.3":        true,
+		"":                        false,
+		"abc; echo x":             false,
+		"abc$(id)":                false,
+		"abc\n":                   false,
+	}
+	for input, want := range cases {
+		assert.Equal(t, want, isSafeOCIRevision(input), "input=%q", input)
+	}
+}
+
+func TestIsSafeOCISource(t *testing.T) {
+	cases := map[string]bool{
+		"https://github.com/foo/bar":     true,
+		"https://gitlab.com/foo/bar.git": true,
+		"https://github.com/foo/bar+baz": true,
+		"git@github.com:foo/bar.git":     true, // ssh-style url: safe chars only
+		"":                               false,
+		"https://evil.com/`id`":          false,
+		"https://evil.com/;rm":           false,
+		"https://evil.com/$(whoami)":     false,
+		"https://evil.com/ with space":   false,
+	}
+	for input, want := range cases {
+		got := isSafeOCISource(input)
+		assert.Equal(t, want, got, "input=%q", input)
+	}
+}
+
+func TestExtractImageTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		imageRef string
+		want     string
+	}{
+		{name: "tagged image", imageRef: "prometheus:v3.9.1", want: "v3.9.1"},
+		{name: "registry with port", imageRef: "localhost:5000/prometheus:v3.9.1", want: "v3.9.1"},
+		{name: "digest only", imageRef: "ghcr.io/org/repo@sha256:abc", want: ""},
+		{name: "tag and digest", imageRef: "ghcr.io/org/repo:v1.2.3@sha256:abc", want: "v1.2.3"},
+		{name: "no tag", imageRef: "ghcr.io/org/repo", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractImageTag(tt.imageRef))
+		})
+	}
+}
+
+func TestParseGoVCSURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantRepo  string
+		wantRef   string
+		wantError bool
+	}{
+		{name: "tag ref", input: "https://github.com/org/repo@v1.2.3", wantRepo: "https://github.com/org/repo", wantRef: "v1.2.3"},
+		{name: "commit ref", input: "https://github.com/org/repo@d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d", wantRepo: "https://github.com/org/repo", wantRef: "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d"},
+		{name: "missing ref", input: "https://github.com/org/repo@", wantError: true},
+		{name: "missing separator", input: "https://github.com/org/repo", wantError: true},
+		{name: "untrusted host", input: "https://gitlab.com/org/repo@v1.0.0", wantError: true},
+		{name: "unsafe ref", input: "https://github.com/org/repo@v1.0.0;rm", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, ref, err := parseGoVCSURL(tt.input)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRepo, repo)
+			assert.Equal(t, tt.wantRef, ref)
+		})
+	}
+}
+
+func TestCloneSourceCodeFallbackChain(t *testing.T) {
+	rebuilder := NewRebuilder()
+
+	tests := []struct {
+		name        string
+		buildInfo   *BuildInfo
+		rebuildCtx  *RebuildContext
+		wantRef     string
+		wantRepo    string
+		wantSubpath string
+		wantError   bool
+	}{
+		{
+			name: "go-vcs-url override has highest priority",
+			buildInfo: &BuildInfo{
+				BuildArgs: map[string]string{
+					"_sourceRepo":   "https://github.com/source/repo",
+					"_sourceCommit": "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+				},
+				ModulePath: "github.com/source/repo/cmd/app",
+			},
+			rebuildCtx:  &RebuildContext{GoVCSURL: "https://github.com/override/repo@v1.2.3"},
+			wantRepo:    "https://github.com/override/repo",
+			wantRef:     "v1.2.3",
+			wantSubpath: "cmd/app",
+		},
+		{
+			name: "binary vcs commit is used when override absent",
+			buildInfo: &BuildInfo{
+				BuildArgs: map[string]string{
+					"_sourceRepo":   "https://github.com/source/repo",
+					"_sourceCommit": "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+				},
+				ModulePath: "github.com/source/repo/cmd/app",
+			},
+			rebuildCtx:  &RebuildContext{ImageRef: "repo:v9.9.9"},
+			wantRepo:    "https://github.com/source/repo",
+			wantRef:     "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+			wantSubpath: "cmd/app",
+		},
+		{
+			name: "image tag fallback when commit missing",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus/cmd/prometheus",
+				GoVersion:  "1.22",
+			},
+			rebuildCtx:  &RebuildContext{ImageRef: "prometheus:v3.9.1"},
+			wantRepo:    "https://github.com/prometheus/prometheus",
+			wantRef:     "v3.9.1",
+			wantSubpath: "cmd/prometheus",
+		},
+		{
+			name: "fails when no ref sources available",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus",
+			},
+			rebuildCtx: &RebuildContext{ImageRef: "prometheus"},
+			wantError:  true,
+		},
+		{
+			name: "rejects non-semver tag like latest",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus",
+			},
+			rebuildCtx: &RebuildContext{ImageRef: "prometheus:latest"},
+			wantError:  true,
+		},
+		{
+			name: "uses OCI source label when no VCS commit",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/VictoriaMetrics/VictoriaLogs",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "victoriametrics/victoria-logs:v1.45.0",
+				ImageSourceLabel: "https://github.com/VictoriaMetrics/VictoriaMetrics",
+			},
+			wantRepo: "github.com/VictoriaMetrics/VictoriaMetrics",
+			wantRef:  "v1.45.0",
+		},
+		{
+			name: "OCI label without semver tag fails",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/example/repo",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "example/repo:latest",
+				ImageSourceLabel: "https://github.com/example/repo",
+			},
+			wantError: true,
+		},
+		{
+			name: "OCI label with non-github URL rejected",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "gitlab.com/example/repo",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "example/repo:v1.0.0",
+				ImageSourceLabel: "https://gitlab.com/example/repo",
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state, subpath, err := rebuilder.cloneSourceCode(tt.buildInfo, tt.rebuildCtx)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSubpath, subpath)
+
+			def, marshalErr := state.Marshal(context.Background())
+			require.NoError(t, marshalErr)
+			blob := strings.Builder{}
+			for _, dt := range def.Def {
+				blob.Write(dt)
+			}
+			assert.Contains(t, blob.String(), tt.wantRepo)
+			assert.Contains(t, blob.String(), tt.wantRef)
+		})
+	}
+}
+
+func TestLooksLikeSemverTag(t *testing.T) {
+	tests := []struct {
+		tag  string
+		want bool
+	}{
+		{"v1.2.3", true},
+		{"1.45.0", true},
+		{"v3.9.1-rc1", true},
+		{"v0.1.0", true},
+		{"latest", false},
+		{"stable", false},
+		{"alpine", false},
+		{"v", false},
+		{"", false},
+		{"3", false},
+		{"sha-abc123", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			assert.Equal(t, tt.want, looksLikeSemverTag(tt.tag))
 		})
 	}
 }
