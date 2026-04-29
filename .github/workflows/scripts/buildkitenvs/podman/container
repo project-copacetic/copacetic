@@ -2,15 +2,27 @@
 
 set -eu -o pipefail
 
+# Pin BuildKit to match BUILDKIT_VERSION (set in .github/workflows/build.yml,
+# test.yml, and private-registry-test.yml). Every other buildkit env script
+# respects this var; using :latest here caused version drift between the
+# podman/container matrix cell and the rest of the CI.
+: "${BUILDKIT_VERSION:=0.19.0}"
+
 # Start Podman buildkit container
 CONTAINER_NAME="copa-buildkitd-$(date +%s)"
-echo "Starting Podman buildkit container: ${CONTAINER_NAME}" >&2
+echo "Starting Podman buildkit container: ${CONTAINER_NAME} (buildkit v${BUILDKIT_VERSION})" >&2
 
-# Start buildkit
+# Start buildkit.
+# --dns forces explicit resolvers in the container's /etc/resolv.conf. With
+# --network=host podman still writes a custom resolv.conf in the container,
+# which BuildKit reads at startup for its sandbox DNS. This hardens the job
+# against flaky resolver config on the self-hosted runners.
 podman run -d --rm --name "${CONTAINER_NAME}" \
     --privileged \
     --network=host \
-    docker.io/moby/buildkit:latest >/dev/null
+    --dns=8.8.8.8 \
+    --dns=1.1.1.1 \
+    "docker.io/moby/buildkit:v${BUILDKIT_VERSION}" >/dev/null
 
 # Wait for container to be ready
 echo "Waiting for buildkit container to be ready..." >&2
