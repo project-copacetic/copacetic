@@ -37,6 +37,11 @@ const (
 	maxFileSize = 1 << 30 // 1GB
 )
 
+// maxPatchLayerSize caps the buffered patch layer to mitigate memory DoS.
+// It is a var (not const) so tests can temporarily lower it without
+// allocating gigabyte-sized buffers.
+var maxPatchLayerSize int64 = 1 << 30 // 1GB
+
 // for testing.
 var (
 	bkNewClient = buildkit.NewClient
@@ -213,10 +218,13 @@ func extractPatchLayer(
 				Type:  client.ExporterTar,
 				Attrs: map[string]string{},
 				Output: func(_ map[string]string) (io.WriteCloser, error) {
-					// Create a buffer to collect the tar data
+					// Create a size-limited buffer to collect the tar data
 					buf := &bytes.Buffer{}
 					writer := &tarWriter{
-						Writer: buf,
+						Writer: &limitedBufferWriter{
+							buf:   buf,
+							limit: maxPatchLayerSize,
+						},
 						onClose: func() {
 							patchChannel <- buf.Bytes()
 						},
@@ -371,6 +379,10 @@ func extractPatchLayer(
 }
 
 func createTarStream(image string, patchLayer []byte, outputPath string) error {
+	if int64(len(patchLayer)) > maxPatchLayerSize {
+		return errors.Errorf("patch layer exceeds maximum allowed size of %d bytes", maxPatchLayerSize)
+	}
+
 	// Open output writer
 	var w io.Writer = os.Stdout
 	if outputPath != "" {
@@ -519,4 +531,23 @@ func (tw *tarWriter) Close() error {
 		tw.onClose()
 	}
 	return nil
+}
+
+type limitedBufferWriter struct {
+	buf     *bytes.Buffer
+	written int64
+	limit   int64
+}
+
+func (w *limitedBufferWriter) Write(p []byte) (int, error) {
+	// If a write would exceed the limit, refuse it entirely rather than
+	// writing a partial chunk: a partial write would leave a corrupt tar
+	// in the buffer that downstream consumers might still try to use.
+	if int64(len(p))+w.written > w.limit {
+		return 0, errors.Errorf("patch layer exceeds maximum allowed size of %d bytes", w.limit)
+	}
+
+	n, err := w.buf.Write(p)
+	w.written += int64(n)
+	return n, err
 }
