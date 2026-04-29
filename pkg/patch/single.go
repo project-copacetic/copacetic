@@ -78,6 +78,7 @@ func patchSingleArchImage(
 	pkgTypes := opts.PkgTypes
 	libraryPatchLevel := opts.LibraryPatchLevel
 	toolchainPatchLevel := opts.ToolchainPatchLevel
+	goVCSURL := opts.GoVCSURL
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -209,7 +210,7 @@ func patchSingleArchImage(
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL)
 		if err != nil {
 			return err
 		}
@@ -471,6 +472,7 @@ func executePatchBuild(
 	buildChannel chan *client.SolveStatus,
 	exitOnEOL bool,
 	toolchainPatchLevel string,
+	goVCSURL string,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -510,6 +512,7 @@ func executePatchBuild(
 			ReturnState:         false, // Always solve for Docker export
 			ExitOnEOL:           exitOnEOL,
 			ToolchainPatchLevel: toolchainPatchLevel,
+			GoVCSURL:            goVCSURL,
 		}
 
 		// Execute the core patching logic
