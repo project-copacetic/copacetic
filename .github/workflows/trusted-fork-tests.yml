@@ -91,6 +91,17 @@ jobs:
       # Create a short-lived upstream branch at the exact PR head SHA.
       # workflow_dispatch requires a ref that exists in the base repository;
       # this branch satisfies that requirement without permanently mirroring the fork branch.
+      #
+      # Note: we use git CLI rather than the REST `POST /git/refs` endpoint because
+      # fork PR head SHAs live only under `refs/pull/<n>/head` and cannot be the
+      # target of a regular branch ref via the API (returns 403/404).
+      - name: Checkout base repository
+        if: steps.check-permission.outputs.authorized == 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
       - name: Create temporary upstream branch at PR head SHA
         if: steps.check-permission.outputs.authorized == 'true'
         id: create-branch
@@ -103,13 +114,22 @@ jobs:
           echo "temp_branch=${TEMP_BRANCH}" >> "$GITHUB_OUTPUT"
 
           # Remove any leftover branch from a previous run on this PR.
-          gh api "repos/${{ github.repository }}/git/refs/heads/${TEMP_BRANCH}" \
-            -X DELETE 2>/dev/null || true
+          git push origin --delete "${TEMP_BRANCH}" 2>/dev/null || true
 
-          # Create the branch at the approved PR head SHA.
-          gh api "repos/${{ github.repository }}/git/refs" \
-            -f "ref=refs/heads/${TEMP_BRANCH}" \
-            -f "sha=${PR_SHA}"
+          # Fetch the PR head from the upstream pull-ref namespace and push it
+          # to a regular branch in the base repository.
+          git fetch origin "refs/pull/${PR_NUMBER}/head:${TEMP_BRANCH}"
+
+          # Sanity check: confirm the local branch tip matches the approved SHA
+          # before publishing it. Guards against races if new commits land between
+          # event firing and fetch.
+          LOCAL_SHA=$(git rev-parse "${TEMP_BRANCH}")
+          if [ "${LOCAL_SHA}" != "${PR_SHA}" ]; then
+            echo "::error::PR head SHA changed since label event (expected ${PR_SHA}, got ${LOCAL_SHA}). Re-add ok-to-test to re-trigger."
+            exit 1
+          fi
+
+          git push origin "${TEMP_BRANCH}"
 
       - name: Dispatch [Blocking] Build workflow
         if: steps.check-permission.outputs.authorized == 'true'
