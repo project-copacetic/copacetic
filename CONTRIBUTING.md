@@ -48,29 +48,11 @@ Once you can successfully `make` the project, any code contributions should also
 
 Pull requests will also be expected to pass the PR functional tests specified by `.github/workflows/build.yml`.
 
-### Testing Fork Pull Requests (Maintainers)
+### CI on Fork Pull Requests
 
-For security reasons, the self-hosted CI runners (used by the `[Blocking] Build` and `[Integration] Gateway Tests` workflows) do not automatically run on pull requests submitted from forks. This prevents untrusted code from executing on project infrastructure.
+If you're opening a PR from a fork, CI workflows will not run automatically — they require a one-time approval from a maintainer per push. Your PR will show *Workflow runs awaiting approval* until a maintainer approves the run. Subsequent commits to the same PR require a fresh approval.
 
-Maintainers can trigger the full test suite against a fork PR using the `ok-to-test` label:
-
-**One-time setup (repo admins only):** Create a label named `ok-to-test` in the repository's Labels settings page.
-
-**To trigger tests on a fork PR:**
-
-1. Review the PR code thoroughly to confirm it is safe to run.
-2. Add the `ok-to-test` label to the PR.
-3. The `[Maintainer] Trusted Fork Tests` workflow will automatically:
-   - Verify you have write/maintain/admin permission (removes the label and posts a notice if not).
-   - Remove the label (so it can be re-added after new commits).
-   - Dispatch the `[Blocking] Build` and `[Integration] Gateway Tests` workflows against the exact PR head SHA.
-   - Post a comment on the PR with links to the running workflows.
-4. Track progress in the [Actions tab](https://github.com/project-copacetic/copacetic/actions) or via the link in the PR comment.
-
-**To re-trigger after new commits:** Simply re-add the `ok-to-test` label. Each application of the label triggers one fresh test run.
-
-> [!IMPORTANT]
-> Only add `ok-to-test` after you have reviewed the contributed code. The label causes the fork's code to execute on project self-hosted runners with access to repository secrets.
+You don't need to do anything; just be aware there may be a delay before checks start.
 
 ### Pull Requests
 
