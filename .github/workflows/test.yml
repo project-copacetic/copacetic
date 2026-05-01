@@ -31,7 +31,6 @@ permissions:
 jobs:
   build:
     name: Build
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 5
     steps:
@@ -58,7 +57,6 @@ jobs:
   test-gateway-all:
     needs: build
     name: Gateway All Tests ${{ matrix.buildkit_mode }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 30
     strategy:
@@ -97,7 +95,6 @@ jobs:
   test-gateway-alpine:
     needs: build
     name: Gateway Alpine ${{ matrix.buildkit_mode }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     strategy:
@@ -136,7 +133,6 @@ jobs:
   test-gateway-debian:
     needs: build
     name: Gateway Debian ${{ matrix.buildkit_mode }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     strategy:
@@ -175,7 +171,6 @@ jobs:
   test-gateway-rpm:
     needs: build
     name: Gateway RPM ${{ matrix.buildkit_mode }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 20
     strategy:
@@ -214,7 +209,6 @@ jobs:
   test-gateway-crossarch:
     needs: build
     name: Gateway Cross-Arch ${{ matrix.buildkit_mode }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 20
     strategy:
@@ -253,7 +247,6 @@ jobs:
   test-gateway-layer-config:
     needs: build
     name: Gateway Layer/Config ${{ matrix.buildkit_mode }}
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 15
     strategy:
