@@ -41,6 +41,7 @@ func TestTryParseScanReport(t *testing.T) {
 					},
 				},
 				LangUpdates: []unversioned.UpdatePackage{},
+				OSSummary:   &unversioned.PatchSummary{Total: 1, Patched: 1, Skipped: 0},
 			},
 			err: nil,
 		},
