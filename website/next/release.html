@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.a473579e.css">
-<script src="/copacetic/website/assets/js/runtime~main.1cd00856.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.241a0cf5.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.7cfed3d8.js" defer="defer"></script>
 </head>
 <body>
@@ -59,6 +59,38 @@
 <div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.1 -m &#x27;v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.1&#x27;</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.1</span><br></div></code></pre></div></div>
 <p>For subsequent release candidates (if fixes are needed):</p>
 <div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">git tag -a v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.2 -m &#x27;v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.2&#x27;</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">git push upstream v&lt;MAJOR&gt;.&lt;MINOR&gt;.0-rc.2</span><br></div></code></pre></div></div>
+</li>
+<li class="">
+<p><strong>Verify the Release Pipeline</strong></p>
+<p>After pushing the tag, monitor the <a href="https://github.com/project-copacetic/copacetic/actions/workflows/release.yml" target="_blank" rel="noopener noreferrer" class="">release workflow</a> and verify the following once it completes:</p>
+<ul>
+<li class="">
+<p><strong>All jobs succeeded</strong> — including binary build (GoReleaser), <code>copa-action</code>, <code>copa-extension</code>, and <code>copacetic-frontend</code> image builds</p>
+</li>
+<li class="">
+<p><strong>Release page exists</strong> at <code>https://github.com/project-copacetic/copacetic/releases/tag/&lt;NEW VERSION&gt;</code> with binary archives, SBOMs, and <code>copacetic_checksums.txt</code></p>
+</li>
+<li class="">
+<p><strong>All three GHCR images exist</strong> for the new tag:</p>
+<ul>
+<li class=""><code>ghcr.io/project-copacetic/copa-action:&lt;NEW VERSION&gt;</code></li>
+<li class=""><code>ghcr.io/project-copacetic/copa-extension:&lt;NEW VERSION&gt;</code></li>
+<li class=""><code>ghcr.io/project-copacetic/copacetic-frontend:&lt;NEW VERSION&gt;</code></li>
+</ul>
+</li>
+<li class="">
+<p><strong>Pre-release flag is correct</strong> — for <code>-rc.N</code> tags, the GitHub release must be marked as pre-release. GoReleaser sets this automatically via <code>release: prerelease: auto</code> in <code>.goreleaser.yml</code>. Verify with:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">gh release view &lt;NEW VERSION&gt; --repo project-copacetic/copacetic --json isPrerelease,tagName</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">gh api /repos/project-copacetic/copacetic/releases/latest --jq &#x27;.tag_name&#x27;</span><br></div></code></pre></div></div>
+<p>The <code>latest</code> API endpoint should NOT return an <code>-rc.N</code> tag.</p>
+</li>
+<li class="">
+<p><strong><code>release-&lt;MAJOR&gt;.&lt;MINOR&gt;</code> branch was created</strong> automatically by the workflow</p>
+</li>
+<li class="">
+<p><strong>Smoke test the binary</strong>:</p>
+<div class="language-sh codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-sh codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">curl -sLO https://github.com/project-copacetic/copacetic/releases/download/&lt;NEW VERSION&gt;/copa_&lt;VERSION_NO_V&gt;_linux_amd64.tar.gz</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">tar -xzf copa_&lt;VERSION_NO_V&gt;_linux_amd64.tar.gz</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">./copa --version</span><br></div></code></pre></div></div>
+</li>
+</ul>
 </li>
 <li class="">
 <p><strong>Gather Feedback</strong></p>
