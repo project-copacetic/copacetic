@@ -634,8 +634,8 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		// Diff the base image and pat[]ched image to get previous patches
 		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
 
-		// Diff the base image and new patches
-		newPatchDiff := llb.Diff(rm.config.ImageState, installed)
+		// Diff the current image state and new patches
+		newPatchDiff := llb.Diff(imageStateCurrent, installed)
 
 		// Merging these two diffs will discard everything in the filesystem that hasn't changed
 		// Doing llb.Scratch ensures we can keep everything in the filesystem that has not changed
