@@ -16,3 +16,4 @@ Check out some adopters of Copa in the community:
 - [Helmper](https://github.com/ChristofferNissen/helmper)
 - [Kubescape](https://github.com/kubescape/kubescape)
 - [Devtron](https://docs.devtron.ai/usage/plugins/plugin-list/copacetic)
+- [Verity](https://www.verity.supply)
