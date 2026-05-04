@@ -48,6 +48,12 @@ Once you can successfully `make` the project, any code contributions should also
 
 Pull requests will also be expected to pass the PR functional tests specified by `.github/workflows/build.yml`.
 
+### CI on Fork Pull Requests
+
+If you're opening a PR from a fork, CI workflows will not run automatically — they require a one-time approval from a maintainer per push. Your PR will show *Workflow runs awaiting approval* until a maintainer approves the run. Subsequent commits to the same PR require a fresh approval.
+
+You don't need to do anything; just be aware there may be a delay before checks start.
+
 ### Pull Requests
 
 If you'd like to start contributing code to the project, you can search for [issues with the `good first issue` label](https://github.com/project-copacetic/copacetic/labels/good%20first%20issue). Other kinds of PR contributions we would look for include:

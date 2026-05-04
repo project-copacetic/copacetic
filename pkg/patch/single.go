@@ -78,6 +78,7 @@ func patchSingleArchImage(
 	pkgTypes := opts.PkgTypes
 	libraryPatchLevel := opts.LibraryPatchLevel
 	toolchainPatchLevel := opts.ToolchainPatchLevel
+	goVCSURL := opts.GoVCSURL
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -147,6 +148,7 @@ func patchSingleArchImage(
 			// only when user explicitly requested some package types (default is OS) but none are patchable.
 			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
 				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+				res.Summary = updates.CombinedSummary()
 				return res, types.ErrNoUpdatesFound
 			}
 		}
@@ -209,7 +211,7 @@ func patchSingleArchImage(
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL)
 		if err != nil {
 			return err
 		}
@@ -248,13 +250,23 @@ func patchSingleArchImage(
 	if err := eg.Wait(); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
 			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			if updates != nil {
+				res.Summary = updates.CombinedSummary()
+			}
 			return res, types.ErrNoUpdatesFound
 		}
 		return nil, err
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	if err != nil {
+		return nil, err
+	}
+	if updates != nil {
+		result.Summary = updates.CombinedSummary()
+	}
+	return result, nil
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -471,6 +483,7 @@ func executePatchBuild(
 	buildChannel chan *client.SolveStatus,
 	exitOnEOL bool,
 	toolchainPatchLevel string,
+	goVCSURL string,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -510,6 +523,7 @@ func executePatchBuild(
 			ReturnState:         false, // Always solve for Docker export
 			ExitOnEOL:           exitOnEOL,
 			ToolchainPatchLevel: toolchainPatchLevel,
+			GoVCSURL:            goVCSURL,
 		}
 
 		// Execute the core patching logic

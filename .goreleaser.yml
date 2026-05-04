@@ -32,3 +32,7 @@ checksum:
 
 sboms:
   - artifacts: archive
+
+release:
+  # Auto-mark releases with -rc.N, -beta.N, etc. suffixes as pre-releases.
+  prerelease: auto
