@@ -63,12 +63,40 @@ For major and minor releases, it is recommended to publish a release candidate (
    git push upstream v<MAJOR>.<MINOR>.0-rc.2
    ```
 
-3. **Gather Feedback**
+3. **Verify the Release Pipeline**
+
+   After pushing the tag, monitor the [release workflow](https://github.com/project-copacetic/copacetic/actions/workflows/release.yml) and verify the following once it completes:
+
+   - **All jobs succeeded** — including binary build (GoReleaser), `copa-action`, `copa-extension`, and `copacetic-frontend` image builds
+   - **Release page exists** at `https://github.com/project-copacetic/copacetic/releases/tag/<NEW VERSION>` with binary archives, SBOMs, and `copacetic_checksums.txt`
+   - **All three GHCR images exist** for the new tag:
+     - `ghcr.io/project-copacetic/copa-action:<NEW VERSION>`
+     - `ghcr.io/project-copacetic/copa-extension:<NEW VERSION>`
+     - `ghcr.io/project-copacetic/copacetic-frontend:<NEW VERSION>`
+   - **Pre-release flag is correct** — for `-rc.N` tags, the GitHub release must be marked as pre-release. GoReleaser sets this automatically via `release: prerelease: auto` in `.goreleaser.yml`. Verify with:
+
+     ```sh
+     gh release view <NEW VERSION> --repo project-copacetic/copacetic --json isPrerelease,tagName
+     gh api /repos/project-copacetic/copacetic/releases/latest --jq '.tag_name'
+     ```
+
+     The `latest` API endpoint should NOT return an `-rc.N` tag.
+
+   - **`release-<MAJOR>.<MINOR>` branch was created** automatically by the workflow
+   - **Smoke test the binary**:
+
+     ```sh
+     curl -sLO https://github.com/project-copacetic/copacetic/releases/download/<NEW VERSION>/copa_<VERSION_NO_V>_linux_amd64.tar.gz
+     tar -xzf copa_<VERSION_NO_V>_linux_amd64.tar.gz
+     ./copa --version
+     ```
+
+4. **Gather Feedback**
    - Announce the RC to the community
    - Monitor for bug reports and feedback
    - Address critical issues if found
 
-4. **Proceed to Final Release**
+5. **Proceed to Final Release**
    - If no critical issues are found, proceed with the final release (see Major/Minor Release Process below)
    - If critical issues are discovered, fix them and create a new RC (increment the RC number)
 
