@@ -168,7 +168,7 @@ func patchSingleArchImage(
 	finalLoaderType := determineLoaderType(loader, bkOpts.Addr)
 
 	// Check media type for OCI vs Docker export
-	shouldExportOCI := shouldExportAsOCI(ref, finalLoaderType)
+	shouldExportOCI := shouldExportAsOCI(ctx, ref, finalLoaderType)
 
 	// Create pipes for Docker export
 	pipeR, pipeW := io.Pipe()
@@ -342,8 +342,8 @@ func determineLoaderType(loader, bkAddr string) string {
 }
 
 // shouldExportAsOCI determines if the image should be exported as OCI format.
-func shouldExportAsOCI(ref, loaderType string) bool {
-	mt, err := utils.GetMediaType(ref, loaderType)
+func shouldExportAsOCI(ctx context.Context, ref, loaderType string) bool {
+	mt, err := utils.GetMediaTypeWithContext(ctx, ref, loaderType)
 	shouldExportOCI := err == nil && strings.Contains(mt, "vnd.oci.image")
 
 	switch {
