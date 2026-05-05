@@ -389,6 +389,42 @@ func TestValidateBinaryPath(t *testing.T) {
 			wantErr: true,
 			errMsg:  "unsafe characters",
 		},
+		{
+			name:    "path with space",
+			path:    "/usr/local/bin/my app",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with newline",
+			path:    "/usr/local/bin/app\ntouch pwned",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with tab",
+			path:    "/usr/local/bin/app\tpwned",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with carriage return",
+			path:    "/usr/local/bin/app\rpwned",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with wildcard asterisk",
+			path:    "/usr/local/bin/app*",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with wildcard question mark",
+			path:    "/usr/local/bin/app?",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
 	}
 
 	for _, tt := range tests {
