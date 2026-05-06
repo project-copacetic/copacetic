@@ -8,6 +8,10 @@ App-level patching is an experimental feature that requires setting the `COPA_EX
 
 Copa supports patching application-level dependencies, such as Python packages, Node.js packages, and Go modules, in addition to operating system packages. This feature allows you to update vulnerable libraries and packages in various programming language ecosystems.
 
+:::caution Private registry limitation
+App-level patching currently expects public source and package registries. Docker/BuildKit registry authentication can authenticate image pulls and pushes, but Copa does not yet pass credentials to git source clones or package-manager downloads for private Go, npm, PyPI, or NuGet sources.
+:::
+
 ## Overview
 
 App-level patching works by scanning and updating application dependencies found in your container images. Unlike OS-level patching which updates system packages, app-level patching focuses on:
