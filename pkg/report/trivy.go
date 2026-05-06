@@ -438,7 +438,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		// Process Language packages
 		if r.Class == utils.LangPackages {
 			// Check if this is a Python, Node.js, or Go related target
-			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary {
+			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary ||
+				r.Type == utils.JavaJar || r.Type == utils.JavaPom || r.Type == utils.JavaGradle || r.Type == utils.JavaSbt {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					libSummary.Total++

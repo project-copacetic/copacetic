@@ -1,6 +1,7 @@
 package langmgr
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -63,6 +64,96 @@ func TestGetLanguageManagers(t *testing.T) {
 	}
 	assert.True(t, pythonFound, "Should include Python manager")
 	assert.False(t, dotnetFound, "Should not include .NET manager without dotnet packages")
+}
+
+func TestGetLanguageManagers_Java(t *testing.T) {
+	config := &buildkit.Config{}
+	workingFolder := testWorkingFolder
+
+	javaTypes := []string{"jar", "pom", "gradle", "sbt"}
+	for _, jt := range javaTypes {
+		t.Run("registers javaManager for type="+jt, func(t *testing.T) {
+			manifest := &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "org.apache.logging.log4j:log4j-core", Type: jt, FixedVersion: "2.17.0"},
+				},
+			}
+			managers := GetLanguageManagers(config, workingFolder, manifest, "", "", "")
+			require.Len(t, managers, 1, "should register exactly one manager for a single Java type")
+			_, ok := managers[0].(*javaManager)
+			assert.True(t, ok, "manager should be javaManager")
+		})
+	}
+
+	t.Run("registers javaManager only once across all four Java types", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "g1:a1", Type: "jar"},
+				{Name: "g2:a2", Type: "pom"},
+				{Name: "g3:a3", Type: "gradle"},
+				{Name: "g4:a4", Type: "sbt"},
+			},
+		}
+		managers := GetLanguageManagers(config, workingFolder, manifest, "", "", "")
+		require.Len(t, managers, 1, "should de-duplicate javaManager across all four Java types")
+		_, ok := managers[0].(*javaManager)
+		assert.True(t, ok, "manager should be javaManager")
+	})
+}
+
+func TestJavaManager_InstallUpdates_Stub(t *testing.T) {
+	jm := &javaManager{config: &buildkit.Config{}, workingFolder: testWorkingFolder}
+
+	t.Run("nil manifest returns nil failures", func(t *testing.T) {
+		state, failed, err := jm.InstallUpdates(context.TODO(), nil, nil, false)
+		assert.NoError(t, err)
+		assert.Nil(t, state)
+		assert.Nil(t, failed)
+	})
+
+	t.Run("non-Java updates are ignored", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "urllib3", Type: "python-pkg", FixedVersion: "2.0.0"},
+			},
+		}
+		_, failed, err := jm.InstallUpdates(context.TODO(), nil, manifest, false)
+		assert.NoError(t, err)
+		assert.Empty(t, failed, "javaManager should not report non-Java updates as failures")
+	})
+
+	t.Run("Java updates are reported as failed packages", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "org.apache.logging.log4j:log4j-core", Type: "jar", InstalledVersion: "2.11.1", FixedVersion: "2.17.0"},
+				{Name: "com.fasterxml.jackson.core:jackson-databind", Type: "pom", InstalledVersion: "2.10.4", FixedVersion: "2.13.4"},
+				{Name: "io.netty:netty-codec", Type: "gradle", InstalledVersion: "4.1.77", FixedVersion: "4.1.86"},
+			},
+		}
+		_, failed, err := jm.InstallUpdates(context.TODO(), nil, manifest, false)
+		assert.NoError(t, err)
+		assert.Len(t, failed, 3, "every Java update should be reported as failed in the scaffold")
+		assert.Contains(t, failed, "org.apache.logging.log4j:log4j-core")
+		assert.Contains(t, failed, "com.fasterxml.jackson.core:jackson-databind")
+		assert.Contains(t, failed, "io.netty:netty-codec")
+	})
+
+	t.Run("filterJavaUpdates picks only Java types", func(t *testing.T) {
+		updates := unversioned.LangUpdatePackages{
+			{Name: "g:a", Type: "jar"},
+			{Name: "urllib3", Type: "python-pkg"},
+			{Name: "g:b", Type: "pom"},
+			{Name: "lodash", Type: "node-pkg"},
+			{Name: "g:c", Type: "gradle"},
+			{Name: "stdlib", Type: "gobinary"},
+			{Name: "g:d", Type: "sbt"},
+		}
+		got := filterJavaUpdates(updates)
+		assert.Len(t, got, 4)
+		for _, u := range got {
+			assert.True(t, isJavaUpdate(u.Type), "filtered entry should be Java type, got %s", u.Type)
+		}
+	})
 }
 
 func TestGetUniqueLatestUpdates(t *testing.T) {
