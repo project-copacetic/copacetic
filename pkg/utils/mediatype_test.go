@@ -58,7 +58,7 @@ func TestLocalMediaType(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := localMediaType("alpine:latest")
+	mt, err := localMediaType(context.Background(), "alpine:latest")
 	require.NoError(t, err)
 	require.Equal(t, fakeMediaType, mt)
 }
@@ -74,7 +74,7 @@ func TestLocalMediaTypeFailure(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := localMediaType("bad:tag")
+	mt, err := localMediaType(context.Background(), "bad:tag")
 	require.Error(t, err)
 	require.Empty(t, mt)
 }
@@ -93,7 +93,7 @@ func TestRemoteMediaType_Success(t *testing.T) {
 		return mr.Get(ref, opts...)
 	}
 
-	mt, err := remoteMediaType("alpine:latest")
+	mt, err := remoteMediaType(context.Background(), "alpine:latest")
 	require.NoError(t, err)
 	require.Equal(t, string(fakeRemoteType), mt)
 }
@@ -108,7 +108,7 @@ func TestRemoteMediaType_Failure(t *testing.T) {
 		return mr.Get(ref, opts...)
 	}
 
-	_, err := remoteMediaType("alpine:latest")
+	_, err := remoteMediaType(context.Background(), "alpine:latest")
 	require.Error(t, err)
 }
 
@@ -168,7 +168,7 @@ func TestPodmanMediaType_ImageNotFound(t *testing.T) {
 	// This test covers the case where podman inspect fails because image doesn't exist
 	// Since podman is available in the test environment, we test with non-existent image
 
-	_, err := podmanMediaType("non-existent-image:test")
+	_, err := podmanMediaType(context.Background(), "non-existent-image:test")
 	require.Error(t, err)
 	// Should get an error from podman command execution
 }
@@ -210,7 +210,7 @@ func TestLocalMediaType_NilDescriptor(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := localMediaType("alpine:latest")
+	mt, err := localMediaType(context.Background(), "alpine:latest")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "descriptor is nil")
 	require.Empty(t, mt)
@@ -218,6 +218,6 @@ func TestLocalMediaType_NilDescriptor(t *testing.T) {
 
 func TestRemoteMediaType_InvalidReference(t *testing.T) {
 	// Test with invalid image reference
-	_, err := remoteMediaType("invalid::reference")
+	_, err := remoteMediaType(context.Background(), "invalid::reference")
 	require.Error(t, err)
 }
