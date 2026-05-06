@@ -129,7 +129,7 @@ release-manifest:
 .PHONY: test
 test:
 	$(info $(INFOMARK) Running unit tests on pkg libraries ...)
-	go test ./pkg/... $(CODECOV_OPTS)
+	go test ./pkg/... -coverpkg=./pkg/... $(CODECOV_OPTS)
 
 ################################################################################
 # Target: clean                                                                #
