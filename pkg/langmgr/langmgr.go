@@ -39,8 +39,10 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 	packageTypes := getPackageTypes(manifest.LangUpdates)
 
 	// Switch on each package type to add appropriate managers.
-	// Track Go manager separately since GoModules and GoBinary share one manager.
+	// Track managers that handle multiple types so we add them only once
+	// (Go: gomod + gobinary; Java: jar + pom + gradle + sbt).
 	goAdded := false
+	javaAdded := false
 	for packageType := range packageTypes {
 		switch packageType {
 		case utils.PythonPackages:
@@ -54,6 +56,11 @@ func GetLanguageManagers(config *buildkit.Config, workingFolder string, manifest
 			}
 		case utils.DotNetPackages:
 			managers = append(managers, &dotnetManager{config: config, workingFolder: workingFolder})
+		case utils.JavaJar, utils.JavaPom, utils.JavaGradle, utils.JavaSbt:
+			if !javaAdded {
+				managers = append(managers, &javaManager{config: config, workingFolder: workingFolder})
+				javaAdded = true
+			}
 		default:
 			log.Warnf("Unknown package type '%s' found in language updates", packageType)
 		}

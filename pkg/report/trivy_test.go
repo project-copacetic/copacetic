@@ -1180,3 +1180,52 @@ func writeTempReport(t *testing.T, report *trivyTypes.Report) string {
 	assert.NoError(t, f.Close())
 	return f.Name()
 }
+
+// TestParseTrivyJavaTypes verifies the parser forwards Java/JVM language
+// updates (jar, pom, gradle, sbt) into the manifest. Without this, Java vulns
+// from Trivy would be silently dropped before reaching pkg/langmgr.
+func TestParseTrivyJavaTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		langType string
+		pkgName  string
+	}{
+		{name: "jar (META-INF detection)", langType: utils.JavaJar, pkgName: "org.apache.logging.log4j:log4j-core"},
+		{name: "pom (build manifest)", langType: utils.JavaPom, pkgName: "com.fasterxml.jackson.core:jackson-databind"},
+		{name: "gradle (lockfile)", langType: utils.JavaGradle, pkgName: "io.netty:netty-codec"},
+		{name: "sbt (lockfile)", langType: utils.JavaSbt, pkgName: "org.scala-lang:scala-library"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			report := &trivyTypes.Report{
+				SchemaVersion: 2,
+				Metadata: trivyTypes.Metadata{
+					OS: &ftypes.OS{Family: "debian", Name: "12"},
+				},
+				Results: []trivyTypes.Result{
+					{
+						Class: utils.LangPackages,
+						Type:  ftypes.LangType(tc.langType),
+						Vulnerabilities: []trivyTypes.DetectedVulnerability{
+							{
+								VulnerabilityID:  "CVE-2099-9999",
+								PkgName:          tc.pkgName,
+								InstalledVersion: "1.0.0",
+								FixedVersion:     "1.0.1",
+								PkgPath:          "/usr/share/app/lib/" + strings.ReplaceAll(tc.pkgName, ":", "-") + "-1.0.0.jar",
+							},
+						},
+					},
+				},
+			}
+
+			manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+			assert.Len(t, manifest.LangUpdates, 1, "Java %s entry should be forwarded into LangUpdates", tc.langType)
+			assert.Equal(t, tc.pkgName, manifest.LangUpdates[0].Name)
+			assert.Equal(t, tc.langType, manifest.LangUpdates[0].Type, "type should be preserved as %q", tc.langType)
+			assert.Equal(t, "1.0.0", manifest.LangUpdates[0].InstalledVersion)
+			assert.Equal(t, "1.0.1", manifest.LangUpdates[0].FixedVersion)
+		})
+	}
+}
