@@ -96,16 +96,20 @@ func DeduplicateStringSlice(input []string) []string {
 func EnsurePath(path string, perm fs.FileMode) (bool, error) {
 	createdPath := false
 	st, err := os.Stat(path)
-	if err != nil && os.IsNotExist(err) {
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return false, err
+		}
 		err = os.MkdirAll(path, perm)
 		createdPath = (err == nil)
-	} else {
-		if !st.IsDir() {
-			return false, fs.ErrExist
-		}
-		if st.Mode().Perm() != perm {
-			return false, fs.ErrPermission
-		}
+		return createdPath, err
+	}
+
+	if !st.IsDir() {
+		return false, fs.ErrExist
+	}
+	if st.Mode().Perm() != perm {
+		return false, fs.ErrPermission
 	}
 	return createdPath, err
 }

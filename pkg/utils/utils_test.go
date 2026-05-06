@@ -96,6 +96,7 @@ func TestEnsurePath(t *testing.T) {
 		{"PathExists", args{existingDir, testPerms}, false, false},
 		{"PathExistsWithDiffPerms", args{diffPermsDir, testPerms}, false, true},
 		{"PathIsFile", args{emptyFile, testPerms}, false, true},
+		{"StatErrorNotExist", args{path.Join(emptyFile, "child"), testPerms}, false, true},
 		{"EmptyPath", args{"", testPerms}, false, true},
 		{"EmptyPerms", args{existingDir, 0o000}, false, true},
 	}
