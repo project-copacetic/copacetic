@@ -14,7 +14,7 @@ require (
 	github.com/cpuguy83/dockercfg v0.3.2
 	github.com/cpuguy83/go-docker v0.4.0
 	github.com/distribution/reference v0.6.0
-	github.com/docker/buildx v0.32.1
+	github.com/docker/buildx v0.33.0
 	github.com/docker/cli v29.3.1+incompatible
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/docker/go-connections v0.6.0
@@ -23,7 +23,7 @@ require (
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
-	github.com/moby/buildkit v0.28.1
+	github.com/moby/buildkit v0.29.0
 	github.com/moby/moby/api v1.54.1
 	github.com/moby/moby/client v0.4.0
 	github.com/opencontainers/go-digest v1.0.0
@@ -62,12 +62,12 @@ require (
 	github.com/charmbracelet/x/ansi v0.3.2 // indirect
 	github.com/containerd/console v1.0.5 // indirect
 	github.com/containerd/containerd/api v1.10.0 // indirect
-	github.com/containerd/containerd/v2 v2.2.1 // indirect
+	github.com/containerd/containerd/v2 v2.2.2 // indirect
 	github.com/containerd/continuity v0.4.5 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
-	github.com/containerd/ttrpc v1.2.7 // indirect
+	github.com/containerd/ttrpc v1.2.8 // indirect
 	github.com/containerd/typeurl/v2 v2.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
