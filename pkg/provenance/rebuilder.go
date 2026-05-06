@@ -262,8 +262,11 @@ func validateBinaryPath(path string) error {
 		return fmt.Errorf("binary path contains null byte: %s", path)
 	}
 
-	// Reject paths with shell metacharacters
-	if strings.ContainsAny(path, "|;&$`\\\"'<>(){}[]!#~") {
+	// Reject paths with shell metacharacters and shell-significant whitespace/control chars.
+	// Use the strict set (includes quotes and wildcards like * and ?) since this value
+	// is later interpolated into shell-evaluated build/verify commands. Add space
+	// explicitly because the strict constant covers \t\n\r but not " ".
+	if strings.ContainsAny(path, shellUnsafeCharsStrict+" ") {
 		return fmt.Errorf("binary path contains unsafe characters: %s", path)
 	}
 
