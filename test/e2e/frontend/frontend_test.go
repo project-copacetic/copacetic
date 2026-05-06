@@ -464,9 +464,10 @@ func runFrontendMultiplatformTest(t *testing.T) {
 		reportsGenerated++
 	}
 
-	// Skip test if no reports were generated (e.g., due to disk space issues)
 	if reportsGenerated == 0 {
-		t.Skip("Skipping multiplatform test: no vulnerability reports could be generated (possible disk space or network issue)")
+		t.Fatal("no vulnerability reports could be generated for any platform; " +
+			"this indicates a real failure in scanner/buildkit/network setup, not a flake — " +
+			"investigate the per-platform t.Logf output above")
 	}
 
 	outputTar := filepath.Join(tempDir, "multiarch-patched.tar")
