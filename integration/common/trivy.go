@@ -17,6 +17,36 @@ import (
 //go:embed fixtures/trivy_ignore.rego
 var TrivyIgnore []byte
 
+// Pinned Trivy DB manifest digests used by every integration-test scan. The `:2`
+// tag rotates ~6 times per day as new CVEs are added; pinning to a digest makes
+// the test suite reproducible and decouples PR CI from the upstream DB-publish
+// cadence. Both the primary (GHCR) and fallback (ECR) are pinned independently —
+// otherwise a transient GHCR auth/rate-limit/network failure would silently fall
+// back to the unpinned ECR mirror and reintroduce non-determinism.
+//
+// Bump these together as part of any test-fixture refresh (e.g., when bumping the
+// pinned base-image SHAs in integration/singlearch/fixtures/test-images.json) so
+// the DB's "fixed-in" versions stay reachable from the test images' package
+// mirrors.
+//
+// To resolve current digests:
+//
+//	curl -fsSL -I -H "Accept: application/vnd.oci.image.index.v1+json" \
+//	  -H "Authorization: Bearer $(curl -fsSL 'https://ghcr.io/token?scope=repository:aquasecurity/trivy-db:pull' | jq -r .token)" \
+//	  https://ghcr.io/v2/aquasecurity/trivy-db/manifests/2 | grep -i docker-content-digest
+//
+//	curl -fsSL -I -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+//	  -H "Authorization: Bearer $(curl -fsSL 'https://public.ecr.aws/token/' | jq -r .token)" \
+//	  https://public.ecr.aws/v2/aquasecurity/trivy-db/manifests/2 | grep -i docker-content-digest
+const (
+	trivyDBPrimary  = "ghcr.io/aquasecurity/trivy-db@sha256:ef6b25b723730a44618a67a337ac48a73fbf257ef2cda34433d9fb305ac7fa5a"
+	trivyDBFallback = "public.ecr.aws/aquasecurity/trivy-db@sha256:2ae934bb83e67ee3865228894fc7eb61bdeed43e50764a51260b794818ef917f"
+)
+
+// trivyDBRepositories is the comma-separated `--db-repository` value passed to
+// every `trivy image` invocation: primary, then ECR fallback.
+var trivyDBRepositories = trivyDBPrimary + "," + trivyDBFallback
+
 type ScannerCmd struct {
 	Output       string
 	SkipDBUpdate bool
@@ -132,7 +162,7 @@ func DownloadDB(t *testing.T, envVars ...string) {
 		"trivy",
 		"image",
 		"--download-db-only",
-		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
+		"--db-repository=" + trivyDBRepositories,
 	}
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
 	cmd.Env = append(cmd.Env, os.Environ()...)
@@ -148,7 +178,7 @@ func DownloadDBToDir(t *testing.T, cacheDir string, envVars ...string) {
 		"trivy",
 		"image",
 		"--download-db-only",
-		"--db-repository=ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db",
+		"--db-repository=" + trivyDBRepositories,
 		"--cache-dir=" + cacheDir,
 	}
 	cmd := exec.Command(args[0], args[1:]...) //#nosec G204
