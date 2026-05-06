@@ -119,6 +119,22 @@ copa patch \
     --library-patch-level patch
 ```
 
+### Helm Chart Patching (Experimental)
+
+You can patch images discovered from a Helm chart and publish a patched wrapper chart.
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+copa patch \
+  --chart vector \
+  --chart-version 0.53.0 \
+  --chart-repo oci://ghcr.io/vectordotdev/helm \
+  --chart-registry oci://ghcr.io/myorg/charts
+```
+
+Chart mode is mutually exclusive with `--image` and `--config`.
+
 ### Ignoring Errors
 
 Sometimes, certain packages may not be compatible with the patching process or may not have available updates. In such cases, you can use the `--ignore-errors` flag to allow Copa to continue patching other packages even if some fail. This is useful in environments where you want to apply as many updates as possible without failing the entire patching process.

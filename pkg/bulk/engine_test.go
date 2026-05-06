@@ -1,6 +1,7 @@
 package bulk
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -168,4 +169,12 @@ func TestMergeTarget(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+}
+
+func TestResolveChartImagesWithCharts_RespectsCanceledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, _, err := resolveChartImagesWithCharts(ctx, []ChartSpec{{Name: "chart", Version: "1.0.0", Repository: "oci://example.com/charts"}}, nil)
+	require.ErrorIs(t, err, context.Canceled)
 }
