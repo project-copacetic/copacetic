@@ -28,7 +28,13 @@ RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /copa-frontend ./cmd/frontend
 
 # Final image
-FROM scratch AS frontend
+#
+# Distroless static gives us a minimal rootfs (no shell, no package
+# manager) while still providing /tmp, CA certs, /etc/passwd, and
+# tzdata -- which the frontend needs at runtime (e.g. os.MkdirTemp
+# requires /tmp to exist). Do not switch to `FROM scratch` without
+# adding those back.
+FROM gcr.io/distroless/static-debian12:nonroot AS frontend
 
 # Copy CA certificates for HTTPS connections
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
