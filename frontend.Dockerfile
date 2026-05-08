@@ -36,9 +36,6 @@ RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
 # adding those back.
 FROM gcr.io/distroless/static-debian12:nonroot AS frontend
 
-# Copy CA certificates for HTTPS connections
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
 # Copy the frontend binary
 COPY --from=builder /copa-frontend /copa-frontend
 

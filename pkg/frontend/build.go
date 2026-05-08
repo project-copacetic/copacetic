@@ -24,10 +24,8 @@ const (
 )
 
 // ensureTempDir makes sure the directory returned by os.TempDir() exists
-// before callers invoke os.MkdirTemp("", ...). The published frontend image
-// is built FROM scratch (see frontend.Dockerfile), so /tmp is not present
-// at runtime and MkdirTemp would otherwise fail with
-// "stat /tmp: no such file or directory".
+// before callers invoke os.MkdirTemp("", ...). Minimal frontend images must
+// provide a writable temp base directory for report extraction.
 func ensureTempDir() error {
 	return os.MkdirAll(os.TempDir(), 0o1777)
 }
