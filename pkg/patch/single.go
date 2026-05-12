@@ -181,6 +181,22 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
+	// Capture original manifest annotations before patching.
+	// If the patched image is loaded with the same tag as the source image, the tag
+	// will be overwritten and a subsequent lookup by tag can no longer read the
+	// original annotations.  Fetching them here — before any goroutine touches the
+	// runtime — guarantees we have the correct pre-patch values regardless of tag
+	// reuse or push strategy.
+	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+		OS:           targetPlatform.OS,
+		Architecture: targetPlatform.Architecture,
+		Variant:      targetPlatform.Variant,
+	})
+	if err != nil {
+		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
+		originalAnnotations = map[string]string{}
+	}
+
 	// Create channels for build coordination.
 	// Buffer the channel to prevent backpressure from the progress display
 	// blocking BuildKit. The progrock TUI processes events slower than
@@ -259,7 +275,7 @@ func patchSingleArchImage(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +415,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result,
+	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -420,32 +436,25 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		log.Debugf("Got image descriptor for %s", patchedImageName)
 	}
 
-	// Add original manifest annotations if we have a patched descriptor
-	if patchedDesc != nil {
-		originalAnnotations, err := utils.GetPlatformManifestAnnotations(descriptorCtx, image, &ispec.Platform{
-			OS:           targetPlatform.OS,
-			Architecture: targetPlatform.Architecture,
-			Variant:      targetPlatform.Variant,
-		})
-		if err != nil {
-			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
-		} else if len(originalAnnotations) > 0 {
-			// Create augmented descriptor with original annotations
-			augmentedDesc := *patchedDesc
-			if augmentedDesc.Annotations == nil {
-				augmentedDesc.Annotations = make(map[string]string)
-			}
-
-			// Copy original annotations
-			maps.Copy(augmentedDesc.Annotations, originalAnnotations)
-
-			// Update creation timestamp and add Copa annotations
-			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
-			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
-
-			patchedDesc = &augmentedDesc
-			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+	// Add original manifest annotations if we have a patched descriptor.
+	// originalAnnotations were captured before patching to avoid a mutable-tag
+	// race where the same tag is reused for the patched image.
+	if patchedDesc != nil && len(originalAnnotations) > 0 {
+		// Create augmented descriptor with original annotations
+		augmentedDesc := *patchedDesc
+		if augmentedDesc.Annotations == nil {
+			augmentedDesc.Annotations = make(map[string]string)
 		}
+
+		// Copy original annotations
+		maps.Copy(augmentedDesc.Annotations, originalAnnotations)
+
+		// Update creation timestamp and add Copa annotations
+		augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
+		augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
+
+		patchedDesc = &augmentedDesc
+		log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
 	}
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
