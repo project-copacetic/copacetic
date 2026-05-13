@@ -650,11 +650,11 @@ jobs:
         run: |
           set -eu -o pipefail
 
-          BASE_IMAGE="mcr.microsoft.com/cbl-mariner/base/core:2.0.20240112"
+          BASE_IMAGE="mcr.microsoft.com/cbl-mariner/base/core:2.0.20260311"
           LOCAL_REGISTRY="localhost:5000"
-          PLATFORM_AMD64_IMAGE="${LOCAL_REGISTRY}/mariner:2.0.20240112-amd64"
-          PLATFORM_ARM64_IMAGE="${LOCAL_REGISTRY}/mariner:2.0.20240112-arm64"
-          LOCAL_MANIFEST="${LOCAL_REGISTRY}/mariner:2.0.20240112-multiplatform"
+          PLATFORM_AMD64_IMAGE="${LOCAL_REGISTRY}/mariner:2.0.20260311-amd64"
+          PLATFORM_ARM64_IMAGE="${LOCAL_REGISTRY}/mariner:2.0.20260311-arm64"
+          LOCAL_MANIFEST="${LOCAL_REGISTRY}/mariner:2.0.20260311-multiplatform"
           
           echo "Building and pushing platform-specific images to local registry..."
           
@@ -684,7 +684,7 @@ jobs:
           
           # Verify images using registry API with retries
           for i in $(seq 1 10); do
-            if curl -s -f "http://localhost:5000/v2/mariner/manifests/2.0.20240112-amd64" > /dev/null; then
+            if curl -s -f "http://localhost:5000/v2/mariner/manifests/2.0.20260311-amd64" > /dev/null; then
               echo "✓ AMD64 image verified in registry"
               break
             fi
@@ -693,7 +693,7 @@ jobs:
           done
           
           for i in $(seq 1 10); do
-            if curl -s -f "http://localhost:5000/v2/mariner/manifests/2.0.20240112-arm64" > /dev/null; then
+            if curl -s -f "http://localhost:5000/v2/mariner/manifests/2.0.20260311-arm64" > /dev/null; then
               echo "✓ ARM64 image verified in registry"
               break
             fi
@@ -717,7 +717,7 @@ jobs:
           docker manifest inspect "${LOCAL_MANIFEST}"
           
           # Verify manifest exists in registry
-          curl -s "http://localhost:5000/v2/mariner/manifests/2.0.20240112-multiplatform" | jq .
+          curl -s "http://localhost:5000/v2/mariner/manifests/2.0.20260311-multiplatform" | jq .
           
           # Create temp directory for OCI layout
           OCI_LAYOUT_DIR=$(mktemp -d)
