@@ -181,19 +181,18 @@ func patchSingleArchImage(
 		return nil, err
 	}
 
-	// Capture original manifest annotations before patching.
-	// If the patched image is loaded with the same tag as the source image, the tag
-	// will be overwritten and a subsequent lookup by tag can no longer read the
-	// original annotations.  Fetching them here — before any goroutine touches the
-	// runtime — guarantees we have the correct pre-patch values regardless of tag
-	// reuse or push strategy.
+	// If the patched image is published or loaded using the same tag as the source
+	// image, that mutable tag may later resolve to the newly published manifest
+	// instead of the original one. Fetching the annotations here preserves the
+	// pre-patch manifest-level values before any same-tag push/load can change what
+	// a lookup by tag returns.
 	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
 		OS:           targetPlatform.OS,
 		Architecture: targetPlatform.Architecture,
 		Variant:      targetPlatform.Variant,
 	})
 	if err != nil {
-		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
+		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
 		originalAnnotations = map[string]string{}
 	}
 
