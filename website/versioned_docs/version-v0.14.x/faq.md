@@ -1,0 +1,266 @@
+---
+title: FAQ
+---
+
+## What kind of vulnerabilities can Copa patch?
+
+Copa patches "OS level" vulnerabilities (e.g. `openssl`, `glibc`) managed by system package managers (`apt`, `yum/dnf`, `apk`, etc.).
+
+Additionally, Copa now supports (experimental) patching of:
+- **Python packages** installed via `pip` when they are present in the image filesystem
+- **Node.js packages** managed by `npm` in application directories
+- **Go modules** defined in `go.mod` files
+
+For more information, please see [application-level patching](app-level-patching).
+
+## What kind of vulnerabilities can Copa not patch?
+
+Copa has limited support for compiled binaries built from source. While Copa can update Go module dependencies in `go.mod` files, it **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa will update the `go.mod` file but the running binary will still contain the vulnerable code until it is rebuilt.
+
+For applications that are compiled binaries:
+- Copa updates `go.mod` and `go.sum` files with fixed dependency versions
+- The updated module files can be used for subsequent builds
+- The compiled binary itself is not automatically patched
+
+To fully patch compiled binary vulnerabilities:
+1. Use Copa to update the module dependencies
+2. Rebuild the application with the updated dependencies
+3. Replace the old binary with the newly built one
+
+Alternatively, package the application into a system package (e.g. a `.deb` or `.rpm`) so Copa can patch it at the OS package layer.
+
+## My disk space is being filled up after using Copa. How can I fix this?
+
+If you find that your storage is rapidly being taken up after working with Copa, run `docker system prune`. This will prune all unused images, containers and caches.
+
+## How does Copa determine what tooling image to use?
+
+All images being passed into Copa have their versioning data carefully extracted and stripped so that an appropriate tooling image can be obtained from a container repository.
+
+### DPKG
+
+#### Debian
+
+All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `ghcr.io/project-copacetic/copacetic/debian:11-slim` is used as the tooling image.
+
+#### Ubuntu
+
+All Ubuntu-based images use the same versioning that was passed in. e.g. if `tomcat:10.1.17-jre17-temurin-jammy` is passed in, `ghcr.io/project-copacetic/copacetic/ubuntu:22.04` will be used for the tooling image.
+
+There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being patched without a Trivy scan, Copa is unable to parse a scan for versioning information. In these scenarios, Copa will fallback to `ghcr.io/project-copacetic/copacetic/debian:stable-slim` as the tooling image.
+
+### RPM
+
+#### Azure Linux 3.0+
+
+Azure Linux based images will use `ghcr.io/project-copacetic/copacetic/azurelinux/base/core` with the same version as the image being patched.
+
+#### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux
+
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`
+
+#### SUSE (SLES and BCI)
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/bci/bci-base` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.suse.com/bci/bci-base`.
+
+#### openSUSE Leap
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/leap` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.opensuse.org/opensuse/leap`.
+
+#### openSUSE Tumbleweed
+These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/tumbleweed` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.opensuse.org/opensuse/tumbleweed`.
+
+### APK (Alpine)
+
+APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
+
+### Python
+
+When updating Python packages:
+
+1. If the target image already contains a working `pip` (`pip` or `pip3` on PATH), Copa installs upgrades directly inside the image layer without pulling a separate tooling image.
+2. If `pip` is absent, Copa will:
+    - Detect an existing `site-packages` path by scanning common locations.
+    - Infer the Python version from the path (e.g. `python3.12`) and choose a matching tooling image: `docker.io/library/python:<major.minor>-slim` (e.g. `python:3.12-slim`).
+    - Fallback to `docker.io/library/python:3-slim` if a version cannot be inferred.
+
+### Go
+
+When updating Go modules:
+
+1. If the target image already contains the Go toolchain (`go` command on PATH), Copa updates modules directly inside the image layer without pulling a separate tooling image.
+2. If the Go toolchain is absent (e.g., distroless images), Copa will:
+    - Detect the Go version using `go version` command or extract from image metadata
+    - Use a matching tooling image: `docker.io/library/golang:<version>-alpine` (e.g. `golang:1.23-alpine`)
+    - Fallback to `docker.io/library/golang:1.23-alpine` if a version cannot be detected
+    - Copy `go.mod`, `go.sum`, and `go.work` (if present) to the tooling container
+    - Perform module updates in the tooling container
+    - Copy updated files back to the target image
+
+**Note**: Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. See [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
+
+## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
+
+After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.
+
+## Can I replace the package repositories in the image with my own?
+
+:::caution
+
+Experimental: This feature might change without preserving backwards compatibility.
+
+:::
+
+Copa does not support replacing the repositories in the package managers with alternatives. Images must already use the intended package repositories. For example, for debian, updating `/etc/apt/sources.list` from `http://archive.ubuntu.com/ubuntu/` to a mirror, such as `https://mirrors.wikimedia.org/ubuntu/`.
+
+If you need the tooling image to use a different package repository, you can create a source policy to define a replacement image and/or pin to a digest. For example, the following source policy replaces `ghcr.io/project-copacetic/copacetic/debian:11-slim` image with `foo.io/bar/baz:latest@sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5`:
+
+```shell
+cat <<EOF > source-policy.json
+{
+    "rules": [
+        {
+            "action": "CONVERT",
+            "selector": {
+                "identifier": "docker-image://ghcr.io/project-copacetic/copacetic/debian:11-slim"
+            },
+            "updates": {
+                "identifier": "docker-image://foo.io/bar/baz:latest@sha256:42d3e6bc186572245aded5a0be381012adba6d89355fa9486dd81b0c634695b5"
+            }
+        }
+    ]
+}
+EOF
+
+export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
+```
+
+> The tooling image for Debian-based images can be `ghcr.io/project-copacetic/copacetic/debian:11-slim` or `ghcr.io/project-copacetic/copacetic/debian:12-slim` depending on the target image version. RPM-based repos use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`. For more details, see [How does Copa determine what tooling image to use?](#how-does-copa-determine-what-tooling-image-to-use).
+
+For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
+
+## Can I use Dependabot with Copa patched images?
+
+Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
+
+## Why is bulk patching creating versioned tags like `1.25.3-patched-1`?
+
+When using [bulk image patching](./bulk-image-patching.md) with `--push`, Copa automatically avoids re-patching images that have no new vulnerabilities. When a re-patch is needed due to new vulnerabilities, Copa creates version-suffixed tags since registry tags are immutable:
+
+```
+nginx:1.25.3            ← original source image
+nginx:1.25.3-patched    ← initial patch (from 1.25.3)
+nginx:1.25.3-patched-1  ← first re-patch (from 1.25.3, not from 1.25.3-patched)
+nginx:1.25.3-patched-2  ← second re-patch (from 1.25.3, not from 1.25.3-patched-1)
+```
+
+**Note**: Each re-patch is created from the **original source image** (e.g., `nginx:1.25.3`), not from the previous patched image. This ensures comprehensive updates and prevents layer buildup, consistent with Copa's architecture.
+
+This automatic versioning:
+- Saves time and compute by skipping unnecessary patches
+- Preserves existing tags (registry tags cannot be overwritten)
+- Provides a clear history of patch iterations
+- Ensures each patch is comprehensive (all updates from original)
+- Works with custom tag templates (e.g., `{{ .SourceTag }}-fixed`)
+
+## How does bulk patching decide whether to skip an image?
+
+Copa uses vulnerability reports you provide to decide whether re-patching is needed. Reports are matched by reading the `ArtifactName` field from inside each JSON file:
+
+1. **No existing patched tag**: Proceeds with patching using the base tag
+2. **Existing patched tag exists**:
+   - If `-r` provided: Looks up the vulnerability report by `ArtifactName`
+     - Report shows no fixable vulnerabilities → skips patching (saves time)
+     - Report shows fixable vulnerabilities → re-patches with version-bumped tag
+     - Report not found (no matching `ArtifactName`) → proceeds with patching (fail-open)
+   - If `-r` not provided: Always proceeds with patching
+
+**Important**: The vulnerability report only determines whether to re-patch, not what to patch. When patching occurs, Copa still applies comprehensive updates to all packages (not selective patching based on specific CVEs).
+
+If Copa cannot complete the report check (e.g., no matching report, parse error, registry errors), it defaults to patching (fail-open behavior) to ensure scheduled jobs don't fail silently. See [troubleshooting](./troubleshooting.md#bulk-patching-images-not-being-skipped) for more details.
+
+### Scanner Agnostic
+
+Skip detection works with any scanner Copa supports (Trivy, native format, custom plugins). You provide the reports, Copa parses them. This maintains separation of concerns: you control when and how scanning happens.
+
+## Does Copa cause a buildup of patched layers on each patch?
+
+No. To prevent a buildup of layers, Copa discards the previous patch layer with each new patch. Each subsequent patch removes the earlier patch layer and creates a new one, which includes all patches applied since the original base image Copa started with. Essentially, Copa is creating a new layer with the latest patch, based on the base/original image. This new layer is a combination (or squash) of both the previous updates and the new updates requested. Discarding the patch layer also reduces the size of the resulting patched images in the future.
+
+## Why am I getting 404 errors when trying to patch an image?
+
+If you're seeing errors related to missing **Release files** or `404 Not Found` errors during patching, your base image is likely using an End-of-Life (EOL) release of a distribution. Copa cannot patch images based on EOL operating systems where the package repositories have been removed or archived.
+
+## What does "End-of-Life" mean for patching?
+
+When a release of Linux distribution reaches its End-of-Life date:
+
+- Package repositories are typically removed from primary mirrors
+- Security updates are no longer published
+- The distribution maintainers no longer provide patches for vulnerabilities
+
+Without access to these repositories, Copa cannot find or apply security updates.
+
+## How do I identify if my image is using an EOL distribution?
+
+Common indicators include:
+
+- Copa Errors mentioning missing Release files
+- `404` Not Found errors when accessing repository URLs
+- References to old distribution codenames (e.g., Debian "Stretch" or "Buster")
+  - Check the output of `cat /etc/os-release` for codenames like:
+    ```shell
+    PRETTY_NAME="Debian GNU/Linux 9 (stretch)"
+    NAME="Debian GNU/Linux"
+    VERSION_ID="9"
+    VERSION="9 (stretch)"
+    VERSION_CODENAME=stretch
+    ID=debian
+    ```
+
+:::tip[Check Distribution End-of-Life Status]
+
+Visit [endoflife.date](https://endoflife.date/) to easily check the End-of-Life (EOL) dates for your Linux distribution, programming languages, frameworks, and other software.
+
+:::
+
+## How does Copa check for EOL status?
+
+Copa automatically checks if an image's operating system is End-of-Life by querying the [endoflife.date API](https://endoflife.date/). This check:
+
+- Runs before attempting to patch the image
+- Warns you if the OS is EOL and patching may fail
+- Can optionally exit with an error if EOL is detected (using `--exit-on-eol`)
+- Has built-in retry logic for 15s for rate limiting (HTTP 429 responses)
+
+### EOL Check Configuration
+
+You can customize the EOL check behavior using these flags:
+
+- `--exit-on-eol`: Exit with an error when an EOL operating system is detected (default: false)
+- `--eol-api-url`: Specify a custom EOL API base URL (default: `https://endoflife.date/api/v1/products`)
+
+### Retry Behavior
+
+If the EOL API returns a rate limit response (HTTP 429), Copa will automatically retry with exponential backoff:
+
+1. First retry: after 1 second
+2. Second retry: after 2 seconds
+3. Third retry: after 4 seconds
+4. Fourth retry: after 8 seconds (capped)
+
+If retries are exhausted, Copa logs a warning and continues with patching.
+
+## What are my options for handling EOL images?
+
+1. **Preferred: Upgrade to a supported distribution version**
+
+   - Update your Dockerfile to use a newer base image
+   - Example: Change `FROM debian:stretch` to `FROM debian:bookworm`
+
+2. **Alternative: Use archive repositories**
+
+   - Modify your image to use archive.debian.org or similar archive repositories
+
+     > **Note**: Archived repositories won't receive new security updates.
+
+3. **Rebuild from source**
+   - For critical applications, consider rebuilding packages from source with security patches
