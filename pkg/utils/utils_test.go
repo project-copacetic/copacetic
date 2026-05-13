@@ -2,16 +2,22 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"path"
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	ggcrv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client/llb"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -475,4 +481,89 @@ func TestGetPlatformManifestAnnotations(t *testing.T) {
 		assert.Nil(t, annotations)
 		// Should still fail at the descriptor fetch level before platform processing
 	})
+}
+
+// TestGetPlatformManifestAnnotations_SameTagOverwrite verifies that capturing
+// manifest-level annotations BEFORE a same-tag patch push preserves the
+// pre-patch values. If callers fetched annotations AFTER the patched image is
+// pushed under the same tag, the lookup would resolve to the new manifest and
+// silently lose the original annotations. This test pins down the ordering
+// contract relied upon by patchSingleArchImage.
+func TestGetPlatformManifestAnnotations_SameTagOverwrite(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{
+		Architecture: "amd64",
+		OS:           "linux",
+	}
+
+	originalIndex := buildIndexManifestJSON(t, map[string]string{
+		"org.opencontainers.image.source":   "https://github.com/example/repo",
+		"org.opencontainers.image.revision": "abc123",
+		"org.opencontainers.image.version":  "1.0.0",
+	})
+	patchedIndex := buildIndexManifestJSON(t, map[string]string{
+		// The post-patch manifest intentionally drops/changes annotations to
+		// simulate the regression: a same-tag overwrite where the new manifest
+		// no longer carries the original metadata.
+		"org.opencontainers.image.version": "1.0.0-patched",
+	})
+
+	currentManifest := originalIndex
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIImageIndex},
+			Manifest:   currentManifest,
+		}, nil
+	}
+
+	// Capture annotations BEFORE the simulated same-tag patch push. This mirrors
+	// what patchSingleArchImage does in pkg/patch/single.go before invoking
+	// BuildKit.
+	captured, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/example/repo", captured["org.opencontainers.image.source"])
+	require.Equal(t, "abc123", captured["org.opencontainers.image.revision"])
+	require.Equal(t, "1.0.0", captured["org.opencontainers.image.version"])
+
+	// Simulate the patch step: the same tag now resolves to the patched manifest.
+	currentManifest = patchedIndex
+
+	// A fresh lookup after the overwrite returns only the new manifest's
+	// annotations, demonstrating why the pre-patch capture is required.
+	afterOverwrite, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	_, hasSource := afterOverwrite["org.opencontainers.image.source"]
+	require.False(t, hasSource, "post-overwrite lookup must not return the original source annotation")
+	require.Equal(t, "1.0.0-patched", afterOverwrite["org.opencontainers.image.version"])
+
+	// The captured map taken before the overwrite is unaffected, which is the
+	// invariant that callers (e.g. createPatchResultWithStates) depend on when
+	// merging original annotations onto the patched descriptor.
+	require.Equal(t, "https://github.com/example/repo", captured["org.opencontainers.image.source"])
+	require.Equal(t, "1.0.0", captured["org.opencontainers.image.version"])
+}
+
+// buildIndexManifestJSON returns the bytes of an OCI image index whose single
+// linux/amd64 manifest entry carries the supplied annotations.
+func buildIndexManifestJSON(t *testing.T, annotations map[string]string) []byte {
+	t.Helper()
+	idx := ggcrv1.IndexManifest{
+		SchemaVersion: 2,
+		MediaType:     ggcrtypes.OCIImageIndex,
+		Manifests: []ggcrv1.Descriptor{{
+			MediaType: ggcrtypes.OCIManifestSchema1,
+			Size:      123,
+			Digest:    ggcrv1.Hash{Algorithm: "sha256", Hex: strings.Repeat("a", 64)},
+			Platform: &ggcrv1.Platform{
+				Architecture: "amd64",
+				OS:           "linux",
+			},
+			Annotations: annotations,
+		}},
+	}
+	b, err := json.Marshal(idx)
+	require.NoError(t, err)
+	return b
 }
