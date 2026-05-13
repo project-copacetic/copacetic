@@ -93,8 +93,8 @@
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
-        "tag": "2.0.20240112",
-        "digest": "sha256:60323975ec3aabe1840920a65237950a54c5fef6ffc811a5d26bb6bd130f1cc3",
+        "tag": "2.0.20260311",
+        "digest": "sha256:c833841d2dcfd3081d2ee807050d19368854f70d9b6faef027463e2c6f45ee41",
         "distro": "Mariner",
         "description": "Valid rpm DB, tdnf, yum & rpm present",
         "ignoreErrors": false,
@@ -102,8 +102,8 @@
     },
     {
         "image": "mcr.microsoft.com/cbl-mariner/base/core",
-        "tag": "2.0.20240112-arm64",
-        "digest": "sha256:c85680df0ddccfd5bf0cd60ff7d0c07b0ea783bcee9ce5dc748b68c0d36e280a",
+        "tag": "2.0.20260311-arm64",
+        "digest": "sha256:c981b0618917f7e8970991584a6b7c0bc668df025d19602776399204bc41a4e7",
         "distro": "Mariner",
         "description": "Valid rpm DB, tdnf, yum & rpm present, arm64 cross-arch",
         "ignoreErrors": false,
@@ -120,8 +120,8 @@
     },
     {
         "image": "mcr.microsoft.com/azurelinux/base/core",
-        "tag": "3.0.20240727",
-        "digest": "sha256:02004412d6133fba772fd88dd45ea99b61258722bfc796c156937df4a5d75c6c",
+        "tag": "3.0.20260401",
+        "digest": "sha256:35149ae8dd179684f969944f54a337c665a64e702486154eb44253fb39c2505b",
         "distro": "Azure Linux",
         "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum",
         "ignoreErrors": false,
@@ -129,8 +129,8 @@
     },
     {
         "image": "mcr.microsoft.com/azurelinux/base/core",
-        "tag": "3.0.20240727-arm64",
-        "digest": "sha256:5975d2ba45e7d256d4eb4e2b3df3aefbaddf25f14fa300fa126fb93b9f082d33",
+        "tag": "3.0.20260401-arm64",
+        "digest": "sha256:a8ff51f0266081e589d7eca6a20092e470834caf1d4db92dd6c8af173aa2681f",
         "distro": "Azure Linux",
         "description": "Valid rpm DB, tdnf & rpm present, no dnf or yum, arm64 cross-arch",
         "ignoreErrors": false,
