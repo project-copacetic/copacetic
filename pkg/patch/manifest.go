@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/distribution/reference"
@@ -38,7 +37,14 @@ func createMultiPlatformManifest(
 	// fetch annotations from the original image
 	annotations := make(map[exptypes.AnnotationKey]string)
 
-	// get the original image index manifest annotations
+	// Get the original image index manifest annotations.
+	//
+	// This lookup is safe to perform here (after per-platform patches have built
+	// and been pushed) because per-platform pushes go to architecture-suffixed
+	// tags such as `image:tag-amd64` (see archTag in pkg/patch/single.go:107),
+	// not to the source `originalImage` tag. The source ref is not overwritten
+	// until resolver.Push at the bottom of this function, by which point we have
+	// already read the annotations.
 	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage)
 	if err != nil {
 		log.Warnf("Failed to get original image annotations: %v", err)
@@ -82,18 +88,7 @@ func createMultiPlatformManifest(
 				Key:  "org.opencontainers.image.version",
 			}
 			if version, ok := annotations[versionKey]; ok {
-				// Extract the tag from the patched image name to determine what suffix to use
-				patchedTag := imageName.Tag()
-
-				// Try to determine what was added to the original version
-				// If the patched tag contains the original version, extract the suffix
-				if strings.Contains(patchedTag, version) {
-					// Use the full patched tag as the new version
-					annotations[versionKey] = patchedTag
-				} else {
-					// Fallback: append the patched tag as a suffix
-					annotations[versionKey] = version + "-" + patchedTag
-				}
+				annotations[versionKey] = rewriteVersionAnnotation(version, imageName.Tag())
 			}
 
 			log.Debugf("Preserving %d annotations from original image", len(annotations))
