@@ -567,3 +567,180 @@ func buildIndexManifestJSON(t *testing.T, annotations map[string]string) []byte 
 	require.NoError(t, err)
 	return b
 }
+
+// buildSinglePlatformManifestJSON returns the bytes of a single-platform OCI
+// image manifest with the supplied annotations on the manifest body itself
+// (which is where `crane mutate --annotation` writes them).
+func buildSinglePlatformManifestJSON(t *testing.T, annotations map[string]string) []byte {
+	t.Helper()
+	m := ggcrv1.Manifest{
+		SchemaVersion: 2,
+		MediaType:     ggcrtypes.OCIManifestSchema1,
+		Config: ggcrv1.Descriptor{
+			MediaType: ggcrtypes.OCIConfigJSON,
+			Size:      10,
+			Digest:    ggcrv1.Hash{Algorithm: "sha256", Hex: strings.Repeat("c", 64)},
+		},
+		Annotations: annotations,
+	}
+	b, err := json.Marshal(m)
+	require.NoError(t, err)
+	return b
+}
+
+// TestGetPlatformManifestAnnotations_SinglePlatform verifies that for a
+// single-platform image (manifest media type, not index), the returned map
+// contains the annotations from the manifest body. Prior to this fix,
+// GetPlatformManifestAnnotations returned (nil, nil) for the single-platform
+// branch, which silently dropped annotations like
+// org.opencontainers.image.{source,revision,version} on copa same-tag patches.
+func TestGetPlatformManifestAnnotations_SinglePlatform(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{
+		Architecture: "amd64",
+		OS:           "linux",
+	}
+
+	manifestBody := buildSinglePlatformManifestJSON(t, map[string]string{
+		"org.opencontainers.image.source":   "https://github.com/example/repo",
+		"org.opencontainers.image.revision": "abc123",
+		"org.opencontainers.image.version":  "1.0.0",
+		"org.opencontainers.image.title":    "single-platform image",
+	})
+
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIManifestSchema1},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/example/repo", got["org.opencontainers.image.source"])
+	require.Equal(t, "abc123", got["org.opencontainers.image.revision"])
+	require.Equal(t, "1.0.0", got["org.opencontainers.image.version"])
+	require.Equal(t, "single-platform image", got["org.opencontainers.image.title"])
+}
+
+// TestGetPlatformManifestAnnotations_SinglePlatformDocker verifies the same
+// single-platform behavior also works for Docker manifest media type
+// (vnd.docker.distribution.manifest.v2+json), which is what most legacy
+// images use.
+func TestGetPlatformManifestAnnotations_SinglePlatformDocker(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{Architecture: "amd64", OS: "linux"}
+
+	manifestBody := buildSinglePlatformManifestJSON(t, map[string]string{
+		"org.opencontainers.image.source": "https://github.com/example/repo",
+	})
+
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.DockerManifestSchema2},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/example/repo", got["org.opencontainers.image.source"])
+}
+
+// TestGetPlatformManifestAnnotations_SinglePlatformNoAnnotations confirms that
+// a single-platform manifest with no annotations returns an empty map (not
+// nil), matching the contract callers rely on.
+func TestGetPlatformManifestAnnotations_SinglePlatformNoAnnotations(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{Architecture: "amd64", OS: "linux"}
+
+	manifestBody := buildSinglePlatformManifestJSON(t, nil)
+
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIManifestSchema1},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+}
+
+// TestGetIndexManifestAnnotations_SinglePlatform mirrors the
+// GetPlatformManifestAnnotations single-platform test for the sibling
+// GetIndexManifestAnnotations function. Prior to this fix it returned the
+// (always-empty) desc.Annotations field instead of the manifest body
+// annotations.
+func TestGetIndexManifestAnnotations_SinglePlatform(t *testing.T) {
+	ctx := context.Background()
+
+	manifestBody := buildSinglePlatformManifestJSON(t, map[string]string{
+		"org.opencontainers.image.title":   "single-platform index lookup",
+		"org.opencontainers.image.version": "2.5.0",
+	})
+
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIManifestSchema1},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetIndexManifestAnnotations(ctx, "registry.example.com/repo:latest")
+	require.NoError(t, err)
+	require.Equal(t, "single-platform index lookup", got["org.opencontainers.image.title"])
+	require.Equal(t, "2.5.0", got["org.opencontainers.image.version"])
+}
+
+// TestParseManifestBodyAnnotations_Edge covers edge cases of the helper:
+// empty input returns empty map; missing annotations field returns empty map;
+// invalid JSON returns an error.
+func TestParseManifestBodyAnnotations_Edge(t *testing.T) {
+	t.Run("empty body", func(t *testing.T) {
+		got, err := parseManifestBodyAnnotations(nil)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
+	t.Run("manifest without annotations key", func(t *testing.T) {
+		body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`)
+		got, err := parseManifestBodyAnnotations(body)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
+	t.Run("manifest with explicit null annotations", func(t *testing.T) {
+		body := []byte(`{"schemaVersion":2,"annotations":null}`)
+		got, err := parseManifestBodyAnnotations(body)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		_, err := parseManifestBodyAnnotations([]byte(`not json`))
+		require.Error(t, err)
+	})
+
+	t.Run("populated annotations", func(t *testing.T) {
+		body := []byte(`{"annotations":{"a":"1","b":"2"}}`)
+		got, err := parseManifestBodyAnnotations(body)
+		require.NoError(t, err)
+		require.Equal(t, "1", got["a"])
+		require.Equal(t, "2", got["b"])
+		require.Len(t, got, 2)
+	})
+}

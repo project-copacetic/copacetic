@@ -175,17 +175,14 @@ func patchSingleArchImage(
 	// Create pipes for Docker export
 	pipeR, pipeW := io.Pipe()
 
-	// Create build configuration
-	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, pipeW)
-	if err != nil {
-		return nil, err
-	}
-
 	// If the patched image is published or loaded using the same tag as the source
 	// image, that mutable tag may later resolve to the newly published manifest
 	// instead of the original one. Fetching the annotations here preserves the
 	// pre-patch manifest-level values before any same-tag push/load can change what
-	// a lookup by tag returns.
+	// a lookup by tag returns. The captured map is also forwarded into the BuildKit
+	// exporter via createBuildConfig so single-platform pushes preserve the
+	// annotations on the pushed manifest itself, not just on the in-memory
+	// PatchResult descriptor used by the multi-arch manifest list assembly.
 	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
 		OS:           targetPlatform.OS,
 		Architecture: targetPlatform.Architecture,
@@ -194,6 +191,12 @@ func patchSingleArchImage(
 	if err != nil {
 		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
 		originalAnnotations = map[string]string{}
+	}
+
+	// Create build configuration
+	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, pipeW, originalAnnotations, patchedTag)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create channels for build coordination.
