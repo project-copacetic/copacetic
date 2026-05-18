@@ -323,10 +323,41 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	// Try local daemon first, then fall back to remote
+	// Prefer the local image store: query the Docker daemon directly via
+	// ImageInspect, which surfaces the full per-platform manifest list when the
+	// daemon uses the multi-platform (containerd) image store. This lets us
+	// patch images that exist locally but not in any remote registry — both
+	// single-platform and multi-platform — without any registry access.
+	if locals, ok, lerr := utils.LocalImagePlatforms(context.Background(), manifestRef); ok && len(locals) > 0 {
+		log.Debugf("Discovered %d platform(s) from local daemon for %s", len(locals), manifestRef)
+		for _, p := range locals {
+			patchPlatform := types.PatchPlatform{
+				Platform: specs.Platform{
+					OS:           p.OS,
+					Architecture: p.Architecture,
+					Variant:      p.Variant,
+					OSVersion:    p.OSVersion,
+					OSFeatures:   p.OSFeatures,
+				},
+				ReportFile:     "",
+				ShouldPreserve: false,
+			}
+			if patchPlatform.Architecture == arm64 && patchPlatform.Variant == "v8" {
+				patchPlatform.Variant = ""
+			}
+			platforms = append(platforms, patchPlatform)
+		}
+		return platforms, nil
+	} else if lerr != nil {
+		log.Debugf("Local platform discovery failed for %s: %v", manifestRef, lerr)
+	}
+
+	// Try local daemon manifest list (legacy path), then fall back to remote
 	desc, err := TryGetManifestFromLocal(ref)
 	if err != nil {
-		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		log.Debugf("Failed to get manifest list from local daemon: %v", err)
+
+		log.Debugf("Falling back to remote registry for %s", manifestRef)
 		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
 			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
