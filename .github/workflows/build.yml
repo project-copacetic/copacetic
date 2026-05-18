@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -58,7 +58,7 @@ jobs:
       - name: Upload coverage to Codecov
         # Skip on fork PRs to keep CODECOV_TOKEN out of fork-controlled coverage reports.
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354 # v6.0.1
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
@@ -70,7 +70,7 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -111,7 +111,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -161,7 +161,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -285,7 +285,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -332,7 +332,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -387,7 +387,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -475,7 +475,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -517,7 +517,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -595,7 +595,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -814,7 +814,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -847,7 +847,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -892,7 +892,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -937,7 +937,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -984,7 +984,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -1029,7 +1029,7 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
