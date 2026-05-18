@@ -320,6 +320,9 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 
 // GetIndexManifestAnnotations retrieves annotations from an image index manifest.
 // This is specifically for multi-platform images to get the index-level annotations.
+// For single-platform manifests, it returns the annotations from the manifest body
+// (NOT desc.Annotations, which is empty for top-level lookups since there is no
+// parent index entry to inherit annotations from).
 func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
@@ -335,8 +338,11 @@ func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string
 	// Check if this is an index manifest
 	if desc.MediaType != types.OCIImageIndex && desc.MediaType != types.DockerManifestList {
 		log.Debugf("Image %s is not a multi-platform image (media type: %s)", imageRef, desc.MediaType)
-		// For single platform images, return the descriptor annotations
-		return desc.Annotations, nil
+		// For single-platform images, parse the manifest body to extract its
+		// annotations. desc.Annotations is empty here because the descriptor
+		// returned by remote.Get for a top-level reference has no parent index
+		// entry to inherit annotations from.
+		return parseManifestBodyAnnotations(desc.Manifest)
 	}
 
 	// Fetch the actual index
@@ -355,7 +361,9 @@ func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string
 }
 
 // GetPlatformManifestAnnotations retrieves manifest-level annotations for a specific platform
-// from an image index manifest.
+// from an image index manifest. For single-platform images (no index), it parses the manifest
+// body to extract its annotations rather than returning nil — annotations on a single-platform
+// manifest live in the manifest body, not in the descriptor returned by a top-level fetch.
 func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPlatform *ocispec.Platform) (map[string]string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
@@ -371,8 +379,11 @@ func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPl
 	// Check if this is an index manifest
 	if desc.MediaType != types.OCIImageIndex && desc.MediaType != types.DockerManifestList {
 		log.Debugf("Image %s is not a multi-platform image (media type: %s)", imageRef, desc.MediaType)
-		// For single platform images, return empty annotations
-		return nil, nil
+		// For single-platform images, parse the manifest body to extract its
+		// annotations. desc.Annotations is empty here because the descriptor
+		// returned by remote.Get for a top-level reference has no parent index
+		// entry to inherit annotations from.
+		return parseManifestBodyAnnotations(desc.Manifest)
 	}
 
 	// Fetch the actual index
@@ -416,30 +427,22 @@ func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPl
 	return nil, fmt.Errorf("platform %s/%s/%s not found in image index", targetPlatform.OS, targetPlatform.Architecture, targetPlatform.Variant)
 }
 
-// GetSinglePlatformManifestAnnotations retrieves annotations from a single-platform manifest.
-// This is used when we need to get annotations from a pushed single-platform image.
-func GetSinglePlatformManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
-	ref, err := name.ParseReference(imageRef)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
+// parseManifestBodyAnnotations extracts the top-level "annotations" field from a raw
+// OCI/Docker image manifest body. The remote registry returns the manifest body in
+// remote.Descriptor.Manifest; this avoids a second registry round-trip vs calling
+// desc.Image() then img.Manifest().
+func parseManifestBodyAnnotations(manifestBody []byte) (map[string]string, error) {
+	if len(manifestBody) == 0 {
+		return map[string]string{}, nil
 	}
-
-	// Get the image
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-	if err != nil {
-		return nil, fmt.Errorf("failed to get image '%s': %w", imageRef, err)
+	var m struct {
+		Annotations map[string]string `json:"annotations"`
 	}
-
-	// Get the manifest
-	manifest, err := img.Manifest()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get manifest for '%s': %w", imageRef, err)
+	if err := json.Unmarshal(manifestBody, &m); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest body annotations: %w", err)
 	}
-
-	// Return the annotations from the manifest
-	if manifest.Annotations != nil {
-		return manifest.Annotations, nil
+	if m.Annotations == nil {
+		return map[string]string{}, nil
 	}
-
-	return map[string]string{}, nil
+	return m.Annotations, nil
 }
