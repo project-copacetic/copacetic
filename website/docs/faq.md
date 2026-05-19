@@ -137,6 +137,12 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
 
+## Why do package updates fail with expired GPG keys?
+
+Copa can fail when it runs the distro package manager's repository refresh inside the target image, such as `apt-get update`, `dnf makecache`, `yum makecache`, `zypper refresh`, or `apk update` equivalents, if the image contains expired package repository GPG keys or other stale trust material. Copa uses the package repositories and trust material already present in the image and does not automatically replace expired repository keys.
+
+To resolve this, rebuild or update the source image with refreshed repository keys, move to a maintained base image that has current repository metadata and keys, or adjust the repository and key material in the image before running Copa.
+
 ## Can I use Dependabot with Copa patched images?
 
 Yes, see [best practices](best-practices.md#dependabot) to learn more about using Dependabot with Copa patched images.
