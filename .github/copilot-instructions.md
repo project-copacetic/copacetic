@@ -33,6 +33,7 @@ Copacetic (Copa) is a CLI tool that patches container image vulnerabilities usin
   - Unit tests for individual functions and components
   - Integration tests for end-to-end patching scenarios
 - Add relevant documentation for new functionality in `website/docs/`
+- When updating current website docs (`website/docs`), check whether the latest versioned docs need the same change (`website/versioned_docs`)
 
 ## Key Architecture Concepts
 - **Patching modes**: Targeted (with vulnerability reports) or comprehensive (all available updates)
