@@ -332,16 +332,21 @@ func GetIndexManifestAnnotations(ctx context.Context, imageRef string) (map[stri
 
 	// Prefer the local image store: if the image is present locally, read its
 	// index-level annotations from there and skip the remote registry entirely.
-	if local, ok, err := localIndexManifestAnnotations(ctx, imageRef); ok {
-		if err != nil {
-			log.Debugf("local index annotation lookup for '%s' returned error: %v", imageRef, err)
-		}
+	local, ok, err := localIndexManifestAnnotations(ctx, imageRef)
+	if err != nil {
+		log.Debugf("local index annotation lookup for '%s' returned error: %v", imageRef, err)
+	}
+	if ok {
 		log.Debugf("Using local index annotations for '%s'", imageRef)
 		return local, nil
 	}
 
 	// Fall back to the remote registry
-	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	desc, err := remoteGet(
+		ref,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descriptor for '%s': %w", imageRef, err)
 	}
@@ -389,10 +394,11 @@ func GetPlatformManifestAnnotations(ctx context.Context, imageRef string, target
 	// Prefer the local image store: if the image is present locally, extract
 	// the platform-specific manifest-level annotations from there and skip the
 	// remote registry entirely.
-	if local, ok, err := localPlatformManifestAnnotations(ctx, imageRef, targetPlatform); ok {
-		if err != nil {
-			log.Debugf("local manifest annotation lookup for '%s' returned error: %v", imageRef, err)
-		}
+	local, ok, err := localIndexManifestAnnotations(ctx, imageRef)
+	if err != nil {
+		log.Debugf("local index annotation lookup for '%s' returned error: %v", imageRef, err)
+	}
+	if ok {
 		log.Debugf("Using local manifest annotations for '%s'", imageRef)
 		return local, nil
 	}
@@ -594,5 +600,5 @@ func LocalImagePlatforms(ctx context.Context, imageRef string) ([]ocispec.Platfo
 			OSVersion:    inspect.OsVersion,
 		}}, true, nil
 	}
-	return nil, true, nil
+	return nil, false, nil
 }

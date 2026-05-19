@@ -328,7 +328,13 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	// daemon uses the multi-platform (containerd) image store. This lets us
 	// patch images that exist locally but not in any remote registry — both
 	// single-platform and multi-platform — without any registry access.
-	if locals, ok, lerr := utils.LocalImagePlatforms(context.Background(), manifestRef); ok && len(locals) > 0 {
+	if locals, ok, lerr := utils.LocalImagePlatforms(context.Background(), manifestRef); ok {
+		// Image was found locally; per LocalImagePlatforms' contract we must
+		// not fall back to a remote registry, even if no usable platforms
+		// were extracted.
+		if len(locals) == 0 {
+			return nil, fmt.Errorf("image %q found in local daemon but no usable platforms could be discovered", manifestRef)
+		}
 		log.Debugf("Discovered %d platform(s) from local daemon for %s", len(locals), manifestRef)
 		for _, p := range locals {
 			patchPlatform := types.PatchPlatform{
