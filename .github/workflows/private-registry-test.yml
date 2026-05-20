@@ -26,7 +26,7 @@ permissions:
 jobs:
   build:
     name: Build Copa
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -52,7 +52,7 @@ jobs:
   test-private-registry:
     needs: build
     name: Test Private Registry Authentication
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Harden Runner

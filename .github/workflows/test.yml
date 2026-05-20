@@ -31,7 +31,7 @@ permissions:
 jobs:
   build:
     name: Build
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -57,7 +57,7 @@ jobs:
   test-gateway-all:
     needs: build
     name: Gateway All Tests ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -95,7 +95,7 @@ jobs:
   test-gateway-alpine:
     needs: build
     name: Gateway Alpine ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -133,7 +133,7 @@ jobs:
   test-gateway-debian:
     needs: build
     name: Gateway Debian ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -171,7 +171,7 @@ jobs:
   test-gateway-rpm:
     needs: build
     name: Gateway RPM ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -209,7 +209,7 @@ jobs:
   test-gateway-crossarch:
     needs: build
     name: Gateway Cross-Arch ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -247,7 +247,7 @@ jobs:
   test-gateway-layer-config:
     needs: build
     name: Gateway Layer/Config ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false

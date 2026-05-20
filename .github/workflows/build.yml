@@ -33,7 +33,7 @@ permissions:
 jobs:
   unit-test:
     name: Unit Test
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -63,7 +63,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
   build:
     name: Build
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       packages: write
@@ -103,7 +103,7 @@ jobs:
   test-patch-trivy:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -153,7 +153,7 @@ jobs:
   test-patch-no-report:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -281,7 +281,7 @@ jobs:
   test-plugin:
     needs: build
     name: Test plugin
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -328,7 +328,7 @@ jobs:
   test-push:
     needs: build
     name: Test push
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Harden Runner
@@ -379,7 +379,7 @@ jobs:
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     strategy:
       fail-fast: false
@@ -467,7 +467,7 @@ jobs:
   test-generate:
     needs: build
     name: Test generate command ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -513,7 +513,7 @@ jobs:
   test-patch-multiplatform-plugin:
     needs: build
     name: Test multiplatform with plugin
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
       - name: Harden Runner
@@ -591,7 +591,7 @@ jobs:
   test-patch-local-multiplatform-oci-layout:
     needs: build
     name: Test multiplatform OCI layout creation
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Harden Runner
@@ -806,7 +806,7 @@ jobs:
   test-gateway:
     needs: build
     name: Gateway Integration Tests ${{ matrix.buildkit_mode }}
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -843,7 +843,7 @@ jobs:
   test-patch-bulk:
     needs: build
     name: Test Bulk Patching
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Harden Runner
@@ -887,7 +887,7 @@ jobs:
   test-nodejs:
     needs: build
     name: Test Node.js patching
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: read-all
     steps:
@@ -932,7 +932,7 @@ jobs:
   test-dotnet:
     needs: build
     name: Test .NET patching
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions: read-all
     steps:
@@ -979,7 +979,7 @@ jobs:
   test-golang:
     needs: build
     name: Test Go patching
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: read-all
     steps:
@@ -1024,7 +1024,7 @@ jobs:
   test-frontend:
     needs: build
     name: Test BuildKit Frontend
-    runs-on: oracle-vm-16cpu-64gb-x86-64
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: read-all
     steps:
