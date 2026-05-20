@@ -23,6 +23,9 @@ const (
 	ARM64 = "arm64"
 )
 
+// For testing: allow stubbing the local-daemon descriptor lookup.
+var localPlatformDescriptor = utils.LocalPlatformDescriptor
+
 var validPlatforms = []string{
 	"linux/386",
 	"linux/amd64",
@@ -134,7 +137,7 @@ func getPlatformDescriptorFromManifest(
 	// descriptor directly without contacting any registry. This is the critical
 	// path for air-gapped patching of images loaded into the daemon (e.g. via
 	// `docker load`) without ever being pushed to a registry.
-	if localDesc, ok, lerr := utils.LocalPlatformDescriptor(
+	if localDesc, ok, lerr := localPlatformDescriptor(
 		context.Background(),
 		imageRef,
 		&ispec.Platform{
@@ -149,15 +152,18 @@ func getPlatformDescriptorFromManifest(
 			log.Debugf("Resolved platform %s/%s descriptor for %s from local daemon", targetPlatform.OS, targetPlatform.Architecture, imageRef)
 			return localDesc, nil
 		}
-		// Image is present locally but its per-platform manifest entries
-		// were not surfaced by the daemon (legacy snapshotter). Per the
-		// LocalPlatformDescriptor contract we must not silently fall back
-		// to a remote registry — that defeats the air-gapped use case.
-		log.Debugf("Image %s is present locally but daemon does not expose per-platform manifest entries; cannot resolve %s/%s descriptor locally", imageRef, targetPlatform.OS, targetPlatform.Architecture)
+		// Image is present locally but no per-platform descriptor was returned.
+		// Either (a) the requested platform is not part of this image, or
+		// (b) the daemon does not expose per-platform manifest entries (legacy
+		// image store). Per the LocalPlatformDescriptor contract we must not
+		// silently fall back to a remote registry — that defeats the
+		// air-gapped use case.
+		log.Debugf("Image %s is present locally but per-platform descriptor for %s/%s is unavailable", imageRef, targetPlatform.OS, targetPlatform.Architecture)
 		return nil, fmt.Errorf(
-			"image %q found locally but per-platform manifest entries are not available "+
-				"from the daemon for platform %s/%s; enable the containerd image store to "+
-				"patch multi-platform images that are only present locally",
+			"image %q found locally but descriptor for platform %s/%s is unavailable: "+
+				"either the platform is not part of this image, or the daemon does not "+
+				"expose per-platform manifest entries (enable the containerd image store "+
+				"to patch multi-platform images that exist only locally)",
 			imageRef, targetPlatform.OS, targetPlatform.Architecture,
 		)
 	} else if lerr != nil {

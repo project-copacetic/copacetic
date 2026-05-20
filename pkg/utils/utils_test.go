@@ -514,6 +514,7 @@ func TestGetPlatformManifestAnnotations_SameTagOverwrite(t *testing.T) {
 	})
 
 	currentManifest := originalIndex
+	defer stubNewClientNotFound(t)()
 	origRemoteGet := remoteGet
 	defer func() { remoteGet = origRemoteGet }()
 	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
@@ -613,6 +614,7 @@ func TestGetPlatformManifestAnnotations_SinglePlatform(t *testing.T) {
 		"org.opencontainers.image.title":    "single-platform image",
 	})
 
+	defer stubNewClientNotFound(t)()
 	origRemoteGet := remoteGet
 	defer func() { remoteGet = origRemoteGet }()
 	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
@@ -642,6 +644,7 @@ func TestGetPlatformManifestAnnotations_SinglePlatformDocker(t *testing.T) {
 		"org.opencontainers.image.source": "https://github.com/example/repo",
 	})
 
+	defer stubNewClientNotFound(t)()
 	origRemoteGet := remoteGet
 	defer func() { remoteGet = origRemoteGet }()
 	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
@@ -665,6 +668,7 @@ func TestGetPlatformManifestAnnotations_SinglePlatformNoAnnotations(t *testing.T
 
 	manifestBody := buildSinglePlatformManifestJSON(t, nil)
 
+	defer stubNewClientNotFound(t)()
 	origRemoteGet := remoteGet
 	defer func() { remoteGet = origRemoteGet }()
 	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
@@ -693,6 +697,7 @@ func TestGetIndexManifestAnnotations_SinglePlatform(t *testing.T) {
 		"org.opencontainers.image.version": "2.5.0",
 	})
 
+	defer stubNewClientNotFound(t)()
 	origRemoteGet := remoteGet
 	defer func() { remoteGet = origRemoteGet }()
 	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
@@ -761,6 +766,20 @@ func stubNewClient(t *testing.T, cli dockerClient.APIClient) func() {
 	orig := newClient
 	newClient = func() (dockerClient.APIClient, error) { return cli, nil }
 	return func() { newClient = orig }
+}
+
+// stubNewClientNotFound makes every local-daemon ImageInspect appear as
+// "image not found", forcing callers down their remote fallback path. Use
+// this in tests that only want to exercise the remote path, so the test
+// remains deterministic regardless of what (if anything) the developer
+// happens to have in their local Docker daemon.
+func stubNewClientNotFound(t *testing.T) func() {
+	t.Helper()
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{}, errors.New("simulated: no such image"),
+	)
+	return stubNewClient(t, md)
 }
 
 // TestLocalIndexManifestAnnotations_Found verifies the helper returns
