@@ -394,9 +394,9 @@ func GetPlatformManifestAnnotations(ctx context.Context, imageRef string, target
 	// Prefer the local image store: if the image is present locally, extract
 	// the platform-specific manifest-level annotations from there and skip the
 	// remote registry entirely.
-	local, ok, err := localIndexManifestAnnotations(ctx, imageRef)
+	local, ok, err := localPlatformManifestAnnotations(ctx, imageRef, targetPlatform)
 	if err != nil {
-		log.Debugf("local index annotation lookup for '%s' returned error: %v", imageRef, err)
+		log.Debugf("local platform annotation lookup for '%s' returned error: %v", imageRef, err)
 	}
 	if ok {
 		log.Debugf("Using local manifest annotations for '%s'", imageRef)
@@ -404,7 +404,11 @@ func GetPlatformManifestAnnotations(ctx context.Context, imageRef string, target
 	}
 
 	// Fall back to the remote registry
-	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	desc, err := remoteGet(
+		ref,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descriptor for '%s': %w", imageRef, err)
 	}
@@ -601,4 +605,37 @@ func LocalImagePlatforms(ctx context.Context, imageRef string) ([]ocispec.Platfo
 		}}, true, nil
 	}
 	return nil, false, nil
+}
+
+// LocalPlatformDescriptor returns the OCI descriptor for a specific platform
+// from a multi-platform image present in the local Docker image store. The
+// second return value indicates whether the image was found locally; callers
+// should not fall back to a remote registry when ok is true.
+//
+// When ok is true but the returned descriptor is nil, the image is present
+// locally but does not contain a matching platform (either because the daemon
+// does not expose per-platform manifest entries — e.g. legacy snapshotter —
+// or because the requested platform is not represented in the image).
+func LocalPlatformDescriptor(ctx context.Context, imageRef string, targetPlatform *ocispec.Platform) (*ocispec.Descriptor, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(inspect.Manifests) > 0 && targetPlatform != nil {
+		matcher := platforms.OnlyStrict(*targetPlatform)
+		for i := range inspect.Manifests {
+			m := &inspect.Manifests[i]
+			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
+				continue
+			}
+			if matcher.Match(m.ImageData.Platform) {
+				d := m.Descriptor
+				return &d, true, nil
+			}
+		}
+	}
+
+	// Image is local but per-platform manifest summaries aren't available.
+	return nil, true, nil
 }

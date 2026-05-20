@@ -289,3 +289,78 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 		require.NoError(t, err, string(out))
 	}
 }
+
+// TestPatchDaemonOnlyImage exercises the daemon-only patching path: an image
+// is loaded into the local Docker daemon and re-tagged with a non-resolvable
+// registry hostname (127.0.0.1:1, which immediately refuses connections). If
+// any copa code path falls back to a remote registry lookup instead of using
+// the local image store, the patch attempt will surface a "connection refused"
+// log line — which this test asserts on. This is the missing test pattern that
+// has historically masked local-first regressions (e.g. PR #1614), because
+// other singlearch fixtures with localName entries are rescued by the graceful
+// fallback in patch.go and still succeed when the registry call fails.
+//
+// Only runs when the buildkit instance is the docker daemon itself
+// (COPA_BUILDKIT_ADDR starts with `docker://`); for other backends the patch
+// hand-off cannot resolve a daemon-only ref and the scenario is moot.
+func TestPatchDaemonOnlyImage(t *testing.T) {
+	if !strings.HasPrefix(os.Getenv("COPA_BUILDKIT_ADDR"), "docker://") {
+		t.Skip("daemon-only patching requires COPA_BUILDKIT_ADDR=docker://...")
+	}
+
+	// Use a small, stable image from the existing fixtures so we don't pull
+	// anything new. The digest pins the content to make the test reproducible.
+	const (
+		source     = "docker.io/library/nginx:1.21.6@sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514"
+		daemonOnly = "127.0.0.1:1/copa-daemon-only:original"
+		bogusHost  = "127.0.0.1:1"
+	)
+
+	dockerPull(t, source)
+	dockerTag(t, source, daemonOnly)
+	t.Cleanup(func() {
+		// Best-effort cleanup; we don't fail the test if the tag is gone.
+		_ = exec.Command("docker", "rmi", daemonOnly).Run()
+	})
+
+	dir := t.TempDir()
+
+	addrFl := "-a=" + os.Getenv("COPA_BUILDKIT_ADDR")
+	cmd := exec.Command(
+		copaPath,
+		"patch",
+		"-i="+daemonOnly,
+		"-t=patched",
+		"-s="+scannerPlugin,
+		"--timeout=30m",
+		addrFl,
+		"--platform=linux/amd64",
+		"--ignore-errors=true",
+		"--output="+dir+"/vex.json",
+		"--debug",
+	)
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "daemon-only patch must succeed without any remote registry access:\n%s", string(out))
+
+	// Any registry attempt to the bogus hostname produces a "connection refused"
+	// (or "no route to host") error mentioning the host. If copa correctly uses
+	// the local image store, no such error is logged.
+	assert.NotContains(
+		t,
+		string(out),
+		bogusHost+`": dial`,
+		"copa attempted to contact the unresolvable registry %q — local-first lookup regressed; output was:\n%s",
+		bogusHost,
+		string(out),
+	)
+	assert.NotContains(
+		t,
+		string(out),
+		"connection refused",
+		"copa attempted to contact a registry that refused connection — local-first lookup regressed; output was:\n%s",
+		string(out),
+	)
+}
