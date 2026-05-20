@@ -56,10 +56,6 @@ func TestPatch(t *testing.T) {
 	common.DownloadDBToDir(t, sharedCacheDir, common.DockerDINDAddress.Env()...)
 
 	for _, img := range images {
-		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
-		mediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
-		require.NoError(t, err)
-
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
@@ -107,15 +103,6 @@ func TestPatch(t *testing.T) {
 
 			tagPatched := img.Tag + "-patched"
 
-			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
-			require.NoError(t, err)
-			fmt.Println("patchedMediaType: ", patchedMediaType)
-
-			// should be equal to the original image media type
-			if mediaType != patchedMediaType {
-				t.Fatalf("media type mismatch: %s != %s", mediaType, patchedMediaType)
-			}
-
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
@@ -141,6 +128,18 @@ func TestPatch(t *testing.T) {
 				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
+
+			// Validate that patching preserved the original image's manifest media type.
+			// Both refs are inspected after patching: the original is locally available
+			// (either via dockerPull above or pulled by buildkit during patching) and
+			// the patched image is loaded into the local daemon by copa.
+			mediaType, err := utils.GetMediaType(ref, imageloader.Docker)
+			require.NoError(t, err)
+			patchedMediaType, err := utils.GetMediaType(patchedRef, imageloader.Docker)
+			require.NoError(t, err)
+			if mediaType != patchedMediaType {
+				t.Fatalf("media type mismatch: %s != %s", mediaType, patchedMediaType)
+			}
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
