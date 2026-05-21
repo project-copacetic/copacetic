@@ -38,6 +38,12 @@ const (
 	GoModules      = "gomod"
 	GoBinary       = "gobinary"
 	DotNetPackages = "dotnet-core"
+	// Java ecosystem types reported by Trivy. All four map to packageurl.TypeMaven
+	// upstream and are handled by a single javaManager in pkg/langmgr.
+	JavaJar    = "jar"
+	JavaPom    = "pom"
+	JavaGradle = "gradle"
+	JavaSbt    = "sbt"
 
 	DefaultTempWorkingFolder = "/tmp"
 )
