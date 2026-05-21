@@ -66,7 +66,7 @@ For docs site changes under `website/`, use Yarn from that directory when verifi
 - Scanner/report changes must preserve the scanner plugin interface and avoid assuming Trivy-only fields unless the code path is explicitly Trivy-specific.
 - Multi-platform changes must preserve manifest-list behavior, target-platform selection, and platform preservation for unaffected images.
 - BuildKit and image-loader changes should keep Docker, Podman, remote BuildKit, and cancellation/timeout behavior in mind.
-- Language/library patching is experimental. Respect `COPA_EXPERIMENTAL=1`, `--pkg-types`, `--library-patch-level`, and `--toolchain-patch-level`; update relevant language manager tests when changing this area.
+- Language/library patching is experimental. Respect `--pkg-types`, `--library-patch-level`, and `--toolchain-patch-level`; when working on CLI flag handling, also respect `COPA_EXPERIMENTAL=1`, but note that BuildKit frontend opts such as `pkg-types` / `library-patch-level` are accepted without that env var. Update relevant language manager tests when changing this area.
 - VEX/provenance changes should not overstate remediation status; only report what the patching flow has actually validated.
 
 ## Documentation and PR expectations
