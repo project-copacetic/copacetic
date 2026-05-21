@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -15,11 +16,15 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 const (
 	ARM64 = "arm64"
 )
+
+// For testing: allow stubbing the local-daemon descriptor lookup.
+var localPlatformDescriptor = utils.LocalPlatformDescriptor
 
 var validPlatforms = []string{
 	"linux/386",
@@ -127,7 +132,46 @@ func getPlatformDescriptorFromManifest(
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
 	}
 
-	// Try local daemon first, then fall back to remote
+	// Prefer the local image store: when the daemon exposes per-platform manifest
+	// entries (multi-platform image store), we can return the matching platform's
+	// descriptor directly without contacting any registry. This is the critical
+	// path for air-gapped patching of images loaded into the daemon (e.g. via
+	// `docker load`) without ever being pushed to a registry.
+	if localDesc, ok, lerr := localPlatformDescriptor(
+		context.Background(),
+		imageRef,
+		&ispec.Platform{
+			OS:           targetPlatform.OS,
+			Architecture: targetPlatform.Architecture,
+			Variant:      targetPlatform.Variant,
+			OSVersion:    targetPlatform.OSVersion,
+			OSFeatures:   targetPlatform.OSFeatures,
+		},
+	); ok {
+		if localDesc != nil {
+			log.Debugf("Resolved platform %s/%s descriptor for %s from local daemon", targetPlatform.OS, targetPlatform.Architecture, imageRef)
+			return localDesc, nil
+		}
+		// Image is present locally but no per-platform descriptor was returned.
+		// Either (a) the requested platform is not part of this image, or
+		// (b) the daemon does not expose per-platform manifest entries (legacy
+		// image store). Per the LocalPlatformDescriptor contract we must not
+		// silently fall back to a remote registry — that defeats the
+		// air-gapped use case.
+		log.Debugf("Image %s is present locally but per-platform descriptor for %s/%s is unavailable", imageRef, targetPlatform.OS, targetPlatform.Architecture)
+		return nil, fmt.Errorf(
+			"image %q found locally but descriptor for platform %s/%s is unavailable: "+
+				"either the platform is not part of this image, or the daemon does not "+
+				"expose per-platform manifest entries (enable the containerd image store "+
+				"to patch multi-platform images that exist only locally)",
+			imageRef, targetPlatform.OS, targetPlatform.Architecture,
+		)
+	} else if lerr != nil {
+		log.Debugf("Local platform descriptor lookup for %s failed: %v", imageRef, lerr)
+	}
+
+	// Image is not available locally — fall back to the legacy local manifest
+	// helper (multi-platform manifest list only) and then to the remote registry.
 	desc, err := buildkit.TryGetManifestFromLocal(ref)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)

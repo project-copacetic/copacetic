@@ -58,8 +58,9 @@ func TestLocalMediaType(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := localMediaType("alpine:latest")
+	mt, found, err := localMediaType("alpine:latest")
 	require.NoError(t, err)
+	require.True(t, found)
 	require.Equal(t, fakeMediaType, mt)
 }
 
@@ -74,8 +75,9 @@ func TestLocalMediaTypeFailure(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := localMediaType("bad:tag")
+	mt, found, err := localMediaType("bad:tag")
 	require.Error(t, err)
+	require.False(t, found)
 	require.Empty(t, mt)
 }
 
@@ -168,8 +170,9 @@ func TestPodmanMediaType_ImageNotFound(t *testing.T) {
 	// This test covers the case where podman inspect fails because image doesn't exist
 	// Since podman is available in the test environment, we test with non-existent image
 
-	_, err := podmanMediaType("non-existent-image:test")
+	_, found, err := podmanMediaType("non-existent-image:test")
 	require.Error(t, err)
+	require.False(t, found)
 	// Should get an error from podman command execution
 }
 
@@ -210,14 +213,84 @@ func TestLocalMediaType_NilDescriptor(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	mt, err := localMediaType("alpine:latest")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "descriptor is nil")
+	// A nil descriptor (and no per-platform manifest entries) means the image
+	// is present in the local daemon but no manifest-level media type metadata
+	// is available. The lookup must succeed (found=true) with an empty media
+	// type so GetMediaType can short-circuit the remote probe.
+	mt, found, err := localMediaType("alpine:latest")
+	require.NoError(t, err)
+	require.True(t, found)
 	require.Empty(t, mt)
+}
+
+// TestLocalMediaType_ManifestsFallback covers single-arch images loaded via
+// `docker load` on multi-platform (containerd) image stores: the top-level
+// descriptor's media type is empty, but the per-platform manifest descriptor
+// carries the manifest's true media type. The fallback must surface that real
+// type so callers can detect format-family preservation (OCI vs Docker) without
+// falling through to the synthetic docker-v2 default.
+func TestLocalMediaType_ManifestsFallback(t *testing.T) {
+	md := new(mockDockerClient)
+	ociManifest := string(types.OCIManifestSchema1)
+	md.On("ImageInspect", mock.Anything, "loaded-oci:latest", mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{}, // top-level MediaType empty
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind: mobyimage.ManifestKindImage,
+					Descriptor: ocispec.Descriptor{
+						MediaType: ociManifest,
+					},
+				},
+			},
+		}},
+		nil,
+	)
+
+	origNewClient := newClient
+	defer func() { newClient = origNewClient }()
+	newClient = func() (dockerClient.APIClient, error) { return md, nil }
+
+	mt, found, err := localMediaType("loaded-oci:latest")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, ociManifest, mt)
 }
 
 func TestRemoteMediaType_InvalidReference(t *testing.T) {
 	// Test with invalid image reference
 	_, err := remoteMediaType("invalid::reference")
 	require.Error(t, err)
+}
+
+// TestGetMediaType_LocalNilDescriptorSkipsRemote guards against a regression
+// where a daemon-only image tagged against an unreachable registry hostname
+// (e.g. "127.0.0.1:1/copa-daemon-only:original") would be inspected locally,
+// return a nil descriptor, and then fall through to a remote registry probe —
+// triggering a "connection refused" log. After the fix, a successful local
+// inspect must be treated as authoritative even when descriptor metadata is
+// absent, so no remote call is made.
+func TestGetMediaType_LocalNilDescriptorSkipsRemote(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, "127.0.0.1:1/copa-daemon-only:original", mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: nil,
+		}},
+		nil,
+	)
+
+	origNewClient := newClient
+	defer func() { newClient = origNewClient }()
+	newClient = func() (dockerClient.APIClient, error) { return md, nil }
+
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		t.Fatalf("remoteGet must not be called when the image is present in the local daemon")
+		return nil, nil
+	}
+
+	mt, err := GetMediaType("127.0.0.1:1/copa-daemon-only:original", imageloader.Docker)
+	require.NoError(t, err)
+	require.Equal(t, string(types.DockerManifestSchema2), mt)
 }
