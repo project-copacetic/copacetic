@@ -2,6 +2,7 @@ package provenance
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -993,4 +994,20 @@ func TestLooksLikeSemverTag(t *testing.T) {
 			assert.Equal(t, tt.want, looksLikeSemverTag(tt.tag))
 		})
 	}
+}
+
+// TestRebuilderUsesGoModTidyDashE is a regression guard ensuring the binary
+// rebuild path runs `go mod tidy -e` (not bare `go mod tidy`). The -e flag
+// tolerates broken upstream go.mod files so unrelated upstream module hygiene
+// issues do not block CVE patches; without it, prometheus-config-reloader and
+// similar images fail to patch (see the failing CI run referenced in the PR
+// that introduced this test).
+func TestRebuilderUsesGoModTidyDashE(t *testing.T) {
+	src, err := os.ReadFile("rebuilder.go")
+	require.NoError(t, err, "must be able to read rebuilder.go")
+	body := string(src)
+	assert.Contains(t, body, `"%s mod tidy -e"`,
+		"rebuilder.go must invoke 'go mod tidy -e' (not bare tidy) to tolerate broken upstream go.mod")
+	assert.NotContains(t, body, `"%s mod tidy"`,
+		"rebuilder.go must not invoke bare 'go mod tidy' (regression: missing -e flag)")
 }
