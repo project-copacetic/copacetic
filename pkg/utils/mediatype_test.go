@@ -213,14 +213,48 @@ func TestLocalMediaType_NilDescriptor(t *testing.T) {
 	defer func() { newClient = origNewClient }()
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
-	// A nil descriptor means the image is present in the local daemon but the
-	// descriptor metadata is unavailable. The lookup must succeed (found=true)
-	// with an empty media type so GetMediaType can short-circuit the remote
-	// probe.
+	// A nil descriptor (and no per-platform manifest entries) means the image
+	// is present in the local daemon but no manifest-level media type metadata
+	// is available. The lookup must succeed (found=true) with an empty media
+	// type so GetMediaType can short-circuit the remote probe.
 	mt, found, err := localMediaType("alpine:latest")
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Empty(t, mt)
+}
+
+// TestLocalMediaType_ManifestsFallback covers single-arch images loaded via
+// `docker load` on multi-platform (containerd) image stores: the top-level
+// descriptor's media type is empty, but the per-platform manifest descriptor
+// carries the manifest's true media type. The fallback must surface that real
+// type so callers can detect format-family preservation (OCI vs Docker) without
+// falling through to the synthetic docker-v2 default.
+func TestLocalMediaType_ManifestsFallback(t *testing.T) {
+	md := new(mockDockerClient)
+	ociManifest := string(types.OCIManifestSchema1)
+	md.On("ImageInspect", mock.Anything, "loaded-oci:latest", mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{}, // top-level MediaType empty
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind: mobyimage.ManifestKindImage,
+					Descriptor: ocispec.Descriptor{
+						MediaType: ociManifest,
+					},
+				},
+			},
+		}},
+		nil,
+	)
+
+	origNewClient := newClient
+	defer func() { newClient = origNewClient }()
+	newClient = func() (dockerClient.APIClient, error) { return md, nil }
+
+	mt, found, err := localMediaType("loaded-oci:latest")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, ociManifest, mt)
 }
 
 func TestRemoteMediaType_InvalidReference(t *testing.T) {
