@@ -109,8 +109,20 @@ func TestParsePkgTypes(t *testing.T) {
 			expectError: false,
 		},
 		{
+			name:        "duplicates are preserved in order",
+			input:       "library,library,os",
+			expected:    []string{utils.PkgTypeLibrary, utils.PkgTypeLibrary, utils.PkgTypeOS},
+			expectError: false,
+		},
+		{
 			name:        "invalid type",
 			input:       "invalid",
+			expected:    nil,
+			expectError: true,
+		},
+		{
+			name:        "blank entry is rejected",
+			input:       "os,,library",
 			expected:    nil,
 			expectError: true,
 		},
