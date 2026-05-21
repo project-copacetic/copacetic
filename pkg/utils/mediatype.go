@@ -27,16 +27,20 @@ var (
 // GetMediaType returns the manifest’s media type for an image reference
 // It prefers a local inspection and falls back to a registry lookup.
 func GetMediaType(imageRef, runtime string) (string, error) {
+	return GetMediaTypeWithContext(context.Background(), imageRef, runtime)
+}
+
+func GetMediaTypeWithContext(ctx context.Context, imageRef, runtime string) (string, error) {
 	// Check if the image is local first using the appropriate runtime
 	var mt string
 	var err error
 
 	switch runtime {
 	case imageloader.Podman:
-		mt, err = podmanMediaType(imageRef)
+		mt, err = podmanMediaType(ctx, imageRef)
 	default:
 		// Default to Docker
-		mt, err = localMediaType(imageRef)
+		mt, err = localMediaType(ctx, imageRef)
 	}
 
 	if err == nil && mt != "" {
@@ -46,17 +50,17 @@ func GetMediaType(imageRef, runtime string) (string, error) {
 	log.Debugf("local media type not found for %s using %s: %v", imageRef, runtime, err)
 
 	// If the image is not local, use the remote media type
-	return remoteMediaType(imageRef)
+	return remoteMediaType(ctx, imageRef)
 }
 
-func localMediaType(imageRef string) (string, error) {
+func localMediaType(ctx context.Context, imageRef string) (string, error) {
 	cli, err := newClient()
 	if err != nil {
 		return "", err
 	}
 	defer cli.Close()
 
-	distInspect, err := cli.ImageInspect(context.Background(), imageRef)
+	distInspect, err := cli.ImageInspect(ctx, imageRef)
 	if err != nil {
 		return "", err
 	}
@@ -67,14 +71,14 @@ func localMediaType(imageRef string) (string, error) {
 }
 
 // podmanMediaType tries to get the manifest's media type using podman CLI.
-func podmanMediaType(imageRef string) (string, error) {
+func podmanMediaType(ctx context.Context, imageRef string) (string, error) {
 	// Check if podman is available
 	if _, err := exec.LookPath("podman"); err != nil {
 		return "", err
 	}
 
 	// Run podman inspect to get image metadata
-	cmd := exec.Command("podman", "inspect", "--type", "image", imageRef)
+	cmd := exec.CommandContext(ctx, "podman", "inspect", "--type", "image", imageRef)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -105,13 +109,13 @@ func podmanMediaType(imageRef string) (string, error) {
 	return "", nil
 }
 
-func remoteMediaType(imageRef string) (string, error) {
+func remoteMediaType(ctx context.Context, imageRef string) (string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		log.Debugf("failed to parse reference %s: %v", imageRef, err)
 		return "", err
 	}
-	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
 		log.Debugf("failed to get remote media type for %s: %v", imageRef, err)
 		return "", err
