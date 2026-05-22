@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.a473579e.css">
-<script src="/copacetic/website/assets/js/runtime~main.abbe14b7.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.f088c781.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.f961fa2b.js" defer="defer"></script>
 </head>
 <body>
@@ -280,6 +280,15 @@
 <div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">INFO Using --go-vcs-url override: https://github.com/org/repo @ v1.2.3</span><br></div></code></pre></div></div>
 <p>When all resolution methods fail:</p>
 <div class="language-text codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-text codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">WARN   Binary /usr/bin/mybinary has no VCS commit info (likely built without .git directory).</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">       Source clone will not be possible; rebuild may fail.</span><br></div></code></pre></div></div>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="tolerance-for-broken-upstream-gomod">Tolerance for broken upstream go.mod<a href="#tolerance-for-broken-upstream-gomod" class="hash-link" aria-label="Direct link to Tolerance for broken upstream go.mod" title="Direct link to Tolerance for broken upstream go.mod" translate="no">​</a></h4>
+<p>When patching Go binaries, copa runs <code>go mod tidy -e</code> (rather than the
+stricter <code>go mod tidy</code>) after applying the requested module version
+bumps. The <code>-e</code> flag instructs the Go toolchain to continue past
+errors loading packages that are unrelated to the CVE patch — a common
+situation when upstream projects ship a <code>go.mod</code> that does not survive
+a fresh tidy under a modern Go toolchain. The patched binary is still
+rebuilt and rescanned end-to-end, so any real regression is caught by
+the post-patch vulnerability scan rather than masked.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="net">.NET<a href="#net" class="hash-link" aria-label="Direct link to .NET" title="Direct link to .NET" translate="no">​</a></h3>
 <p>Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images using the same flags as noted above.</p>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="how-net-patching-works">How .NET Patching Works<a href="#how-net-patching-works" class="hash-link" aria-label="Direct link to How .NET Patching Works" title="Direct link to How .NET Patching Works" translate="no">​</a></h4>
