@@ -151,6 +151,16 @@ func cleanGoVersion(version string) string {
 	return ""
 }
 
+// buildGoUpdateCmd assembles the shell command run inside the build container
+// to apply `go get` version bumps and then run `go mod tidy -e`. The -e flag
+// causes tidy to proceed past errors loading packages so a CVE patch is not
+// blocked by unrelated upstream go.mod hygiene issues; the subsequent build
+// step still fails loudly if the patched module graph cannot produce a
+// working binary.
+func buildGoUpdateCmd(modPath, allGetCmd string) string {
+	return fmt.Sprintf(`sh -c 'cd %s && %s && go mod tidy -e'`, modPath, allGetCmd)
+}
+
 // filterGoPackages filters for Go module and binary packages.
 // Returns the non-stdlib Go packages and the minimum Go version needed to fix
 // stdlib vulnerabilities (empty string if none). Stdlib vulns are fixed by
@@ -913,8 +923,12 @@ func (gm *golangManager) updateGoModule(
 	// Execute all 'go get' commands
 	allGetCmd := strings.Join(getCommands, " && ")
 
-	// Add 'go mod tidy' after updates
-	updateCmd := fmt.Sprintf(`sh -c 'cd %s && %s && go mod tidy'`, modPath, allGetCmd)
+	// Add 'go mod tidy -e' after updates. The -e flag tolerates broken
+	// upstream go.mod files (missing transitive packages, stale module
+	// paths) so a CVE patch is not blocked by unrelated upstream module
+	// hygiene issues. The subsequent `go build` will still fail loudly
+	// if the patched module graph cannot produce a working binary.
+	updateCmd := buildGoUpdateCmd(modPath, allGetCmd)
 
 	log.Debugf("Executing Go module updates: %s", updateCmd)
 
@@ -1031,7 +1045,9 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		}
 
 		allGetCmd := strings.Join(getCommands, " && ")
-		updateCmd := fmt.Sprintf(`sh -c 'cd /workspace && %s && go mod tidy'`, allGetCmd)
+		// -e tolerates broken upstream go.mod files; see comment in the
+		// primary updateCmd above.
+		updateCmd := buildGoUpdateCmd("/workspace", allGetCmd)
 
 		log.Debugf("Executing in tooling container: %s", updateCmd)
 
