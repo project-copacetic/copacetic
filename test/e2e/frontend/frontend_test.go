@@ -328,52 +328,34 @@ func stopLocalRegistry(t *testing.T) {
 func buildFrontendImage(t *testing.T) {
 	t.Logf("Building Copa frontend image: %s", frontendImage)
 
-	// First build the frontend binary locally to avoid Docker disk space issues
-	t.Log("Building frontend binary locally...")
-	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", "copa-frontend", "./cmd/frontend")
-	buildCmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux")
-
 	// Set working directory to project root (3 levels up from test/e2e/frontend)
 	wd, _ := os.Getwd()
 	projectRoot := filepath.Join(wd, "..", "..", "..")
-	buildCmd.Dir = projectRoot
 
-	output, err := buildCmd.CombinedOutput()
-	require.NoError(t, err, fmt.Sprintf("failed to build frontend binary: %v\nOutput: %s", err, string(output)))
-
-	// Create a simple Dockerfile for the frontend image
-	// Must include BuildKit capability labels for named contexts support
-	dockerfileContent := `FROM alpine:3.18
-RUN apk add --no-cache ca-certificates busybox
-COPY copa-frontend /usr/bin/copa-frontend
-RUN chmod +x /usr/bin/copa-frontend
-LABEL moby.buildkit.frontend.network.none="true"
-LABEL moby.buildkit.frontend.caps="moby.buildkit.frontend.inputs,moby.buildkit.frontend.contexts"
-ENTRYPOINT ["/usr/bin/copa-frontend"]`
-
-	dockerfilePath := filepath.Join(projectRoot, "frontend-simple.Dockerfile")
-	binaryPath := filepath.Join(projectRoot, "copa-frontend")
-
-	err = os.WriteFile(dockerfilePath, []byte(dockerfileContent), 0o600)
-	require.NoError(t, err, "failed to create simple Dockerfile")
-	defer os.Remove(dockerfilePath)
-	defer os.Remove(binaryPath)
+	// Build the actual published frontend.Dockerfile so the e2e test
+	// exercises the same rootfs (distroless, no shell) that ships to users.
+	// Previously this test wrapped the binary in an alpine image, which
+	// masked regressions like #1597 (missing /tmp on the scratch rootfs).
+	dockerfilePath := filepath.Join(projectRoot, "frontend.Dockerfile")
+	if _, err := os.Stat(dockerfilePath); err != nil {
+		t.Fatalf("frontend.Dockerfile not found at %s: %v", dockerfilePath, err)
+	}
 
 	// Build the Docker image - use buildx with --load if available
 	var cmd *exec.Cmd
 	if _, err := exec.LookPath("docker"); err == nil {
 		// Check if buildx is available
 		if checkCmd := exec.Command("docker", "buildx", "version"); checkCmd.Run() == nil {
-			cmd = exec.Command("docker", "buildx", "build", "--load", "-f", "frontend-simple.Dockerfile", "-t", frontendImage, ".")
+			cmd = exec.Command("docker", "buildx", "build", "--load", "-f", "frontend.Dockerfile", "-t", frontendImage, ".")
 		} else {
-			cmd = exec.Command("docker", "build", "-f", "frontend-simple.Dockerfile", "-t", frontendImage, ".")
+			cmd = exec.Command("docker", "build", "-f", "frontend.Dockerfile", "-t", frontendImage, ".")
 		}
 	}
 	cmd.Dir = projectRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	err = cmd.Run()
-	require.NoError(t, err, "failed to build frontend image")
+	err := cmd.Run()
+	require.NoError(t, err, "failed to build frontend image from frontend.Dockerfile")
 	t.Logf("Frontend image built successfully: %s", frontendImage)
 
 	// Push the frontend image to the local registry so BuildKit can access it
@@ -464,9 +446,10 @@ func runFrontendMultiplatformTest(t *testing.T) {
 		reportsGenerated++
 	}
 
-	// Skip test if no reports were generated (e.g., due to disk space issues)
 	if reportsGenerated == 0 {
-		t.Skip("Skipping multiplatform test: no vulnerability reports could be generated (possible disk space or network issue)")
+		t.Fatal("no vulnerability reports could be generated for any platform; " +
+			"this indicates a real failure in scanner/buildkit/network setup, not a flake — " +
+			"investigate the per-platform t.Logf output above")
 	}
 
 	outputTar := filepath.Join(tempDir, "multiarch-patched.tar")

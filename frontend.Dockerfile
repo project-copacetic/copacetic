@@ -5,7 +5,7 @@
 # The release workflow passes this automatically via --build-arg
 # GO_VERSION=$(awk '/^go /{print $2; exit}' go.mod). This default is a fallback
 # for local builds and should match go.mod.
-ARG GO_VERSION=1.25.9
+ARG GO_VERSION=1.25.10
 ARG ALPINE_VERSION=3.23
 
 FROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS builder
@@ -28,10 +28,13 @@ RUN --mount=type=cache,id=gomod,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /copa-frontend ./cmd/frontend
 
 # Final image
-FROM scratch AS frontend
-
-# Copy CA certificates for HTTPS connections
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+#
+# Distroless static gives us a minimal rootfs (no shell, no package
+# manager) while still providing /tmp, CA certs, /etc/passwd, and
+# tzdata -- which the frontend needs at runtime (e.g. os.MkdirTemp
+# requires /tmp to exist). Do not switch to `FROM scratch` without
+# adding those back.
+FROM gcr.io/distroless/static-debian12:nonroot AS frontend
 
 # Copy the frontend binary
 COPY --from=builder /copa-frontend /copa-frontend

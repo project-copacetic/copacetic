@@ -8,6 +8,10 @@ App-level patching is an experimental feature that requires setting the `COPA_EX
 
 Copa supports patching application-level dependencies, such as Python packages, Node.js packages, and Go modules, in addition to operating system packages. This feature allows you to update vulnerable libraries and packages in various programming language ecosystems.
 
+:::caution Private registry limitation
+App-level patching currently expects public source and package registries. Docker/BuildKit registry authentication can authenticate image pulls and pushes, but Copa does not yet pass credentials to git source clones or package-manager downloads for private Go, npm, PyPI, or NuGet sources.
+:::
+
 ## Overview
 
 App-level patching works by scanning and updating application dependencies found in your container images. Unlike OS-level patching which updates system packages, app-level patching focuses on:
@@ -561,6 +565,17 @@ When all resolution methods fail:
 WARN   Binary /usr/bin/mybinary has no VCS commit info (likely built without .git directory).
        Source clone will not be possible; rebuild may fail.
 ```
+
+#### Tolerance for broken upstream go.mod
+
+When patching Go binaries, copa runs `go mod tidy -e` (rather than the
+stricter `go mod tidy`) after applying the requested module version
+bumps. The `-e` flag instructs the Go toolchain to continue past
+errors loading packages that are unrelated to the CVE patch — a common
+situation when upstream projects ship a `go.mod` that does not survive
+a fresh tidy under a modern Go toolchain. The patched binary is still
+rebuilt and rescanned end-to-end, so any real regression is caught by
+the post-patch vulnerability scan rather than masked.
 
 ### .NET
 
