@@ -550,6 +550,17 @@ WARN   Binary /usr/bin/mybinary has no VCS commit info (likely built without .gi
        Source clone will not be possible; rebuild may fail.
 ```
 
+#### Tolerance for broken upstream go.mod
+
+When patching Go binaries, copa runs `go mod tidy -e` (rather than the
+stricter `go mod tidy`) after applying the requested module version
+bumps. The `-e` flag instructs the Go toolchain to continue past
+errors loading packages that are unrelated to the CVE patch — a common
+situation when upstream projects ship a `go.mod` that does not survive
+a fresh tidy under a modern Go toolchain. The patched binary is still
+rebuilt and rescanned end-to-end, so any real regression is caught by
+the post-patch vulnerability scan rather than masked.
+
 ### .NET
 
 Copa supports patching .NET applications by replacing vulnerable DLLs in-place. This approach works for both SDK-based images and runtime-only images using the same flags as noted above.
