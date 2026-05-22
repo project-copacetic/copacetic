@@ -903,3 +903,43 @@ func TestBuildSyntheticBinaryInfo(t *testing.T) {
 		})
 	}
 }
+
+// TestBuildGoUpdateCmd asserts that the shell command emitted for both Go
+// module update sites uses `go mod tidy -e`. The -e flag tolerates broken
+// upstream go.mod files so that unrelated upstream module hygiene issues do
+// not block CVE patches; see the helper's docstring in golang.go.
+func TestBuildGoUpdateCmd(t *testing.T) {
+	tests := []struct {
+		name      string
+		modPath   string
+		allGetCmd string
+		want      string
+	}{
+		{
+			// Site 1: primary in-image path with a discovered go.mod path.
+			name:      "in-image module path",
+			modPath:   "/app",
+			allGetCmd: "go get golang.org/x/net@v0.23.0",
+			want:      `sh -c 'cd /app && go get golang.org/x/net@v0.23.0 && go mod tidy -e'`,
+		},
+		{
+			// Site 2: tooling container fallback path.
+			name:      "tooling container workspace",
+			modPath:   "/workspace",
+			allGetCmd: "go get golang.org/x/net@v0.23.0 && go get golang.org/x/text@v0.14.0",
+			want:      `sh -c 'cd /workspace && go get golang.org/x/net@v0.23.0 && go get golang.org/x/text@v0.14.0 && go mod tidy -e'`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildGoUpdateCmd(tt.modPath, tt.allGetCmd)
+			assert.Equal(t, tt.want, got)
+			// Explicit guards against regression to bare `go mod tidy`.
+			assert.Contains(t, got, "go mod tidy -e",
+				"updateCmd must use 'go mod tidy -e' to tolerate broken upstream go.mod")
+			assert.NotContains(t, got, "go mod tidy'",
+				"updateCmd must not end with bare 'go mod tidy' (missing -e flag)")
+		})
+	}
+}
