@@ -3,6 +3,7 @@ package vex
 
 import (
 	"bytes"
+	"net/url"
 	"os"
 	"time"
 
@@ -70,16 +71,31 @@ func (o *OpenVex) CreateVEXDocument(
 			log.Debugf("skipping update %s: fixed version equals installed version (%s)", u.Name, u.FixedVersion)
 			return
 		}
-		// choose package type: prefer provided pkgType (OS) if u.Type is empty, else use u.Type (e.g. python-pkg)
+		// Derive canonical package manager type (apk, deb, rpm) from the OS-level pkgType.
+		// For language packages (e.g. python-pkg), u.Type triggers a separate PURL scheme below.
 		pt := utils.CanonicalPkgManagerType(pkgType) // base OS package manager type (apk, deb, rpm)
 		langType := u.Type
+
+		// Use InstalledVersion (vulnerable) for BOM-VEX correlation: the subcomponent
+		// PURL should match the input scan/BOM so consumers can map VEX statements back
+		// to the original vulnerability report. Fall back to FixedVersion if unavailable.
+		purlVersion := u.InstalledVersion
+		if purlVersion == "" {
+			purlVersion = u.FixedVersion
+		}
 
 		var componentID string
 		if langType == utils.PythonPackages { // treat python-pkg as coming from PyPI for purl standardization
 			// Standard PyPI purl form: pkg:pypi/<name>@<version>
-			componentID = "pkg:pypi/" + u.Name + "@" + u.FixedVersion
+			componentID = "pkg:pypi/" + u.Name + "@" + purlVersion
 		} else {
-			componentID = "pkg:" + pt + "/" + updates.Metadata.OS.Type + "/" + u.Name + "@" + u.FixedVersion + "?arch=" + updates.Metadata.Config.Arch
+			// Build PURL qualifiers: arch is always present, distro added when OS version is known.
+			qualifiers := url.Values{}
+			qualifiers.Set("arch", updates.Metadata.Config.Arch)
+			if updates.Metadata.OS.Version != "" {
+				qualifiers.Set("distro", updates.Metadata.OS.Type+"-"+updates.Metadata.OS.Version)
+			}
+			componentID = "pkg:" + pt + "/" + updates.Metadata.OS.Type + "/" + u.Name + "@" + purlVersion + "?" + qualifiers.Encode()
 		}
 		subComponent := vex.Subcomponent{Component: vex.Component{ID: componentID}}
 		// if vulnerability id already exists, append subcomponent

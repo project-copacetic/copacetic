@@ -45,6 +45,7 @@ type patchArgs struct {
 	pkgTypes            string
 	libraryPatchLevel   string
 	toolchainPatchLevel string
+	goVCSURL            string
 	progress            string
 	ociDir              string
 	eolAPIBaseURL       string
@@ -103,6 +104,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				PkgTypes:            ua.pkgTypes,
 				LibraryPatchLevel:   ua.libraryPatchLevel,
 				ToolchainPatchLevel: ua.toolchainPatchLevel,
+				GoVCSURL:            ua.goVCSURL,
 				Progress:            progressui.DisplayMode(ua.progress),
 				OCIDir:              ua.ociDir,
 				EOLAPIBaseURL:       ua.eolAPIBaseURL,
@@ -173,6 +175,8 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				"Values: 'patch' (e.g., 1.23.0 -> 1.23.latest), 'minor' (e.g., 1.23 -> 1.25), 'major'. "+
 				"Currently supported for Go only. Requires 'library' in --pkg-types")
 		flags.Lookup("toolchain-patch-level").NoOptDefVal = utils.PatchTypePatch
+		flags.StringVar(&ua.goVCSURL, "go-vcs-url", "",
+			"[EXPERIMENTAL] Override Go source repository and ref for binary rebuilds. Format: 'https://github.com/org/repo@ref'")
 	} else {
 		// Set default values when experimental flags are not enabled
 		ua.pkgTypes = utils.PkgTypeOS

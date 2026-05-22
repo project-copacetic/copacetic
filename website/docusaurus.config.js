@@ -84,7 +84,7 @@ const config = {
       },
       footer: {
         style: 'dark',
-        copyright: `Copyright © ${new Date().getFullYear()} Linux Foundation. The Linux Foundation® (TLF) has registered trademarks and uses trademarks. For a list of TLF trademarks, see <a href="https://www.linuxfoundation.org/trademark-usage/">Trademark Usage</a>.`,
+        copyright: `Copyright © ${new Date().getFullYear()} Copacetic a Series of LF Projects, LLC. For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">https://lfprojects.org/policies/</a>.`,
       },
       prism: {
         theme: lightCodeTheme,

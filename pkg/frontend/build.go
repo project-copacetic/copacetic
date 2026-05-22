@@ -23,6 +23,13 @@ const (
 	jsonExt = ".json"
 )
 
+// ensureTempDir makes sure the directory returned by os.TempDir() exists
+// before callers invoke os.MkdirTemp("", ...). Minimal frontend images must
+// provide a writable temp base directory for report extraction.
+func ensureTempDir() error {
+	return os.MkdirAll(os.TempDir(), 0o1777)
+}
+
 // BuildPatchedImage builds a patched image using the Copa patching logic.
 // This reuses the same components as the CLI to ensure consistency.
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
@@ -145,6 +152,10 @@ func extractReportFromContext(ctx context.Context, client gwclient.Client, repor
 func extractReportFile(ctx context.Context, ref gwclient.Reference, reportPath string, fileSize int64) (string, error) {
 	const chunkSize = 8 * 1024 * 1024 // 8MB chunks to stay well under 16MB gRPC limit
 
+	if err := ensureTempDir(); err != nil {
+		return "", errors.Wrap(err, "failed to ensure temp dir exists")
+	}
+
 	tmpDir, err := os.MkdirTemp("", "copa-frontend-report-")
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create temp dir for report file")
@@ -237,6 +248,10 @@ func extractReportDirectory(ctx context.Context, ref gwclient.Reference, reportP
 
 	if len(entries) == 0 {
 		return "", errors.Errorf("no JSON files found in report directory: %s", reportPath)
+	}
+
+	if err := ensureTempDir(); err != nil {
+		return "", errors.Wrap(err, "failed to ensure temp dir exists")
 	}
 
 	tmpDir, err := os.MkdirTemp("", "copa-frontend-reports-")

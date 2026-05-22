@@ -1,9 +1,38 @@
 package unversioned
 
+// PatchSummary captures counts of vulnerabilities by patch outcome.
+type PatchSummary struct {
+	Total   int `json:"total"`   // vulns considered (after pkg-type filtering)
+	Patched int `json:"patched"` // vulns with a fix that Copa can apply
+	Skipped int `json:"skipped"` // vulns with no fix or fix excluded by patch-level
+}
+
 type UpdateManifest struct {
-	Metadata    Metadata           `json:"metadata"`
-	OSUpdates   UpdatePackages     `json:"osupdates"`
-	LangUpdates LangUpdatePackages `json:"langupdates"`
+	Metadata       Metadata           `json:"metadata"`
+	OSUpdates      UpdatePackages     `json:"osupdates"`
+	LangUpdates    LangUpdatePackages `json:"langupdates"`
+	OSSummary      *PatchSummary      `json:"-"` // internal, not serialized
+	LibrarySummary *PatchSummary      `json:"-"` // internal, not serialized
+}
+
+// CombinedSummary merges OS and library summaries into a single PatchSummary.
+// Returns nil if neither summary is available.
+func (m *UpdateManifest) CombinedSummary() *PatchSummary {
+	if m.OSSummary == nil && m.LibrarySummary == nil {
+		return nil
+	}
+	s := &PatchSummary{}
+	if m.OSSummary != nil {
+		s.Total += m.OSSummary.Total
+		s.Patched += m.OSSummary.Patched
+		s.Skipped += m.OSSummary.Skipped
+	}
+	if m.LibrarySummary != nil {
+		s.Total += m.LibrarySummary.Total
+		s.Patched += m.LibrarySummary.Patched
+		s.Skipped += m.LibrarySummary.Skipped
+	}
+	return s
 }
 
 type UpdatePackages []UpdatePackage
