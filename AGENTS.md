@@ -71,6 +71,7 @@ For docs site changes under `website/`, use Yarn from that directory when verifi
 
 ## Documentation and PR expectations
 - Update `README.md` and/or `website/docs/` when changing user-visible CLI behavior, flags, outputs, configuration, supported platforms, or workflows.
+- When updating current website docs (`website/docs`), check whether the latest versioned docs need the same change (`website/versioned_docs`).
 - Keep examples aligned with current command names and flags.
 - Contributions are expected to pass `make test`, `make lint`, and `gofumpt` formatting.
 - The project uses Angular-style commit messages for changelog automation and requires DCO signoff (`Signed-off-by`) on real commits.
