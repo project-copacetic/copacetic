@@ -937,10 +937,14 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 	// Run mod tidy to sync go.sum after dependency updates.
 	// This is needed both for generated go.mod and for cloned source where
 	// go get may have added transitive dependencies not in the original go.sum.
+	// The -e flag tolerates broken upstream go.mod files (missing transitive
+	// packages, stale module paths) so a CVE patch is not blocked by unrelated
+	// upstream module hygiene issues. The subsequent `go build` will still
+	// fail loudly if the patched module graph cannot produce a working binary.
 	{
-		log.Debug("Running go mod tidy...")
+		log.Debug("Running go mod tidy -e...")
 		state = state.Run(
-			llb.Shlexf("%s mod tidy", goBin),
+			llb.Shlexf("%s mod tidy -e", goBin),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
 	}
