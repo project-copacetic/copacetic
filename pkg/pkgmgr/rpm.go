@@ -997,7 +997,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 
 	run := toolingBase.Run(
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
-		llb.AddEnv("COPA_RPM_DB_DIR", filepath.Join(chrootDir, rpmLibPath)),
+		llb.AddEnv("COPA_RPM_DB_DIR", chrootDir+rpmLibPath),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
 		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
 		buildkit.Sh(zypperCmd),
