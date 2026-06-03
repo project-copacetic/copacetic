@@ -124,9 +124,9 @@
   {
     "originalImage": "registry.suse.com/bci/bci-base",
     "localImage": "localhost:5000/bci-bci-base",
-    "tag": "16.0",
+    "tag": "16.0-19.4",
     "distro": "sles",
-    "description": "Multi-platform bci/bci-base:16.0, with push",
+    "description": "Multi-platform bci/bci-base:16.0-19.4, with push",
     "ignoreErrors": false,
     "push": true,
     "skipAnnotations": true,
@@ -138,9 +138,9 @@
   {
     "originalImage": "registry.suse.com/bci/bci-base",
     "localImage": "localhost:5000/bci-bci-base",
-    "tag": "16.0",
+    "tag": "16.0-19.4",
     "distro": "sles",
-    "description": "Multi-platform bci/bci-base:16.0, no push",
+    "description": "Multi-platform bci/bci-base:16.0-19.4, no push",
     "ignoreErrors": false,
     "push": false,
     "platforms": [
