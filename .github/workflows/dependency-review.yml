@@ -36,4 +36,8 @@ jobs:
 
     - uses: golang/govulncheck-action@31f7c5463448f83528bd771c2d978d940080c9fd # post-v1.0.4 (SHA-pinned internal deps)
       with:
-        go-version-input: "1.25.10"
+        # Clear govulncheck-action's default 'stable' so setup-go honours go-version-file.
+        # See: https://github.com/golang/govulncheck-action/blob/master/action.yml (defaults to 'stable',
+        # which setup-go's resolveVersionInput() prefers over go-version-file when both are set).
+        go-version-input: ''
+        go-version-file: go.mod
