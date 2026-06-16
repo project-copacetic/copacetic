@@ -17,12 +17,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
 
       - name: 'Checkout Repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: 'Dependency Review'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
 
@@ -30,11 +30,11 @@ jobs:
    runs-on: ubuntu-latest
    steps:
     - name: Harden the runner (Audit all outbound calls)
-      uses: step-security/harden-runner@9ca718d3bf646d6534007c269a635b3e54cadf99 # v2.19.2
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
       with:
         egress-policy: audit
 
-    - uses: golang/govulncheck-action@31f7c5463448f83528bd771c2d978d940080c9fd # post-v1.0.4 (SHA-pinned internal deps)
+    - uses: golang/govulncheck-action@3fa7bd9cee2cfdf3499a8803b226e43de7b7cdb4 # post-v1.0.4 (SHA-pinned internal deps)
       with:
         # Clear govulncheck-action's default 'stable' so setup-go honours go-version-file.
         # See: https://github.com/golang/govulncheck-action/blob/master/action.yml (defaults to 'stable',
