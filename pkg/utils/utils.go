@@ -532,6 +532,9 @@ func localPlatformManifestAnnotations(ctx context.Context, imageRef string, targ
 			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
 				continue
 			}
+			if !m.Available {
+				continue
+			}
 			if matcher.Match(m.ImageData.Platform) {
 				if m.Descriptor.Annotations != nil {
 					return m.Descriptor.Annotations, true, nil
@@ -586,6 +589,9 @@ func LocalImagePlatforms(ctx context.Context, imageRef string) ([]ocispec.Platfo
 			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
 				continue
 			}
+			if !m.Available {
+				continue
+			}
 			p := m.ImageData.Platform
 			if p.OS == "" || p.OS == "unknown" || p.Architecture == "" || p.Architecture == "unknown" {
 				continue
@@ -629,6 +635,9 @@ func LocalPlatformDescriptor(ctx context.Context, imageRef string, targetPlatfor
 		for i := range inspect.Manifests {
 			m := &inspect.Manifests[i]
 			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
+				continue
+			}
+			if !m.Available {
 				continue
 			}
 			if matcher.Match(m.ImageData.Platform) {
