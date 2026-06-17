@@ -56,6 +56,10 @@ var knownIntroducedCVEs = map[string]string{
 	// TODO: file tracking issue and reference it here; remove this
 	// entry once the nodejs langmgr patches transitive deps.
 	"CVE-2026-45149": "brace-expansion DoS; fix exists in 5.0.6; copa nodejs langmgr does not patch transitives yet",
+	// tmp package pulled in transitively when Ghost's dependencies get
+	// updated during patching. Copa nodejs langmgr doesn't re-resolve
+	// transitive deps to their fixed versions yet.
+	"CVE-2026-49982": "tmp package introduced transitively; copa nodejs langmgr does not patch transitives yet",
 }
 
 // assertNoNewVulnerabilities verifies that every CVE present after

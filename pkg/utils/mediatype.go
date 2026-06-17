@@ -9,6 +9,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
+	mobyimage "github.com/moby/moby/api/types/image"
 	dockerClient "github.com/moby/moby/client"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	log "github.com/sirupsen/logrus"
@@ -24,85 +26,118 @@ var (
 	}
 )
 
-// GetMediaType returns the manifest’s media type for an image reference
-// It prefers a local inspection and falls back to a registry lookup.
+// GetMediaType returns the manifest's media type for an image reference.
+// It prefers a local inspection and falls back to a registry lookup only when
+// the image is not present in the local image store. When the image is
+// confirmed locally but no media type metadata is available, a Docker manifest
+// v2 media type is returned to keep daemon-only refs strictly local-first.
 func GetMediaType(imageRef, runtime string) (string, error) {
-	// Check if the image is local first using the appropriate runtime
-	var mt string
-	var err error
+	var (
+		mt    string
+		found bool
+		err   error
+	)
 
 	switch runtime {
 	case imageloader.Podman:
-		mt, err = podmanMediaType(imageRef)
+		mt, found, err = podmanMediaType(imageRef)
 	default:
 		// Default to Docker
-		mt, err = localMediaType(imageRef)
+		mt, found, err = localMediaType(imageRef)
 	}
 
-	if err == nil && mt != "" {
-		log.Debugf("local media type found for %s using %s: %s", imageRef, runtime, mt)
-		return mt, nil
+	if found {
+		if mt != "" {
+			log.Debugf("local media type found for %s using %s: %s", imageRef, runtime, mt)
+			return mt, nil
+		}
+		// Image is in the local store but the descriptor did not expose a
+		// media type. Treat it as a Docker manifest and skip the remote
+		// registry probe — daemon-only refs (e.g. ones tagged against an
+		// unreachable registry hostname) must never trigger network access.
+		log.Debugf("image %s found in local %s store without descriptor media type; defaulting to docker manifest v2 and skipping remote probe", imageRef, runtime)
+		return string(ggcrtypes.DockerManifestSchema2), nil
 	}
 	log.Debugf("local media type not found for %s using %s: %v", imageRef, runtime, err)
 
-	// If the image is not local, use the remote media type
+	// Image is not present locally — consult the remote registry.
 	return remoteMediaType(imageRef)
 }
 
-func localMediaType(imageRef string) (string, error) {
-	cli, err := newClient()
+// localMediaType inspects the local docker daemon for imageRef. The second
+// return value indicates whether the image is present in the daemon (regardless
+// of whether a media type could be read from its descriptor).
+//
+// Lookup precedence for the manifest media type:
+//  1. The top-level Descriptor.MediaType — populated for multi-platform image
+//     indexes and for single-platform images on legacy daemons that expose it.
+//  2. The first image manifest entry under inspect.Manifests — populated by
+//     multi-platform (containerd) image stores, where the top-level descriptor
+//     may be empty for single-arch images that were loaded via `docker load`
+//     but the per-platform manifest descriptor carries the true type.
+//
+// Returning (mt="", found=true, nil) means the image is local but the daemon
+// exposed no manifest-level media type at all; callers should treat that as
+// "docker manifest v2" by default rather than triggering a remote probe.
+func localMediaType(imageRef string) (string, bool, error) {
+	inspect, err := inspectLocalImage(context.Background(), imageRef)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	defer cli.Close()
 
-	distInspect, err := cli.ImageInspect(context.Background(), imageRef)
-	if err != nil {
-		return "", err
+	if inspect.Descriptor != nil && inspect.Descriptor.MediaType != "" {
+		return inspect.Descriptor.MediaType, true, nil
 	}
-	if distInspect.Descriptor == nil {
-		return "", errors.New("descriptor is nil")
+
+	for i := range inspect.Manifests {
+		m := &inspect.Manifests[i]
+		if m.Kind == mobyimage.ManifestKindImage && m.Descriptor.MediaType != "" {
+			return m.Descriptor.MediaType, true, nil
+		}
 	}
-	return distInspect.Descriptor.MediaType, nil
+
+	return "", true, nil
 }
 
 // podmanMediaType tries to get the manifest's media type using podman CLI.
-func podmanMediaType(imageRef string) (string, error) {
+// The second return value indicates whether the image is present in the local
+// podman store.
+func podmanMediaType(imageRef string) (string, bool, error) {
 	// Check if podman is available
 	if _, err := exec.LookPath("podman"); err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	// Run podman inspect to get image metadata
 	cmd := exec.Command("podman", "inspect", "--type", "image", imageRef)
 	output, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	// Parse the JSON output
 	var inspectResults []map[string]interface{}
 	if err := json.Unmarshal(output, &inspectResults); err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	if len(inspectResults) == 0 {
-		return "", errors.New("no inspect results")
+		return "", false, errors.New("no inspect results")
 	}
 
 	result := inspectResults[0]
 
 	// Try to get MediaType from the result
 	if mt, ok := result["MediaType"].(string); ok && mt != "" {
-		return mt, nil
+		return mt, true, nil
 	}
 
 	// Try to get it from ManifestType (some versions of podman use this)
 	if mt, ok := result["ManifestType"].(string); ok && mt != "" {
-		return mt, nil
+		return mt, true, nil
 	}
 
-	return "", nil
+	return "", true, nil
 }
 
 func remoteMediaType(imageRef string) (string, error) {
