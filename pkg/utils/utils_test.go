@@ -860,7 +860,8 @@ func TestLocalPlatformManifestAnnotations_PerPlatform(t *testing.T) {
 			},
 			Manifests: []mobyimage.ManifestSummary{
 				{
-					Kind: mobyimage.ManifestKindImage,
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					Descriptor: ocispec.Descriptor{
 						MediaType:   ocispec.MediaTypeImageManifest,
 						Annotations: map[string]string{"arch": "amd64", "version": "1.0.0"},
@@ -870,7 +871,8 @@ func TestLocalPlatformManifestAnnotations_PerPlatform(t *testing.T) {
 					},
 				},
 				{
-					Kind: mobyimage.ManifestKindImage,
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					Descriptor: ocispec.Descriptor{
 						MediaType:   ocispec.MediaTypeImageManifest,
 						Annotations: map[string]string{"arch": "arm64", "version": "1.0.0"},
@@ -949,10 +951,12 @@ func TestLocalImagePlatforms_MultiPlatform(t *testing.T) {
 			Manifests: []mobyimage.ManifestSummary{
 				{
 					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					ImageData: &mobyimage.ImageProperties{Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"}},
 				},
 				{
 					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					ImageData: &mobyimage.ImageProperties{Platform: ocispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}},
 				},
 				{
@@ -1030,7 +1034,8 @@ func TestGetPlatformManifestAnnotations_LocalPerPlatform(t *testing.T) {
 			},
 			Manifests: []mobyimage.ManifestSummary{
 				{
-					Kind: mobyimage.ManifestKindImage,
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					Descriptor: ocispec.Descriptor{
 						MediaType:   ocispec.MediaTypeImageManifest,
 						Annotations: map[string]string{"scope": "amd64-manifest"},
@@ -1040,7 +1045,8 @@ func TestGetPlatformManifestAnnotations_LocalPerPlatform(t *testing.T) {
 					},
 				},
 				{
-					Kind: mobyimage.ManifestKindImage,
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					Descriptor: ocispec.Descriptor{
 						MediaType:   ocispec.MediaTypeImageManifest,
 						Annotations: map[string]string{"scope": "arm64-manifest"},
@@ -1085,7 +1091,8 @@ func TestLocalPlatformDescriptor_PerPlatform(t *testing.T) {
 		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
 			Manifests: []mobyimage.ManifestSummary{
 				{
-					Kind: mobyimage.ManifestKindImage,
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					Descriptor: ocispec.Descriptor{
 						MediaType: ocispec.MediaTypeImageManifest,
 						Digest:    amdDigest,
@@ -1096,7 +1103,8 @@ func TestLocalPlatformDescriptor_PerPlatform(t *testing.T) {
 					},
 				},
 				{
-					Kind: mobyimage.ManifestKindImage,
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
 					Descriptor: ocispec.Descriptor{
 						MediaType: ocispec.MediaTypeImageManifest,
 						Digest:    armDigest,
