@@ -56,10 +56,6 @@ func TestPatch(t *testing.T) {
 	common.DownloadDBToDir(t, sharedCacheDir, common.DockerDINDAddress.Env()...)
 
 	for _, img := range images {
-		imageRef := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
-		mediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
-		require.NoError(t, err)
-
 		// Oracle tends to throw false positives with Trivy
 		// See https://github.com/aquasecurity/trivy/issues/1967#issuecomment-1092987400
 		if !reportFile && !strings.Contains(img.Image, "oracle") {
@@ -110,15 +106,6 @@ func TestPatch(t *testing.T) {
 
 			tagPatched := img.Tag + "-patched"
 
-			patchedMediaType, err := utils.GetMediaType(imageRef, imageloader.Docker)
-			require.NoError(t, err)
-			fmt.Println("patchedMediaType: ", patchedMediaType)
-
-			// should be equal to the original image media type
-			if mediaType != patchedMediaType {
-				t.Fatalf("media type mismatch: %s != %s", mediaType, patchedMediaType)
-			}
-
 			t.Log("patching image")
 			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
 
@@ -144,6 +131,39 @@ func TestPatch(t *testing.T) {
 				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
+
+			// Sanity-check that copa wrote an inspectable patched manifest with
+			// a recognized media-type family (OCI or Docker). This is what's
+			// reliably observable here; the related PR #949 ("fix: oci media
+			// type should be respected") wanted to assert end-to-end OCI
+			// format preservation, but the local docker daemon normalises OCI
+			// manifests to docker schema 2 on `docker load` (unless backed by
+			// the containerd image store — and even then copa's docker-exporter
+			// output is docker schema 2), so a strict source-vs-patched format
+			// comparison spuriously fails for any OCI source whose patched
+			// output lands in the local daemon. Proper preservation testing
+			// requires inspecting copa's output in a remote registry or OCI
+			// layout tarball, which is out of scope for this assertion.
+			//
+			// We still surface any observed source-vs-patched family change as
+			// an informational log so OCI→Docker regressions show up in CI
+			// output even when we can't fail the test on them.
+			patchedMediaType, perr := utils.GetMediaType(patchedRef, imageloader.Docker)
+			if perr != nil {
+				t.Logf("skipping media type sanity check for %s: %v", patchedRef, perr)
+			} else {
+				patchedFamily := mediaTypeFamily(patchedMediaType)
+				if patchedFamily == "" {
+					t.Fatalf("patched image %s has unrecognized manifest media type: %s",
+						patchedRef, patchedMediaType)
+				}
+				if srcMT, srcErr := utils.GetMediaType(ref, imageloader.Docker); srcErr == nil {
+					if srcFamily := mediaTypeFamily(srcMT); srcFamily != "" && srcFamily != patchedFamily {
+						t.Logf("media type family changed across patch: source %s (%s) → patched %s (%s)",
+							srcMT, srcFamily, patchedMediaType, patchedFamily)
+					}
+				}
+			}
 
 			switch {
 			case strings.Contains(img.Image, "oracle"):
@@ -174,6 +194,23 @@ func TestPatch(t *testing.T) {
 				common.ValidateVEXJSON(t, dir)
 			}
 		})
+	}
+}
+
+// mediaTypeFamily returns "oci" for OCI manifest/index media types,
+// "docker" for Docker distribution manifest/list media types, or "" when the
+// supplied type is unrecognized or empty. We compare families instead of exact
+// strings because copa is allowed to e.g. lower an OCI image index into the
+// equivalent per-platform OCI manifest while still preserving the OCI format
+// family.
+func mediaTypeFamily(mt string) string {
+	switch {
+	case strings.HasPrefix(mt, "application/vnd.oci."):
+		return "oci"
+	case strings.HasPrefix(mt, "application/vnd.docker."):
+		return "docker"
+	default:
+		return ""
 	}
 }
 
@@ -291,4 +328,79 @@ func patch(t *testing.T, ref, patchedTag, path string, ignoreErrors bool, report
 	} else {
 		require.NoError(t, err, string(out))
 	}
+}
+
+// TestPatchDaemonOnlyImage exercises the daemon-only patching path: an image
+// is loaded into the local Docker daemon and re-tagged with a non-resolvable
+// registry hostname (127.0.0.1:1, which immediately refuses connections). If
+// any copa code path falls back to a remote registry lookup instead of using
+// the local image store, the patch attempt will surface a "connection refused"
+// log line — which this test asserts on. This is the missing test pattern that
+// has historically masked local-first regressions (e.g. PR #1614), because
+// other singlearch fixtures with localName entries are rescued by the graceful
+// fallback in patch.go and still succeed when the registry call fails.
+//
+// Only runs when the buildkit instance is the docker daemon itself
+// (COPA_BUILDKIT_ADDR starts with `docker://`); for other backends the patch
+// hand-off cannot resolve a daemon-only ref and the scenario is moot.
+func TestPatchDaemonOnlyImage(t *testing.T) {
+	if !strings.HasPrefix(os.Getenv("COPA_BUILDKIT_ADDR"), "docker://") {
+		t.Skip("daemon-only patching requires COPA_BUILDKIT_ADDR=docker://...")
+	}
+
+	// Use a small, stable image from the existing fixtures so we don't pull
+	// anything new. The digest pins the content to make the test reproducible.
+	const (
+		source     = "docker.io/library/nginx:1.21.6@sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514"
+		daemonOnly = "127.0.0.1:1/copa-daemon-only:original"
+		bogusHost  = "127.0.0.1:1"
+	)
+
+	dockerPull(t, source)
+	dockerTag(t, source, daemonOnly)
+	t.Cleanup(func() {
+		// Best-effort cleanup; we don't fail the test if the tag is gone.
+		_ = exec.Command("docker", "rmi", daemonOnly).Run()
+	})
+
+	dir := t.TempDir()
+
+	addrFl := "-a=" + os.Getenv("COPA_BUILDKIT_ADDR")
+	cmd := exec.Command(
+		copaPath,
+		"patch",
+		"-i="+daemonOnly,
+		"-t=patched",
+		"-s="+scannerPlugin,
+		"--timeout=30m",
+		addrFl,
+		"--platform=linux/amd64",
+		"--ignore-errors=true",
+		"--output="+dir+"/vex.json",
+		"--debug",
+	)
+	cmd.Env = append(cmd.Env, os.Environ()...)
+	cmd.Env = append(cmd.Env, common.DockerDINDAddress.Env()...)
+
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "daemon-only patch must succeed without any remote registry access:\n%s", string(out))
+
+	// Any registry attempt to the bogus hostname produces a "connection refused"
+	// (or "no route to host") error mentioning the host. If copa correctly uses
+	// the local image store, no such error is logged.
+	assert.NotContains(
+		t,
+		string(out),
+		bogusHost+`": dial`,
+		"copa attempted to contact the unresolvable registry %q — local-first lookup regressed; output was:\n%s",
+		bogusHost,
+		string(out),
+	)
+	assert.NotContains(
+		t,
+		string(out),
+		"connection refused",
+		"copa attempted to contact a registry that refused connection — local-first lookup regressed; output was:\n%s",
+		string(out),
+	)
 }

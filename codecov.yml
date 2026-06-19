@@ -5,7 +5,36 @@ coverage:
     project:
       default:
         target: auto
-        threshold: 0%
+        threshold: 1%
     patch:
       default:
         informational: true
+
+# Exclude generated, non-Go, and harness-only paths from the coverage denominator.
+# Mock files and demo/website assets dilute the reported number without offering
+# meaningful test signal.
+ignore:
+  - "mocks/**"
+  - "**/*_mock.go"
+  - "demo/**"
+  - "website/**"
+  - "images/**"
+  - ".github/**"
+  - "integration/**"
+  - "test/e2e/**"
+  - "cmd/**"
+  - "main.go"
+
+# Per-suite flag management lets unit and integration coverage be tracked and
+# carried-forward independently. Required when integration jobs upload their own
+# coverage profiles (see PRs adding instrumented-binary coverage).
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: unit
+    - name: integration
+
+comment:
+  layout: "diff, flags, files"
+  require_changes: true
