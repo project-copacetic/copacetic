@@ -35,7 +35,16 @@ func GetMediaType(imageRef, runtime string) (string, error) {
 	return GetMediaTypeWithContext(context.Background(), imageRef, runtime)
 }
 
+// GetMediaTypeWithContext behaves like GetMediaType but binds media type
+// detection to ctx, so the local Docker inspection, Podman CLI execution, and
+// remote registry lookup are canceled when the caller's context (e.g. the patch
+// timeout) is done. A nil ctx is treated as context.Background() to avoid
+// panicking exec.CommandContext.
 func GetMediaTypeWithContext(ctx context.Context, imageRef, runtime string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var (
 		mt    string
 		found bool

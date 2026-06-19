@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -114,6 +115,27 @@ func TestRemoteMediaType_Failure(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestRemoteMediaType_ContextCanceled is a regression test for the context
+// binding added in this change: a canceled context must abort the remote
+// registry lookup promptly instead of issuing an unbounded network request, so
+// media type detection cannot outlive the caller's patch timeout.
+func TestRemoteMediaType_ContextCanceled(t *testing.T) {
+	// Exercise the real context-aware remote.Get path (not the mock) so the
+	// test verifies that remote.WithContext(ctx) is actually honored.
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = remote.Get
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	start := time.Now()
+	_, err := remoteMediaType(ctx, "alpine:latest")
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, time.Since(start), 5*time.Second, "canceled context must abort promptly")
+}
+
 func TestGetMediaType_LocalSuccess(t *testing.T) {
 	md := new(mockDockerClient)
 	fakeLocalType := "application/vnd.docker.distribution.manifest.v2+json"
@@ -131,6 +153,31 @@ func TestGetMediaType_LocalSuccess(t *testing.T) {
 	newClient = func() (dockerClient.APIClient, error) { return md, nil }
 
 	mt, err := GetMediaType("alpine:latest", imageloader.Docker)
+	require.NoError(t, err)
+	require.Equal(t, fakeLocalType, mt)
+}
+
+// TestGetMediaTypeWithContext_NilContext verifies the defensive guard: a nil
+// context is treated as context.Background() instead of panicking downstream
+// (e.g. exec.CommandContext / cli.ImageInspect).
+func TestGetMediaTypeWithContext_NilContext(t *testing.T) {
+	md := new(mockDockerClient)
+	fakeLocalType := string(types.DockerManifestSchema2)
+	md.On("ImageInspect", mock.Anything, "alpine:latest", mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{
+				MediaType: fakeLocalType,
+			},
+		}},
+		nil,
+	)
+
+	origNewClient := newClient
+	defer func() { newClient = origNewClient }()
+	newClient = func() (dockerClient.APIClient, error) { return md, nil }
+
+	//nolint:staticcheck // SA1012: intentionally passing nil to exercise the guard.
+	mt, err := GetMediaTypeWithContext(nil, "alpine:latest", imageloader.Docker)
 	require.NoError(t, err)
 	require.Equal(t, fakeLocalType, mt)
 }
@@ -170,7 +217,11 @@ func TestPodmanMediaType_ImageNotFound(t *testing.T) {
 	// This test covers the case where podman inspect fails because image doesn't exist
 	// Since podman is available in the test environment, we test with non-existent image
 
-	_, found, err := podmanMediaType(context.Background(), "non-existent-image:test")
+	// Bound the call to a timeout so a stuck `podman inspect` cannot hang CI.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, found, err := podmanMediaType(ctx, "non-existent-image:test")
 	require.Error(t, err)
 	require.False(t, found)
 	// Should get an error from podman command execution
