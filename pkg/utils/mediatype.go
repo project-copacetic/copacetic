@@ -32,6 +32,19 @@ var (
 // confirmed locally but no media type metadata is available, a Docker manifest
 // v2 media type is returned to keep daemon-only refs strictly local-first.
 func GetMediaType(imageRef, runtime string) (string, error) {
+	return GetMediaTypeWithContext(context.Background(), imageRef, runtime)
+}
+
+// GetMediaTypeWithContext behaves like GetMediaType but binds media type
+// detection to ctx, so the local Docker inspection, Podman CLI execution, and
+// remote registry lookup are canceled when the caller's context (e.g. the patch
+// timeout) is done. A nil ctx is treated as context.Background() to avoid
+// panicking exec.CommandContext.
+func GetMediaTypeWithContext(ctx context.Context, imageRef, runtime string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
 	var (
 		mt    string
 		found bool
@@ -40,10 +53,10 @@ func GetMediaType(imageRef, runtime string) (string, error) {
 
 	switch runtime {
 	case imageloader.Podman:
-		mt, found, err = podmanMediaType(imageRef)
+		mt, found, err = podmanMediaType(ctx, imageRef)
 	default:
 		// Default to Docker
-		mt, found, err = localMediaType(imageRef)
+		mt, found, err = localMediaType(ctx, imageRef)
 	}
 
 	if found {
@@ -61,7 +74,7 @@ func GetMediaType(imageRef, runtime string) (string, error) {
 	log.Debugf("local media type not found for %s using %s: %v", imageRef, runtime, err)
 
 	// Image is not present locally — consult the remote registry.
-	return remoteMediaType(imageRef)
+	return remoteMediaType(ctx, imageRef)
 }
 
 // localMediaType inspects the local docker daemon for imageRef. The second
@@ -79,8 +92,8 @@ func GetMediaType(imageRef, runtime string) (string, error) {
 // Returning (mt="", found=true, nil) means the image is local but the daemon
 // exposed no manifest-level media type at all; callers should treat that as
 // "docker manifest v2" by default rather than triggering a remote probe.
-func localMediaType(imageRef string) (string, bool, error) {
-	inspect, err := inspectLocalImage(context.Background(), imageRef)
+func localMediaType(ctx context.Context, imageRef string) (string, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
 	if err != nil {
 		return "", false, err
 	}
@@ -102,14 +115,14 @@ func localMediaType(imageRef string) (string, bool, error) {
 // podmanMediaType tries to get the manifest's media type using podman CLI.
 // The second return value indicates whether the image is present in the local
 // podman store.
-func podmanMediaType(imageRef string) (string, bool, error) {
+func podmanMediaType(ctx context.Context, imageRef string) (string, bool, error) {
 	// Check if podman is available
 	if _, err := exec.LookPath("podman"); err != nil {
 		return "", false, err
 	}
 
 	// Run podman inspect to get image metadata
-	cmd := exec.Command("podman", "inspect", "--type", "image", imageRef)
+	cmd := exec.CommandContext(ctx, "podman", "inspect", "--type", "image", imageRef)
 	output, err := cmd.Output()
 	if err != nil {
 		return "", false, err
@@ -140,13 +153,13 @@ func podmanMediaType(imageRef string) (string, bool, error) {
 	return "", true, nil
 }
 
-func remoteMediaType(imageRef string) (string, error) {
+func remoteMediaType(ctx context.Context, imageRef string) (string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		log.Debugf("failed to parse reference %s: %v", imageRef, err)
 		return "", err
 	}
-	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
 		log.Debugf("failed to get remote media type for %s: %v", imageRef, err)
 		return "", err
