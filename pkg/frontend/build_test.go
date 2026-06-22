@@ -3,6 +3,7 @@ package frontend
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +17,32 @@ const (
 // Note: buildPatchedImage tests are covered by e2e tests in test/e2e/frontend/
 // since they require a real BuildKit gateway client and complex setup.
 // This file tests helper functions that can be unit tested.
+
+func TestEnsureTempDirCreatesMissingDir(t *testing.T) {
+	// Simulate the FROM scratch frontend image where /tmp does not exist.
+	// Point TMPDIR at a not-yet-created path under a real temp dir, then
+	// verify ensureTempDir() materializes it so os.MkdirTemp("", ...) works.
+	parent := t.TempDir()
+	missing := filepath.Join(parent, "does-not-exist-yet")
+
+	t.Setenv("TMPDIR", missing)
+
+	// Sanity: the directory really is missing before we call ensureTempDir.
+	_, err := os.Stat(missing)
+	require.True(t, os.IsNotExist(err), "expected %s to not exist", missing)
+
+	require.NoError(t, ensureTempDir(), "ensureTempDir should create missing TempDir")
+
+	info, err := os.Stat(missing)
+	require.NoError(t, err)
+	require.True(t, info.IsDir(), "expected %s to be a directory", missing)
+
+	// MkdirTemp("", ...) must now succeed against the freshly created dir.
+	tmpDir, err := os.MkdirTemp("", "copa-frontend-report-")
+	require.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+	assert.True(t, strings.HasPrefix(tmpDir, missing), "tmp dir %s should be inside %s", tmpDir, missing)
+}
 
 func TestPlatformSpecificReportFilename(t *testing.T) {
 	t.Run("AMD64 platform", func(t *testing.T) {

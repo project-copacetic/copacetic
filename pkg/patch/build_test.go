@@ -152,3 +152,48 @@ func TestValidateSourcePolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestRewriteVersionAnnotation pins down the version-rewrite contract used by
+// both the single-platform exporter (createBuildConfig) and the multi-platform
+// index assembly (createMultiPlatformManifest). The two paths must agree so
+// that copa patch produces consistent metadata regardless of input topology.
+func TestRewriteVersionAnnotation(t *testing.T) {
+	tests := []struct {
+		name            string
+		originalVersion string
+		patchedTag      string
+		want            string
+	}{
+		{
+			name:            "patched tag contains original version",
+			originalVersion: "1.0.0",
+			patchedTag:      "1.0.0-patched",
+			want:            "1.0.0-patched",
+		},
+		{
+			name:            "patched tag does not contain original version",
+			originalVersion: "1.0.0",
+			patchedTag:      "patched",
+			want:            "1.0.0-patched",
+		},
+		{
+			name:            "patched tag identical to original version",
+			originalVersion: "1.0.0",
+			patchedTag:      "1.0.0",
+			want:            "1.0.0",
+		},
+		{
+			name:            "empty patched tag returns original",
+			originalVersion: "1.0.0",
+			patchedTag:      "",
+			want:            "1.0.0",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := rewriteVersionAnnotation(tc.originalVersion, tc.patchedTag)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}

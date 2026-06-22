@@ -1,18 +1,29 @@
 if [ "$IGNORE_ERRORS" = "true" ]; then
     set -x
 else
-	set -ex
+    set -ex
 fi
 
+# Build positional parameters ($@) of package names so they can be passed
+# safely to apt-get without word-splitting or option injection.
 if [ "$UPDATE_ALL" = "true" ]; then
-    packages="$(cat /var/cache/apt/archives/packages.txt)"
+    # One package per line, written by the caller via printf.
+    set --
+    while IFS= read -r pkg || [ -n "$pkg" ]; do
+        [ -n "$pkg" ] || continue
+        set -- "$@" "$pkg"
+    done < /var/cache/apt/archives/packages.txt
 else
-    packages="%s"
+    # The placeholder below is a space-separated list of pre-validated package
+    # names interpolated by Go at script-generation time. Word-splitting here
+    # is intentional so each name becomes its own positional parameter.
+    # shellcheck disable=SC2086
+    set -- %s
 fi
 
 apt-get -o Acquire::Retries=3 update
 
-apt-get -o Acquire::Retries=3 download --no-install-recommends $packages
+apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
 dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
 dpkg --root=/tmp/debian-rootfs --configure -a
 

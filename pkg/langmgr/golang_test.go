@@ -1,6 +1,7 @@
 package langmgr
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -205,6 +206,11 @@ func TestValidateGoPackageName(t *testing.T) {
 		{
 			name:        "package name with newline",
 			packageName: "github.com/user/repo\n",
+			expectError: true,
+		},
+		{
+			name:        "package name starting with dash",
+			packageName: "-modfile=/tmp/pwn/mod",
 			expectError: true,
 		},
 	}
@@ -557,7 +563,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			managers := GetLanguageManagers(config, workingFolder, tt.manifest, "")
+			managers := GetLanguageManagers(config, workingFolder, tt.manifest, "", "", "")
 			assert.Len(t, managers, tt.expectedCount, "Expected %d managers, got %d", tt.expectedCount, len(managers))
 
 			var hasGoMgr, hasPythonMgr, hasNodeMgr bool
@@ -585,7 +591,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
 			},
 		}
-		managers := GetLanguageManagers(config, workingFolder, manifest, "minor")
+		managers := GetLanguageManagers(config, workingFolder, manifest, "minor", "", "")
 		require.Len(t, managers, 1)
 		goMgr, ok := managers[0].(*golangManager)
 		require.True(t, ok, "Expected golangManager")
@@ -598,7 +604,7 @@ func TestGetLanguageManagers_Go(t *testing.T) {
 				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
 			},
 		}
-		managers := GetLanguageManagers(config, workingFolder, manifest, "")
+		managers := GetLanguageManagers(config, workingFolder, manifest, "", "", "")
 		require.Len(t, managers, 1)
 		goMgr, ok := managers[0].(*golangManager)
 		require.True(t, ok, "Expected golangManager")
@@ -734,6 +740,206 @@ func TestGetUniqueLatestUpdates_Go(t *testing.T) {
 			if tt.checkPackage != nil {
 				tt.checkPackage(t, result)
 			}
+		})
+	}
+}
+
+func TestRebuildFailureString(t *testing.T) {
+	tests := []struct {
+		name     string
+		failure  rebuildFailure
+		expected string
+	}{
+		{
+			name:     "no build info",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/foo", reason: "no build info"},
+			expected: "/usr/bin/foo: no build info",
+		},
+		{
+			name:     "error reason",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/bar", reason: "exit status 1"},
+			expected: "/usr/bin/bar: exit status 1",
+		},
+		{
+			name:     "empty reason",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/baz", reason: ""},
+			expected: "/usr/bin/baz: ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.failure.String())
+		})
+	}
+}
+
+func TestRebuildFailureSliceFormat(t *testing.T) {
+	failures := []rebuildFailure{
+		{binaryPath: "/usr/bin/foo", reason: "no build info"},
+		{binaryPath: "/usr/bin/bar", reason: "exit status 1"},
+	}
+	oldStyle := []string{
+		"/usr/bin/foo: no build info",
+		"/usr/bin/bar: exit status 1",
+	}
+	assert.Equal(t, fmt.Sprintf("%v", oldStyle), fmt.Sprintf("%v", failures),
+		"rebuildFailure slice must format identically to the old []string representation")
+}
+
+func TestCollectGoBinaryInfo(t *testing.T) {
+	tests := []struct {
+		name        string
+		updates     unversioned.LangUpdatePackages
+		wantPaths   []string
+		wantVersion string
+	}{
+		{
+			name: "extracts paths and Go version from stdlib",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary, InstalledVersion: "v1.26.0"},
+				{Name: "golang.org/x/crypto", PkgPath: "manager", Type: utils.GoBinary},
+			},
+			wantPaths:   []string{"manager"},
+			wantVersion: "1.26.0",
+		},
+		{
+			name: "multiple paths no stdlib",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/crypto", PkgPath: "bin/consul", Type: utils.GoBinary},
+				{Name: "golang.org/x/net", PkgPath: "bin/consul-agent", Type: utils.GoBinary},
+			},
+			wantPaths:   []string{"bin/consul", "bin/consul-agent"},
+			wantVersion: "",
+		},
+		{
+			name:      "skips non-gobinary",
+			updates:   unversioned.LangUpdatePackages{{Name: "flask", PkgPath: "app/requirements.txt", Type: "pip"}},
+			wantPaths: nil,
+		},
+		{
+			name: "skips gomod entries even if PkgPath set",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/foo/bar", PkgPath: "src/go.mod", Type: utils.GoModules},
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary, InstalledVersion: "v1.26.0"},
+			},
+			wantPaths:   []string{"manager"},
+			wantVersion: "1.26.0",
+		},
+		{
+			name: "all gomod, no binary paths returned",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/foo/bar", PkgPath: "src/go.mod", Type: utils.GoModules},
+				{Name: "github.com/baz/qux", PkgPath: "src/go.sum", Type: utils.GoModules},
+			},
+			wantPaths:   nil,
+			wantVersion: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths, goVersion := collectGoBinaryInfo(tt.updates)
+			assert.Equal(t, tt.wantPaths, paths)
+			assert.Equal(t, tt.wantVersion, goVersion)
+		})
+	}
+}
+
+func TestBuildSyntheticBinaryInfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		paths     []string
+		goVCSURL  string
+		wantCount int
+		wantPaths []string
+		wantMod   string
+	}{
+		{
+			name:      "single binary path",
+			paths:     []string{"manager"},
+			goVCSURL:  "https://github.com/grafana/grafana-operator@v5.22.0",
+			wantCount: 1,
+			wantPaths: []string{"/manager"},
+			wantMod:   "github.com/grafana/grafana-operator",
+		},
+		{
+			name:      "multiple paths",
+			paths:     []string{"bin/consul", "bin/consul-agent"},
+			goVCSURL:  "https://github.com/hashicorp/consul@v1.22.4",
+			wantCount: 2,
+			wantPaths: []string{"/bin/consul", "/bin/consul-agent"},
+			wantMod:   "github.com/hashicorp/consul",
+		},
+		{
+			name:      "path already has leading slash",
+			paths:     []string{"/usr/local/bin/app"},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 1,
+			wantPaths: []string{"/usr/local/bin/app"},
+			wantMod:   "github.com/example/app",
+		},
+		{
+			name:      "empty paths",
+			paths:     []string{},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildSyntheticBinaryInfo(tt.paths, tt.goVCSURL, "1.26.0")
+			assert.Len(t, result, tt.wantCount)
+
+			for i, wantPath := range tt.wantPaths {
+				if i < len(result) {
+					assert.Equal(t, wantPath, result[i].Path)
+					assert.Equal(t, tt.wantMod, result[i].ModulePath)
+					assert.Equal(t, "0", result[i].BuildSettings["CGO_ENABLED"])
+					assert.Equal(t, "0755", result[i].FileMode)
+					assert.Equal(t, "0:0", result[i].FileOwner)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildGoUpdateCmd asserts that the shell command emitted for both Go
+// module update sites uses `go mod tidy -e`. The -e flag tolerates broken
+// upstream go.mod files so that unrelated upstream module hygiene issues do
+// not block CVE patches; see the helper's docstring in golang.go.
+func TestBuildGoUpdateCmd(t *testing.T) {
+	tests := []struct {
+		name      string
+		modPath   string
+		allGetCmd string
+		want      string
+	}{
+		{
+			// Site 1: primary in-image path with a discovered go.mod path.
+			name:      "in-image module path",
+			modPath:   "/app",
+			allGetCmd: "go get golang.org/x/net@v0.23.0",
+			want:      `sh -c 'cd /app && go get golang.org/x/net@v0.23.0 && go mod tidy -e'`,
+		},
+		{
+			// Site 2: tooling container fallback path.
+			name:      "tooling container workspace",
+			modPath:   "/workspace",
+			allGetCmd: "go get golang.org/x/net@v0.23.0 && go get golang.org/x/text@v0.14.0",
+			want:      `sh -c 'cd /workspace && go get golang.org/x/net@v0.23.0 && go get golang.org/x/text@v0.14.0 && go mod tidy -e'`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildGoUpdateCmd(tt.modPath, tt.allGetCmd)
+			assert.Equal(t, tt.want, got)
+			// Explicit guards against regression to bare `go mod tidy`.
+			assert.Contains(t, got, "go mod tidy -e",
+				"updateCmd must use 'go mod tidy -e' to tolerate broken upstream go.mod")
+			assert.NotContains(t, got, "go mod tidy'",
+				"updateCmd must not end with bare 'go mod tidy' (missing -e flag)")
 		})
 	}
 }

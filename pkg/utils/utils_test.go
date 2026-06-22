@@ -2,16 +2,27 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path"
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	ggcrv1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	ggcrtypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client/llb"
+	mobyimage "github.com/moby/moby/api/types/image"
+	dockerClient "github.com/moby/moby/client"
+	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -475,4 +486,696 @@ func TestGetPlatformManifestAnnotations(t *testing.T) {
 		assert.Nil(t, annotations)
 		// Should still fail at the descriptor fetch level before platform processing
 	})
+}
+
+// TestGetPlatformManifestAnnotations_SameTagOverwrite verifies that capturing
+// manifest-level annotations BEFORE a same-tag patch push preserves the
+// pre-patch values. If callers fetched annotations AFTER the patched image is
+// pushed under the same tag, the lookup would resolve to the new manifest and
+// silently lose the original annotations. This test pins down the ordering
+// contract relied upon by patchSingleArchImage.
+func TestGetPlatformManifestAnnotations_SameTagOverwrite(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{
+		Architecture: "amd64",
+		OS:           "linux",
+	}
+
+	originalIndex := buildIndexManifestJSON(t, map[string]string{
+		"org.opencontainers.image.source":   "https://github.com/example/repo",
+		"org.opencontainers.image.revision": "abc123",
+		"org.opencontainers.image.version":  "1.0.0",
+	})
+	patchedIndex := buildIndexManifestJSON(t, map[string]string{
+		// The post-patch manifest intentionally drops/changes annotations to
+		// simulate the regression: a same-tag overwrite where the new manifest
+		// no longer carries the original metadata.
+		"org.opencontainers.image.version": "1.0.0-patched",
+	})
+
+	currentManifest := originalIndex
+	defer stubNewClientNotFound(t)()
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIImageIndex},
+			Manifest:   currentManifest,
+		}, nil
+	}
+
+	// Capture annotations BEFORE the simulated same-tag patch push. This mirrors
+	// what patchSingleArchImage does in pkg/patch/single.go before invoking
+	// BuildKit.
+	captured, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/example/repo", captured["org.opencontainers.image.source"])
+	require.Equal(t, "abc123", captured["org.opencontainers.image.revision"])
+	require.Equal(t, "1.0.0", captured["org.opencontainers.image.version"])
+
+	// Simulate the patch step: the same tag now resolves to the patched manifest.
+	currentManifest = patchedIndex
+
+	// A fresh lookup after the overwrite returns only the new manifest's
+	// annotations, demonstrating why the pre-patch capture is required.
+	afterOverwrite, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	_, hasSource := afterOverwrite["org.opencontainers.image.source"]
+	require.False(t, hasSource, "post-overwrite lookup must not return the original source annotation")
+	require.Equal(t, "1.0.0-patched", afterOverwrite["org.opencontainers.image.version"])
+
+	// The captured map taken before the overwrite is unaffected, which is the
+	// invariant that callers (e.g. createPatchResultWithStates) depend on when
+	// merging original annotations onto the patched descriptor.
+	require.Equal(t, "https://github.com/example/repo", captured["org.opencontainers.image.source"])
+	require.Equal(t, "1.0.0", captured["org.opencontainers.image.version"])
+}
+
+// buildIndexManifestJSON returns the bytes of an OCI image index whose single
+// linux/amd64 manifest entry carries the supplied annotations.
+func buildIndexManifestJSON(t *testing.T, annotations map[string]string) []byte {
+	t.Helper()
+	idx := ggcrv1.IndexManifest{
+		SchemaVersion: 2,
+		MediaType:     ggcrtypes.OCIImageIndex,
+		Manifests: []ggcrv1.Descriptor{{
+			MediaType: ggcrtypes.OCIManifestSchema1,
+			Size:      123,
+			Digest:    ggcrv1.Hash{Algorithm: "sha256", Hex: strings.Repeat("a", 64)},
+			Platform: &ggcrv1.Platform{
+				Architecture: "amd64",
+				OS:           "linux",
+			},
+			Annotations: annotations,
+		}},
+	}
+	b, err := json.Marshal(idx)
+	require.NoError(t, err)
+	return b
+}
+
+// buildSinglePlatformManifestJSON returns the bytes of a single-platform OCI
+// image manifest with the supplied annotations on the manifest body itself
+// (which is where `crane mutate --annotation` writes them).
+func buildSinglePlatformManifestJSON(t *testing.T, annotations map[string]string) []byte {
+	t.Helper()
+	m := ggcrv1.Manifest{
+		SchemaVersion: 2,
+		MediaType:     ggcrtypes.OCIManifestSchema1,
+		Config: ggcrv1.Descriptor{
+			MediaType: ggcrtypes.OCIConfigJSON,
+			Size:      10,
+			Digest:    ggcrv1.Hash{Algorithm: "sha256", Hex: strings.Repeat("c", 64)},
+		},
+		Annotations: annotations,
+	}
+	b, err := json.Marshal(m)
+	require.NoError(t, err)
+	return b
+}
+
+// TestGetPlatformManifestAnnotations_SinglePlatform verifies that for a
+// single-platform image (manifest media type, not index), the returned map
+// contains the annotations from the manifest body. Prior to this fix,
+// GetPlatformManifestAnnotations returned (nil, nil) for the single-platform
+// branch, which silently dropped annotations like
+// org.opencontainers.image.{source,revision,version} on copa same-tag patches.
+func TestGetPlatformManifestAnnotations_SinglePlatform(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{
+		Architecture: "amd64",
+		OS:           "linux",
+	}
+
+	manifestBody := buildSinglePlatformManifestJSON(t, map[string]string{
+		"org.opencontainers.image.source":   "https://github.com/example/repo",
+		"org.opencontainers.image.revision": "abc123",
+		"org.opencontainers.image.version":  "1.0.0",
+		"org.opencontainers.image.title":    "single-platform image",
+	})
+
+	defer stubNewClientNotFound(t)()
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIManifestSchema1},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/example/repo", got["org.opencontainers.image.source"])
+	require.Equal(t, "abc123", got["org.opencontainers.image.revision"])
+	require.Equal(t, "1.0.0", got["org.opencontainers.image.version"])
+	require.Equal(t, "single-platform image", got["org.opencontainers.image.title"])
+}
+
+// TestGetPlatformManifestAnnotations_SinglePlatformDocker verifies the same
+// single-platform behavior also works for Docker manifest media type
+// (vnd.docker.distribution.manifest.v2+json), which is what most legacy
+// images use.
+func TestGetPlatformManifestAnnotations_SinglePlatformDocker(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{Architecture: "amd64", OS: "linux"}
+
+	manifestBody := buildSinglePlatformManifestJSON(t, map[string]string{
+		"org.opencontainers.image.source": "https://github.com/example/repo",
+	})
+
+	defer stubNewClientNotFound(t)()
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.DockerManifestSchema2},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.Equal(t, "https://github.com/example/repo", got["org.opencontainers.image.source"])
+}
+
+// TestGetPlatformManifestAnnotations_SinglePlatformNoAnnotations confirms that
+// a single-platform manifest with no annotations returns an empty map (not
+// nil), matching the contract callers rely on.
+func TestGetPlatformManifestAnnotations_SinglePlatformNoAnnotations(t *testing.T) {
+	ctx := context.Background()
+	targetPlatform := &ocispec.Platform{Architecture: "amd64", OS: "linux"}
+
+	manifestBody := buildSinglePlatformManifestJSON(t, nil)
+
+	defer stubNewClientNotFound(t)()
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIManifestSchema1},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(ctx, "registry.example.com/repo:latest", targetPlatform)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+}
+
+// TestGetIndexManifestAnnotations_SinglePlatform mirrors the
+// GetPlatformManifestAnnotations single-platform test for the sibling
+// GetIndexManifestAnnotations function. Prior to this fix it returned the
+// (always-empty) desc.Annotations field instead of the manifest body
+// annotations.
+func TestGetIndexManifestAnnotations_SinglePlatform(t *testing.T) {
+	ctx := context.Background()
+
+	manifestBody := buildSinglePlatformManifestJSON(t, map[string]string{
+		"org.opencontainers.image.title":   "single-platform index lookup",
+		"org.opencontainers.image.version": "2.5.0",
+	})
+
+	defer stubNewClientNotFound(t)()
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: ggcrv1.Descriptor{MediaType: ggcrtypes.OCIManifestSchema1},
+			Manifest:   manifestBody,
+		}, nil
+	}
+
+	got, err := GetIndexManifestAnnotations(ctx, "registry.example.com/repo:latest")
+	require.NoError(t, err)
+	require.Equal(t, "single-platform index lookup", got["org.opencontainers.image.title"])
+	require.Equal(t, "2.5.0", got["org.opencontainers.image.version"])
+}
+
+// TestParseManifestBodyAnnotations_Edge covers edge cases of the helper:
+// empty input returns empty map; missing annotations field returns empty map;
+// invalid JSON returns an error.
+func TestParseManifestBodyAnnotations_Edge(t *testing.T) {
+	t.Run("empty body", func(t *testing.T) {
+		got, err := parseManifestBodyAnnotations(nil)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
+	t.Run("manifest without annotations key", func(t *testing.T) {
+		body := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`)
+		got, err := parseManifestBodyAnnotations(body)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
+	t.Run("manifest with explicit null annotations", func(t *testing.T) {
+		body := []byte(`{"schemaVersion":2,"annotations":null}`)
+		got, err := parseManifestBodyAnnotations(body)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Empty(t, got)
+	})
+
+	t.Run("invalid json", func(t *testing.T) {
+		_, err := parseManifestBodyAnnotations([]byte(`not json`))
+		require.Error(t, err)
+	})
+
+	t.Run("populated annotations", func(t *testing.T) {
+		body := []byte(`{"annotations":{"a":"1","b":"2"}}`)
+		got, err := parseManifestBodyAnnotations(body)
+		require.NoError(t, err)
+		require.Equal(t, "1", got["a"])
+		require.Equal(t, "2", got["b"])
+		require.Len(t, got, 2)
+	})
+}
+
+// --------------------------------------------------------------------------
+// Local-first daemon helper tests
+// --------------------------------------------------------------------------
+
+// stubNewClient swaps the package-level newClient factory with one that always
+// returns the provided client. It returns a cleanup func to restore the original.
+func stubNewClient(t *testing.T, cli dockerClient.APIClient) func() {
+	t.Helper()
+	orig := newClient
+	newClient = func() (dockerClient.APIClient, error) { return cli, nil }
+	return func() { newClient = orig }
+}
+
+// stubNewClientNotFound makes every local-daemon ImageInspect appear as
+// "image not found", forcing callers down their remote fallback path. Use
+// this in tests that only want to exercise the remote path, so the test
+// remains deterministic regardless of what (if anything) the developer
+// happens to have in their local Docker daemon.
+func stubNewClientNotFound(t *testing.T) func() {
+	t.Helper()
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{}, errors.New("simulated: no such image"),
+	)
+	return stubNewClient(t, md)
+}
+
+// TestLocalIndexManifestAnnotations_Found verifies the helper returns
+// (annotations, true, nil) when the image exists locally and the daemon
+// surfaces a top-level descriptor with annotations.
+func TestLocalIndexManifestAnnotations_Found(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, "registry.example.com/repo:latest", mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{
+				MediaType: ocispec.MediaTypeImageIndex,
+				Annotations: map[string]string{
+					"org.opencontainers.image.source":   "https://github.com/example/repo",
+					"org.opencontainers.image.revision": "abc123",
+				},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := localIndexManifestAnnotations(context.Background(), "registry.example.com/repo:latest")
+	require.NoError(t, err)
+	require.True(t, ok, "image present in daemon must signal ok=true")
+	require.Equal(t, "https://github.com/example/repo", got["org.opencontainers.image.source"])
+	require.Equal(t, "abc123", got["org.opencontainers.image.revision"])
+}
+
+// TestLocalIndexManifestAnnotations_NotFound verifies the helper returns
+// ok=false when the daemon does not have the image, so callers can fall back
+// to a remote registry lookup.
+func TestLocalIndexManifestAnnotations_NotFound(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, "registry.example.com/missing:latest", mock.Anything).Return(
+		dockerClient.ImageInspectResult{}, errors.New("Error: No such image: registry.example.com/missing:latest"),
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := localIndexManifestAnnotations(context.Background(), "registry.example.com/missing:latest")
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Nil(t, got)
+}
+
+// TestLocalIndexManifestAnnotations_FoundNoAnnotations verifies that an image
+// present locally but with no annotations on its descriptor still signals ok=true
+// (so callers do not fall back to remote), returning an empty (non-nil) map.
+func TestLocalIndexManifestAnnotations_FoundNoAnnotations(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := localIndexManifestAnnotations(context.Background(), "registry.example.com/no-ann:latest")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, got)
+	require.Empty(t, got)
+}
+
+// TestLocalPlatformManifestAnnotations_PerPlatform verifies that for a
+// multi-platform image, the per-platform helper returns the annotations
+// belonging to the requested platform's manifest entry — NOT the index-level
+// annotations and NOT a different platform's annotations. This guards the
+// regression where GetPlatformManifestAnnotations mistakenly delegated to the
+// index helper, returning wrong/missing annotations for multi-arch images.
+func TestLocalPlatformManifestAnnotations_PerPlatform(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{
+				MediaType:   ocispec.MediaTypeImageIndex,
+				Annotations: map[string]string{"index-only": "yes"},
+			},
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType:   ocispec.MediaTypeImageManifest,
+						Annotations: map[string]string{"arch": "amd64", "version": "1.0.0"},
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"},
+					},
+				},
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType:   ocispec.MediaTypeImageManifest,
+						Annotations: map[string]string{"arch": "arm64", "version": "1.0.0"},
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "arm64"},
+					},
+				},
+				{
+					Kind:       mobyimage.ManifestKindAttestation,
+					Descriptor: ocispec.Descriptor{MediaType: "application/vnd.in-toto+json"},
+				},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	t.Run("amd64 returns amd64 manifest annotations", func(t *testing.T) {
+		got, ok, err := localPlatformManifestAnnotations(
+			context.Background(),
+			"registry.example.com/multiarch:latest",
+			&ocispec.Platform{OS: "linux", Architecture: "amd64"},
+		)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, "amd64", got["arch"])
+		require.NotContains(t, got, "index-only", "must not leak index-level annotations")
+	})
+
+	t.Run("arm64 returns arm64 manifest annotations", func(t *testing.T) {
+		got, ok, err := localPlatformManifestAnnotations(
+			context.Background(),
+			"registry.example.com/multiarch:latest",
+			&ocispec.Platform{OS: "linux", Architecture: "arm64"},
+		)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, "arm64", got["arch"])
+	})
+}
+
+// TestLocalPlatformManifestAnnotations_SinglePlatformFallback verifies the
+// helper falls back to the top-level descriptor's annotations when the image
+// is single-platform (no Manifests entries).
+func TestLocalPlatformManifestAnnotations_SinglePlatformFallback(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{
+				MediaType:   ocispec.MediaTypeImageManifest,
+				Annotations: map[string]string{"only": "one"},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := localPlatformManifestAnnotations(
+		context.Background(),
+		"registry.example.com/single:latest",
+		&ocispec.Platform{OS: "linux", Architecture: "amd64"},
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "one", got["only"])
+}
+
+// TestLocalImagePlatforms_MultiPlatform verifies all image-kind manifest
+// entries are returned, while attestation entries and entries with empty
+// OS/Architecture (e.g. unknown/unknown attestation placeholders) are skipped.
+func TestLocalImagePlatforms_MultiPlatform(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					ImageData: &mobyimage.ImageProperties{Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"}},
+				},
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					ImageData: &mobyimage.ImageProperties{Platform: ocispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}},
+				},
+				{
+					Kind: mobyimage.ManifestKindAttestation,
+				},
+				{
+					// Unknown attestation placeholder used by buildx provenance.
+					Kind:      mobyimage.ManifestKindImage,
+					ImageData: &mobyimage.ImageProperties{Platform: ocispec.Platform{OS: "unknown", Architecture: "unknown"}},
+				},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := LocalImagePlatforms(context.Background(), "registry.example.com/multiarch:latest")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, got, 2)
+	require.Equal(t, "amd64", got[0].Architecture)
+	require.Equal(t, "arm64", got[1].Architecture)
+}
+
+// TestLocalImagePlatforms_SinglePlatform verifies the helper falls back to the
+// top-level inspect fields (Architecture/Os/Variant) when no per-platform
+// Manifests entries are present (classic Docker daemon image store).
+func TestLocalImagePlatforms_SinglePlatform(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Os:           "linux",
+			Architecture: "amd64",
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := LocalImagePlatforms(context.Background(), "registry.example.com/single:latest")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, got, 1)
+	require.Equal(t, "amd64", got[0].Architecture)
+	require.Equal(t, "linux", got[0].OS)
+}
+
+// TestLocalImagePlatforms_NotFound verifies the helper returns ok=false when
+// the image is not present in the daemon, so callers can fall back to remote.
+func TestLocalImagePlatforms_NotFound(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{}, errors.New("Error response from daemon: No such image"),
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := LocalImagePlatforms(context.Background(), "registry.example.com/missing:latest")
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Nil(t, got)
+}
+
+// TestGetPlatformManifestAnnotations_LocalPerPlatform is the regression test
+// for the bug where GetPlatformManifestAnnotations delegated to
+// localIndexManifestAnnotations instead of the per-platform helper. With the
+// bug present, the returned annotations would be index-level (or empty) and
+// ignore the targetPlatform argument. With the fix, the returned annotations
+// belong to the requested platform's manifest entry.
+func TestGetPlatformManifestAnnotations_LocalPerPlatform(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{
+				MediaType:   ocispec.MediaTypeImageIndex,
+				Annotations: map[string]string{"scope": "index"},
+			},
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType:   ocispec.MediaTypeImageManifest,
+						Annotations: map[string]string{"scope": "amd64-manifest"},
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"},
+					},
+				},
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType:   ocispec.MediaTypeImageManifest,
+						Annotations: map[string]string{"scope": "arm64-manifest"},
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "arm64"},
+					},
+				},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	// remoteGet should never be called on the local-first happy path. Set up
+	// a sentinel so any unintended fallthrough fails loudly.
+	origRemoteGet := remoteGet
+	defer func() { remoteGet = origRemoteGet }()
+	remoteGet = func(_ name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		t.Fatalf("remoteGet must not be called when the image is found in the local daemon")
+		return nil, nil
+	}
+
+	got, err := GetPlatformManifestAnnotations(
+		context.Background(),
+		"registry.example.com/multiarch:latest",
+		&ocispec.Platform{OS: "linux", Architecture: "amd64"},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "amd64-manifest", got["scope"], "must return the amd64 platform's manifest annotations, not the index-level annotations")
+}
+
+// TestLocalPlatformDescriptor_PerPlatform verifies the helper returns the
+// matching platform's descriptor when the daemon exposes per-platform manifest
+// entries, and contains the original digest/size/mediaType from that entry.
+func TestLocalPlatformDescriptor_PerPlatform(t *testing.T) {
+	amdDigest := digest.Digest("sha256:" + strings.Repeat("a", 64))
+	armDigest := digest.Digest("sha256:" + strings.Repeat("b", 64))
+
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType: ocispec.MediaTypeImageManifest,
+						Digest:    amdDigest,
+						Size:      1234,
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"},
+					},
+				},
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType: ocispec.MediaTypeImageManifest,
+						Digest:    armDigest,
+						Size:      4321,
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "arm64"},
+					},
+				},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := LocalPlatformDescriptor(
+		context.Background(),
+		"registry.example.com/multiarch:latest",
+		&ocispec.Platform{OS: "linux", Architecture: "arm64"},
+	)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, got)
+	require.Equal(t, armDigest, got.Digest, "must return the arm64 descriptor, not amd64")
+	require.Equal(t, int64(4321), got.Size)
+}
+
+// TestLocalPlatformDescriptor_LocalButLegacySnapshotter verifies the helper's
+// contract for the legacy-snapshotter case: image is present locally but the
+// daemon does not surface per-platform manifest summaries. The helper returns
+// (nil, true, nil) so the caller can decide how to handle the absence — it
+// must NOT silently fall back to a remote registry, which would defeat the
+// air-gapped use case.
+func TestLocalPlatformDescriptor_LocalButLegacySnapshotter(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			// No Manifests entries: classic Docker daemon image store.
+			Os:           "linux",
+			Architecture: "amd64",
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := LocalPlatformDescriptor(
+		context.Background(),
+		"registry.example.com/legacy:latest",
+		&ocispec.Platform{OS: "linux", Architecture: "amd64"},
+	)
+	require.NoError(t, err)
+	require.True(t, ok, "image is present locally, ok must be true to prevent remote fallback")
+	require.Nil(t, got, "no per-platform descriptor is available in legacy snapshotter mode")
+}
+
+// TestLocalPlatformDescriptor_NotFound verifies the helper returns ok=false
+// when the image is not in the local daemon, so callers can fall back to a
+// remote registry lookup.
+func TestLocalPlatformDescriptor_NotFound(t *testing.T) {
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{}, errors.New("Error: No such image"),
+	)
+	defer stubNewClient(t, md)()
+
+	got, ok, err := LocalPlatformDescriptor(
+		context.Background(),
+		"registry.example.com/missing:latest",
+		&ocispec.Platform{OS: "linux", Architecture: "amd64"},
+	)
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Nil(t, got)
 }

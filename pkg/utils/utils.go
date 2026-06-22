@@ -17,6 +17,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client/llb"
+	mobyimage "github.com/moby/moby/api/types/image"
+	dockerClient "github.com/moby/moby/client"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
@@ -94,20 +96,22 @@ func DeduplicateStringSlice(input []string) []string {
 }
 
 func EnsurePath(path string, perm fs.FileMode) (bool, error) {
-	createdPath := false
 	st, err := os.Stat(path)
-	if err != nil && os.IsNotExist(err) {
-		err = os.MkdirAll(path, perm)
-		createdPath = (err == nil)
-	} else {
-		if !st.IsDir() {
-			return false, fs.ErrExist
+	if err != nil {
+		if os.IsNotExist(err) {
+			err = os.MkdirAll(path, perm)
+			return err == nil, err
 		}
-		if st.Mode().Perm() != perm {
-			return false, fs.ErrPermission
-		}
+		return false, err
 	}
-	return createdPath, err
+
+	if !st.IsDir() {
+		return false, fs.ErrExist
+	}
+	if st.Mode().Perm() != perm {
+		return false, fs.ErrPermission
+	}
+	return false, nil
 }
 
 func IsNonEmptyFile(dir, file string) bool {
@@ -314,14 +318,37 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 
 // GetIndexManifestAnnotations retrieves annotations from an image index manifest.
 // This is specifically for multi-platform images to get the index-level annotations.
-func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
+// For single-platform manifests, it returns the annotations from the manifest body
+// (NOT desc.Annotations, which is empty for top-level lookups since there is no
+// parent index entry to inherit annotations from).
+//
+// The local image store is checked first via the Docker daemon; if the image is
+// present locally, its index-level annotations are returned from there and the
+// remote registry is not contacted. Only when the image is not available locally
+// does this function fall back to a remote registry lookup.
+func GetIndexManifestAnnotations(ctx context.Context, imageRef string) (map[string]string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
 	}
 
-	// First check if this is an index
-	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	// Prefer the local image store: if the image is present locally, read its
+	// index-level annotations from there and skip the remote registry entirely.
+	local, ok, err := localIndexManifestAnnotations(ctx, imageRef)
+	if err != nil {
+		log.Debugf("local index annotation lookup for '%s' returned error: %v", imageRef, err)
+	}
+	if ok {
+		log.Debugf("Using local index annotations for '%s'", imageRef)
+		return local, nil
+	}
+
+	// Fall back to the remote registry
+	desc, err := remoteGet(
+		ref,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descriptor for '%s': %w", imageRef, err)
 	}
@@ -329,8 +356,11 @@ func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string
 	// Check if this is an index manifest
 	if desc.MediaType != types.OCIImageIndex && desc.MediaType != types.DockerManifestList {
 		log.Debugf("Image %s is not a multi-platform image (media type: %s)", imageRef, desc.MediaType)
-		// For single platform images, return the descriptor annotations
-		return desc.Annotations, nil
+		// For single-platform images, parse the manifest body to extract its
+		// annotations. desc.Annotations is empty here because the descriptor
+		// returned by remote.Get for a top-level reference has no parent index
+		// entry to inherit annotations from.
+		return parseManifestBodyAnnotations(desc.Manifest)
 	}
 
 	// Fetch the actual index
@@ -349,15 +379,38 @@ func GetIndexManifestAnnotations(_ context.Context, imageRef string) (map[string
 }
 
 // GetPlatformManifestAnnotations retrieves manifest-level annotations for a specific platform
-// from an image index manifest.
-func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPlatform *ocispec.Platform) (map[string]string, error) {
+// from an image index manifest. For single-platform images (no index), it parses the manifest
+// body to extract its annotations rather than returning nil — annotations on a single-platform
+// manifest live in the manifest body, not in the descriptor returned by a top-level fetch.
+//
+// The local image store is checked first via the Docker daemon; if the image is
+// present locally, the matching platform's manifest-level annotations are returned
+// from there and the remote registry is not contacted. Only when the image is not
+// available locally does this function fall back to a remote registry lookup.
+func GetPlatformManifestAnnotations(ctx context.Context, imageRef string, targetPlatform *ocispec.Platform) (map[string]string, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
 	}
 
-	// First check if this is an index
-	desc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	// Prefer the local image store: if the image is present locally, extract
+	// the platform-specific manifest-level annotations from there and skip the
+	// remote registry entirely.
+	local, ok, err := localPlatformManifestAnnotations(ctx, imageRef, targetPlatform)
+	if err != nil {
+		log.Debugf("local platform annotation lookup for '%s' returned error: %v", imageRef, err)
+	}
+	if ok {
+		log.Debugf("Using local manifest annotations for '%s'", imageRef)
+		return local, nil
+	}
+
+	// Fall back to the remote registry
+	desc, err := remoteGet(
+		ref,
+		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		remote.WithContext(ctx),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get descriptor for '%s': %w", imageRef, err)
 	}
@@ -365,8 +418,11 @@ func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPl
 	// Check if this is an index manifest
 	if desc.MediaType != types.OCIImageIndex && desc.MediaType != types.DockerManifestList {
 		log.Debugf("Image %s is not a multi-platform image (media type: %s)", imageRef, desc.MediaType)
-		// For single platform images, return empty annotations
-		return nil, nil
+		// For single-platform images, parse the manifest body to extract its
+		// annotations. desc.Annotations is empty here because the descriptor
+		// returned by remote.Get for a top-level reference has no parent index
+		// entry to inherit annotations from.
+		return parseManifestBodyAnnotations(desc.Manifest)
 	}
 
 	// Fetch the actual index
@@ -410,30 +466,187 @@ func GetPlatformManifestAnnotations(_ context.Context, imageRef string, targetPl
 	return nil, fmt.Errorf("platform %s/%s/%s not found in image index", targetPlatform.OS, targetPlatform.Architecture, targetPlatform.Variant)
 }
 
-// GetSinglePlatformManifestAnnotations retrieves annotations from a single-platform manifest.
-// This is used when we need to get annotations from a pushed single-platform image.
-func GetSinglePlatformManifestAnnotations(_ context.Context, imageRef string) (map[string]string, error) {
-	ref, err := name.ParseReference(imageRef)
+// parseManifestBodyAnnotations extracts the top-level "annotations" field from a raw
+// OCI/Docker image manifest body. The remote registry returns the manifest body in
+// remote.Descriptor.Manifest; this avoids a second registry round-trip vs calling
+// desc.Image() then img.Manifest().
+func parseManifestBodyAnnotations(manifestBody []byte) (map[string]string, error) {
+	if len(manifestBody) == 0 {
+		return map[string]string{}, nil
+	}
+	var m struct {
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := json.Unmarshal(manifestBody, &m); err != nil {
+		return nil, fmt.Errorf("failed to parse manifest body annotations: %w", err)
+	}
+	if m.Annotations == nil {
+		return map[string]string{}, nil
+	}
+	return m.Annotations, nil
+}
+
+// inspectLocalImage runs ImageInspect with ImageInspectWithManifests(true) to
+// get the richest possible response (including per-platform manifest entries
+// when the daemon uses a multi-platform image store). If the daemon rejects
+// that option (e.g. Docker API < 1.48), it transparently retries with a plain
+// inspect so callers can still detect that the image is present locally.
+func inspectLocalImage(ctx context.Context, imageRef string) (*mobyimage.InspectResponse, error) {
+	cli, err := newClient()
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
+		return nil, err
 	}
+	defer cli.Close()
 
-	// Get the image
-	img, err := remote.Image(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	inspect, err := cli.ImageInspect(ctx, imageRef, dockerClient.ImageInspectWithManifests(true))
+	if err == nil {
+		return &inspect.InspectResponse, nil
+	}
+	log.Debugf("ImageInspect with manifests failed for %s (%v); retrying without manifests option", imageRef, err)
+
+	plain, err := cli.ImageInspect(ctx, imageRef)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get image '%s': %w", imageRef, err)
+		return nil, err
 	}
+	return &plain.InspectResponse, nil
+}
 
-	// Get the manifest
-	manifest, err := img.Manifest()
+// localPlatformManifestAnnotations attempts to read the manifest-level annotations
+// for a specific platform from the local Docker image store. Returns (annotations,
+// true, nil) when the image was found locally (even if no annotations are present,
+// in which case an empty map is returned). The second return value indicates that
+// the local lookup succeeded; callers should not fall back to a remote registry in
+// that case. Returns (nil, false, err) when the image is not available locally via
+// the Docker daemon.
+func localPlatformManifestAnnotations(ctx context.Context, imageRef string, targetPlatform *ocispec.Platform) (map[string]string, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get manifest for '%s': %w", imageRef, err)
+		return nil, false, err
 	}
 
-	// Return the annotations from the manifest
-	if manifest.Annotations != nil {
-		return manifest.Annotations, nil
+	// Multi-platform image: search the per-platform manifest list.
+	if len(inspect.Manifests) > 0 && targetPlatform != nil {
+		matcher := platforms.OnlyStrict(*targetPlatform)
+		for i := range inspect.Manifests {
+			m := &inspect.Manifests[i]
+			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
+				continue
+			}
+			if !m.Available {
+				continue
+			}
+			if matcher.Match(m.ImageData.Platform) {
+				if m.Descriptor.Annotations != nil {
+					return m.Descriptor.Annotations, true, nil
+				}
+				return map[string]string{}, true, nil
+			}
+		}
 	}
 
-	return map[string]string{}, nil
+	// Single-platform image (or daemon without multi-platform store): fall back
+	// to the top-level descriptor when available.
+	if inspect.Descriptor != nil && inspect.Descriptor.Annotations != nil {
+		return inspect.Descriptor.Annotations, true, nil
+	}
+	return map[string]string{}, true, nil
+}
+
+// localIndexManifestAnnotations attempts to read the index-level annotations
+// for a multi-platform image from the local Docker image store. Returns
+// (annotations, true, nil) when the image was found locally. The second return
+// value indicates that the local lookup succeeded; callers should not fall back
+// to a remote registry in that case.
+func localIndexManifestAnnotations(ctx context.Context, imageRef string) (map[string]string, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if inspect.Descriptor != nil && inspect.Descriptor.Annotations != nil {
+		return inspect.Descriptor.Annotations, true, nil
+	}
+	return map[string]string{}, true, nil
+}
+
+// LocalImagePlatforms returns the list of platforms present in the local Docker
+// image store for the given image reference. The second return value indicates
+// whether the image was found locally; callers should not fall back to a remote
+// registry when ok is true. For single-platform local images, a one-element
+// slice is returned. For multi-platform images (only available when the daemon
+// uses a multi-platform image store), one entry per image manifest is returned.
+func LocalImagePlatforms(ctx context.Context, imageRef string) ([]ocispec.Platform, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Multi-platform image store: collect each image manifest's platform.
+	if len(inspect.Manifests) > 0 {
+		var out []ocispec.Platform
+		for i := range inspect.Manifests {
+			m := &inspect.Manifests[i]
+			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
+				continue
+			}
+			if !m.Available {
+				continue
+			}
+			p := m.ImageData.Platform
+			if p.OS == "" || p.OS == "unknown" || p.Architecture == "" || p.Architecture == "unknown" {
+				continue
+			}
+			out = append(out, p)
+		}
+		if len(out) > 0 {
+			return out, true, nil
+		}
+	}
+
+	// Single-platform image: fall back to the top-level inspect fields.
+	if inspect.Architecture != "" && inspect.Os != "" {
+		return []ocispec.Platform{{
+			OS:           inspect.Os,
+			Architecture: inspect.Architecture,
+			Variant:      inspect.Variant,
+			OSVersion:    inspect.OsVersion,
+		}}, true, nil
+	}
+	return nil, false, nil
+}
+
+// LocalPlatformDescriptor returns the OCI descriptor for a specific platform
+// from a multi-platform image present in the local Docker image store. The
+// second return value indicates whether the image was found locally; callers
+// should not fall back to a remote registry when ok is true.
+//
+// When ok is true but the returned descriptor is nil, the image is present
+// locally but does not contain a matching platform (either because the daemon
+// does not expose per-platform manifest entries — e.g. legacy snapshotter —
+// or because the requested platform is not represented in the image).
+func LocalPlatformDescriptor(ctx context.Context, imageRef string, targetPlatform *ocispec.Platform) (*ocispec.Descriptor, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(inspect.Manifests) > 0 && targetPlatform != nil {
+		matcher := platforms.OnlyStrict(*targetPlatform)
+		for i := range inspect.Manifests {
+			m := &inspect.Manifests[i]
+			if m.Kind != mobyimage.ManifestKindImage || m.ImageData == nil {
+				continue
+			}
+			if !m.Available {
+				continue
+			}
+			if matcher.Match(m.ImageData.Platform) {
+				d := m.Descriptor
+				return &d, true, nil
+			}
+		}
+	}
+
+	// Image is local but per-platform manifest summaries aren't available.
+	return nil, true, nil
 }

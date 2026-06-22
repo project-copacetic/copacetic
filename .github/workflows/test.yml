@@ -35,13 +35,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Build copa
         shell: bash
@@ -65,20 +65,20 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run all gateway integration tests
         shell: bash
         run: |
@@ -86,7 +86,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 25m
       - name: Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -103,20 +103,20 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run Alpine tests
         shell: bash
         run: |
@@ -124,7 +124,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 10m -run "Alpine"
       - name: Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -141,20 +141,20 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run Debian tests
         shell: bash
         run: |
@@ -162,7 +162,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 10m -run "Debian|Distroless"
       - name: Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -179,20 +179,20 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run RPM-based distro tests
         shell: bash
         run: |
@@ -200,7 +200,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 15m -run "Mariner|AzureLinux|AmazonLinux|Rocky|Alma|Redhat|Symlink"
       - name: Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -217,20 +217,20 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run cross-architecture tests
         shell: bash
         run: |
@@ -238,7 +238,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 15m -run "ARM64|MultiPlatform"
       - name: Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
@@ -255,20 +255,20 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run layer and config tests
         shell: bash
         run: |
@@ -276,7 +276,7 @@ jobs:
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 10m -run "LayerCount|Config"
       - name: Test Summary
-        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86 # v2
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"

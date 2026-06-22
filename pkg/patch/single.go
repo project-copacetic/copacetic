@@ -78,6 +78,7 @@ func patchSingleArchImage(
 	pkgTypes := opts.PkgTypes
 	libraryPatchLevel := opts.LibraryPatchLevel
 	toolchainPatchLevel := opts.ToolchainPatchLevel
+	goVCSURL := opts.GoVCSURL
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -147,6 +148,7 @@ func patchSingleArchImage(
 			// only when user explicitly requested some package types (default is OS) but none are patchable.
 			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
 				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+				res.Summary = updates.CombinedSummary()
 				return res, types.ErrNoUpdatesFound
 			}
 		}
@@ -168,13 +170,31 @@ func patchSingleArchImage(
 	finalLoaderType := determineLoaderType(loader, bkOpts.Addr)
 
 	// Check media type for OCI vs Docker export
-	shouldExportOCI := shouldExportAsOCI(ref, finalLoaderType)
+	shouldExportOCI := shouldExportAsOCI(ctx, ref, finalLoaderType)
 
 	// Create pipes for Docker export
 	pipeR, pipeW := io.Pipe()
 
+	// If the patched image is published or loaded using the same tag as the source
+	// image, that mutable tag may later resolve to the newly published manifest
+	// instead of the original one. Fetching the annotations here preserves the
+	// pre-patch manifest-level values before any same-tag push/load can change what
+	// a lookup by tag returns. The captured map is also forwarded into the BuildKit
+	// exporter via createBuildConfig so single-platform pushes preserve the
+	// annotations on the pushed manifest itself, not just on the in-memory
+	// PatchResult descriptor used by the multi-arch manifest list assembly.
+	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+		OS:           targetPlatform.OS,
+		Architecture: targetPlatform.Architecture,
+		Variant:      targetPlatform.Variant,
+	})
+	if err != nil {
+		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
+		originalAnnotations = map[string]string{}
+	}
+
 	// Create build configuration
-	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, pipeW)
+	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, pipeW, originalAnnotations, patchedTag)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +229,7 @@ func patchSingleArchImage(
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL)
 		if err != nil {
 			return err
 		}
@@ -248,13 +268,23 @@ func patchSingleArchImage(
 	if err := eg.Wait(); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
 			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			if updates != nil {
+				res.Summary = updates.CombinedSummary()
+			}
 			return res, types.ErrNoUpdatesFound
 		}
 		return nil, err
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	return createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, image, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	if err != nil {
+		return nil, err
+	}
+	if updates != nil {
+		result.Summary = updates.CombinedSummary()
+	}
+	return result, nil
 }
 
 // validatePlatformEmulation checks if emulation is available for cross-platform builds.
@@ -342,8 +372,8 @@ func determineLoaderType(loader, bkAddr string) string {
 }
 
 // shouldExportAsOCI determines if the image should be exported as OCI format.
-func shouldExportAsOCI(ref, loaderType string) bool {
-	mt, err := utils.GetMediaType(ref, loaderType)
+func shouldExportAsOCI(ctx context.Context, ref, loaderType string) bool {
+	mt, err := utils.GetMediaTypeWithContext(ctx, ref, loaderType)
 	shouldExportOCI := err == nil && strings.Contains(mt, "vnd.oci.image")
 
 	switch {
@@ -387,7 +417,7 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, image, loaderType string, patchResult *Result,
+	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -408,32 +438,25 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		log.Debugf("Got image descriptor for %s", patchedImageName)
 	}
 
-	// Add original manifest annotations if we have a patched descriptor
-	if patchedDesc != nil {
-		originalAnnotations, err := utils.GetPlatformManifestAnnotations(descriptorCtx, image, &ispec.Platform{
-			OS:           targetPlatform.OS,
-			Architecture: targetPlatform.Architecture,
-			Variant:      targetPlatform.Variant,
-		})
-		if err != nil {
-			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", targetPlatform.Platform, err)
-		} else if len(originalAnnotations) > 0 {
-			// Create augmented descriptor with original annotations
-			augmentedDesc := *patchedDesc
-			if augmentedDesc.Annotations == nil {
-				augmentedDesc.Annotations = make(map[string]string)
-			}
-
-			// Copy original annotations
-			maps.Copy(augmentedDesc.Annotations, originalAnnotations)
-
-			// Update creation timestamp and add Copa annotations
-			augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
-			augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
-
-			patchedDesc = &augmentedDesc
-			log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+	// Add original manifest annotations if we have a patched descriptor.
+	// originalAnnotations were captured before patching to avoid a mutable-tag
+	// race where the same tag is reused for the patched image.
+	if patchedDesc != nil && len(originalAnnotations) > 0 {
+		// Create augmented descriptor with original annotations
+		augmentedDesc := *patchedDesc
+		if augmentedDesc.Annotations == nil {
+			augmentedDesc.Annotations = make(map[string]string)
 		}
+
+		// Copy original annotations
+		maps.Copy(augmentedDesc.Annotations, originalAnnotations)
+
+		// Update creation timestamp and add Copa annotations
+		augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
+		augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
+
+		patchedDesc = &augmentedDesc
+		log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
 	}
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
@@ -471,6 +494,7 @@ func executePatchBuild(
 	buildChannel chan *client.SolveStatus,
 	exitOnEOL bool,
 	toolchainPatchLevel string,
+	goVCSURL string,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -510,6 +534,7 @@ func executePatchBuild(
 			ReturnState:         false, // Always solve for Docker export
 			ExitOnEOL:           exitOnEOL,
 			ToolchainPatchLevel: toolchainPatchLevel,
+			GoVCSURL:            goVCSURL,
 		}
 
 		// Execute the core patching logic

@@ -16,19 +16,21 @@ jobs:
       packages: write
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d # v2.3.1
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
         with:
           egress-policy: audit
 
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
 
       - name: Set Version Variables
         id: vars
+        env:
+          RAW_GITHUB_REF: ${{ github.ref }}
         run: |
           # Get the version without the 'refs/tags/v' prefix, e.g., "1.2.3"
-          VERSION_TAG_ONLY=$(echo "${{ github.ref }}" | sed 's,refs/tags/v,,')
+          VERSION_TAG_ONLY="${RAW_GITHUB_REF#refs/tags/v}"
           
           # Reconstruct the full pushed tag, e.g., "v1.2.3"
           PUSHED_TAG="v${VERSION_TAG_ONLY}"
@@ -50,9 +52,11 @@ jobs:
           PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
 
       - name: Create release branch
+        env:
+          VERSION_TAG_ONLY: ${{ steps.vars.outputs.version_tag }}
         run: |
-          # Extract version from tag (e.g., v0.11.0 -> 0.11 or v0.12.0-rc.1 -> 0.12)
-          VERSION=$(echo "${{ steps.vars.outputs.version_tag }}" | cut -d'.' -f1,2)
+          # Extract version from tag without the leading 'v' (e.g., 0.11.0 -> 0.11 or 0.12.0-rc.1 -> 0.12)
+          VERSION=$(echo "${VERSION_TAG_ONLY}" | cut -d'.' -f1,2)
           BRANCH_NAME="release-${VERSION}"
           
           # Check if release branch already exists
@@ -68,13 +72,13 @@ jobs:
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
           check-latest: true
 
       - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
 
       - name: Run goreleaser
-        uses: goreleaser/goreleaser-action@ec59f474b9834571250b370d4735c50f8e2d1e29 # v7.0.0
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           version: latest
           args: release --clean --config .goreleaser.yml
@@ -82,68 +86,89 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Checkout copa-action repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ github.repository_owner }}/copa-action
           path: copa-action
           ref: main
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Login to ghcr
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa-action image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          tag="${{ steps.vars.outputs.version_tag }}"
-          image_owner="${{ github.repository_owner }}"
-          docker buildx build --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
+          docker buildx build --build-arg copa_version="${tag}" -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
 
       - name: Checkout copa-extension repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           repository: ${{ github.repository_owner }}/copa-extension
           path: copa-extension
           ref: main
 
       - name: Set up Docker for copa-extension
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Login to ghcr for copa-extension
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa-extension image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          tag="${{ steps.vars.outputs.version_tag }}"
-          image_owner="${{ github.repository_owner }}"
-          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version=${tag} -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
+          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version="${tag}" -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
 
       - name: Set up Docker for copa frontend
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Login to ghcr for copa frontend
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push copa frontend image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
         run: |
-          tag="${{ steps.vars.outputs.version_tag }}"
-          image_owner="${{ github.repository_owner }}"
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
+          # Derive Go toolchain version from go.mod so the frontend image
+          # never drifts from the module's required Go version.
+          go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          echo "Building copacetic-frontend with Go ${go_version}"
+          # Only tag :latest on final releases, never on -rc.* tags.
+          extra_tags=()
+          if [[ "${tag}" != *-* ]]; then
+            extra_tags+=(-t "ghcr.io/${image_owner}/copacetic-frontend:latest")
+          else
+            echo "Skipping :latest tag for pre-release ${tag}"
+          fi
           docker buildx build --push \
             --platform linux/amd64,linux/arm64 \
+            --build-arg "GO_VERSION=${go_version}" \
             -f frontend.Dockerfile \
             -t "ghcr.io/${image_owner}/copacetic-frontend:v${tag}" \
-            -t "ghcr.io/${image_owner}/copacetic-frontend:latest" \
+            "${extra_tags[@]}" \
             .

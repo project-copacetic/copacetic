@@ -29,6 +29,21 @@ func NewDetector() *Detector {
 	return &Detector{}
 }
 
+// stripOuterQuotes removes balanced surrounding double or single quotes from a string.
+// `go version -m` reports build setting values like ldflags with embedded outer quotes
+// (e.g. `"-s -w -X main.version=1.0"`), but they should be passed to `go build` without
+// literal quotes, otherwise go rejects the flag.
+func stripOuterQuotes(s string) string {
+	if len(s) < 2 {
+		return s
+	}
+	first, last := s[0], s[len(s)-1]
+	if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // DetectGoBinaries detects all Go binaries in an image using a single BuildKit operation.
 // It mounts the target image and runs `go version -m` on all executable files.
 func (d *Detector) DetectGoBinaries(
@@ -44,7 +59,7 @@ func (d *Detector) DetectGoBinaries(
 		return nil, fmt.Errorf("target state is nil")
 	}
 
-	log.Info("Detecting Go binaries in image using go version -m")
+	log.Debug("Detecting Go binaries in image using go version -m")
 	if platform != nil {
 		log.Debugf("Target platform: %s/%s", platform.OS, platform.Architecture)
 	}
@@ -155,7 +170,7 @@ touch "$OUTPUT"
 	if len(binaries) == 0 {
 		log.Debug("No Go binaries detected in the image")
 	} else {
-		log.Infof("Detected %d Go binaries in image", len(binaries))
+		log.Debugf("Detected %d Go binaries in image", len(binaries))
 		for _, bi := range binaries {
 			log.Debugf("  Binary: %s (Go %s, module: %s)", bi.Path, bi.GoVersion, bi.ModulePath)
 		}
@@ -283,6 +298,12 @@ func (d *Detector) parseGoVersionOutput(output string) []*BinaryInfo {
 
 // ConvertBinaryInfoToBuildInfo converts detected binary info to BuildInfo for rebuilding.
 func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
+	return d.ConvertBinaryInfoToBuildInfoWithLabels(bi, nil)
+}
+
+// ConvertBinaryInfoToBuildInfoWithLabels converts detected binary info to BuildInfo,
+// using OCI image labels as fallback when VCS info is missing (e.g. binaries built with -trimpath).
+func (d *Detector) ConvertBinaryInfoToBuildInfoWithLabels(bi *BinaryInfo, imageLabels map[string]string) *BuildInfo {
 	if bi == nil {
 		return nil
 	}
@@ -326,9 +347,22 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 		buildInfo.BuildArgs["GOARCH"] = goarch
 	}
 
-	// Extract ldflags if present
+	// Extract ldflags if present.
+	// `go version -m` reports ldflags with literal outer quotes (e.g. `"-s -w -X ..."`).
+	// Strip them so the value is passed to `go build` as a plain flag value, otherwise
+	// go rejects the flag with "parameter may not start with quote character".
 	if ldflags, ok := bi.BuildSettings["-ldflags"]; ok {
-		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-ldflags="+ldflags)
+		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-ldflags="+stripOuterQuotes(ldflags))
+	}
+	// Preserve -trimpath if the original binary was built with it
+	if trimpath, ok := bi.BuildSettings["-trimpath"]; ok && trimpath == "true" {
+		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-trimpath")
+	}
+
+	// If the original binary had no VCS info, add -buildvcs=false to prevent
+	// Go from embedding pseudo-versions from the cloned git repo
+	if _, hasVCS := bi.VCS["vcs.revision"]; !hasVCS {
+		buildInfo.BuildFlags = append(buildInfo.BuildFlags, "-buildvcs=false")
 	}
 
 	// Extract VCS info for source identification
@@ -341,6 +375,22 @@ func (d *Detector) ConvertBinaryInfoToBuildInfo(bi *BinaryInfo) *BuildInfo {
 		repoURL, _ := deriveRepoFromModulePath(buildInfo.ModulePath)
 		if repoURL != "" {
 			buildInfo.BuildArgs["_sourceRepo"] = repoURL
+		}
+	}
+
+	// Fall back to OCI image labels when VCS info is missing (e.g. -trimpath builds).
+	if imageLabels != nil {
+		if buildInfo.BuildArgs["_sourceCommit"] == "" {
+			if rev, ok := imageLabels["org.opencontainers.image.revision"]; ok && rev != "" {
+				buildInfo.BuildArgs["_sourceCommit"] = rev
+				log.Infof("Using OCI label org.opencontainers.image.revision as source commit: %s", rev)
+			}
+		}
+		if buildInfo.BuildArgs["_sourceRepo"] == "" {
+			if src, ok := imageLabels["org.opencontainers.image.source"]; ok && src != "" {
+				buildInfo.BuildArgs["_sourceRepo"] = src
+				log.Infof("Using OCI label org.opencontainers.image.source as source repo: %s", src)
+			}
 		}
 	}
 

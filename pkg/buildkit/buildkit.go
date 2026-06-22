@@ -45,6 +45,8 @@ type Config struct {
 	Platform          *specs.Platform
 	ImageState        llb.State
 	PatchedImageState llb.State
+	// ImageLabels contains OCI labels from the image config (e.g. org.opencontainers.image.*).
+	ImageLabels map[string]string
 }
 
 type Opts struct {
@@ -131,7 +133,24 @@ func InitializeBuildkitConfig(
 
 	config.Client = c
 
+	// Extract OCI labels from image config for use by language managers
+	// (e.g. org.opencontainers.image.revision for Go binary source cloning).
+	config.ImageLabels = extractLabelsFromConfig(configData)
+
 	return &config, nil
+}
+
+// extractLabelsFromConfig parses OCI image config JSON and returns the labels map.
+func extractLabelsFromConfig(configData []byte) map[string]string {
+	var parsed struct {
+		Config struct {
+			Labels map[string]string `json:"Labels"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(configData, &parsed); err != nil {
+		return nil
+	}
+	return parsed.Config.Labels
 }
 
 func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatform, error) {
@@ -304,10 +323,47 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	// Try local daemon first, then fall back to remote
+	// Prefer the local image store: query the Docker daemon directly via
+	// ImageInspect, which surfaces the full per-platform manifest list when the
+	// daemon uses the multi-platform (containerd) image store. This lets us
+	// patch images that exist locally but not in any remote registry — both
+	// single-platform and multi-platform — without any registry access.
+	if locals, ok, lerr := utils.LocalImagePlatforms(context.Background(), manifestRef); ok {
+		// Image was found locally; per LocalImagePlatforms' contract we must
+		// not fall back to a remote registry, even if no usable platforms
+		// were extracted.
+		if len(locals) == 0 {
+			return nil, fmt.Errorf("image %q found in local daemon but no usable platforms could be discovered", manifestRef)
+		}
+		log.Debugf("Discovered %d platform(s) from local daemon for %s", len(locals), manifestRef)
+		for _, p := range locals {
+			patchPlatform := types.PatchPlatform{
+				Platform: specs.Platform{
+					OS:           p.OS,
+					Architecture: p.Architecture,
+					Variant:      p.Variant,
+					OSVersion:    p.OSVersion,
+					OSFeatures:   p.OSFeatures,
+				},
+				ReportFile:     "",
+				ShouldPreserve: false,
+			}
+			if patchPlatform.Architecture == arm64 && patchPlatform.Variant == "v8" {
+				patchPlatform.Variant = ""
+			}
+			platforms = append(platforms, patchPlatform)
+		}
+		return platforms, nil
+	} else if lerr != nil {
+		log.Debugf("Local platform discovery failed for %s: %v", manifestRef, lerr)
+	}
+
+	// Try local daemon manifest list (legacy path), then fall back to remote
 	desc, err := TryGetManifestFromLocal(ref)
 	if err != nil {
-		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		log.Debugf("Failed to get manifest list from local daemon: %v", err)
+
+		log.Debugf("Falling back to remote registry for %s", manifestRef)
 		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if err != nil {
 			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
@@ -641,6 +697,73 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 	return ref.ReadFile(ctx, gwclient.ReadRequest{
 		Filename: path,
 	})
+}
+
+// ReadFileErr distinguishes the cause of a file extraction failure so callers
+// can tell a missing file apart from a solve-time failure of the underlying
+// build graph (which may have included the path in its error text).
+type ReadFileErr struct {
+	// Err is the underlying buildkit error.
+	Err error
+	// SolveFailed is true when c.Solve(...) itself failed. When true the
+	// target file was never actually read, and the failure belongs to the
+	// graph that was supposed to produce it. Err may contain shell command
+	// text and must not be used for path-based heuristics.
+	SolveFailed bool
+	// ReadFailed is true when Solve succeeded but ref.ReadFile for the
+	// requested path failed. This is the only case where path-based
+	// classification (e.g. "missing marker file") is safe.
+	ReadFailed bool
+}
+
+func (e *ReadFileErr) Error() string {
+	if e == nil || e.Err == nil {
+		return ""
+	}
+	return e.Err.Error()
+}
+
+func (e *ReadFileErr) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// TryExtractFileFromState is like ExtractFileFromState but tags the returned
+// error with which phase failed. Prefer this when callers need to treat a
+// missing file differently from a real failure of the build graph.
+func TryExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, *ReadFileErr) {
+	platform := platforms.Normalize(platforms.DefaultSpec())
+	if platform.OS != linux {
+		platform.OS = linux
+	}
+
+	def, err := st.Marshal(ctx, llb.Platform(platform))
+	if err != nil {
+		return nil, &ReadFileErr{Err: err, SolveFailed: true}
+	}
+
+	resp, err := c.Solve(ctx, gwclient.SolveRequest{
+		Evaluate:   true,
+		Definition: def.ToPB(),
+	})
+	if err != nil {
+		return nil, &ReadFileErr{Err: err, SolveFailed: true}
+	}
+
+	ref, err := resp.SingleRef()
+	if err != nil {
+		return nil, &ReadFileErr{Err: err, SolveFailed: true}
+	}
+
+	data, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+		Filename: path,
+	})
+	if err != nil {
+		return nil, &ReadFileErr{Err: err, ReadFailed: true}
+	}
+	return data, nil
 }
 
 func Sh(cmd string) llb.RunOption {
