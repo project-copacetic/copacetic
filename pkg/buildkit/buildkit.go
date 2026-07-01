@@ -56,6 +56,13 @@ type Opts struct {
 	KeyPath    string
 }
 
+// OCILayoutExportOptions controls BuildKit OCI exporter behavior when writing
+// an OCI image layout.
+type OCILayoutExportOptions struct {
+	Compression      string
+	ForceCompression bool
+}
+
 const (
 	linux = "linux"
 	arm64 = "arm64"
@@ -908,6 +915,12 @@ func mapGoArch(arch, variant string) string {
 
 // CreateOCILayoutFromResults creates an OCI layout directory from patch results using BuildKit's OCI exporter.
 func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+	return CreateOCILayoutFromResultsWithOptions(outputDir, results, platforms, OCILayoutExportOptions{})
+}
+
+// CreateOCILayoutFromResultsWithOptions creates an OCI layout directory from patch results using
+// BuildKit's OCI exporter with the provided export options.
+func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform, exportOpts OCILayoutExportOptions) error {
 	log.Infof("Creating multi-platform OCI layout in directory: %s with %d platforms", outputDir, len(platforms))
 
 	// Create output directory
@@ -927,14 +940,14 @@ func CreateOCILayoutFromResults(outputDir string, results []types.PatchResult, p
 
 	if hasStates {
 		log.Info("Using BuildKit states directly for OCI export")
-		return createOCILayoutFromStates(outputDir, results, platforms)
+		return createOCILayoutFromStates(outputDir, results, platforms, exportOpts)
 	}
 
 	return fmt.Errorf("no BuildKit states available for OCI export, cannot proceed")
 }
 
 // createOCILayoutFromStates creates OCI layout directly from BuildKit states.
-func createOCILayoutFromStates(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform) error {
+func createOCILayoutFromStates(outputDir string, results []types.PatchResult, platforms []types.PatchPlatform, exportOpts OCILayoutExportOptions) error {
 	log.Info("Creating OCI layout from preserved BuildKit states and preserved platforms")
 
 	// Separate patched and preserved platforms
@@ -992,7 +1005,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	switch {
 	case hasPreservedPlatforms && hasPatchedPlatforms:
 		log.Infof("Creating mixed OCI layout with %d patched and %d preserved platforms", len(platformStates), len(preservedPlatforms))
-		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms)
+		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms, exportOpts)
 	case hasPatchedPlatforms:
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
@@ -1017,7 +1030,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 				log.Debug("Using buildx driver for OCI layout export")
 				defer c.Close()
 
-				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
 			}
 			c.Close()
 		}
@@ -1033,11 +1046,11 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	}
 	defer c.Close()
 
-	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs)
+	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
 }
 
 // solveMultiPlatformOCI uses BuildKit client to solve multi-platform states and export to OCI layout.
-func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform) error {
+func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) error {
 	if len(platformStates) == 0 {
 		return fmt.Errorf("no platform states provided")
 	}
@@ -1056,23 +1069,35 @@ func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir stri
 
 	if len(platformStates) == 1 {
 		// Single platform case - use output function to avoid diffcopy issues
-		return solveSinglePlatformOCI(ctx, c, outputDir, &platformStates[0], &platformSpecs[0])
+		return solveSinglePlatformOCI(ctx, c, outputDir, &platformStates[0], &platformSpecs[0], exportOpts)
 	}
 
 	// Multi-platform case - solve each platform and combine
-	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs)
+	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+}
+
+func ociExporterAttrs(exportOpts OCILayoutExportOptions) map[string]string {
+	attrs := map[string]string{
+		"oci-mediatypes": "true",
+		"buildinfo":      "false",
+	}
+	if exportOpts.Compression != "" {
+		attrs["compression"] = exportOpts.Compression
+	}
+	if exportOpts.ForceCompression {
+		attrs["force-compression"] = "true"
+	}
+
+	return attrs
 }
 
 // solveSinglePlatformOCI handles single platform OCI export using output function.
-func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir string, state *llb.State, platformSpec *specs.Platform) error {
+func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir string, state *llb.State, platformSpec *specs.Platform, exportOpts OCILayoutExportOptions) error {
 	// Create solve options with output function to avoid diffcopy issues
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{{
-			Type: client.ExporterOCI,
-			Attrs: map[string]string{
-				"oci-mediatypes": "true",
-				"buildinfo":      "false",
-			},
+			Type:  client.ExporterOCI,
+			Attrs: ociExporterAttrs(exportOpts),
 			Output: func(_ map[string]string) (io.WriteCloser, error) {
 				tarPath := filepath.Join(outputDir, "image.tar")
 				return os.Create(tarPath)
@@ -1155,7 +1180,7 @@ func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform) error
 }
 
 // solveAndCombineAllPlatforms solves each platform and combines them into one OCI layout.
-func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform) error {
+func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) error {
 	// Create temporary directory for platform tars
 	tempDir, err := os.MkdirTemp("", "copa-platforms-*")
 	if err != nil {
@@ -1173,11 +1198,8 @@ func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDi
 		// Create solve options with output function
 		platformSolveOpt := client.SolveOpt{
 			Exports: []client.ExportEntry{{
-				Type: client.ExporterOCI,
-				Attrs: map[string]string{
-					"oci-mediatypes": "true",
-					"buildinfo":      "false",
-				},
+				Type:  client.ExporterOCI,
+				Attrs: ociExporterAttrs(exportOpts),
 				Output: func(_ map[string]string) (io.WriteCloser, error) {
 					return os.Create(platformTarPath)
 				},
@@ -1411,6 +1433,7 @@ func createMixedOCILayout(
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
 	preservedPlatforms []types.PatchPlatform,
+	exportOpts OCILayoutExportOptions,
 ) error {
 	log.Infof("Creating mixed OCI layout with %d patched platforms and %d preserved platforms", len(platformStates), len(preservedPlatforms))
 
@@ -1436,7 +1459,7 @@ func createMixedOCILayout(
 		}
 		defer c.Close()
 
-		patchedManifests, err = exportPatchedPlatformsToTemp(ctx, c, patchedTempDir, platformStates, platformSpecs)
+		patchedManifests, err = exportPatchedPlatformsToTemp(ctx, c, patchedTempDir, platformStates, platformSpecs, exportOpts)
 		if err != nil {
 			return fmt.Errorf("failed to export patched platforms: %w", err)
 		}
@@ -1481,7 +1504,7 @@ func createMixedOCILayout(
 }
 
 // exportPatchedPlatformsToTemp exports patched platforms using BuildKit to a temporary directory.
-func exportPatchedPlatformsToTemp(ctx context.Context, c *client.Client, tempDir string, platformStates []llb.State, platformSpecs []specs.Platform) ([]map[string]interface{}, error) {
+func exportPatchedPlatformsToTemp(ctx context.Context, c *client.Client, tempDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) ([]map[string]interface{}, error) {
 	var manifests []map[string]interface{}
 
 	// Export each platform to its own tar file
@@ -1492,11 +1515,8 @@ func exportPatchedPlatformsToTemp(ctx context.Context, c *client.Client, tempDir
 		// Create solve options with output function
 		solveOpt := client.SolveOpt{
 			Exports: []client.ExportEntry{{
-				Type: client.ExporterOCI,
-				Attrs: map[string]string{
-					"oci-mediatypes": "true",
-					"buildinfo":      "false",
-				},
+				Type:  client.ExporterOCI,
+				Attrs: ociExporterAttrs(exportOpts),
 				Output: func(_ map[string]string) (io.WriteCloser, error) {
 					return os.Create(platformTarPath)
 				},
