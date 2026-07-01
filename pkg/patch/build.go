@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	attrValueTrue                 = "true"
-	defaultLocalExportCompression = "uncompressed"
+	attrValueTrue = "true"
+
+	// DefaultLocalExportCompression is the BuildKit compression used for newly
+	// created patch layers when loading patched images locally.
+	DefaultLocalExportCompression = "uncompressed"
 )
 
 // BuildConfig holds configuration for building and exporting images.
@@ -99,11 +102,11 @@ func createBuildConfig(
 		}
 	} else {
 		// Use uncompressed layers for local export to ensure diff_id == blob digest
-		// for newly created patch layers. This fixes Trivy scanning issues where
-		// compressed layers have mismatched hashes without forcing BuildKit to
-		// re-encode existing base layers unless explicitly requested.
+		// for newly created patch layers. Without force-compression, BuildKit
+		// applies this to Copa's new patch layer while passing existing base
+		// layers through in their original compression.
 		if compression == "" {
-			compression = defaultLocalExportCompression
+			compression = DefaultLocalExportCompression
 		}
 		attrs["compression"] = compression
 		if forceCompression {

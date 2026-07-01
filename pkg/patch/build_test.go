@@ -211,7 +211,7 @@ func TestCreateBuildConfigLocalExportCompression(t *testing.T) {
 	}{
 		{
 			name:            "default compression without force compression",
-			wantCompression: defaultLocalExportCompression,
+			wantCompression: DefaultLocalExportCompression,
 		},
 		{
 			name:                 "custom compression with force compression",
