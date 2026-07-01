@@ -106,7 +106,7 @@ Update only packages with known vulnerabilities:
 
 Both methods create a new image tagged `nginx:1.21.6-patched` in your local registry.
 
-For local exports, Copa stores newly created patch layers with `--compression=uncompressed` by default so scanners can read the patched image reliably. Existing base layers are preserved in their original compression unless you use `--force-compression` to re-encode all layers to the selected compression.
+For local exports, Copa stores newly created patch layers with `--compression=uncompressed` by default so scanners can read the patched image reliably. Existing base layers are preserved in their original compression unless you use `--force-compression` to re-encode layers exported for patched platforms to the selected compression. Platforms preserved unchanged in a multi-platform OCI layout keep their original layer blobs and compression.
 
 :::tip
 

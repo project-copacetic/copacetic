@@ -57,7 +57,8 @@ type Opts struct {
 }
 
 // OCILayoutExportOptions controls BuildKit OCI exporter behavior when writing
-// an OCI image layout.
+// patched platforms into an OCI image layout. Preserved platforms are copied
+// from the original image as-is to keep their descriptors and layer blobs unchanged.
 type OCILayoutExportOptions struct {
 	Compression      string
 	ForceCompression bool
@@ -1485,6 +1486,8 @@ func createMixedOCILayout(
 		if originalRef == nil {
 			log.Warn("Could not determine original image reference for preserved platforms, skipping preserved platforms export")
 		} else {
+			// Preserved platforms intentionally keep their original descriptors and
+			// layer blobs, even when compression options are set for patched platforms.
 			var err error
 			preservedManifests, err = exportPreservedPlatformsToOutput(outputDir, originalRef, preservedPlatforms, allBlobs)
 			if err != nil {

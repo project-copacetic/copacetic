@@ -166,8 +166,8 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
 	flags.StringVar(&ua.compression, "compression", patch.DefaultLocalExportCompression,
-		"Layer compression for local export (BuildKit values such as 'uncompressed', 'gzip', 'estargz', or 'zstd')")
-	flags.BoolVar(&ua.forceCompression, "force-compression", false, "Re-encode all layers to the selected compression on local export")
+		"Layer compression for patched-platform local export (BuildKit values such as 'uncompressed', 'gzip', 'estargz', or 'zstd')")
+	flags.BoolVar(&ua.forceCompression, "force-compression", false, "Re-encode BuildKit-exported patched-platform layers to the selected compression on local export")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
