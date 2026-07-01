@@ -1,10 +1,13 @@
 package patch
 
 import (
+	"io"
 	"testing"
 
+	"github.com/moby/buildkit/client"
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidateSourcePolicy tests the validateSourcePolicy function.
@@ -196,4 +199,77 @@ func TestRewriteVersionAnnotation(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestCreateBuildConfigLocalExportCompression(t *testing.T) {
+	tests := []struct {
+		name                 string
+		compression          string
+		forceCompression     bool
+		wantCompression      string
+		wantForceCompression bool
+	}{
+		{
+			name:            "default compression without force compression",
+			wantCompression: defaultLocalExportCompression,
+		},
+		{
+			name:                 "custom compression with force compression",
+			compression:          "gzip",
+			forceCompression:     true,
+			wantCompression:      "gzip",
+			wantForceCompression: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeR, pipeW := io.Pipe()
+			defer pipeR.Close()
+			defer pipeW.Close()
+
+			buildConfig, err := createBuildConfig(
+				"example.com/app:patched",
+				false,
+				false,
+				pipeW,
+				nil,
+				"patched",
+				tc.compression,
+				tc.forceCompression,
+			)
+			require.NoError(t, err)
+			require.Len(t, buildConfig.SolveOpt.Exports, 1)
+
+			export := buildConfig.SolveOpt.Exports[0]
+			assert.Equal(t, client.ExporterDocker, export.Type)
+			assert.Equal(t, tc.wantCompression, export.Attrs["compression"])
+			_, hasForceCompression := export.Attrs["force-compression"]
+			assert.Equal(t, tc.wantForceCompression, hasForceCompression)
+		})
+	}
+}
+
+func TestCreateBuildConfigPushDoesNotSetLocalCompressionAttrs(t *testing.T) {
+	pipeR, pipeW := io.Pipe()
+	defer pipeR.Close()
+	defer pipeW.Close()
+
+	buildConfig, err := createBuildConfig(
+		"example.com/app:patched",
+		false,
+		true,
+		pipeW,
+		nil,
+		"patched",
+		"gzip",
+		true,
+	)
+	require.NoError(t, err)
+	require.Len(t, buildConfig.SolveOpt.Exports, 1)
+
+	export := buildConfig.SolveOpt.Exports[0]
+	assert.Equal(t, client.ExporterImage, export.Type)
+	assert.NotContains(t, export.Attrs, "compression")
+	assert.NotContains(t, export.Attrs, "force-compression")
 }

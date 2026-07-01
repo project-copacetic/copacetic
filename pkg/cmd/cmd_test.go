@@ -33,6 +33,11 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			expectValidationError: false, // This combination of flags is valid.
 		},
 		{
+			name:                  "PASS: Local export compression flags",
+			args:                  []string{"--image", "alpine:latest", "--compression", "gzip", "--force-compression"},
+			expectValidationError: false, // This combination of flags is valid.
+		},
+		{
 			name:                  "PASS: Bulk mode validation",
 			args:                  []string{"--config", "config.yaml"},
 			expectValidationError: false, // This combination of flags is valid.

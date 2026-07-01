@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	attrValueTrue = "true"
+	attrValueTrue                 = "true"
+	defaultLocalExportCompression = "uncompressed"
 )
 
 // BuildConfig holds configuration for building and exporting images.
@@ -51,6 +52,8 @@ func createBuildConfig(
 	pipeW io.WriteCloser,
 	originalAnnotations map[string]string,
 	patchedTag string,
+	compression string,
+	forceCompression bool,
 ) (*BuildConfig, error) {
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
@@ -96,9 +99,16 @@ func createBuildConfig(
 		}
 	} else {
 		// Use uncompressed layers for local export to ensure diff_id == blob digest
-		// This fixes Trivy scanning issues where compressed layers have mismatched hashes
-		attrs["compression"] = "uncompressed"
-		attrs["force-compression"] = attrValueTrue
+		// for newly created patch layers. This fixes Trivy scanning issues where
+		// compressed layers have mismatched hashes without forcing BuildKit to
+		// re-encode existing base layers unless explicitly requested.
+		if compression == "" {
+			compression = defaultLocalExportCompression
+		}
+		attrs["compression"] = compression
+		if forceCompression {
+			attrs["force-compression"] = attrValueTrue
+		}
 
 		solveOpt.Exports = []client.ExportEntry{
 			{
