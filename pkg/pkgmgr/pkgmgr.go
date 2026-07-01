@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -77,7 +76,27 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 
 // validOSPackageNamePattern matches valid OS package names across dpkg, rpm, apk, and pacman.
 // Allows alphanumeric characters plus . + - : ~ _ (common in Debian epochs, RPM release tags, etc.).
-var validOSPackageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+\-:~_]*$`)
+const validOSPackageNamePattern = `^[a-zA-Z0-9][a-zA-Z0-9.+\-:~_]*$`
+
+func isValidOSPackageName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := range len(name) {
+		c := name[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
+			continue
+		}
+		if i > 0 {
+			switch c {
+			case '.', '+', '-', ':', '~', '_':
+				continue
+			}
+		}
+		return false
+	}
+	return true
+}
 
 // ValidateOSPackageNames validates that all package names in the update list are safe
 // for interpolation into shell commands. Returns an error if any name is invalid.
@@ -89,14 +108,20 @@ func ValidateOSPackageNames(updates unversioned.UpdatePackages) error {
 		if len(u.Name) > 256 {
 			return fmt.Errorf("package name too long (max 256 characters): %s", u.Name)
 		}
-		if !validOSPackageNamePattern.MatchString(u.Name) {
-			return fmt.Errorf("invalid OS package name %q: must match %s", u.Name, validOSPackageNamePattern.String())
-		}
-		if strings.ContainsAny(u.Name, ";&|`$(){}[]<>\"'\\") {
-			return fmt.Errorf("OS package name contains unsafe shell characters: %s", u.Name)
+		if !isValidOSPackageName(u.Name) {
+			return fmt.Errorf("invalid OS package name %q: must match %s", u.Name, validOSPackageNamePattern)
 		}
 	}
 	return nil
+}
+
+func splitManifestLines(b []byte) []string {
+	if len(b) == 0 {
+		return nil
+	}
+	s := string(b)
+	s = strings.TrimSuffix(s, "\n")
+	return strings.Split(s, "\n")
 }
 
 type VersionComparer struct {
@@ -111,7 +136,7 @@ func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionCompa
 		return unversioned.UpdatePackages{}, nil
 	}
 
-	dict := make(map[string]string)
+	dict := make(map[string]string, len(updates))
 	var allErrors *multierror.Error
 	for _, u := range updates {
 		if cmp.IsValid(u.FixedVersion) {
@@ -132,7 +157,7 @@ func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionCompa
 		return nil, allErrors.ErrorOrNil()
 	}
 
-	out := unversioned.UpdatePackages{}
+	out := make(unversioned.UpdatePackages, 0, len(dict))
 	for k, v := range dict {
 		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
 	}

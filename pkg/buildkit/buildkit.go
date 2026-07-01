@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -247,67 +248,97 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 		return nil, fmt.Errorf("failed to get raw manifest: %v", err)
 	}
 
+	return descriptorFromRawManifest(imageName, rawManifest)
+}
+
+func descriptorFromRawManifest(imageName string, rawManifest []byte) (*remote.Descriptor, error) {
 	// Parse the manifest to determine if it's a manifest list
-	var manifestData map[string]interface{}
+	var manifestData struct {
+		MediaType string          `json:"mediaType"`
+		Manifests json.RawMessage `json:"manifests"`
+	}
 	if err := json.Unmarshal(rawManifest, &manifestData); err != nil {
 		log.Debugf("Failed to parse manifest JSON for %s: %v", imageName, err)
 		return nil, fmt.Errorf("failed to parse manifest JSON: %v", err)
 	}
 
 	// Check if this is a manifest list (has "manifests" field)
-	if manifests, ok := manifestData["manifests"]; ok {
-		if manifestSlice, ok := manifests.([]interface{}); ok && len(manifestSlice) > 0 {
-			log.Debugf("Found multi-platform manifest from daemon with %d platforms", len(manifestSlice))
-
-			// Parse the manifest list to extract individual platform image references
-			var enhancedManifestData struct {
-				MediaType string `json:"mediaType"`
-				Manifests []struct {
-					Digest    string `json:"digest"`
-					MediaType string `json:"mediaType"`
-					Size      int64  `json:"size"`
-					Platform  struct {
-						Architecture string `json:"architecture"`
-						OS           string `json:"os"`
-						Variant      string `json:"variant,omitempty"`
-					} `json:"platform"`
-				} `json:"manifests"`
-			}
-
-			if err := json.Unmarshal(rawManifest, &enhancedManifestData); err != nil {
-				log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
-				return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
-			}
-
-			// Log platform information for debugging
-			log.Debugf("Manifest list contains the following platforms:")
-			for i, manifest := range enhancedManifestData.Manifests {
-				log.Debugf("  Platform %d: %s/%s (digest: %s)", i+1,
-					manifest.Platform.OS, manifest.Platform.Architecture,
-					manifest.Digest[:12]+"...")
-			}
-
-			// Determine media type
-			mediaType := "application/vnd.docker.distribution.manifest.list.v2+json"
-			if enhancedManifestData.MediaType != "" {
-				mediaType = enhancedManifestData.MediaType
-			}
-
-			// Calculate digest from the manifest content
-			digest := fmt.Sprintf("%x", sha256.Sum256(rawManifest))
-
-			return &remote.Descriptor{
-				Descriptor: v1.Descriptor{
-					MediaType: v1types.MediaType(mediaType),
-					Size:      int64(len(rawManifest)),
-					Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
-				},
-				Manifest: rawManifest,
-			}, nil
-		}
+	if !startsWithJSONArray(manifestData.Manifests) {
+		return nil, fmt.Errorf("single-platform image")
 	}
 
-	return nil, fmt.Errorf("single-platform image")
+	// Parse the manifest list to extract individual platform image references
+	var manifests []manifestListEntry
+	if err := json.Unmarshal(manifestData.Manifests, &manifests); err != nil {
+		log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
+		return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
+	}
+	if len(manifests) == 0 {
+		return nil, fmt.Errorf("single-platform image")
+	}
+
+	log.Debugf("Found multi-platform manifest from daemon with %d platforms", len(manifests))
+
+	// Log platform information for debugging
+	log.Debugf("Manifest list contains the following platforms:")
+	for i, manifest := range manifests {
+		log.Debugf("  Platform %d: %s/%s (digest: %s)", i+1,
+			manifest.Platform.OS, manifest.Platform.Architecture,
+			shortDigest(manifest.Digest)+"...")
+	}
+
+	// Determine media type
+	mediaType := "application/vnd.docker.distribution.manifest.list.v2+json"
+	if manifestData.MediaType != "" {
+		mediaType = manifestData.MediaType
+	}
+
+	// Calculate digest from the manifest content
+	sum := sha256.Sum256(rawManifest)
+	digest := hex.EncodeToString(sum[:])
+
+	return &remote.Descriptor{
+		Descriptor: v1.Descriptor{
+			MediaType: v1types.MediaType(mediaType),
+			Size:      int64(len(rawManifest)),
+			Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
+		},
+		Manifest: rawManifest,
+	}, nil
+}
+
+type manifestListEntry struct {
+	Digest    string `json:"digest"`
+	MediaType string `json:"mediaType"`
+	Size      int64  `json:"size"`
+	Platform  manifestPlatform
+}
+
+type manifestPlatform struct {
+	Architecture string `json:"architecture"`
+	OS           string `json:"os"`
+	Variant      string `json:"variant,omitempty"`
+}
+
+func startsWithJSONArray(raw json.RawMessage) bool {
+	for _, c := range raw {
+		switch c {
+		case ' ', '\n', '\r', '\t':
+			continue
+		case '[':
+			return true
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+func shortDigest(digest string) string {
+	if len(digest) <= 12 {
+		return digest
+	}
+	return digest[:12]
 }
 
 // DiscoverPlatformsFromReference discovers platforms from both local and remote manifests.
@@ -527,6 +558,10 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *specs.Platfor
 		return manifestRef, nil
 	}
 
+	return platformImageReferenceFromManifest(ref, desc.Manifest, targetPlatform)
+}
+
+func platformImageReferenceFromManifest(ref name.Reference, manifestBytes []byte, targetPlatform *specs.Platform) (string, error) {
 	// Parse the manifest to extract platform-specific information
 	var manifestData struct {
 		Manifests []struct {
@@ -539,7 +574,7 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *specs.Platfor
 		} `json:"manifests"`
 	}
 
-	if err := json.Unmarshal(desc.Manifest, &manifestData); err != nil {
+	if err := json.Unmarshal(manifestBytes, &manifestData); err != nil {
 		return "", fmt.Errorf("failed to parse manifest JSON: %w", err)
 	}
 

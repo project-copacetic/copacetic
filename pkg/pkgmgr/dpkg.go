@@ -672,35 +672,34 @@ func (dm *dpkgManager) GetPackageType() string {
 }
 
 func dpkgParseResultsManifest(b []byte) (map[string]string, error) {
-	buf := bytes.NewBuffer(b)
-
 	// results.manifest file is expected to be subset of DPKG status or debian info format
 	// consisting of repeating consecutive blocks of:
 	//
 	// Package: <package name>
 	// Version: <version value>
 	// ...
-	updateMap := map[string]string{}
-	fs := bufio.NewScanner(buf)
+	updateMap := make(map[string]string, bytes.Count(b, []byte("Version: ")))
+	fs := bufio.NewScanner(bytes.NewReader(b))
 	var packageName string
 	for fs.Scan() {
-		kv := strings.Split(fs.Text(), " ")
-		if len(kv) != 2 {
-			err := fmt.Errorf("unexpected %s file entry: %s", resultManifest, fs.Text())
+		line := fs.Text()
+		field, value, ok := strings.Cut(line, " ")
+		if !ok || strings.Contains(value, " ") {
+			err := fmt.Errorf("unexpected %s file entry: %s", resultManifest, line)
 			log.Error(err)
 			return nil, err
 		}
 		switch {
-		case kv[0] == "Package:":
+		case field == "Package:":
 			if packageName != "" {
 				log.Debugf("ignoring held or not-installed Package without Version: %s", packageName)
 			}
-			packageName = kv[1]
-		case kv[0] == "Version:" && packageName != "":
-			updateMap[packageName] = kv[1]
+			packageName = value
+		case field == "Version:" && packageName != "":
+			updateMap[packageName] = value
 			packageName = ""
 		default:
-			err := fmt.Errorf("unexpected field found: %s", fs.Text())
+			err := fmt.Errorf("unexpected field found: %s", line)
 			log.Error(err)
 			return nil, err
 		}
