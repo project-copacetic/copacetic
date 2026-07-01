@@ -1507,7 +1507,14 @@ func createMixedOCILayout(
 }
 
 // exportPatchedPlatformsToTemp exports patched platforms using BuildKit to a temporary directory.
-func exportPatchedPlatformsToTemp(ctx context.Context, c *client.Client, tempDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) ([]map[string]interface{}, error) {
+func exportPatchedPlatformsToTemp(
+	ctx context.Context,
+	c *client.Client,
+	tempDir string,
+	platformStates []llb.State,
+	platformSpecs []specs.Platform,
+	exportOpts OCILayoutExportOptions,
+) ([]map[string]interface{}, error) {
 	var manifests []map[string]interface{}
 
 	// Export each platform to its own tar file
