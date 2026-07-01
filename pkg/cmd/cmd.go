@@ -165,7 +165,8 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
-	flags.StringVar(&ua.compression, "compression", "uncompressed", "Layer compression for local export")
+	flags.StringVar(&ua.compression, "compression", "uncompressed",
+		"Layer compression for local export (BuildKit values such as 'uncompressed', 'gzip', 'estargz', or 'zstd')")
 	flags.BoolVar(&ua.forceCompression, "force-compression", false, "Re-encode all layers to the selected compression on local export")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
