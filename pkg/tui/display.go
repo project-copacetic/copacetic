@@ -156,6 +156,7 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 			if status == nil {
 				continue
 			}
+			completedVertices := make([]string, 0, len(status.Vertexes))
 
 			// Process vertex information
 			for _, vertex := range status.Vertexes {
@@ -188,8 +189,10 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 						vtx.rec.Done(nil)
 					}
 					// Drop this vertex's progress tasks with the vertex state instead of
-					// scanning unrelated task bookkeeping.
-					delete(vertices, vtxID)
+					// scanning unrelated task bookkeeping. Defer the deletion until this
+					// entire SolveStatus batch is processed so final status/log records for
+					// this vertex in the same BuildKit message are not dropped.
+					completedVertices = append(completedVertices, vtxID)
 				}
 			}
 
@@ -241,6 +244,10 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 				if w != nil {
 					*warnings = append(*warnings, *w)
 				}
+			}
+
+			for _, vtxID := range completedVertices {
+				delete(vertices, vtxID)
 			}
 
 		case <-ctx.Done():
