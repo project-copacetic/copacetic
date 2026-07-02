@@ -11,7 +11,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -112,12 +111,14 @@ func TestNodeJSPatching(t *testing.T) {
 				return
 			}
 
-			filterReportToNodePackages(t, scanResultsFile)
-
-			// 2. Patch the image and capture its output.
+			// 2. Patch the image and capture its output. Keep this Node.js e2e
+			// scoped to node-pkg findings: Trivy can also report vulnerabilities
+			// for Go helper binaries in the same images, which exercises Copa's Go
+			// binary rebuilder instead of the Node.js language manager under test.
 			t.Log("patching image")
+			nodeReportFile := filterTrivyReportByType(t, scanResultsFile, "node-pkg")
 			tagPatched := img.Tag + "-patched"
-			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
+			copaOutput := patchImage(t, ref, tagPatched, nodeReportFile)
 
 			// 3. Scan the newly patched image.
 			t.Log("scanning patched image for verification")
@@ -208,25 +209,31 @@ func scanAndParse(t *testing.T, image string, outputFile string, cacheDir string
 	return vulns
 }
 
-func filterReportToNodePackages(t *testing.T, reportFile string) {
+func filterTrivyReportByType(t *testing.T, reportFile string, allowedTypes ...string) string {
 	t.Helper()
+
+	allowed := make(map[string]struct{}, len(allowedTypes))
+	for _, typ := range allowedTypes {
+		allowed[typ] = struct{}{}
+	}
 
 	reportBytes, err := os.ReadFile(reportFile)
 	require.NoError(t, err, "failed to read trivy report file")
 
-	var report map[string]any
+	var report map[string]interface{}
 	require.NoError(t, json.Unmarshal(reportBytes, &report), "failed to unmarshal trivy report")
 
-	results, ok := report["Results"].([]any)
-	require.True(t, ok, "trivy report Results field has unexpected type")
+	results, ok := report["Results"].([]interface{})
+	require.True(t, ok, "trivy report Results should be an array")
 
-	filteredResults := results[:0]
+	filteredResults := make([]interface{}, 0, len(results))
 	for _, result := range results {
-		resultMap, ok := result.(map[string]any)
+		resultMap, ok := result.(map[string]interface{})
 		if !ok {
 			continue
 		}
-		if resultMap["Type"] == utils.NodePackages {
+		resultType, _ := resultMap["Type"].(string)
+		if _, keep := allowed[resultType]; keep {
 			filteredResults = append(filteredResults, result)
 		}
 	}
@@ -234,7 +241,10 @@ func filterReportToNodePackages(t *testing.T, reportFile string) {
 
 	filteredBytes, err := json.Marshal(report)
 	require.NoError(t, err, "failed to marshal filtered trivy report")
-	require.NoError(t, os.WriteFile(reportFile, filteredBytes, 0o600), "failed to write filtered trivy report")
+
+	filteredFile := filepath.Join(t.TempDir(), "scan-filtered.json")
+	require.NoError(t, os.WriteFile(filteredFile, filteredBytes, 0o600), "failed to write filtered trivy report")
+	return filteredFile
 }
 
 // patchImage now returns the command output as a string.

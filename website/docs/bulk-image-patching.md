@@ -96,11 +96,13 @@ copa patch --config ./copa-bulk-config.yaml --oci-dir ./out
 | `--timeout`             | Per‑job timeout (e.g., `15m`)                                            |
 | `--ignore-errors`       | Continue processing other jobs if one fails                           |
 | `--oci-dir`             | Export patched image(s) as an OCI layout instead of pushing              |
+| `--compression`         | Layer compression for patched-platform local export                     |
+| `--force-compression`   | Re-encode patched-platform layers to the selected compression on local export |
 
 Restrictions in bulk mode:
 
 - `--config` cannot be combined with `--image` or `--tag`.
-- Global flags like `--push`, `--timeout`, `--ignore-errors`, and `--oci-dir` apply to every job defined by the config.
+- Global flags like `--push`, `--timeout`, `--ignore-errors`, `--oci-dir`, `--compression`, and `--force-compression` apply to every job defined by the config.
 
 ## Behavior and Output
 

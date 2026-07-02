@@ -421,7 +421,19 @@ func patchMultiPlatformImage(
 	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
-		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms); err != nil {
+		compression := opts.Compression
+		if compression == "" {
+			compression = DefaultLocalExportCompression
+		}
+		if err := buildkit.CreateOCILayoutFromResultsWithOptions(
+			opts.OCIDir,
+			patchResults,
+			platforms,
+			buildkit.OCILayoutExportOptions{
+				Compression:      compression,
+				ForceCompression: opts.ForceCompression,
+			},
+		); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)
 		}
