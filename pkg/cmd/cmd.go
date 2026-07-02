@@ -48,6 +48,8 @@ type patchArgs struct {
 	goVCSURL            string
 	progress            string
 	ociDir              string
+	compression         string
+	forceCompression    bool
 	eolAPIBaseURL       string
 	exitOnEOL           bool
 	configFile          string
@@ -107,6 +109,8 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				GoVCSURL:            ua.goVCSURL,
 				Progress:            progressui.DisplayMode(ua.progress),
 				OCIDir:              ua.ociDir,
+				Compression:         ua.compression,
+				ForceCompression:    ua.forceCompression,
 				EOLAPIBaseURL:       ua.eolAPIBaseURL,
 				ExitOnEOL:           ua.exitOnEOL,
 				ConfigFile:          ua.configFile,
@@ -161,6 +165,9 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
 	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
 	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
+	flags.StringVar(&ua.compression, "compression", patch.DefaultLocalExportCompression,
+		"Layer compression for patched-platform local export (BuildKit values such as 'uncompressed', 'gzip', 'estargz', or 'zstd')")
+	flags.BoolVar(&ua.forceCompression, "force-compression", false, "Re-encode BuildKit-exported patched-platform layers to the selected compression on local export")
 
 	// Experimental flags - only available when COPA_EXPERIMENTAL=1
 	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
