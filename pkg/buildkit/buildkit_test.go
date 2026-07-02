@@ -571,3 +571,48 @@ func TestQemuAvailable_Mocked(t *testing.T) {
 		})
 	}
 }
+
+func TestOCIExporterAttrs(t *testing.T) {
+	tests := []struct {
+		name                 string
+		exportOpts           OCILayoutExportOptions
+		wantCompression      string
+		wantForceCompression bool
+	}{
+		{
+			name: "no compression options",
+		},
+		{
+			name: "compression without force compression",
+			exportOpts: OCILayoutExportOptions{
+				Compression: "zstd",
+			},
+			wantCompression: "zstd",
+		},
+		{
+			name: "compression with force compression",
+			exportOpts: OCILayoutExportOptions{
+				Compression:      "gzip",
+				ForceCompression: true,
+			},
+			wantCompression:      "gzip",
+			wantForceCompression: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := ociExporterAttrs(tc.exportOpts)
+
+			assert.Equal(t, "true", attrs["oci-mediatypes"])
+			assert.Equal(t, "false", attrs["buildinfo"])
+			if tc.wantCompression == "" {
+				assert.NotContains(t, attrs, "compression")
+			} else {
+				assert.Equal(t, tc.wantCompression, attrs["compression"])
+			}
+			_, hasForceCompression := attrs["force-compression"]
+			assert.Equal(t, tc.wantForceCompression, hasForceCompression)
+		})
+	}
+}
