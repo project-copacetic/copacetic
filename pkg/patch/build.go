@@ -101,10 +101,13 @@ func createBuildConfig(
 			},
 		}
 	} else {
-		// Use uncompressed layers for local export to ensure diff_id == blob digest
-		// for newly created patch layers. Without force-compression, BuildKit
-		// applies this to Copa's new patch layer while passing existing base
-		// layers through in their original compression.
+		// Local export compresses newly created patch layers with the selected
+		// compression (default: uncompressed). Uncompressed keeps
+		// diff_id == blob digest for the patch layer, which is what local
+		// scanners such as Trivy expect. Without force-compression, BuildKit
+		// applies the selected compression only to Copa's new patch layer and
+		// passes existing base layers through in their original compression;
+		// force-compression re-encodes every layer to the selected compression.
 		if compression == "" {
 			compression = DefaultLocalExportCompression
 		}
