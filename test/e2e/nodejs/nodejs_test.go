@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -111,6 +112,8 @@ func TestNodeJSPatching(t *testing.T) {
 				return
 			}
 
+			filterReportToNodePackages(t, scanResultsFile)
+
 			// 2. Patch the image and capture its output.
 			t.Log("patching image")
 			tagPatched := img.Tag + "-patched"
@@ -203,6 +206,35 @@ func scanAndParse(t *testing.T, image string, outputFile string, cacheDir string
 		}
 	}
 	return vulns
+}
+
+func filterReportToNodePackages(t *testing.T, reportFile string) {
+	t.Helper()
+
+	reportBytes, err := os.ReadFile(reportFile)
+	require.NoError(t, err, "failed to read trivy report file")
+
+	var report map[string]any
+	require.NoError(t, json.Unmarshal(reportBytes, &report), "failed to unmarshal trivy report")
+
+	results, ok := report["Results"].([]any)
+	require.True(t, ok, "trivy report Results field has unexpected type")
+
+	filteredResults := results[:0]
+	for _, result := range results {
+		resultMap, ok := result.(map[string]any)
+		if !ok {
+			continue
+		}
+		if resultMap["Type"] == utils.NodePackages {
+			filteredResults = append(filteredResults, result)
+		}
+	}
+	report["Results"] = filteredResults
+
+	filteredBytes, err := json.Marshal(report)
+	require.NoError(t, err, "failed to marshal filtered trivy report")
+	require.NoError(t, os.WriteFile(reportFile, filteredBytes, 0o600), "failed to write filtered trivy report")
 }
 
 // patchImage now returns the command output as a string.

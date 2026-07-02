@@ -313,7 +313,9 @@ func resolveTargetTag(target TargetSpec, sourceTag string) (string, error) {
 
 func cachedTargetTagTemplate(tagTemplate string) (*template.Template, error) {
 	if cached, ok := targetTagTemplateCache.Load(tagTemplate); ok {
-		return cached.(*template.Template), nil
+		if tmpl, ok := cached.(*template.Template); ok {
+			return tmpl, nil
+		}
 	}
 
 	tmpl, err := template.New("tag").Parse(tagTemplate)
@@ -321,7 +323,10 @@ func cachedTargetTagTemplate(tagTemplate string) (*template.Template, error) {
 		return nil, fmt.Errorf("invalid target tag template: %w", err)
 	}
 	cached, _ := targetTagTemplateCache.LoadOrStore(tagTemplate, tmpl)
-	return cached.(*template.Template), nil
+	if tmpl, ok := cached.(*template.Template); ok {
+		return tmpl, nil
+	}
+	return nil, fmt.Errorf("invalid cached target tag template for %q", tagTemplate)
 }
 
 // printSummary prints a formatted summary table of all patch jobs.
