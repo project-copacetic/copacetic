@@ -13,18 +13,26 @@ type Vex interface {
 }
 
 func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedImageName, format, file string) error {
-	var doc string
-	var err error
-
 	switch format {
 	case "openvex":
 		ov := &OpenVex{}
-		doc, err = ov.CreateVEXDocument(updates, patchedImageName, pkgType)
+		doc, err := ov.createVEXDocument(updates, patchedImageName, pkgType)
 		if err != nil {
+			return err
+		}
+		docFile, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		if err := doc.ToJSON(docFile); err != nil {
+			_ = docFile.Close()
+			return err
+		}
+		if err := docFile.Close(); err != nil {
 			return err
 		}
 	default:
 		return fmt.Errorf("unsupported output format %s specified", format)
 	}
-	return os.WriteFile(file, []byte(doc), 0o600)
+	return nil
 }
