@@ -194,7 +194,16 @@ func patchSingleArchImage(
 	}
 
 	// Create build configuration
-	buildConfig, err := createBuildConfig(patchedImageName, shouldExportOCI, push, pipeW, originalAnnotations, patchedTag)
+	buildConfig, err := createBuildConfig(
+		patchedImageName,
+		shouldExportOCI,
+		push,
+		pipeW,
+		originalAnnotations,
+		patchedTag,
+		opts.Compression,
+		opts.ForceCompression,
+	)
 	if err != nil {
 		return nil, err
 	}

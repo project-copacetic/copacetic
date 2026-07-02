@@ -37,10 +37,12 @@ type Options struct {
 	BkKeyPath    string
 
 	// Platform and push
-	Push      bool
-	Platforms []string
-	Loader    string
-	OCIDir    string
+	Push             bool
+	Platforms        []string
+	Loader           string
+	OCIDir           string
+	Compression      string
+	ForceCompression bool
 
 	// Package types and library patch level
 	PkgTypes          string
