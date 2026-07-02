@@ -126,3 +126,27 @@ func TestWriteVEXDocumentFileReplacesOutputOnSuccess(t *testing.T) {
 		t.Fatalf("output file content = %q, want %q", got, updatedContent)
 	}
 }
+
+func TestWriteVEXDocumentFilePreservesExistingFileMode(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "vex.json")
+	const existingMode = 0o640
+	if err := os.WriteFile(outputPath, []byte(existingVEXContent), existingMode); err != nil {
+		t.Fatalf("failed to seed output file: %v", err)
+	}
+
+	if err := writeVEXDocumentFile(outputPath, func(w io.Writer) error {
+		_, err := w.Write([]byte("updated"))
+		return err
+	}); err != nil {
+		t.Fatalf("writeVEXDocumentFile() error = %v", err)
+	}
+
+	info, err := os.Stat(outputPath)
+	if err != nil {
+		t.Fatalf("failed to stat output file: %v", err)
+	}
+	if got := info.Mode().Perm(); got != existingMode {
+		t.Fatalf("output file mode = %v, want %v", got, os.FileMode(existingMode))
+	}
+}

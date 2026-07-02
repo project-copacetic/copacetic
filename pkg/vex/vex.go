@@ -29,6 +29,13 @@ func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedI
 }
 
 func writeVEXDocumentFile(file string, write func(io.Writer) error) error {
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(file); err == nil {
+		mode = info.Mode().Perm()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
 	dir := filepath.Dir(file)
 	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(file)+".tmp-*")
 	if err != nil {
@@ -43,6 +50,10 @@ func writeVEXDocumentFile(file string, write func(io.Writer) error) error {
 	}()
 
 	if err := write(tmpFile); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Chmod(mode); err != nil {
 		_ = tmpFile.Close()
 		return err
 	}
