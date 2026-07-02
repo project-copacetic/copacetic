@@ -1,6 +1,10 @@
 package vex
 
 import (
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -8,6 +12,8 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
+
+const existingVEXContent = "existing vex content"
 
 func TestTryOutputVexDocument(t *testing.T) {
 	config := &buildkit.Config{}
@@ -59,5 +65,64 @@ func TestTryOutputVexDocument(t *testing.T) {
 				t.Errorf("TryOutputVexDocument() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestWriteVEXDocumentFilePreservesExistingFileOnWriteError(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "vex.json")
+	if err := os.WriteFile(outputPath, []byte(existingVEXContent), 0o600); err != nil {
+		t.Fatalf("failed to seed output file: %v", err)
+	}
+
+	writeErr := errors.New("write failed")
+	err := writeVEXDocumentFile(outputPath, func(w io.Writer) error {
+		if _, err := w.Write([]byte("partial")); err != nil {
+			return err
+		}
+		return writeErr
+	})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("writeVEXDocumentFile() error = %v, want %v", err, writeErr)
+	}
+
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if string(got) != existingVEXContent {
+		t.Fatalf("output file content = %q, want %q", got, existingVEXContent)
+	}
+
+	tmpFiles, err := filepath.Glob(filepath.Join(dir, ".vex.json.tmp-*"))
+	if err != nil {
+		t.Fatalf("failed to glob temp files: %v", err)
+	}
+	if len(tmpFiles) != 0 {
+		t.Fatalf("temporary files were not cleaned up: %v", tmpFiles)
+	}
+}
+
+func TestWriteVEXDocumentFileReplacesOutputOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "vex.json")
+	if err := os.WriteFile(outputPath, []byte(existingVEXContent), 0o600); err != nil {
+		t.Fatalf("failed to seed output file: %v", err)
+	}
+
+	const updatedContent = "updated vex content"
+	if err := writeVEXDocumentFile(outputPath, func(w io.Writer) error {
+		_, err := w.Write([]byte(updatedContent))
+		return err
+	}); err != nil {
+		t.Fatalf("writeVEXDocumentFile() error = %v", err)
+	}
+
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if string(got) != updatedContent {
+		t.Fatalf("output file content = %q, want %q", got, updatedContent)
 	}
 }

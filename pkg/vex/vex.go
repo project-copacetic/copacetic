@@ -2,7 +2,9 @@ package vex
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -20,19 +22,36 @@ func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedI
 		if err != nil {
 			return err
 		}
-		docFile, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-		if err != nil {
-			return err
-		}
-		if err := doc.ToJSON(docFile); err != nil {
-			_ = docFile.Close()
-			return err
-		}
-		if err := docFile.Close(); err != nil {
-			return err
-		}
+		return writeVEXDocumentFile(file, doc.ToJSON)
 	default:
 		return fmt.Errorf("unsupported output format %s specified", format)
 	}
+}
+
+func writeVEXDocumentFile(file string, write func(io.Writer) error) error {
+	dir := filepath.Dir(file)
+	tmpFile, err := os.CreateTemp(dir, "."+filepath.Base(file)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmpFile.Name()
+	succeeded := false
+	defer func() {
+		if !succeeded {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := write(tmpFile); err != nil {
+		_ = tmpFile.Close()
+		return err
+	}
+	if err := tmpFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, file); err != nil {
+		return err
+	}
+	succeeded = true
 	return nil
 }
