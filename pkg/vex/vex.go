@@ -1,6 +1,7 @@
 package vex
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -29,9 +30,8 @@ func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedI
 }
 
 func writeVEXDocumentFile(file string, write func(io.Writer) error) error {
-	mode := os.FileMode(0o600)
-	if info, err := os.Stat(file); err == nil {
-		mode = info.Mode().Perm()
+	if _, err := os.Lstat(file); err == nil {
+		return writeBufferedVEXDocumentFile(file, write)
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -53,10 +53,6 @@ func writeVEXDocumentFile(file string, write func(io.Writer) error) error {
 		_ = tmpFile.Close()
 		return err
 	}
-	if err := tmpFile.Chmod(mode); err != nil {
-		_ = tmpFile.Close()
-		return err
-	}
 	if err := tmpFile.Close(); err != nil {
 		return err
 	}
@@ -65,4 +61,12 @@ func writeVEXDocumentFile(file string, write func(io.Writer) error) error {
 	}
 	succeeded = true
 	return nil
+}
+
+func writeBufferedVEXDocumentFile(file string, write func(io.Writer) error) error {
+	var buf bytes.Buffer
+	if err := write(&buf); err != nil {
+		return err
+	}
+	return os.WriteFile(file, buf.Bytes(), 0o600)
 }

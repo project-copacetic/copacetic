@@ -150,3 +150,69 @@ func TestWriteVEXDocumentFilePreservesExistingFileMode(t *testing.T) {
 		t.Fatalf("output file mode = %v, want %v", got, os.FileMode(existingMode))
 	}
 }
+
+func TestWriteVEXDocumentFileFollowsExistingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	targetPath := filepath.Join(dir, "target-vex.json")
+	linkPath := filepath.Join(dir, "vex-link.json")
+	if err := os.WriteFile(targetPath, []byte(existingVEXContent), 0o600); err != nil {
+		t.Fatalf("failed to seed target file: %v", err)
+	}
+	if err := os.Symlink(targetPath, linkPath); err != nil {
+		t.Fatalf("failed to create symlink: %v", err)
+	}
+
+	const updatedContent = "updated through symlink"
+	if err := writeVEXDocumentFile(linkPath, func(w io.Writer) error {
+		_, err := w.Write([]byte(updatedContent))
+		return err
+	}); err != nil {
+		t.Fatalf("writeVEXDocumentFile() error = %v", err)
+	}
+
+	linkInfo, err := os.Lstat(linkPath)
+	if err != nil {
+		t.Fatalf("failed to lstat symlink: %v", err)
+	}
+	if linkInfo.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("output path is no longer a symlink: mode=%v", linkInfo.Mode())
+	}
+
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("failed to read symlink target: %v", err)
+	}
+	if string(got) != updatedContent {
+		t.Fatalf("target content = %q, want %q", got, updatedContent)
+	}
+}
+
+func TestWriteVEXDocumentFileUpdatesExistingFileWithoutDirectoryWrite(t *testing.T) {
+	dir := t.TempDir()
+	outputPath := filepath.Join(dir, "vex.json")
+	if err := os.WriteFile(outputPath, []byte(existingVEXContent), 0o600); err != nil {
+		t.Fatalf("failed to seed output file: %v", err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("failed to remove directory write permission: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(dir, 0o700)
+	})
+
+	const updatedContent = "updated without directory write"
+	if err := writeVEXDocumentFile(outputPath, func(w io.Writer) error {
+		_, err := w.Write([]byte(updatedContent))
+		return err
+	}); err != nil {
+		t.Fatalf("writeVEXDocumentFile() error = %v", err)
+	}
+
+	got, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output file: %v", err)
+	}
+	if string(got) != updatedContent {
+		t.Fatalf("output file content = %q, want %q", got, updatedContent)
+	}
+}
