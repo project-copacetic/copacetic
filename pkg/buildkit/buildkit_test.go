@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io/fs"
 	"net"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +26,12 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	v1types "github.com/google/go-containerregistry/pkg/v1/types"
 	controlapi "github.com/moby/buildkit/api/services/control"
 	bk_types "github.com/moby/buildkit/api/types"
 	gateway "github.com/moby/buildkit/frontend/gateway/pb"
@@ -614,5 +623,113 @@ func TestOCIExporterAttrs(t *testing.T) {
 			_, hasForceCompression := attrs["force-compression"]
 			assert.Equal(t, tc.wantForceCompression, hasForceCompression)
 		})
+	}
+}
+
+// rawTaggable lets us push an arbitrary, hand-crafted manifest to a registry so
+// we can create a manifest index entry with no platform field.
+type rawTaggable struct {
+	raw []byte
+	mt  v1types.MediaType
+}
+
+func (r *rawTaggable) RawManifest() ([]byte, error)          { return r.raw, nil }
+func (r *rawTaggable) MediaType() (v1types.MediaType, error) { return r.mt, nil }
+
+// TestDiscoverPlatformsFromReference_NilPlatformManifestEntry reproduces the
+// nil-pointer panic in DiscoverPlatformsFromReference: a manifest index that
+// contains a child descriptor with no "platform" field makes the skip branch
+// dereference m.Platform.OS in the log.Debugf call (logrus evaluates arguments
+// before checking the log level), panicking instead of skipping the entry.
+func TestDiscoverPlatformsFromReference_NilPlatformManifestEntry(t *testing.T) {
+	// Spin up an in-memory OCI registry.
+	srv := httptest.NewServer(registry.New())
+	defer srv.Close()
+
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("failed to parse registry URL: %v", err)
+	}
+	// Use "localhost" so go-containerregistry talks plain HTTP.
+	host := strings.Replace(u.Host, "127.0.0.1", "localhost", 1)
+	repo := host + "/test/nilplatform"
+
+	// Push a real child image so the index references an existing manifest.
+	img, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatalf("failed to create random image: %v", err)
+	}
+	childTag, err := name.NewTag(repo+":child", name.Insecure)
+	if err != nil {
+		t.Fatalf("failed to build child tag: %v", err)
+	}
+	if err := remote.Write(childTag, img); err != nil {
+		t.Fatalf("failed to push child image: %v", err)
+	}
+
+	childDigest, err := img.Digest()
+	if err != nil {
+		t.Fatalf("failed to get child digest: %v", err)
+	}
+	childMT, err := img.MediaType()
+	if err != nil {
+		t.Fatalf("failed to get child media type: %v", err)
+	}
+	childSize, err := img.Size()
+	if err != nil {
+		t.Fatalf("failed to get child size: %v", err)
+	}
+
+	// One valid platform entry and one entry with NO platform field
+	// (Platform stays nil, so it is omitted from the JSON).
+	idx := v1.IndexManifest{
+		SchemaVersion: 2,
+		MediaType:     v1types.OCIImageIndex,
+		Manifests: []v1.Descriptor{
+			{
+				MediaType: childMT,
+				Size:      childSize,
+				Digest:    childDigest,
+				Platform:  &v1.Platform{OS: "linux", Architecture: "amd64"},
+			},
+			{
+				MediaType: childMT,
+				Size:      childSize,
+				Digest:    childDigest,
+				// Platform intentionally nil (e.g. an attestation/unknown entry).
+			},
+		},
+	}
+	rawIdx, err := json.Marshal(idx)
+	if err != nil {
+		t.Fatalf("failed to marshal index: %v", err)
+	}
+
+	indexTag, err := name.NewTag(repo+":latest", name.Insecure)
+	if err != nil {
+		t.Fatalf("failed to build index tag: %v", err)
+	}
+	if err := remote.Put(indexTag, &rawTaggable{raw: rawIdx, mt: v1types.OCIImageIndex}); err != nil {
+		t.Fatalf("failed to push index: %v", err)
+	}
+
+	// The function must not panic on the nil-platform entry; it should skip it.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("DiscoverPlatformsFromReference panicked on nil-platform manifest entry: %v", r)
+		}
+	}()
+
+	platforms, err := DiscoverPlatformsFromReference(repo + ":latest")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Only the valid entry should be discovered; the nil-platform one is skipped.
+	if len(platforms) != 1 {
+		t.Fatalf("expected 1 platform, got %d: %+v", len(platforms), platforms)
+	}
+	if platforms[0].OS != "linux" || platforms[0].Architecture != "amd64" {
+		t.Fatalf("expected linux/amd64, got %s/%s", platforms[0].OS, platforms[0].Architecture)
 	}
 }
