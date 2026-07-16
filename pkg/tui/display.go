@@ -135,21 +135,12 @@ func (d *progrockDisplay) UpdateFrom(ctx context.Context, ch chan *client.SolveS
 
 // processBuildkitProgress processes buildkit progress events and translates them to progrock.
 func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *client.SolveStatus, warnings *[]client.VertexWarning) error {
-	vertices := make(map[string]*progrock.VertexRecorder)
-	progressTasks := make(map[string]progrockTask)
+	type vertexState struct {
+		rec   *progrock.VertexRecorder
+		tasks map[string]progrockTask
+	}
 
-	typeStatusKey := func(vtxID string, statusName string) string {
-		// BuildKit status updates don't always include a stable ID; vertex+name is good enough
-		// to dedupe task creation and reduce flicker.
-		return vtxID + ":" + statusName
-	}
-	cleanupVertexTasks := func(vtxID string) {
-		for k := range progressTasks {
-			if strings.HasPrefix(k, vtxID+":") {
-				delete(progressTasks, k)
-			}
-		}
-	}
+	vertices := make(map[string]*vertexState)
 
 	for {
 		select {
@@ -157,7 +148,7 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 			if !ok {
 				// Channel closed, mark remaining vertices as done and exit
 				for _, vtx := range vertices {
-					vtx.Done(nil)
+					vtx.rec.Done(nil)
 				}
 				return nil
 			}
@@ -165,6 +156,7 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 			if status == nil {
 				continue
 			}
+			completedVertices := make([]string, 0, len(status.Vertexes))
 
 			// Process vertex information
 			for _, vertex := range status.Vertexes {
@@ -177,24 +169,30 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 					if name == "" {
 						name = fmt.Sprintf("Step %s", vtxID[:8])
 					}
-					vtx = d.rec.Vertex(vertex.Digest, name)
+					vtx = &vertexState{
+						rec:   d.rec.Vertex(vertex.Digest, name),
+						tasks: make(map[string]progrockTask),
+					}
 					vertices[vtxID] = vtx
 				}
 
 				// Update vertex status based on buildkit vertex state
 				if vertex.Cached {
-					vtx.Cached()
+					vtx.rec.Cached()
 				}
 
 				if vertex.Completed != nil {
 					// Vertex completed
 					if vertex.Error != "" {
-						vtx.Done(errors.New(vertex.Error))
+						vtx.rec.Done(errors.New(vertex.Error))
 					} else {
-						vtx.Done(nil)
+						vtx.rec.Done(nil)
 					}
-					delete(vertices, vtxID)
-					cleanupVertexTasks(vtxID)
+					// Drop this vertex's progress tasks with the vertex state instead of
+					// scanning unrelated task bookkeeping. Defer the deletion until this
+					// entire SolveStatus batch is processed so final status/log records for
+					// this vertex in the same BuildKit message are not dropped.
+					completedVertices = append(completedVertices, vtxID)
 				}
 			}
 
@@ -203,21 +201,20 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 				vtxID := statusUpdate.Vertex.String()
 				if vtx, exists := vertices[vtxID]; exists {
 					// Create/update progress task if we have total progress.
-					// Dedupe by vertex+name so we don't spam new tasks on every update.
+					// Dedupe by status name within each vertex so we don't spam new tasks on every update.
 					if statusUpdate.Total > 0 {
-						key := typeStatusKey(vtxID, statusUpdate.Name)
-						task, ok := progressTasks[key]
+						task, ok := vtx.tasks[statusUpdate.Name]
 						if !ok || task.total != statusUpdate.Total {
 							task = progrockTask{
-								rec:   vtx.ProgressTask(statusUpdate.Total, "%s", statusUpdate.Name),
+								rec:   vtx.rec.ProgressTask(statusUpdate.Total, "%s", statusUpdate.Name),
 								total: statusUpdate.Total,
 							}
-							progressTasks[key] = task
+							vtx.tasks[statusUpdate.Name] = task
 						}
 						task.rec.Current(statusUpdate.Current)
 						if statusUpdate.Completed != nil {
 							task.rec.Done(nil)
-							delete(progressTasks, key)
+							delete(vtx.tasks, statusUpdate.Name)
 						}
 					}
 				}
@@ -235,9 +232,9 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 
 					// Send to appropriate stream
 					if log.Stream == 2 { // stderr
-						fmt.Fprint(vtx.Stderr(), msg)
+						fmt.Fprint(vtx.rec.Stderr(), msg)
 					} else { // stdout
-						fmt.Fprint(vtx.Stdout(), msg)
+						fmt.Fprint(vtx.rec.Stdout(), msg)
 					}
 				}
 			}
@@ -249,10 +246,14 @@ func (d *progrockDisplay) processBuildkitProgress(ctx context.Context, ch chan *
 				}
 			}
 
+			for _, vtxID := range completedVertices {
+				delete(vertices, vtxID)
+			}
+
 		case <-ctx.Done():
 			// Context canceled (Ctrl+C), mark remaining vertices as done
 			for _, vtx := range vertices {
-				vtx.Done(nil)
+				vtx.rec.Done(nil)
 			}
 			return ctx.Err()
 		}

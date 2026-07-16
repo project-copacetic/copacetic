@@ -353,6 +353,69 @@ func TestProcessBuildkitProgress_ProgressUpdates(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestProcessBuildkitProgress_ProcessesFinalStatusAndLogInCompletedVertexBatch(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "test")
+	require.NoError(t, err)
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
+
+	display, err := NewProgrockDisplay(tmpFile)
+	require.NoError(t, err)
+
+	progrockDisp, ok := display.(*progrockDisplay)
+	require.True(t, ok, "expected *progrockDisplay")
+	ch := make(chan *client.SolveStatus)
+	warnings := []client.VertexWarning{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	now := time.Now()
+	vtxDigest := digest.FromString("completed-same-batch-vertex")
+
+	go func() {
+		defer close(ch)
+		ch <- &client.SolveStatus{
+			Vertexes: []*client.Vertex{
+				{
+					Digest:    vtxDigest,
+					Name:      "completed same batch vertex",
+					Started:   &now,
+					Completed: &now,
+				},
+			},
+			Statuses: []*client.VertexStatus{
+				{
+					Vertex:    vtxDigest,
+					Name:      "final download",
+					Current:   100,
+					Total:     100,
+					Completed: &now,
+				},
+			},
+			Logs: []*client.VertexLog{
+				{
+					Vertex: vtxDigest,
+					Stream: 1,
+					Data:   []byte("final log line"),
+				},
+			},
+		}
+	}()
+
+	err = progrockDisp.processBuildkitProgress(ctx, ch, &warnings)
+	assert.NoError(t, err)
+
+	vertices := progrockDisp.tape.Vertices()
+	require.Len(t, vertices, 1)
+	activity := progrockDisp.tape.Activity(vertices[0])
+	assert.Equal(t, int64(1), activity.TasksTotal)
+	assert.Equal(t, int64(1), activity.TasksCompleted)
+	assert.Equal(t, int64(100), activity.TaskBarsCurrent)
+	assert.Equal(t, int64(100), activity.TaskBarsTotal)
+	assert.Contains(t, activity.LastLine, "final log line")
+}
+
 func TestProcessBuildkitProgress_LogOutput(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "test")
 	require.NoError(t, err)
