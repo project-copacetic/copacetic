@@ -397,7 +397,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 
 			// Skip manifests with unknown platforms
 			if m.Platform == nil || m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
-				log.Debugf("Skipping manifest with unknown platform: %s/%s", m.Platform.OS, m.Platform.Architecture)
+				log.Debugf("Skipping manifest %d with unknown or missing platform", i)
 				continue
 			}
 
