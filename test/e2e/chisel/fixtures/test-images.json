@@ -1,0 +1,45 @@
+[
+  {
+    "id": "canonical-native-dotnet",
+    "layout": "native-chisel",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:20bd739a82b977ad1fc882d0a73be15df8db4ad04c9cee210ba2572fdc273351",
+    "platform": "linux/amd64",
+    "expectedUpgradePackages": [
+      "dotnet-runtime-8.0",
+      "libc6",
+      "openssl"
+    ],
+    "runtimeContains": "Microsoft.NETCore.App"
+  },
+  {
+    "id": "community-native-sonarr",
+    "layout": "native-chisel",
+    "reference": "ghcr.io/hadrienpatte/sonarr@sha256:d506fff2fe6ca5a7a02f7303c3014a9911e50299d17774e0d3b64ed8a244fa1f",
+    "platform": "linux/amd64",
+    "chiselRelease": "ubuntu-24.04",
+    "expectedUpgradePackages": [
+      "libc6",
+      "libsqlite3-0",
+      "openssl"
+    ],
+    "preserveTree": "Sonarr/"
+  },
+  {
+    "id": "microsoft-full-status-dotnet",
+    "layout": "external-full-status",
+    "reference": "mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled@sha256:e41fc0f37cc2ac256aa3969d14d73328699ab1d39909abd5df3e62a60af5be68",
+    "platform": "linux/amd64",
+    "expectedUpgradePackages": [
+      "libc6",
+      "libssl3"
+    ],
+    "runtimeContains": "Microsoft.NETCore.App"
+  },
+  {
+    "id": "canonical-native-index",
+    "layout": "native-chisel-index",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:b82dacfba50e41a83f2b1ab7848cff634a112a07437a0bf50a990ef086dd98b1",
+    "platform": "linux/amd64",
+    "chiselRelease": "ubuntu-24.04"
+  }
+]
