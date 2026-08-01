@@ -22,6 +22,38 @@ WARN[0000] --debug specified, working folder at /var/folders/fx/nbhd5jln1qq3t405
 
 The folder specified defaults to the system temp folder unless the `--working-folder` option was specified, and you can delete it with `rm -r <folder>` when you're done. The working folder will usually contain the `copa-out` directory which contains files depending on the `pkgmgr` implementation, such as the probed package state or post-patching package state file for the package manager. Searching for `SolveToLocal()` invocations in the `copa` codebase will show you where these files are written.
 
+## Run Ubuntu Chiseled real-image tests
+
+Changes to native Chisel or apt-less dpkg-status patching should run the
+digest-pinned real-image suite in addition to `make test`. The suite requires
+Docker with the containerd image store, Docker Buildx, Trivy, and public network
+access. Build the local tooling image and run the tests from the repository
+root:
+
+```bash
+make build
+
+docker buildx build \
+  --platform linux/amd64 \
+  --file images/chisel/Dockerfile \
+  --tag ghcr.io/project-copacetic/copacetic/chisel:v1.4.2 \
+  --load \
+  .
+
+COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
+go test ./test/e2e/chisel \
+  --addr=docker:// \
+  --copa="$COPA_BIN" \
+  -timeout 55m \
+  -v
+```
+
+Use `-run` to select one case while iterating. These tests contact public image
+registries, the pinned Trivy database, and Ubuntu archives, so they are not part
+of the network-independent `make test` target. The complete fixture matrix and
+assertions are documented in
+[`test/e2e/chisel/README.md`](https://github.com/project-copacetic/copacetic/blob/main/test/e2e/chisel/README.md).
+
 ## Verify the intermediate stages of building a patched image
 
 It's often useful to be able to inspect what the output of an intermediate LLB stage would look like after it has executed, and you can perform an analog to `printf` debugging by solving the LLB stage to a Docker image and then inspecting the resulting image:

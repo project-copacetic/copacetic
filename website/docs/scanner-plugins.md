@@ -24,6 +24,17 @@ You can also a submit scan report in native `v1alpha1` format (interface mention
 
 :::
 
+:::warning Native Chisel manifests
+
+As verified on July 31, 2026 with Copa's pinned Trivy version (`v0.69.3`),
+Trivy does not extract the OS package inventory from
+`/var/lib/chisel/manifest.wall`. Native Chisel images are therefore
+comprehensive-update-only in Copa and must be patched without a report. This
+does not affect apt-less Chiseled images that retain `/var/lib/dpkg/status`. See
+[Ubuntu Chiseled Images](./chiseled-images.md).
+
+:::
+
 ## Scanner Plugins from the Community
 
 If you have built a scanner plugin and would like to add it to this list, please submit a PR to update this section with your plugin.
