@@ -14,6 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	remotev1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
+	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -29,8 +35,73 @@ import (
 	"github.com/moby/buildkit/util/apicaps"
 	caps "github.com/moby/buildkit/util/apicaps/pb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
+
+func TestDiscoverPlatformsPrefersRemoteIndexOverCachedSingleChild(t *testing.T) {
+	originalLocal := localImagePlatforms
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		localImagePlatforms = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+
+	localImagePlatforms = func(context.Context, string) ([]ispec.Platform, bool, error) {
+		return []ispec.Platform{{OS: "linux", Architecture: "arm64"}}, true, nil
+	}
+	raw := []byte(`{
+		"schemaVersion":2,
+		"mediaType":"application/vnd.oci.image.index.v1+json",
+		"manifests":[
+			{
+				"mediaType":"application/vnd.oci.image.manifest.v1+json",
+				"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"size":1,
+				"platform":{"os":"linux","architecture":"amd64"}
+			},
+			{
+				"mediaType":"application/vnd.oci.image.manifest.v1+json",
+				"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"size":1,
+				"platform":{"os":"linux","architecture":"arm64"}
+			}
+		]
+	}`)
+	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+		return &remote.Descriptor{
+			Descriptor: remotev1.Descriptor{
+				MediaType: remoteTypes.OCIImageIndex,
+				Size:      int64(len(raw)),
+				Digest:    remotev1.Hash{Algorithm: "sha256", Hex: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
+			},
+			Manifest: raw,
+		}, nil
+	}
+
+	platforms, err := DiscoverPlatformsFromReference("example.com/test/image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+	require.NoError(t, err)
+	require.Len(t, platforms, 2)
+	assert.Equal(t, "amd64", platforms[0].Architecture)
+	assert.Equal(t, "arm64", platforms[1].Architecture)
+}
+
+func TestAddOCIExportMetadata(t *testing.T) {
+	result := gwclient.NewResult()
+	metadata := platformExportMetadata{
+		Config: []byte(`{"architecture":"arm64","os":"linux","config":{"User":"101"}}`),
+		Annotations: map[string]string{
+			"sh.copa.chisel.release": "ubuntu-24.04",
+			"sh.copa.chisel.version": "v1.4.2",
+		},
+	}
+
+	require.NoError(t, addOCIExportMetadata(result, metadata))
+	assert.Equal(t, metadata.Config, result.Metadata[exptypes.ExporterImageConfigKey])
+	for key, value := range metadata.Annotations {
+		assert.Equal(t, []byte(value), result.Metadata[exptypes.AnnotationManifestKey(nil, key)])
+	}
+}
 
 const (
 	goosDarwin  = "darwin"

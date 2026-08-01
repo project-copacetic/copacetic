@@ -1,13 +1,23 @@
 package frontend
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -323,4 +333,118 @@ func TestJSONFileFiltering(t *testing.T) {
 		assert.Contains(t, jsonFiles, "report1.json")
 		assert.Contains(t, jsonFiles, "report2.json")
 	})
+}
+
+func TestFrontendResultMetadataIncludesChiselAnnotations(t *testing.T) {
+	configData, err := json.Marshal(ocispecs.Image{
+		Config: ocispecs.ImageConfig{
+			Labels: map[string]string{"existing": "preserved"},
+		},
+	})
+	require.NoError(t, err)
+	platform := ocispecs.Platform{OS: osLinux, Architecture: "amd64"}
+	annotations := map[string]string{
+		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+	}
+
+	metadata, err := frontendResultMetadata(configData, &platform, annotations)
+	require.NoError(t, err)
+
+	configKey := exptypes.ExporterImageConfigKey + "/linux/amd64"
+	var image ocispecs.Image
+	require.NoError(t, json.Unmarshal(metadata[configKey], &image))
+	assert.Equal(t, "preserved", image.Config.Labels["existing"])
+	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
+	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+	assert.Equal(t, []byte("ubuntu-24.04"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselReleaseAnnotation)])
+	assert.Equal(t, []byte("v1.4.2"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselVersionAnnotation)])
+}
+
+type frontendMetadataTestClient struct {
+	gwclient.Client
+	result *gwclient.Result
+}
+
+func (c *frontendMetadataTestClient) Solve(context.Context, gwclient.SolveRequest) (*gwclient.Result, error) {
+	return c.result, nil
+}
+
+func TestResultMetadataClientDecoratesNextSolveAndRestoresClient(t *testing.T) {
+	baseResult := gwclient.NewResult()
+	baseClient := &frontendMetadataTestClient{result: baseResult}
+	frontend := &Frontend{}
+	decorator := &resultMetadataClient{
+		Client: baseClient,
+		owner:  frontend,
+		metadata: map[string][]byte{
+			exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation): []byte("ubuntu-24.04"),
+		},
+	}
+	frontend.client = decorator
+
+	result, err := frontend.client.Solve(context.Background(), gwclient.SolveRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("ubuntu-24.04"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
+	assert.Equal(t, baseClient, frontend.client)
+}
+
+func TestNativeChiselTargetedPatchErrorText(t *testing.T) {
+	assert.Equal(t,
+		"targeted patching of native Chisel manifests is not supported; omit --report to run a comprehensive Chisel update",
+		pkgmgr.NativeChiselTargetedPatchError,
+	)
+}
+
+type frontendStatePathReference struct {
+	gwclient.Reference
+	statErr error
+}
+
+func (r *frontendStatePathReference) StatFile(context.Context, gwclient.StatRequest) (*fstypes.Stat, error) {
+	if r.statErr != nil {
+		return nil, r.statErr
+	}
+	return &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil
+}
+
+func TestRejectTargetedNativeChiselState(t *testing.T) {
+	t.Run("native manifest returns exact targeted error", func(t *testing.T) {
+		result := gwclient.NewResult()
+		result.SetRef(&frontendStatePathReference{})
+		client := &frontendMetadataTestClient{result: result}
+		state := llb.Scratch()
+
+		err := rejectTargetedNativeChiselState(context.Background(), client, &state, nil)
+		require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
+	})
+
+	t.Run("missing manifest remains supported", func(t *testing.T) {
+		result := gwclient.NewResult()
+		result.SetRef(&frontendStatePathReference{statErr: status.Error(codes.NotFound, "missing")})
+		client := &frontendMetadataTestClient{result: result}
+		state := llb.Scratch()
+
+		require.NoError(t, rejectTargetedNativeChiselState(context.Background(), client, &state, nil))
+	})
+}
+
+func TestCopyFrontendResultMetadata(t *testing.T) {
+	source := gwclient.NewResult()
+	sourceValue := []byte("ubuntu-24.04")
+	source.AddMeta(exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation), sourceValue)
+	destination := gwclient.NewResult()
+
+	copyFrontendResultMetadata(destination, source)
+	sourceValue[0] = 'x'
+
+	assert.Equal(t, []byte("ubuntu-24.04"), destination.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
+}
+
+func TestExtractChiselReleaseFromContextRejectsUnsafePaths(t *testing.T) {
+	_, err := extractChiselReleaseFromContext(t.Context(), nil, "/absolute/release")
+	require.ErrorContains(t, err, "must be relative")
+
+	_, err = extractChiselReleaseFromContext(t.Context(), nil, "../outside")
+	require.ErrorContains(t, err, "escapes its BuildKit context")
 }

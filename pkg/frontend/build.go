@@ -7,13 +7,16 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/util/bklog"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -22,6 +25,77 @@ import (
 const (
 	jsonExt = ".json"
 )
+
+// resultMetadataClient decorates the next Solve result with image config and
+// package-manager annotations, then restores the original frontend client. The
+// frontend currently builds a state first and solves it in its caller, so this
+// keeps metadata coupled to that immediately following solve without changing
+// the public buildPatchedImage signature.
+type resultMetadataClient struct {
+	gwclient.Client
+	owner    *Frontend
+	metadata map[string][]byte
+}
+
+//nolint:gocritic // The gateway Client interface requires SolveRequest by value.
+func (c *resultMetadataClient) Solve(ctx context.Context, request gwclient.SolveRequest) (*gwclient.Result, error) {
+	defer func() {
+		if c.owner != nil && c.owner.client == c {
+			c.owner.client = c.Client
+		}
+	}()
+
+	result, err := c.Client.Solve(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, errors.New("frontend solve returned a nil result")
+	}
+	for key, value := range c.metadata {
+		result.AddMeta(key, append([]byte(nil), value...))
+	}
+	return result, nil
+}
+
+func copyFrontendResultMetadata(destination, source *gwclient.Result) {
+	if destination == nil || source == nil {
+		return
+	}
+	for key, value := range source.Metadata {
+		destination.AddMeta(key, append([]byte(nil), value...))
+	}
+}
+
+func rejectTargetedNativeChiselState(ctx context.Context, client gwclient.Client, state *llb.State, platform *ocispecs.Platform) error {
+	manifestExists, err := common.StatePathExists(ctx, client, state, platform, pkgmgr.NativeChiselManifestPath)
+	if err != nil {
+		return errors.Wrap(err, "failed to inspect target image for native Chisel metadata")
+	}
+	if manifestExists {
+		return errors.New(pkgmgr.NativeChiselTargetedPatchError)
+	}
+	return nil
+}
+
+func frontendResultMetadata(configData []byte, platform *ocispecs.Platform, annotations map[string]string) (map[string][]byte, error) {
+	configData, err := common.AddImageConfigLabels(configData, annotations)
+	if err != nil {
+		return nil, err
+	}
+
+	configKey := exptypes.ExporterImageConfigKey
+	if platform != nil {
+		configKey += "/" + platforms.Format(*platform)
+	}
+	metadata := map[string][]byte{
+		configKey: configData,
+	}
+	for key, value := range annotations {
+		metadata[exptypes.AnnotationManifestKey(platform, key)] = []byte(value)
+	}
+	return metadata, nil
+}
 
 // ensureTempDir makes sure the directory returned by os.TempDir() exists
 // before callers invoke os.MkdirTemp("", ...). Minimal frontend images must
@@ -34,7 +108,9 @@ func ensureTempDir() error {
 // This reuses the same components as the CLI to ensure consistency.
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
 	// Create package manager instance
-	config, pm, err := common.SetupBuildkitConfigAndManager(ctx, f.client, opts.Image, platform, "", nil)
+	config, pm, err := common.SetupBuildkitConfigAndManagerWithOptions(ctx, f.client, opts.Image, platform, "", nil, pkgmgr.PackageManagerOptions{
+		ChiselRelease: opts.ChiselRelease,
+	})
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to set up buildkit config and package manager")
 	}
@@ -62,6 +138,9 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 					bklog.G(ctx).WithField("component", "copa-frontend").
 						WithField("platform", platformFile).
 						Warn("No report found for platform, skipping patch")
+					if err := rejectTargetedNativeChiselState(ctx, f.client, &config.ImageState, platform); err != nil {
+						return llb.State{}, err
+					}
 					return config.ImageState, nil
 				}
 			}
@@ -80,6 +159,9 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 
 	// Check if there are packages to update
 	if um != nil && len(um.OSUpdates) == 0 && len(um.LangUpdates) == 0 {
+		if err := rejectTargetedNativeChiselState(ctx, f.client, &config.ImageState, platform); err != nil {
+			return llb.State{}, err
+		}
 		bklog.G(ctx).WithField("component", "copa-frontend").Info("No packages to update, returning original image")
 		return config.ImageState, nil
 	}
@@ -92,6 +174,16 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 			return config.ImageState, nil
 		}
 		return llb.State{}, errors.Wrap(err, "failed to install package updates")
+	}
+
+	metadata, err := frontendResultMetadata(config.ConfigData, platform, pkgmgr.GetPackageManagerAnnotations(pm))
+	if err != nil {
+		return llb.State{}, errors.Wrap(err, "failed to prepare frontend image metadata")
+	}
+	f.client = &resultMetadataClient{
+		Client:   f.client,
+		owner:    f,
+		metadata: metadata,
 	}
 
 	return *patchedState, nil
@@ -290,4 +382,109 @@ func extractReportDirectory(ctx context.Context, ref gwclient.Reference, reportP
 		Debug("Extracted report directory from context")
 
 	return tmpDir, nil
+}
+
+const (
+	chiselReleaseContextName = "chisel-release"
+	maxFrontendReleaseBytes  = 64 << 20
+	maxFrontendReleaseFiles  = 10000
+)
+
+// extractChiselReleaseFromContext copies a local Chisel release directory from
+// the dedicated BuildKit context into the frontend's temporary filesystem.
+func extractChiselReleaseFromContext(ctx context.Context, client gwclient.Client, releasePath string) (string, error) {
+	if releasePath == "" || filepath.IsAbs(releasePath) {
+		return "", fmt.Errorf("local Chisel release path must be relative to the %q BuildKit context", chiselReleaseContextName)
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(releasePath))
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("local Chisel release path %q escapes its BuildKit context", releasePath)
+	}
+
+	localState := llb.Local(chiselReleaseContextName,
+		llb.SharedKeyHint(chiselReleaseContextName),
+		llb.WithCustomName("Loading local Chisel release"),
+		llb.FollowPaths([]string{"."}),
+	)
+	definition, err := localState.Marshal(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to marshal Chisel release context")
+	}
+	result, err := client.Solve(ctx, gwclient.SolveRequest{Definition: definition.ToPB()})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to solve Chisel release context")
+	}
+	reference, err := result.SingleRef()
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get Chisel release context reference")
+	}
+	stat, err := reference.StatFile(ctx, gwclient.StatRequest{Path: cleaned})
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to stat Chisel release directory %s", releasePath)
+	}
+	if !stat.IsDir() {
+		return "", fmt.Errorf("local Chisel release path %q is not a directory", releasePath)
+	}
+
+	if err := ensureTempDir(); err != nil {
+		return "", errors.Wrap(err, "failed to ensure temp dir exists")
+	}
+	tempDir, err := os.MkdirTemp("", "copa-frontend-chisel-release-")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create Chisel release temp directory")
+	}
+	fileCount := 0
+	var totalBytes int64
+	if err := extractFrontendContextDirectory(ctx, reference, cleaned, tempDir, &fileCount, &totalBytes); err != nil {
+		os.RemoveAll(tempDir)
+		return "", err
+	}
+	return tempDir, nil
+}
+
+func extractFrontendContextDirectory(ctx context.Context, reference gwclient.Reference, sourcePath, destinationPath string, fileCount *int, totalBytes *int64) error {
+	entries, err := reference.ReadDir(ctx, gwclient.ReadDirRequest{Path: sourcePath})
+	if err != nil {
+		return errors.Wrapf(err, "failed to read Chisel release directory %s", sourcePath)
+	}
+	for _, entry := range entries {
+		name := filepath.Base(entry.GetPath())
+		if name == "." || name == ".." || name == "" {
+			return fmt.Errorf("invalid entry %q in Chisel release context", entry.GetPath())
+		}
+		if name == ".git" {
+			continue
+		}
+		*fileCount++
+		if *fileCount > maxFrontendReleaseFiles {
+			return fmt.Errorf("local Chisel release contains more than %d entries", maxFrontendReleaseFiles)
+		}
+		sourceEntry := filepath.Join(sourcePath, name)
+		destinationEntry := filepath.Join(destinationPath, name)
+		mode := os.FileMode(entry.Mode)
+		switch {
+		case mode.IsDir():
+			if err := os.Mkdir(destinationEntry, mode.Perm()); err != nil {
+				return errors.Wrapf(err, "failed to create local Chisel release directory %s", name)
+			}
+			if err := extractFrontendContextDirectory(ctx, reference, sourceEntry, destinationEntry, fileCount, totalBytes); err != nil {
+				return err
+			}
+		case mode.IsRegular():
+			if entry.Size < 0 || entry.Size > maxFrontendReleaseBytes || *totalBytes+entry.Size > maxFrontendReleaseBytes {
+				return fmt.Errorf("local Chisel release exceeds the %d MiB size limit", maxFrontendReleaseBytes>>20)
+			}
+			data, err := reference.ReadFile(ctx, gwclient.ReadRequest{Filename: sourceEntry})
+			if err != nil {
+				return errors.Wrapf(err, "failed to read local Chisel release file %s", sourceEntry)
+			}
+			*totalBytes += int64(len(data))
+			if err := os.WriteFile(destinationEntry, data, mode.Perm()); err != nil {
+				return errors.Wrapf(err, "failed to write local Chisel release file %s", name)
+			}
+		default:
+			return fmt.Errorf("local Chisel release contains unsupported non-regular entry %q", sourceEntry)
+		}
+	}
+	return nil
 }

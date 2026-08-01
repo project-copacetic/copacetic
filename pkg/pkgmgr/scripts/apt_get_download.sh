@@ -1,102 +1,206 @@
+#!/bin/sh
+
 if [ "$IGNORE_ERRORS" = "true" ]; then
     set -x
 else
     set -ex
 fi
 
-# Build positional parameters ($@) of package names so they can be passed
-# safely to apt-get without word-splitting or option injection.
-if [ "$UPDATE_ALL" = "true" ]; then
-    # One package per line, written by the caller via printf.
-    set --
-    while IFS= read -r pkg || [ -n "$pkg" ]; do
-        [ -n "$pkg" ] || continue
-        set -- "$@" "$pkg"
-    done < /var/cache/apt/archives/packages.txt
-else
-    # The placeholder below is a space-separated list of pre-validated package
-    # names interpolated by Go at script-generation time. Word-splitting here
-    # is intentional so each name becomes its own positional parameter.
-    # shellcheck disable=SC2086
-    set -- %s
+DPKG_ROOT=${DPKG_ROOT:-/tmp/debian-rootfs}
+DOWNLOAD_DIR=${DOWNLOAD_DIR:-/copa-dpkg-downloads}
+PACKAGES_FILE=${PACKAGES_FILE:-$DOWNLOAD_DIR/packages.txt}
+VERSION_FLOORS_FILE=${VERSION_FLOORS_FILE:-/copa-dpkg-version-floors}
+FINALIZE_DPKG_STATUS_SCRIPT=${FINALIZE_DPKG_STATUS_SCRIPT:-/finalize_dpkg_status.sh}
+RESULT_MANIFEST=${RESULT_MANIFEST:-$DPKG_ROOT/manifest}
+
+case "$UPDATE_ALL" in
+    true|false)
+        ;;
+    *)
+        echo "invalid UPDATE_ALL value: $UPDATE_ALL" >&2
+        exit 1
+        ;;
+esac
+
+mkdir -p "$DOWNLOAD_DIR"
+cd "$DOWNLOAD_DIR"
+: > "$RESULT_MANIFEST"
+
+# Build positional parameters from a generated one-package-per-line file. Go
+# validates every package name before creating this file; no package value is
+# interpolated into shell source.
+set --
+while IFS= read -r package || [ -n "$package" ]; do
+    [ -n "$package" ] || continue
+    set -- "$@" "$package"
+done < "$PACKAGES_FILE"
+
+if [ "$#" -eq 0 ]; then
+    echo "no packages were selected for download" >&2
+    exit 1
 fi
 
 apt-get -o Acquire::Retries=3 update
-
-apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
-dpkg --root=/tmp/debian-rootfs --admindir=/tmp/debian-rootfs/var/lib/dpkg --force-all --force-confold --install *.deb
-dpkg --root=/tmp/debian-rootfs --configure -a
-
-# create new status.d with contents from status file after updates
-STATUS_FILE="/tmp/debian-rootfs/var/lib/dpkg/status"
-OUTPUT_DIR="/tmp/debian-rootfs/var/lib/dpkg/status.d"
-rm -rf "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR"
-
-package_name=""
-package_content=""
-
-get_original_filename() {
-    local pkg="$1"
-    echo "$STATUSD_FILE_MAP" | grep "\"$pkg\":" | sed 's/.*"'"$pkg"'":"\([^"]*\)".*/\1/'
-}
-
-while IFS= read -r line || [ -n "$line" ]; do
-    if [ -z "$line" ]; then
-        # end of a package block
-        if [ -n "$package_name" ]; then
-            # Get the original filename from STATUSD_FILE_MAP if it exists
-            original_filename=$(get_original_filename "$package_name")
-            
-            if [ -n "$original_filename" ]; then
-                output_name="$original_filename"
-            else
-               output_name="$package_name"
-            fi
-            
-            # write the collected content to the package file
-            echo "$package_content" > "$OUTPUT_DIR/$output_name"
-        fi
-
-        # re-set for next package
-        package_name=""
-        package_content=""
-    else
-        # add current line to package content
-        if [ -z "$package_content" ]; then
-            package_content="$line"
-        else
-            package_content="$package_content
-$line"
-        fi
-
-        case "$line" in
-            "Package:"*)
-                # extract package name
-                package_name=$(echo "$line" | cut -d' ' -f2)
-                ;;
-        esac
-    fi
-done < "$STATUS_FILE"
-
-# handle last block if file does not end with a newline
-if [ -n "$package_name" ] && [ -n "$package_content" ]; then
-    # Get the original filename from STATUSD_FILE_MAP if it exists
-    original_filename=$(get_original_filename "$package_name")
-    
-    if [ -n "$original_filename" ]; then
-        output_name="$original_filename"
-    else
-         output_name="$package_name"
-    fi
-        
-    echo "$package_content" > "$OUTPUT_DIR/$output_name"
+mkdir -p "$DOWNLOAD_DIR/partial"
+if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
+    # Download the closure needed to make the target's intentionally minimal
+    # package inventory dependency-consistent. This is download-only.
+    apt-get \
+        -o Acquire::Retries=3 \
+        -o "Dir::State::status=$DPKG_ROOT/var/lib/dpkg/status" \
+        -o "Dir::Cache::archives=$DOWNLOAD_DIR" \
+        -o Debug::NoLocking=1 \
+        --download-only \
+        --fix-broken \
+        --no-install-recommends \
+        -y install
 fi
 
-# delete everything else inside /tmp/debian-rootfs/var/lib/dpkg except status.d
-find /tmp/debian-rootfs/var/lib/dpkg -mindepth 1 -maxdepth 1 ! -name "status.d" -exec rm -rf {} +
+# Download the explicitly selected upgrades as candidates. The full-status
+# closure above may already contain some of them.
+apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
 
-# write results manifest for validation
-for deb in *.deb; do
-    dpkg-deb -f "$deb" | grep "^Package:\|^Version:" >> /tmp/debian-rootfs/manifest
+lookup_version_floor() {
+    wanted_package=$1
+    FLOOR_INSTALLED=""
+    FLOOR_FIXED=""
+
+    while IFS='|' read -r floor_package installed_version fixed_version extra || [ -n "${floor_package}${installed_version}${fixed_version}${extra}" ]; do
+        if [ -z "$floor_package" ] || [ -n "$extra" ]; then
+            echo "invalid package version floor record in $VERSION_FLOORS_FILE" >&2
+            exit 1
+        fi
+        if [ "$floor_package" = "$wanted_package" ]; then
+            FLOOR_INSTALLED=$installed_version
+            FLOOR_FIXED=$fixed_version
+            return 0
+        fi
+    done < "$VERSION_FLOORS_FILE"
+
+    return 1
+}
+
+version_satisfies() {
+    actual=$1
+    relation=$2
+    required=$3
+
+    if dpkg --compare-versions "$actual" "$relation" "$required"; then
+        return 0
+    else
+        compare_status=$?
+    fi
+    if [ "$compare_status" -gt 1 ]; then
+        echo "invalid Debian version comparison: actual=$actual relation=$relation required=$required" >&2
+        exit 1
+    fi
+    return 1
+}
+
+record_package_version() {
+    package=$1
+    version=$2
+    printf 'Package: %s\nVersion: %s\n' "$package" "$version" >> "$RESULT_MANIFEST"
+}
+
+unsafe_downloads=false
+for deb in ./*.deb; do
+    [ -f "$deb" ] || continue
+
+    package=$(dpkg-deb -f "$deb" Package)
+    version=$(dpkg-deb -f "$deb" Version)
+    unsafe_reason=""
+
+    if ! lookup_version_floor "$package"; then
+        # APT may download a new dependency that was not present in the
+        # original minimal image. It has no installed-version floor.
+        FLOOR_INSTALLED=""
+        FLOOR_FIXED=""
+    elif [ "$UPDATE_ALL" = "true" ]; then
+        if [ -z "$FLOOR_INSTALLED" ]; then
+            unsafe_reason="downloaded package $package has no installed-version baseline"
+        elif ! version_satisfies "$version" gt "$FLOOR_INSTALLED"; then
+            unsafe_reason="downloaded package $package version $version is not newer than installed version $FLOOR_INSTALLED"
+        fi
+    else
+        if [ -n "$FLOOR_INSTALLED" ] && ! version_satisfies "$version" ge "$FLOOR_INSTALLED"; then
+            unsafe_reason="downloaded package $package version $version is lower than installed version $FLOOR_INSTALLED"
+        elif [ -n "$FLOOR_FIXED" ] && ! version_satisfies "$version" ge "$FLOOR_FIXED"; then
+            unsafe_reason="downloaded package $package version $version is lower than requested fixed version $FLOOR_FIXED"
+        fi
+    fi
+
+    if [ -n "$unsafe_reason" ]; then
+        echo "$unsafe_reason; refusing to install it" >&2
+        # Preserve the attempted version in the result manifest so Go-side
+        # validation reports the package when --ignore-errors is active.
+        record_package_version "$package" "$version"
+        rm -f "$deb"
+        unsafe_downloads=true
+        if [ "$IGNORE_ERRORS" != "true" ]; then
+            exit 1
+        fi
+    fi
 done
+
+# Full-status images omit the shell and helper programs package maintainer
+# scripts assume. Rebuild only that layout's archives without scripts; preserve
+# the established status.d installation behavior.
+if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
+    sanitize_root=$(mktemp -d)
+    sanitized_dir="$DOWNLOAD_DIR/sanitized"
+    mkdir -p "$sanitized_dir"
+    for deb in ./*.deb; do
+        [ -f "$deb" ] || continue
+        package=$(dpkg-deb -f "$deb" Package)
+        unpacked="$sanitize_root/$package"
+        rm -rf "$unpacked"
+        dpkg-deb -R "$deb" "$unpacked"
+        rm -f \
+            "$unpacked/DEBIAN/config" "$unpacked/DEBIAN/preinst" \
+            "$unpacked/DEBIAN/postinst" "$unpacked/DEBIAN/prerm" \
+            "$unpacked/DEBIAN/postrm" "$unpacked/DEBIAN/triggers"
+        dpkg-deb -b "$unpacked" "$sanitized_dir/$(basename "$deb")" >/dev/null
+    done
+    rm -rf "$sanitize_root"
+    set -- "$sanitized_dir"/*.deb
+else
+    set -- ./*.deb
+fi
+if [ ! -f "$1" ]; then
+    set --
+fi
+
+if [ "$#" -gt 0 ]; then
+    dpkg --root="$DPKG_ROOT" --admindir="$DPKG_ROOT/var/lib/dpkg" --force-all --force-confold --install "$@"
+    dpkg --root="$DPKG_ROOT" --configure -a
+fi
+
+if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
+    # Dependency closure packages may contain package-manager or shell tooling
+    # used only while maintainer scripts run. Never leave those executables in
+    # the patched apt-less image.
+    rm -f \
+        "$DPKG_ROOT"/bin/bash "$DPKG_ROOT"/bin/busybox \
+        "$DPKG_ROOT"/bin/dash "$DPKG_ROOT"/bin/sh \
+        "$DPKG_ROOT"/usr/bin/apt "$DPKG_ROOT"/usr/bin/apt-* \
+        "$DPKG_ROOT"/usr/bin/bash "$DPKG_ROOT"/usr/bin/busybox \
+        "$DPKG_ROOT"/usr/bin/dash "$DPKG_ROOT"/usr/bin/dpkg* \
+        "$DPKG_ROOT"/usr/bin/sh "$DPKG_ROOT"/sbin/apk
+fi
+
+# Preserve the target image's original dpkg metadata layout and remove the
+# temporary administrative database reconstructed for the update.
+DPKG_ROOT="$DPKG_ROOT" /bin/sh "$FINALIZE_DPKG_STATUS_SCRIPT"
+
+# Write results manifest for validation. Rejected packages were recorded above;
+# safe downloaded packages are recorded after installation.
+for deb in "$@"; do
+    package=$(dpkg-deb -f "$deb" Package)
+    version=$(dpkg-deb -f "$deb" Version)
+    record_package_version "$package" "$version"
+done
+
+if [ "$unsafe_downloads" = "true" ]; then
+    echo "one or more unsafe package versions were skipped" >&2
+fi

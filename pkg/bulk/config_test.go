@@ -3,8 +3,34 @@ package bulk
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
+
+func TestPatchConfigChiselRelease(t *testing.T) {
+	var config PatchConfig
+	err := yaml.Unmarshal([]byte(`
+apiVersion: copa.sh/v1alpha1
+kind: PatchConfig
+chiselRelease: ubuntu-24.04
+images:
+  - name: default-release
+    image: example.com/default
+    tags:
+      strategy: latest
+  - name: overridden-release
+    image: example.com/override
+    chiselRelease: https://example.com/releases.git#abc123
+    tags:
+      strategy: latest
+`), &config)
+	require.NoError(t, err)
+	require.Len(t, config.Images, 2)
+	assert.Equal(t, "ubuntu-24.04", config.ChiselRelease)
+	assert.Empty(t, config.Images[0].ChiselRelease)
+	assert.Equal(t, "https://example.com/releases.git#abc123", config.Images[1].ChiselRelease)
+}
 
 func TestTagStrategy_UnmarshalYAML(t *testing.T) {
 	testCases := []struct {

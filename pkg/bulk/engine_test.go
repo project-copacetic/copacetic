@@ -169,3 +169,38 @@ func TestMergeTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveChiselRelease(t *testing.T) {
+	tests := []struct {
+		name           string
+		defaultRelease string
+		imageRelease   string
+		expected       string
+	}{
+		{
+			name: "both omitted use inference",
+		},
+		{
+			name:           "bulk default",
+			defaultRelease: "ubuntu-24.04",
+			expected:       "ubuntu-24.04",
+		},
+		{
+			name:         "image release without default",
+			imageRelease: "/releases/ubuntu-24.04",
+			expected:     "/releases/ubuntu-24.04",
+		},
+		{
+			name:           "image release overrides bulk default",
+			defaultRelease: "ubuntu-24.04",
+			imageRelease:   "https://example.com/releases.git#abc123",
+			expected:       "https://example.com/releases.git#abc123",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, resolveChiselRelease(tt.defaultRelease, tt.imageRelease))
+		})
+	}
+}

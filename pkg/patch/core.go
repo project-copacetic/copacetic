@@ -2,7 +2,9 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
@@ -11,6 +13,7 @@ import (
 	"golang.org/x/exp/slices"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/langmgr"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
@@ -32,6 +35,7 @@ type Options struct {
 	// Working environment
 	WorkingFolder string
 	IgnoreError   bool
+	ChiselRelease string
 
 	// Optional error channel for patch command integration
 	ErrorChannel chan error
@@ -56,6 +60,7 @@ type Result struct {
 	PackageType      string
 	ErroredPackages  []string
 	ValidatedUpdates []unversioned.UpdatePackage
+	Annotations      map[string]string
 
 	// BuildKit state and config (only set if ReturnState is true)
 	PatchedState *llb.State
@@ -106,6 +111,17 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Language-only mode applies when the report has lang updates but no OS updates
 	// (common for scratch/distroless/busybox Go binary images).
 	langOnlyMode := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) > 0
+	if langOnlyMode {
+		manifestExists, preflightErr := common.StatePathExists(ctx, c, &config.ImageState, &opts.TargetPlatform.Platform, pkgmgr.NativeChiselManifestPath)
+		if preflightErr != nil {
+			// Preserve existing language-only behavior when optional native metadata
+			// inspection is unavailable; actual OS package flows still classify in
+			// the package manager.
+			log.Debugf("Unable to preflight language-only image for native Chisel metadata: %v", preflightErr)
+		} else if manifestExists {
+			return nil, errors.New(pkgmgr.NativeChiselTargetedPatchError)
+		}
+	}
 
 	var manager pkgmgr.PackageManager
 	var patchedImageState *llb.State
@@ -187,10 +203,23 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		log.Debug("No language-specific updates found in the manifest.")
 	}
 
-	// Preserve the state and config for potential OCI export use
-	// This allows both Docker export AND OCI layout creation from the same patching operation
-	preservedState := patchedImageState
-	preservedConfig := config.ConfigData
+	// Collect optional package-manager metadata after installation, when values
+	// such as resolved release and tool versions are available.
+	managerAnnotations := pkgmgr.GetPackageManagerAnnotations(manager)
+
+	// Preserve the state and config for potential OCI export use. Mirror the
+	// annotations into image-config labels as well as manifest annotations so
+	// frontends and exporters that consume config metadata retain the provenance.
+	preservedConfig, err := common.AddImageConfigLabels(config.ConfigData, managerAnnotations)
+	if err != nil {
+		trySendError(opts.ErrorChannel, err)
+		return nil, err
+	}
+	preservedState, err := preservedImageState(patchedImageState, preservedConfig)
+	if err != nil {
+		trySendError(opts.ErrorChannel, err)
+		return nil, err
+	}
 
 	// If ReturnState is true, return the state without solving
 	if opts.ReturnState {
@@ -199,6 +228,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 			PackageType:      packageType(manager),
 			ErroredPackages:  errPkgs,
 			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
+			Annotations:      managerAnnotations,
 			PatchedState:     preservedState,
 			ConfigData:       preservedConfig,
 		}, nil
@@ -223,12 +253,13 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	}
 
 	// Normalize the configuration for the target platform
-	fixed, err := normalizeConfigForPlatform(config.ConfigData, opts.TargetPlatform)
+	fixed, err := normalizeConfigForPlatform(preservedConfig, opts.TargetPlatform)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
+	addPackageManagerAnnotations(res, managerAnnotations)
 
 	// Return result with BOTH the solved result AND preserved states
 	// This enables Docker export (from result) AND OCI layout (from states)
@@ -237,9 +268,28 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		PackageType:      packageType(manager),
 		ErroredPackages:  errPkgs,
 		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
+		Annotations:      managerAnnotations,
 		PatchedState:     preservedState,  // Always preserve for OCI export
 		ConfigData:       preservedConfig, // Always preserve for OCI export
 	}, nil
+}
+
+func preservedImageState(state *llb.State, config []byte) (*llb.State, error) {
+	preserved, err := state.WithImageConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("attach image config to preserved state: %w", err)
+	}
+	return &preserved, nil
+}
+
+// addPackageManagerAnnotations exposes manager-provided OCI annotations to the exporter.
+func addPackageManagerAnnotations(result *gwclient.Result, annotations map[string]string) {
+	if result == nil {
+		return
+	}
+	for key, value := range annotations {
+		result.AddMeta(exptypes.AnnotationManifestKey(nil, key), []byte(value))
+	}
 }
 
 // getValidatedUpdates extracts validated updates (excluding errored packages).
@@ -264,49 +314,90 @@ func packageType(manager pkgmgr.PackageManager) string {
 	return utils.PkgTypeLibrary
 }
 
+func explicitNativeChiselOS(
+	ctx context.Context,
+	c gwclient.Client,
+	config *buildkit.Config,
+	override string,
+) (string, string, bool, error) {
+	if override == "" {
+		return "", "", false, nil
+	}
+
+	current := &config.ImageState
+	if config.PatchedConfigData != nil {
+		current = &config.PatchedImageState
+	}
+	if _, readErr := buildkit.TryExtractFileFromState(ctx, c, current, pkgmgr.NativeChiselManifestPath); readErr != nil {
+		return "", "", false, nil
+	}
+
+	release, err := copachisel.ParseRelease(override)
+	if err != nil {
+		return "", "", false, err
+	}
+	version := ""
+	if release.Kind == copachisel.ReleaseNamed {
+		version = strings.TrimPrefix(release.Location, "ubuntu-")
+	}
+	return utils.OSTypeUbuntu, version, true, nil
+}
+
 // setupPackageManager creates and configures the appropriate package manager
 // based on the image's operating system.
 func setupPackageManager(ctx context.Context, c gwclient.Client, config *buildkit.Config, opts *Options) (pkgmgr.PackageManager, error) {
 	if opts.Updates == nil {
-		// No vulnerability report provided - detect OS from image
-		fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
-		if err != nil {
-			return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
-		}
-
-		osInfo, err := common.GetOSInfo(ctx, fileBytes)
+		osType, osVersion, explicitNative, err := explicitNativeChiselOS(ctx, c, config, opts.ChiselRelease)
 		if err != nil {
 			return nil, err
 		}
-
-		osType := osInfo.Type
-		osVersion := osInfo.Version
-
-		// Check for end-of-life status
-		isEOL, eolDate, err := utils.CheckEOSL(osType, osVersion)
-		if err != nil {
-			log.Warnf("Failed to check EOL status for %s %s: %v. Patch attempt will proceed.", osType, osVersion, err)
-		} else if isEOL {
-			eolMsg := fmt.Sprintf("The operating system %s %s appears to be End-Of-Support-Life.", osType, osVersion)
-			if eolDate != "Unknown" && eolDate != "Not in EOL DB" && eolDate != "Normalization Failed" && eolDate != "API Rate Limited" {
-				eolMsg += fmt.Sprintf(" (EOL date: %s)", eolDate)
+		if !explicitNative {
+			// No vulnerability report provided - detect OS from image.
+			fileBytes, extractErr := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+			if extractErr != nil {
+				return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", extractErr)
 			}
-			eolMsg += " Patching may fail, be incomplete, or use archived repositories. Consider upgrading the base image."
 
-			if opts.ExitOnEOL {
-				log.Error(eolMsg)
-				return nil, fmt.Errorf("exiting due to EOL operating system: %s %s", osType, osVersion)
+			osInfo, infoErr := common.GetOSInfo(ctx, fileBytes)
+			if infoErr != nil {
+				return nil, infoErr
 			}
-			log.Warn(eolMsg)
+			osType = osInfo.Type
+			osVersion = osInfo.Version
 		}
 
-		// Get package manager based on detected OS
-		return pkgmgr.GetPackageManager(osType, osVersion, config, opts.WorkingFolder)
+		// Local and Git release overrides do not encode an Ubuntu version. The
+		// native Chisel flow validates and materializes those definitions later,
+		// so only run the EOL lookup when a concrete version is available.
+		if osVersion != "" {
+			isEOL, eolDate, checkErr := utils.CheckEOSL(osType, osVersion)
+			if checkErr != nil {
+				log.Warnf("Failed to check EOL status for %s %s: %v. Patch attempt will proceed.", osType, osVersion, checkErr)
+			} else if isEOL {
+				eolMsg := fmt.Sprintf("The operating system %s %s appears to be End-of-Support-Life.", osType, osVersion)
+				if eolDate != "Unknown" && eolDate != "Not in EOL DB" && eolDate != "Normalization Failed" && eolDate != "API Rate Limited" {
+					eolMsg += fmt.Sprintf(" (EOL date: %s)", eolDate)
+				}
+				eolMsg += " Patching may fail, be incomplete, or use archived repositories. Consider upgrading the base image."
+
+				if opts.ExitOnEOL {
+					log.Error(eolMsg)
+					return nil, fmt.Errorf("exiting due to EOL operating system: %s %s", osType, osVersion)
+				}
+				log.Warn(eolMsg)
+			}
+		}
+
+		return pkgmgr.GetPackageManagerWithOptions(osType, osVersion, config, opts.WorkingFolder, pkgmgr.PackageManagerOptions{
+			ChiselRelease: opts.ChiselRelease,
+		})
 	}
 
 	// Use OS information from the vulnerability report
 	if opts.Updates.Metadata.OS.Type == "" || opts.Updates.Metadata.OS.Version == "" {
 		return nil, fmt.Errorf("vulnerability report metadata is incomplete: OS type=%q, version=%q", opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version)
 	}
-	return pkgmgr.GetPackageManager(opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version, config, opts.WorkingFolder)
+	return pkgmgr.GetPackageManagerWithOptions(opts.Updates.Metadata.OS.Type, opts.Updates.Metadata.OS.Version, config, opts.WorkingFolder, pkgmgr.PackageManagerOptions{
+		ChiselRelease: opts.ChiselRelease,
+	})
 }

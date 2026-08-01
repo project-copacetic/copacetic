@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
@@ -218,6 +219,52 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	// The exact error message may vary depending on how far the patch process gets
 	// before failing (BuildKit connection, image loading, etc.)
 	t.Logf("Patch returned error as expected (and did not panic): %v", err)
+}
+
+func TestResolveSingleReportPlatform(t *testing.T) {
+	tests := []struct {
+		name      string
+		platforms []string
+		want      string
+		wantErr   string
+	}{
+		{
+			name: "defaults to host platform",
+			want: platforms.Format(common.GetDefaultLinuxPlatform()),
+		},
+		{
+			name:      "explicit platform",
+			platforms: []string{"linux/amd64"},
+			want:      "linux/amd64",
+		},
+		{
+			name:      "normalizes variant",
+			platforms: []string{"linux/arm64/v8"},
+			want:      "linux/arm64",
+		},
+		{
+			name:      "rejects multiple platforms",
+			platforms: []string{"linux/amd64", "linux/arm64"},
+			wantErr:   "a single report file can target only one platform",
+		},
+		{
+			name:      "rejects unsupported platform",
+			platforms: []string{"linux/mips64"},
+			wantErr:   "unsupported platform",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveSingleReportPlatform(tt.platforms)
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got.String())
+		})
+	}
 }
 
 func TestArchTag(t *testing.T) {

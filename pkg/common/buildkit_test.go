@@ -1,10 +1,21 @@
 package common
 
 import (
+	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/containerd/platforms"
+	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 )
 
 func TestGetDefaultLinuxPlatform(t *testing.T) {
@@ -87,4 +98,96 @@ func TestGetDefaultLinuxPlatform_DifferentArchitectures(t *testing.T) {
 func TestLinuxConstant(t *testing.T) {
 	assert.Equal(t, "linux", LINUX)
 	assert.NotEmpty(t, LINUX)
+}
+
+func TestAddImageConfigLabels(t *testing.T) {
+	input, err := json.Marshal(map[string]any{
+		"architecture": "amd64",
+		"config": map[string]any{
+			"Labels": map[string]string{
+				"existing":                     "preserved",
+				pkgmgr.ChiselReleaseAnnotation: "old",
+			},
+		},
+		"x-extra": map[string]any{"preserved": true},
+	})
+	require.NoError(t, err)
+
+	updated, err := AddImageConfigLabels(input, map[string]string{
+		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+	})
+	require.NoError(t, err)
+
+	var image ocispecs.Image
+	require.NoError(t, json.Unmarshal(updated, &image))
+	assert.Equal(t, "preserved", image.Config.Labels["existing"])
+	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
+	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(updated, &raw))
+	assert.Equal(t, map[string]any{"preserved": true}, raw["x-extra"])
+}
+
+type statePathTestClient struct {
+	gwclient.Client
+	result *gwclient.Result
+	err    error
+}
+
+func (c *statePathTestClient) Solve(context.Context, gwclient.SolveRequest) (*gwclient.Result, error) {
+	return c.result, c.err
+}
+
+type statePathTestReference struct {
+	gwclient.Reference
+	stat    *fstypes.Stat
+	statErr error
+}
+
+func (r *statePathTestReference) StatFile(context.Context, gwclient.StatRequest) (*fstypes.Stat, error) {
+	return r.stat, r.statErr
+}
+
+func TestStatePathExists(t *testing.T) {
+	tests := []struct {
+		name      string
+		stat      *fstypes.Stat
+		statErr   error
+		exists    bool
+		wantError bool
+	}{
+		{
+			name:   "path exists",
+			stat:   &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath},
+			exists: true,
+		},
+		{
+			name:    "path missing",
+			statErr: status.Error(codes.NotFound, "missing"),
+		},
+		{
+			name:      "stat failure",
+			statErr:   status.Error(codes.PermissionDenied, "denied"),
+			wantError: true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := gwclient.NewResult()
+			result.SetRef(&statePathTestReference{stat: test.stat, statErr: test.statErr})
+			client := &statePathTestClient{result: result}
+			state := llb.Scratch()
+
+			exists, err := StatePathExists(context.Background(), client, &state, nil, pkgmgr.NativeChiselManifestPath)
+			assert.Equal(t, test.exists, exists)
+			if test.wantError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }

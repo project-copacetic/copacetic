@@ -12,6 +12,7 @@ import (
 	"github.com/distribution/reference"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
@@ -392,4 +393,31 @@ func TestPatchSingleArchImageReturnsNoUpdatesFoundAfterFiltering(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "localhost:65535/test-image:latest", result.OriginalRef.String())
 	assert.Equal(t, result.OriginalRef.String(), result.PatchedRef.String())
+}
+
+func TestAugmentPatchedDescriptorIncludesManagerAnnotations(t *testing.T) {
+	originalDescriptor := &v1.Descriptor{
+		Annotations: map[string]string{
+			"runtime": "preserved",
+		},
+	}
+	originalAnnotations := map[string]string{
+		"org.opencontainers.image.source": "https://example.com/source",
+		pkgmgr.ChiselReleaseAnnotation:    "stale-release",
+	}
+	managerAnnotations := map[string]string{
+		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+	}
+
+	augmented := augmentPatchedDescriptor(originalDescriptor, originalAnnotations, managerAnnotations)
+	require.NotNil(t, augmented)
+	assert.Equal(t, "preserved", augmented.Annotations["runtime"])
+	assert.Equal(t, "https://example.com/source", augmented.Annotations["org.opencontainers.image.source"])
+	assert.Equal(t, "ubuntu-24.04", augmented.Annotations[pkgmgr.ChiselReleaseAnnotation])
+	assert.Equal(t, "v1.4.2", augmented.Annotations[pkgmgr.ChiselVersionAnnotation])
+	assert.NotEmpty(t, augmented.Annotations["org.opencontainers.image.created"])
+	assert.NotEmpty(t, augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"])
+
+	assert.Equal(t, map[string]string{"runtime": "preserved"}, originalDescriptor.Annotations, "the source descriptor must not be mutated")
 }

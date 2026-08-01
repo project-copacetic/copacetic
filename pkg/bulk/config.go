@@ -12,19 +12,21 @@ const (
 
 // PatchConfig represents the top-level structure for the bulk patching configuration.
 type PatchConfig struct {
-	APIVersion string      `yaml:"apiVersion"`
-	Kind       string      `yaml:"kind"`
-	Target     TargetSpec  `yaml:"target,omitempty"` // Default target for all images
-	Images     []ImageSpec `yaml:"images"`
+	APIVersion    string      `yaml:"apiVersion"`
+	Kind          string      `yaml:"kind"`
+	ChiselRelease string      `yaml:"chiselRelease,omitempty"`
+	Target        TargetSpec  `yaml:"target,omitempty"` // Default target for all images
+	Images        []ImageSpec `yaml:"images"`
 }
 
 // ImageSpec defines the configuration for patching a single image.
 type ImageSpec struct {
-	Name      string      `yaml:"name"`
-	Image     string      `yaml:"image"`
-	Tags      TagStrategy `yaml:"tags"`
-	Target    TargetSpec  `yaml:"target,omitempty"`
-	Platforms []string    `yaml:"platforms,omitempty"`
+	Name          string      `yaml:"name"`
+	Image         string      `yaml:"image"`
+	ChiselRelease string      `yaml:"chiselRelease,omitempty"`
+	Tags          TagStrategy `yaml:"tags"`
+	Target        TargetSpec  `yaml:"target,omitempty"`
+	Platforms     []string    `yaml:"platforms,omitempty"`
 }
 
 // TargetSpec defines how the patched image should be tagged and where it should be pushed.

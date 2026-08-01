@@ -3,13 +3,74 @@ package patch
 import (
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
+
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
+
+func TestPreservedImageStateCarriesExecutionEnvironment(t *testing.T) {
+	config := []byte(`{
+		"architecture":"arm64",
+		"os":"linux",
+		"config":{
+			"Env":["TEST_VALUE=present"],
+			"WorkingDir":"/work",
+			"Entrypoint":["/usr/bin/example"],
+			"Cmd":["serve"]
+		}
+	}`)
+	state := llb.Scratch()
+	preserved, err := preservedImageState(&state, config)
+	require.NoError(t, err)
+
+	value, ok, err := preserved.GetEnv(t.Context(), "TEST_VALUE")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "present", value)
+	dir, err := preserved.GetDir(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "/work", dir)
+	platform, err := preserved.GetPlatform(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "linux", platform.OS)
+	assert.Equal(t, "arm64", platform.Architecture)
+}
+
+func TestSetupPackageManagerUsesExplicitNativeChiselReleaseWithoutOSRelease(t *testing.T) {
+	client := new(mocks.MockGWClient)
+	ref := new(mocks.MockReference)
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil)
+	ref.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+		return req.Filename == pkgmgr.NativeChiselManifestPath
+	})).Return([]byte("manifest"), nil)
+
+	config := &buildkit.Config{
+		Client:     client,
+		ImageState: llb.Scratch(),
+	}
+	manager, err := setupPackageManager(t.Context(), client, config, &Options{
+		WorkingFolder: t.TempDir(),
+		ChiselRelease: "ubuntu-24.04",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "deb", manager.GetPackageType())
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
 
 func TestExitOnEOLFunctionality(t *testing.T) {
 	// Test the ExitOnEOL functionality with mock EOL API
@@ -257,4 +318,17 @@ func TestOptions_ValidationScenarios(t *testing.T) {
 			assert.Equal(t, tc.expected, tc.opts.ImageName)
 		})
 	}
+}
+
+func TestAddPackageManagerAnnotations(t *testing.T) {
+	result := gwclient.NewResult()
+	annotations := map[string]string{
+		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+	}
+
+	addPackageManagerAnnotations(result, annotations)
+
+	assert.Equal(t, []byte("ubuntu-24.04"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
+	assert.Equal(t, []byte("v1.4.2"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselVersionAnnotation)])
 }

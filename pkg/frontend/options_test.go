@@ -1,17 +1,49 @@
 package frontend
 
 import (
+	"context"
 	"testing"
 
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 // Note: ParseOptions tests are covered by e2e tests in test/e2e/frontend/
 // since it requires a real BuildKit gateway client. This file focuses on
 // testing the validation helper functions that can be unit tested.
+
+func TestParseOptionsChiselRelease(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "direct frontend option", key: keyChiselRelease},
+		{name: "build argument", key: "build-arg:" + keyChiselRelease},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := new(mocks.MockGWClient)
+			client.On("BuildOpts").Return(gwclient.BuildOpts{
+				Opts: map[string]string{
+					keyImage: "ubuntu:24.04",
+					tt.key:   "ubuntu-24.04",
+				},
+				LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
+			})
+
+			opts, err := ParseOptions(context.Background(), client)
+			require.NoError(t, err)
+			assert.Equal(t, "ubuntu-24.04", opts.ChiselRelease)
+			client.AssertExpectations(t)
+		})
+	}
+}
 
 func TestValidateLibraryPatchLevel(t *testing.T) {
 	t.Run("Valid patch levels", func(t *testing.T) {

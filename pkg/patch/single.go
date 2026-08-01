@@ -23,6 +23,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -36,6 +37,8 @@ const (
 	defaultTag  = "latest"
 	LINUX       = "linux"
 )
+
+var errNativeChiselTargetedPatch = errors.New(pkgmgr.NativeChiselTargetedPatchError)
 
 // removeIfNotDebug removes working folder unless debug mode is enabled.
 func removeIfNotDebug(workingFolder string) {
@@ -79,6 +82,7 @@ func patchSingleArchImage(
 	libraryPatchLevel := opts.LibraryPatchLevel
 	toolchainPatchLevel := opts.ToolchainPatchLevel
 	goVCSURL := opts.GoVCSURL
+	chiselRelease := opts.ChiselRelease
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
@@ -143,20 +147,14 @@ func patchSingleArchImage(
 			}
 
 			log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
-
-			// If after filtering there are zero OS and zero library updates, return an error
-			// only when user explicitly requested some package types (default is OS) but none are patchable.
-			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
-				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
-				res.Summary = updates.CombinedSummary()
-				return res, types.ErrNoUpdatesFound
-			}
 		}
 
 		log.Debugf("updates to apply: %v", updates)
 	}
 
-	// Create buildkit client
+	// Create the BuildKit client after report parsing to preserve parse-error
+	// behavior, then run a shell-less native Chisel preflight before handling an
+	// otherwise empty report.
 	bkClient, err := bkNewClient(ctx, bkOpts)
 	if err != nil {
 		return nil, err
@@ -165,6 +163,27 @@ func patchSingleArchImage(
 
 	// Resolve image reference
 	ref := resolveImageReference(imageName)
+	reportHasNoUpdates := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0
+	if reportFile != "" && reportHasNoUpdates {
+		if err := rejectTargetedNativeChiselPatch(ctx, bkClient, ref, &targetPlatform.Platform); err != nil {
+			// Preserve the historical ErrNoUpdatesFound result for non-native
+			// empty reports when BuildKit is unavailable to perform the preflight.
+			// A positively identified native image always returns the exact
+			// targeted-patching error.
+			if errors.Is(err, errNativeChiselTargetedPatch) {
+				return nil, err
+			}
+			log.Debugf("Unable to preflight an empty report for native Chisel metadata: %v", err)
+		}
+	}
+
+	// Keep the existing empty-report behavior for non-native images. Native
+	// images have already returned the targeted-patching error above.
+	if reportHasNoUpdates {
+		res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+		res.Summary = updates.CombinedSummary()
+		return res, types.ErrNoUpdatesFound
+	}
 
 	// Determine the loader type
 	finalLoaderType := determineLoaderType(loader, bkOpts.Addr)
@@ -238,7 +257,7 @@ func patchSingleArchImage(
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
 		if err != nil {
 			return err
 		}
@@ -424,6 +443,29 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 	return pipeR.Close()
 }
 
+func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient *client.Client, image string, platform *ispec.Platform) error {
+	var manifestExists bool
+	_, err := bkClient.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, platform)
+		if err != nil {
+			return nil, err
+		}
+
+		manifestExists, err = common.StatePathExists(ctx, c, &config.ImageState, platform, pkgmgr.NativeChiselManifestPath)
+		if err != nil {
+			return nil, err
+		}
+		return gwclient.NewResult(), nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("inspect target image for native Chisel metadata: %w", err)
+	}
+	if manifestExists {
+		return errNativeChiselTargetedPatch
+	}
+	return nil
+}
+
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
@@ -447,25 +489,16 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		log.Debugf("Got image descriptor for %s", patchedImageName)
 	}
 
-	// Add original manifest annotations if we have a patched descriptor.
-	// originalAnnotations were captured before patching to avoid a mutable-tag
-	// race where the same tag is reused for the patched image.
-	if patchedDesc != nil && len(originalAnnotations) > 0 {
-		// Create augmented descriptor with original annotations
-		augmentedDesc := *patchedDesc
-		if augmentedDesc.Annotations == nil {
-			augmentedDesc.Annotations = make(map[string]string)
-		}
-
-		// Copy original annotations
-		maps.Copy(augmentedDesc.Annotations, originalAnnotations)
-
-		// Update creation timestamp and add Copa annotations
-		augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
-		augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
-
-		patchedDesc = &augmentedDesc
-		log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+	// Add original and package-manager annotations if we have a patched
+	// descriptor. originalAnnotations were captured before patching to avoid a
+	// mutable-tag race where the same tag is reused for the patched image.
+	var managerAnnotations map[string]string
+	if patchResult != nil {
+		managerAnnotations = patchResult.Annotations
+	}
+	patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	if patchedDesc != nil {
+		log.Debugf("Added %d original and %d package-manager manifest annotations for platform %s", len(originalAnnotations), len(managerAnnotations), targetPlatform.Platform)
 	}
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
@@ -489,6 +522,25 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	return result, nil
 }
 
+func augmentPatchedDescriptor(descriptor *ispec.Descriptor, originalAnnotations, managerAnnotations map[string]string) *ispec.Descriptor {
+	if descriptor == nil {
+		return nil
+	}
+
+	augmented := *descriptor
+	augmented.Annotations = maps.Clone(descriptor.Annotations)
+	if augmented.Annotations == nil {
+		augmented.Annotations = make(map[string]string)
+	}
+	maps.Copy(augmented.Annotations, originalAnnotations)
+	maps.Copy(augmented.Annotations, managerAnnotations)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	augmented.Annotations["org.opencontainers.image.created"] = now
+	augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"] = now
+	return &augmented
+}
+
 // executePatchBuild executes the actual patch build process.
 func executePatchBuild(
 	ctx context.Context,
@@ -504,6 +556,7 @@ func executePatchBuild(
 	exitOnEOL bool,
 	toolchainPatchLevel string,
 	goVCSURL string,
+	chiselRelease string,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -544,6 +597,7 @@ func executePatchBuild(
 			ExitOnEOL:           exitOnEOL,
 			ToolchainPatchLevel: toolchainPatchLevel,
 			GoVCSURL:            goVCSURL,
+			ChiselRelease:       chiselRelease,
 		}
 
 		// Execute the core patching logic

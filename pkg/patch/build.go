@@ -31,6 +31,15 @@ type BuildConfig struct {
 	PipeWriter      io.WriteCloser
 }
 
+func authenticatedSolveOpt() client.SolveOpt {
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	authConfig := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
+	return client.SolveOpt{
+		Frontend: "",
+		Session:  []session.Attachable{authprovider.NewDockerAuthProvider(authConfig)},
+	}
+}
+
 // createBuildConfig creates the build configuration for patching.
 // originalAnnotations is the set of manifest-level annotations captured from the
 // source image before patching; they are forwarded to the BuildKit exporter via
@@ -58,15 +67,8 @@ func createBuildConfig(
 	compression string,
 	forceCompression bool,
 ) (*BuildConfig, error) {
-	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
-
 	// create solve options based on whether we're pushing to registry or loading to docker
-	solveOpt := client.SolveOpt{
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
-	}
+	solveOpt := authenticatedSolveOpt()
 
 	// determine which attributes to set for the export
 	attrs := map[string]string{

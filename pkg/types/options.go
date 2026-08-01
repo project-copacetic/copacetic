@@ -9,10 +9,11 @@ import (
 // Options contains common copacetic options.
 type Options struct {
 	// Core single image patch configuration
-	Image      string
-	Report     string
-	PatchedTag string
-	Suffix     string
+	Image         string
+	Report        string
+	PatchedTag    string
+	Suffix        string
+	ChiselRelease string
 
 	// Bulk image patch configuration
 	ConfigFile string

@@ -20,6 +20,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -64,6 +65,11 @@ type OCILayoutExportOptions struct {
 	ForceCompression bool
 }
 
+type platformExportMetadata struct {
+	Config      []byte
+	Annotations map[string]string
+}
+
 const (
 	linux = "linux"
 	arm64 = "arm64"
@@ -71,9 +77,11 @@ const (
 
 // for testing.
 var (
-	readDir  = os.ReadDir
-	readFile = os.ReadFile
-	lookPath = exec.LookPath
+	readDir                  = os.ReadDir
+	readFile                 = os.ReadFile
+	lookPath                 = exec.LookPath
+	localImagePlatforms      = utils.LocalImagePlatforms
+	getRemoteImageDescriptor = remote.Get
 )
 
 func InitializeBuildkitConfig(
@@ -331,15 +339,12 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	// Prefer the local image store: query the Docker daemon directly via
-	// ImageInspect, which surfaces the full per-platform manifest list when the
-	// daemon uses the multi-platform (containerd) image store. This lets us
-	// patch images that exist locally but not in any remote registry — both
-	// single-platform and multi-platform — without any registry access.
-	if locals, ok, lerr := utils.LocalImagePlatforms(context.Background(), manifestRef); ok {
-		// Image was found locally; per LocalImagePlatforms' contract we must
-		// not fall back to a remote registry, even if no usable platforms
-		// were extracted.
+	// Prefer the local image store. A daemon may expose only the host child of
+	// an otherwise multi-platform remote index, so a one-platform local result
+	// is reconciled with the remote descriptor when available. Local-only
+	// images still fall back to the discovered local platform.
+	var desc *remote.Descriptor
+	if locals, ok, localErr := localImagePlatforms(context.Background(), manifestRef); ok {
 		if len(locals) == 0 {
 			return nil, fmt.Errorf("image %q found in local daemon but no usable platforms could be discovered", manifestRef)
 		}
@@ -353,32 +358,45 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					OSVersion:    p.OSVersion,
 					OSFeatures:   p.OSFeatures,
 				},
-				ReportFile:     "",
-				ShouldPreserve: false,
 			}
 			if patchPlatform.Architecture == arm64 && patchPlatform.Variant == "v8" {
 				patchPlatform.Variant = ""
 			}
 			platforms = append(platforms, patchPlatform)
 		}
-		return platforms, nil
-	} else if lerr != nil {
-		log.Debugf("Local platform discovery failed for %s: %v", manifestRef, lerr)
-	}
-
-	// Try local daemon manifest list (legacy path), then fall back to remote
-	desc, err := TryGetManifestFromLocal(ref)
-	if err != nil {
-		log.Debugf("Failed to get manifest list from local daemon: %v", err)
-
-		log.Debugf("Falling back to remote registry for %s", manifestRef)
-		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-		if err != nil {
-			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
+		if len(platforms) > 1 {
+			return platforms, nil
 		}
-		log.Debugf("Successfully fetched descriptor from remote registry for %s", manifestRef)
+
+		remoteDesc, remoteErr := getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		if remoteErr != nil || !remoteDesc.MediaType.IsIndex() {
+			if remoteErr != nil {
+				log.Debugf("Remote platform discovery failed for locally cached %s: %v", manifestRef, remoteErr)
+			}
+			return platforms, nil
+		}
+		log.Debugf("Locally cached child masks a remote index for %s; using remote platform list", manifestRef)
+		desc = remoteDesc
+		platforms = nil
 	} else {
-		log.Debugf("Successfully fetched descriptor from local daemon for %s", manifestRef)
+		if localErr != nil {
+			log.Debugf("Local platform discovery failed for %s: %v", manifestRef, localErr)
+		}
+
+		// Try the legacy local daemon manifest path, then fall back to the remote registry.
+		var err error
+		desc, err = TryGetManifestFromLocal(ref)
+		if err != nil {
+			log.Debugf("Failed to get manifest list from local daemon: %v", err)
+			log.Debugf("Falling back to remote registry for %s", manifestRef)
+			desc, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+			if err != nil {
+				return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
+			}
+			log.Debugf("Successfully fetched descriptor from remote registry for %s", manifestRef)
+		} else {
+			log.Debugf("Successfully fetched descriptor from local daemon for %s", manifestRef)
+		}
 	}
 
 	if desc.MediaType.IsIndex() {
@@ -968,6 +986,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	// Build platform states from results for patched platforms only
 	var platformStates []llb.State
 	var platformSpecs []specs.Platform
+	var platformMetadata []platformExportMetadata
 
 	// Map results by platform for easy lookup
 	resultMap := make(map[string]*types.PatchResult)
@@ -992,6 +1011,11 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 		if result, exists := resultMap[platformKey]; exists && result.PatchedState != nil {
 			platformStates = append(platformStates, *result.PatchedState)
 			platformSpecs = append(platformSpecs, platform.Platform)
+			metadata := platformExportMetadata{Config: result.ConfigData}
+			if result.PatchedDesc != nil {
+				metadata.Annotations = result.PatchedDesc.Annotations
+			}
+			platformMetadata = append(platformMetadata, metadata)
 		}
 	}
 
@@ -1006,7 +1030,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	switch {
 	case hasPreservedPlatforms && hasPatchedPlatforms:
 		log.Infof("Creating mixed OCI layout with %d patched and %d preserved platforms", len(platformStates), len(preservedPlatforms))
-		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms, exportOpts)
+		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, platformMetadata, preservedPlatforms, exportOpts)
 	case hasPatchedPlatforms:
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
@@ -1031,7 +1055,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 				log.Debug("Using buildx driver for OCI layout export")
 				defer c.Close()
 
-				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 			}
 			c.Close()
 		}
@@ -1047,17 +1071,28 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	}
 	defer c.Close()
 
-	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 }
 
 // solveMultiPlatformOCI uses BuildKit client to solve multi-platform states and export to OCI layout.
-func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) error {
+func solveMultiPlatformOCI(
+	ctx context.Context,
+	c *client.Client,
+	outputDir string,
+	platformStates []llb.State,
+	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
+	exportOpts OCILayoutExportOptions,
+) error {
 	if len(platformStates) == 0 {
 		return fmt.Errorf("no platform states provided")
 	}
 
 	if len(platformStates) != len(platformSpecs) {
 		return fmt.Errorf("mismatch between states (%d) and platform specs (%d)", len(platformStates), len(platformSpecs))
+	}
+	if len(platformStates) != len(platformMetadata) {
+		return fmt.Errorf("mismatch between states (%d) and platform metadata (%d)", len(platformStates), len(platformMetadata))
 	}
 
 	// Remove output directory if it exists
@@ -1070,11 +1105,11 @@ func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir stri
 
 	if len(platformStates) == 1 {
 		// Single platform case - use output function to avoid diffcopy issues
-		return solveSinglePlatformOCI(ctx, c, outputDir, &platformStates[0], &platformSpecs[0], exportOpts)
+		return solveSinglePlatformOCI(ctx, c, outputDir, &platformStates[0], &platformSpecs[0], platformMetadata[0], exportOpts)
 	}
 
 	// Multi-platform case - solve each platform and combine
-	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 }
 
 func ociExporterAttrs(exportOpts OCILayoutExportOptions) map[string]string {
@@ -1092,8 +1127,52 @@ func ociExporterAttrs(exportOpts OCILayoutExportOptions) map[string]string {
 	return attrs
 }
 
+func addOCIExportMetadata(result *gwclient.Result, metadata platformExportMetadata) error {
+	if len(metadata.Config) == 0 {
+		return fmt.Errorf("patched platform is missing image config metadata")
+	}
+	result.AddMeta(exptypes.ExporterImageConfigKey, metadata.Config)
+	for key, value := range metadata.Annotations {
+		result.AddMeta(exptypes.AnnotationManifestKey(nil, key), []byte(value))
+	}
+	return nil
+}
+
+func solvePlatformOCI(
+	ctx context.Context,
+	c *client.Client,
+	state *llb.State,
+	platformSpec *specs.Platform,
+	metadata platformExportMetadata,
+	solveOpt *client.SolveOpt,
+) error {
+	_, err := c.Build(ctx, *solveOpt, "copa-oci-export", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
+		def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
+		if err != nil {
+			return nil, fmt.Errorf("marshal platform state: %w", err)
+		}
+		result, err := gateway.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB(), Evaluate: true})
+		if err != nil {
+			return nil, fmt.Errorf("solve platform state: %w", err)
+		}
+		if err := addOCIExportMetadata(result, metadata); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}, nil)
+	return err
+}
+
 // solveSinglePlatformOCI handles single platform OCI export using output function.
-func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir string, state *llb.State, platformSpec *specs.Platform, exportOpts OCILayoutExportOptions) error {
+func solveSinglePlatformOCI(
+	ctx context.Context,
+	c *client.Client,
+	outputDir string,
+	state *llb.State,
+	platformSpec *specs.Platform,
+	metadata platformExportMetadata,
+	exportOpts OCILayoutExportOptions,
+) error {
 	// Create solve options with output function to avoid diffcopy issues
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{{
@@ -1106,15 +1185,7 @@ func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir str
 		}},
 	}
 
-	// Marshal the state with platform constraint
-	def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
-	if err != nil {
-		return fmt.Errorf("failed to marshal LLB state: %w", err)
-	}
-
-	// Solve to tar
-	_, err = c.Solve(ctx, def, solveOpt, nil)
-	if err != nil {
+	if err := solvePlatformOCI(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
 		return fmt.Errorf("BuildKit solve failed: %w", err)
 	}
 
@@ -1181,7 +1252,15 @@ func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform) error
 }
 
 // solveAndCombineAllPlatforms solves each platform and combines them into one OCI layout.
-func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) error {
+func solveAndCombineAllPlatforms(
+	ctx context.Context,
+	c *client.Client,
+	outputDir string,
+	platformStates []llb.State,
+	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
+	exportOpts OCILayoutExportOptions,
+) error {
 	// Create temporary directory for platform tars
 	tempDir, err := os.MkdirTemp("", "copa-platforms-*")
 	if err != nil {
@@ -1207,14 +1286,7 @@ func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDi
 			}},
 		}
 
-		// Marshal and solve this platform's definition
-		def, err := platformStates[i].Marshal(ctx, llb.Platform(platformSpecs[i]))
-		if err != nil {
-			return fmt.Errorf("failed to marshal platform: %w", err)
-		}
-
-		_, err = c.Solve(ctx, def, platformSolveOpt, nil)
-		if err != nil {
+		if err := solvePlatformOCI(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
 			return fmt.Errorf("failed to solve platform: %w", err)
 		}
 	}
@@ -1433,6 +1505,7 @@ func createMixedOCILayout(
 	results []types.PatchResult,
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
 	preservedPlatforms []types.PatchPlatform,
 	exportOpts OCILayoutExportOptions,
 ) error {
@@ -1460,7 +1533,7 @@ func createMixedOCILayout(
 		}
 		defer c.Close()
 
-		patchedManifests, err = exportPatchedPlatformsToTemp(ctx, c, patchedTempDir, platformStates, platformSpecs, exportOpts)
+		patchedManifests, err = exportPatchedPlatformsToTemp(ctx, c, patchedTempDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 		if err != nil {
 			return fmt.Errorf("failed to export patched platforms: %w", err)
 		}
@@ -1513,6 +1586,7 @@ func exportPatchedPlatformsToTemp(
 	tempDir string,
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
 	exportOpts OCILayoutExportOptions,
 ) ([]map[string]interface{}, error) {
 	var manifests []map[string]interface{}
@@ -1533,14 +1607,7 @@ func exportPatchedPlatformsToTemp(
 			}},
 		}
 
-		// Marshal and solve this platform's definition
-		def, err := platformState.Marshal(ctx, llb.Platform(platformSpec))
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal platform: %w", err)
-		}
-
-		_, err = c.Solve(ctx, def, solveOpt, nil)
-		if err != nil {
+		if err := solvePlatformOCI(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
 			return nil, fmt.Errorf("failed to solve platform: %w", err)
 		}
 

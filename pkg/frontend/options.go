@@ -11,6 +11,7 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/exp/slices"
 
+	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -96,6 +97,26 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	// Parse suffix
 	if v, ok := getOpt(keySuffix); ok {
 		options.Suffix = v
+	}
+
+	// Parse Chisel release override. Named releases and pinned HTTPS Git URLs
+	// are passed through directly. A path is extracted from the dedicated
+	// BuildKit local context named "chisel-release" so frontend users can use
+	// the same local-directory form as the CLI.
+	if value, ok := getOpt(keyChiselRelease); ok {
+		if strings.Contains(value, "://") || strings.HasPrefix(value, "ubuntu-") {
+			release, parseErr := copachisel.ParseRelease(value)
+			if parseErr != nil {
+				return nil, errors.Wrap(parseErr, "invalid Chisel release override")
+			}
+			options.ChiselRelease = release.String()
+		} else {
+			extractedPath, extractErr := extractChiselReleaseFromContext(ctx, client, value)
+			if extractErr != nil {
+				return nil, errors.Wrap(extractErr, "failed to extract local Chisel release from context")
+			}
+			options.ChiselRelease = extractedPath
+		}
 	}
 
 	// Parse output (for VEX document)

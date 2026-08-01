@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/util/progress/progressui"
 	log "github.com/sirupsen/logrus"
@@ -193,12 +195,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	}
 	// Handle file - single-platform patching
 	log.Debugf("Using report file: %s", reportPath)
-	defaultPlatform := common.GetDefaultLinuxPlatform()
-	patchPlatform := types.PatchPlatform{
-		Platform: defaultPlatform,
-	}
-	if patchPlatform.OS != LINUX {
-		patchPlatform.OS = LINUX
+	patchPlatform, err := resolveSingleReportPlatform(targetPlatforms)
+	if err != nil {
+		return err
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
 	result, err := patchSingleArchImage(ctx, opts, patchPlatform, false, nil)
@@ -209,6 +208,30 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
+}
+
+func resolveSingleReportPlatform(targetPlatforms []string) (types.PatchPlatform, error) {
+	if len(targetPlatforms) > 1 {
+		return types.PatchPlatform{}, fmt.Errorf("a single report file can target only one platform; got %d: %s", len(targetPlatforms), strings.Join(targetPlatforms, ", "))
+	}
+
+	platform := common.GetDefaultLinuxPlatform()
+	if len(targetPlatforms) == 1 {
+		target := targetPlatforms[0]
+		if !slices.Contains(validPlatforms, target) {
+			return types.PatchPlatform{}, fmt.Errorf("unsupported platform %q; valid platforms: %s", target, strings.Join(validPlatforms, ", "))
+		}
+		parsed, err := platforms.Parse(target)
+		if err != nil {
+			return types.PatchPlatform{}, fmt.Errorf("parse platform %q: %w", target, err)
+		}
+		platform = platforms.Normalize(parsed)
+	}
+	if platform.OS != LINUX {
+		platform.OS = LINUX
+	}
+
+	return types.PatchPlatform{Platform: platform}, nil
 }
 
 // logPatchSummary prints the patch summary if available.
