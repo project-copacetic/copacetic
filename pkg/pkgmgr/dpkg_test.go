@@ -347,6 +347,105 @@ func TestParseDPKGProbeResult(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid value")
 }
 
+func TestLoadFullStatusRejectsOversizedMetadata(t *testing.T) {
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: dpkgStatusOutputFilename}).
+		Return(&fstypes.Stat{Size: maxDPKGStatusBytes + 1}, nil).
+		Once()
+
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := &mocks.MockGWClient{}
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+
+	dm := &dpkgManager{config: &buildkit.Config{Client: client}}
+	state := llb.Scratch()
+	_, err := dm.loadFullStatus(t.Context(), &state)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, dpkgStatusPath)
+	assert.ErrorContains(t, err, fmt.Sprintf("maximum size of %d bytes", maxDPKGStatusBytes))
+	assert.ErrorContains(t, err, fmt.Sprintf("exceeding the maximum allowed size of %d bytes", maxDPKGStatusBytes))
+
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+	ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+}
+
+func TestLoadStatusDirectoryRejectsOversizedPackageList(t *testing.T) {
+	const maxBytes int64 = 8
+
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: dpkgStatusdListFilename}).
+		Return(&fstypes.Stat{Size: maxBytes + 1}, nil).
+		Once()
+
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := &mocks.MockGWClient{}
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+
+	dm := &dpkgManager{config: &buildkit.Config{Client: client}}
+	state := llb.Scratch()
+	err := dm.loadStatusDirectoryWithLimit(t.Context(), &state, maxBytes)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, dpkgStatusFolder)
+	assert.ErrorContains(t, err, fmt.Sprintf("aggregate maximum of %d bytes", maxBytes))
+	assert.ErrorContains(t, err, fmt.Sprintf("exceeding the maximum allowed size of %d bytes", maxBytes))
+
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+	ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+}
+
+func TestLoadStatusDirectoryEnforcesAggregateSizeLimit(t *testing.T) {
+	const maxBytes int64 = 64
+
+	statusdNames := []byte("first\nsecond\n")
+	firstStatus := []byte("Package: first\nVersion: 1\n")
+	remainingBytes := maxBytes - int64(len(statusdNames)) - int64(len(firstStatus))
+	require.Positive(t, remainingBytes)
+
+	firstPath := filepath.Join(dpkgStatusdFilesFolder, "first")
+	secondPath := filepath.Join(dpkgStatusdFilesFolder, "second")
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: dpkgStatusdListFilename}).
+		Return(&fstypes.Stat{Size: int64(len(statusdNames))}, nil).
+		Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: dpkgStatusdListFilename,
+		Range:    &gwclient.FileRange{Offset: 0, Length: len(statusdNames)},
+	}).Return(statusdNames, nil).Once()
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: firstPath}).
+		Return(&fstypes.Stat{Size: int64(len(firstStatus))}, nil).
+		Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: firstPath,
+		Range:    &gwclient.FileRange{Offset: 0, Length: len(firstStatus)},
+	}).Return(firstStatus, nil).Once()
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: secondPath}).
+		Return(&fstypes.Stat{Size: remainingBytes + 1}, nil).
+		Once()
+
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := &mocks.MockGWClient{}
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Times(3)
+
+	dm := &dpkgManager{config: &buildkit.Config{Client: client}}
+	state := llb.Scratch()
+	err := dm.loadStatusDirectoryWithLimit(t.Context(), &state, maxBytes)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, filepath.Join(dpkgStatusFolder, "second"))
+	assert.ErrorContains(t, err, fmt.Sprintf("with %d of %d aggregate bytes remaining", remainingBytes, maxBytes))
+	assert.ErrorContains(t, err, fmt.Sprintf("exceeding the maximum allowed size of %d bytes", remainingBytes))
+
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+	ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+		return req.Filename == secondPath
+	}))
+}
+
 var (
 	//go:embed testdata/dpkg_valid.txt
 	validDPKGManifest []byte

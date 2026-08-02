@@ -203,8 +203,10 @@ supplied context are rejected.
 
 ### Bulk configuration
 
-Bulk mode is comprehensive-update-only. Set a default release at the top level
-and override it for individual images when necessary:
+Only bulk jobs for native images with `/var/lib/chisel/manifest.wall` are
+comprehensive-update-only and must run without a report. Bulk jobs for other
+supported image layouts may use a report directory. Set a default Chisel
+release at the top level and override it for individual images when necessary:
 
 ```yaml
 apiVersion: copa.sh/v1alpha1

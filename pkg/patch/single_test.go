@@ -12,6 +12,7 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	buildkitclient "github.com/moby/buildkit/client"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
@@ -26,6 +27,22 @@ import (
 
 type trackingReadCloser struct {
 	closed bool
+}
+
+type testBuildkitBuildClient struct {
+	gateway gwclient.Client
+}
+
+//nolint:gocritic // The BuildKit client API requires SolveOpt by value.
+func (c *testBuildkitBuildClient) Build(
+	ctx context.Context,
+	_ buildkitclient.SolveOpt,
+	_ string,
+	buildFunc gwclient.BuildFunc,
+	_ chan *buildkitclient.SolveStatus,
+) (*buildkitclient.SolveResponse, error) {
+	_, err := buildFunc(ctx, c.gateway)
+	return &buildkitclient.SolveResponse{}, err
 }
 
 func (t *trackingReadCloser) Read(_ []byte) (int, error) {
@@ -501,6 +518,22 @@ func TestPatchSingleArchImageReturnsNoUpdatesFoundAfterFiltering(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "localhost:65535/test-image:latest", result.OriginalRef.String())
 	assert.Equal(t, result.OriginalRef.String(), result.PatchedRef.String())
+}
+
+func TestEmptyReportPreflightUsesNativeSuppliedPatchedImage(t *testing.T) {
+	gateway := &recordedBaseNativePatchedGateway{}
+	bkClient := &testBuildkitBuildClient{gateway: gateway}
+	platform := &v1.Platform{OS: LINUX, Architecture: "amd64"}
+
+	err := rejectTargetedNativeChiselPatch(
+		t.Context(),
+		bkClient,
+		testNativeSuppliedImage,
+		platform,
+	)
+
+	require.ErrorIs(t, err, errNativeChiselTargetedPatch)
+	assert.Equal(t, testNativeSuppliedImage, gateway.inspectedImage)
 }
 
 func TestAugmentPatchedDescriptorIncludesManagerAnnotations(t *testing.T) {

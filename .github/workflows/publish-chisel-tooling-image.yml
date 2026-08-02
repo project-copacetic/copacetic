@@ -1,14 +1,9 @@
 name: Publish Chisel tooling image
 
+# This workflow publishes a fixed immutable release tag. Update the pinned release
+# values below and dispatch it intentionally when publishing a new tooling image.
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - images/chisel/**
-      - .github/workflows/publish-chisel-tooling-image.yml
-      - .github/workflows/scripts/chisel/**
 
 concurrency:
   group: publish-chisel-tooling-v1.4.2

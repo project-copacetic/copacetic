@@ -91,6 +91,13 @@ func trySendError(ch chan error, err error) {
 	}
 }
 
+func currentSuppliedImageState(config *buildkit.Config) *llb.State {
+	if config.PatchedConfigData != nil {
+		return &config.PatchedImageState
+	}
+	return &config.ImageState
+}
+
 func preflightReportForNativeChisel(
 	ctx context.Context,
 	c gwclient.Client,
@@ -102,7 +109,13 @@ func preflightReportForNativeChisel(
 		return nil
 	}
 
-	manifestExists, err := common.StatePathExists(ctx, c, &config.ImageState, &platform.Platform, pkgmgr.NativeChiselManifestPath)
+	manifestExists, err := common.StatePathExists(
+		ctx,
+		c,
+		currentSuppliedImageState(config),
+		&platform.Platform,
+		pkgmgr.NativeChiselManifestPath,
+	)
 	if err != nil {
 		return fmt.Errorf("inspect target image for native Chisel metadata: %w", err)
 	}
@@ -354,11 +367,12 @@ func explicitNativeChiselOS(
 		return "", "", false, nil
 	}
 
-	current := &config.ImageState
-	if config.PatchedConfigData != nil {
-		current = &config.PatchedImageState
-	}
-	if _, readErr := buildkit.TryExtractFileFromState(ctx, c, current, pkgmgr.NativeChiselManifestPath); readErr != nil {
+	if _, readErr := buildkit.TryExtractFileFromState(
+		ctx,
+		c,
+		currentSuppliedImageState(config),
+		pkgmgr.NativeChiselManifestPath,
+	); readErr != nil {
 		return "", "", false, nil
 	}
 

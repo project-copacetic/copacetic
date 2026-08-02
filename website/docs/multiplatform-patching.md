@@ -100,7 +100,7 @@ These flags are essential for multi-platform patching:
 
 - **Automatic platform detection**: Copa automatically detects whether an image is multi-platform (Docker manifest list or OCI Index) or single-platform and handles them accordingly.
 
-- **Report and platform flags**: With one report file, pass zero or one `--platform` value; an explicit value is honored and must match the report architecture, while multiple values are rejected. If it is omitted, Copa uses the host's default Linux platform. With a report directory, platforms are determined from the reports and `--platform` is ignored. Without a report, `--platform` can select any subset of discovered platforms.
+- **Report and platform flags**: With one report file, pass zero or one `--platform` value; an explicit value is honored and must match the report architecture, while multiple values are rejected. If it is omitted, Copa determines the platform from the report metadata and uses the host's default Linux platform only as a fallback. With a report directory, platforms are determined from the reports and `--platform` is ignored. Without a report, `--platform` can select any subset of discovered platforms.
 
 - **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in a pushed index or an OCI layout.
 
@@ -115,7 +115,7 @@ These flags are essential for multi-platform patching:
 
 - With a report directory, only platforms with vulnerability reports are patched. Other platforms pass through unchanged in the pushed index or OCI layout.
 
-- With one report file, Copa performs a single-platform patch. An optional single `--platform` value selects that platform explicitly; otherwise the host's default Linux platform is used.
+- With one report file, Copa performs a single-platform patch. An optional single `--platform` value selects that platform explicitly; otherwise Copa uses the platform in the report metadata, falling back to the host's default Linux platform only when the report does not identify one.
 
 - When using `--platform` without a report, only the specified platforms are patched, and others are preserved unchanged in the pushed index or OCI layout.
 

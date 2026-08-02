@@ -1,15 +1,22 @@
 package patch
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/client/llb/sourceresolver"
 	fsutiltypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -22,6 +29,72 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
+
+const (
+	testRecordedBaseImage   = "docker.io/example/non-native-base:latest"
+	testNativeSuppliedImage = "docker.io/example/native-patched:latest"
+	testImageSourcePrefix   = "docker-image://"
+)
+
+type recordedBaseNativePatchedGateway struct {
+	gwclient.Client
+	inspectedImage string
+}
+
+func (c *recordedBaseNativePatchedGateway) ResolveImageConfig(
+	_ context.Context,
+	ref string,
+	_ sourceresolver.Opt,
+) (string, digest.Digest, []byte, error) {
+	var config []byte
+	switch ref {
+	case testNativeSuppliedImage:
+		config = []byte(`{"config":{"labels":{"BaseImage":"` + testRecordedBaseImage + `"}}}`)
+	case testRecordedBaseImage:
+		config = []byte(`{"config":{"labels":{}}}`)
+	default:
+		return "", "", nil, errors.New("unexpected image config reference: " + ref)
+	}
+	return ref, digest.FromString(ref), config, nil
+}
+
+//nolint:gocritic // The gateway Client interface requires SolveRequest by value.
+func (c *recordedBaseNativePatchedGateway) Solve(
+	_ context.Context,
+	req gwclient.SolveRequest,
+) (*gwclient.Result, error) {
+	for _, encodedOp := range req.Definition.Def {
+		var op pb.Op
+		if err := op.Unmarshal(encodedOp); err != nil {
+			return nil, err
+		}
+		if source := op.GetSource(); source != nil {
+			c.inspectedImage = strings.TrimPrefix(source.Identifier, testImageSourcePrefix)
+		}
+	}
+	if c.inspectedImage == "" {
+		return nil, errors.New("preflight state did not contain an image source")
+	}
+
+	result := gwclient.NewResult()
+	result.SetRef(&nativeManifestTestReference{exists: c.inspectedImage == testNativeSuppliedImage})
+	return result, nil
+}
+
+type nativeManifestTestReference struct {
+	gwclient.Reference
+	exists bool
+}
+
+func (r *nativeManifestTestReference) StatFile(
+	_ context.Context,
+	req gwclient.StatRequest,
+) (*fsutiltypes.Stat, error) {
+	if r.exists {
+		return &fsutiltypes.Stat{Path: req.Path}, nil
+	}
+	return nil, &os.PathError{Op: "stat", Path: req.Path, Err: fs.ErrNotExist}
+}
 
 func TestImageConfigWithAnnotationsPreservesSuppliedImageConfig(t *testing.T) {
 	baseConfig, err := json.Marshal(v1.Image{
@@ -185,6 +258,27 @@ func TestPreflightReportForNativeChiselRejectsEveryReportKind(t *testing.T) {
 			ref.AssertExpectations(t)
 		})
 	}
+}
+
+func TestPreflightReportForNativeChiselUsesNativeSuppliedPatchedImage(t *testing.T) {
+	client := &recordedBaseNativePatchedGateway{}
+	platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+	config, err := buildkit.InitializeBuildkitConfig(
+		t.Context(),
+		client,
+		testNativeSuppliedImage,
+		&platform.Platform,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, config.PatchedConfigData)
+
+	err = preflightReportForNativeChisel(t.Context(), client, config, platform, &unversioned.UpdateManifest{
+		Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: utils.OSTypeAlpine, Version: "3.22"}},
+		OSUpdates: unversioned.UpdatePackages{{Name: "musl", FixedVersion: "1.2.5-r10"}},
+	})
+
+	require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
+	assert.Equal(t, testNativeSuppliedImage, client.inspectedImage)
 }
 
 func TestPreflightReportForNativeChiselFailsClosedOnInspectionError(t *testing.T) {

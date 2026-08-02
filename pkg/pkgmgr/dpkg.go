@@ -64,6 +64,11 @@ const (
 	dpkgNativeQualifier         = "native"
 	dpkgArchitectureAll         = "all"
 	dpkgArchitectureAny         = "any"
+	// Bound target-controlled Debian metadata before reading it into the
+	// Copa/frontend process. status.d uses one budget for its generated file
+	// list and every copied metadata file combined.
+	maxDPKGStatusBytes          = 64 << 20
+	maxDPKGStatusDirectoryBytes = 64 << 20
 )
 
 var requiredDPKGTools = []string{"apt-get", "apt-mark", "dpkg", "sh", "grep", "tee"}
@@ -493,9 +498,20 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 }
 
 func (dm *dpkgManager) loadFullStatus(ctx context.Context, resultsState *llb.State) (parsedDPKGStatus, error) {
-	statusBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, resultsState, dpkgStatusOutputFilename)
+	statusBytes, err := buildkit.ExtractFileFromStateWithLimit(
+		ctx,
+		dm.config.Client,
+		resultsState,
+		dpkgStatusOutputFilename,
+		maxDPKGStatusBytes,
+	)
 	if err != nil {
-		return parsedDPKGStatus{}, fmt.Errorf("extracting %s: %w", dpkgStatusPath, err)
+		return parsedDPKGStatus{}, fmt.Errorf(
+			"extracting %s with a maximum size of %d bytes: %w",
+			dpkgStatusPath,
+			maxDPKGStatusBytes,
+			err,
+		)
 	}
 	status, err := parseDPKGStatus(statusBytes)
 	if err != nil {
@@ -505,10 +521,31 @@ func (dm *dpkgManager) loadFullStatus(ctx context.Context, resultsState *llb.Sta
 }
 
 func (dm *dpkgManager) loadStatusDirectory(ctx context.Context, resultsState *llb.State) error {
-	statusdNamesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, resultsState, dpkgStatusdListFilename)
+	return dm.loadStatusDirectoryWithLimit(ctx, resultsState, maxDPKGStatusDirectoryBytes)
+}
+
+func (dm *dpkgManager) loadStatusDirectoryWithLimit(
+	ctx context.Context,
+	resultsState *llb.State,
+	maxBytes int64,
+) error {
+	remainingBytes := maxBytes
+	statusdNamesBytes, err := buildkit.ExtractFileFromStateWithLimit(
+		ctx,
+		dm.config.Client,
+		resultsState,
+		dpkgStatusdListFilename,
+		remainingBytes,
+	)
 	if err != nil {
-		return fmt.Errorf("extracting package list from %s: %w", dpkgStatusFolder, err)
+		return fmt.Errorf(
+			"extracting package list from %s with an aggregate maximum of %d bytes: %w",
+			dpkgStatusFolder,
+			maxBytes,
+			err,
+		)
 	}
+	remainingBytes -= int64(len(statusdNamesBytes))
 
 	dm.statusdNames = strings.Join(strings.Fields(string(statusdNamesBytes)), " ")
 	packageInfo := make(map[string]string)
@@ -521,15 +558,23 @@ func (dm *dpkgManager) loadStatusDirectory(ctx context.Context, resultsState *ll
 		if name == "" {
 			continue
 		}
-		fileBytes, err := buildkit.ExtractFileFromState(
+		fileBytes, err := buildkit.ExtractFileFromStateWithLimit(
 			ctx,
 			dm.config.Client,
 			resultsState,
 			filepath.Join(dpkgStatusdFilesFolder, name),
+			remainingBytes,
 		)
 		if err != nil {
-			return fmt.Errorf("extracting %s: %w", filepath.Join(dpkgStatusFolder, name), err)
+			return fmt.Errorf(
+				"extracting %s with %d of %d aggregate bytes remaining: %w",
+				filepath.Join(dpkgStatusFolder, name),
+				remainingBytes,
+				maxBytes,
+				err,
+			)
 		}
+		remainingBytes -= int64(len(fileBytes))
 
 		if strings.HasSuffix(name, ".md5sums") {
 			continue

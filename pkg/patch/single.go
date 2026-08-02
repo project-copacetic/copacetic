@@ -40,6 +40,10 @@ const (
 
 var errNativeChiselTargetedPatch = errors.New(pkgmgr.NativeChiselTargetedPatchError)
 
+type buildkitBuildClient interface {
+	Build(context.Context, client.SolveOpt, string, gwclient.BuildFunc, chan *client.SolveStatus) (*client.SolveResponse, error)
+}
+
 // removeIfNotDebug removes working folder unless debug mode is enabled.
 func removeIfNotDebug(workingFolder string) {
 	if log.GetLevel() >= log.DebugLevel {
@@ -492,7 +496,7 @@ func validateReportPlatform(updates *unversioned.UpdateManifest, targetPlatform 
 	return nil
 }
 
-func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient *client.Client, image string, platform *ispec.Platform) error {
+func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuildClient, image string, platform *ispec.Platform) error {
 	var manifestExists bool
 	_, err := bkClient.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, platform)
@@ -500,7 +504,13 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient *client.Clien
 			return nil, err
 		}
 
-		manifestExists, err = common.StatePathExists(ctx, c, &config.ImageState, platform, pkgmgr.NativeChiselManifestPath)
+		manifestExists, err = common.StatePathExists(
+			ctx,
+			c,
+			currentSuppliedImageState(config),
+			platform,
+			pkgmgr.NativeChiselManifestPath,
+		)
 		if err != nil {
 			return nil, err
 		}
