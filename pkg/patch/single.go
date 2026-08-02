@@ -126,6 +126,9 @@ func patchSingleArchImage(
 		if err != nil {
 			return nil, err
 		}
+		if err := validateReportPlatform(updates, &targetPlatform); err != nil {
+			return nil, err
+		}
 
 		// Filter updates based on package types
 		pkgTypesList, err := parsePkgTypes(pkgTypes)
@@ -441,6 +444,38 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 		return err
 	}
 	return pipeR.Close()
+}
+
+func validateReportPlatform(updates *unversioned.UpdateManifest, targetPlatform *types.PatchPlatform) error {
+	if updates == nil {
+		return nil
+	}
+
+	reportArch := strings.TrimSpace(updates.Metadata.Config.Arch)
+	if reportArch == "" {
+		return nil
+	}
+
+	target := targetPlatform.Platform
+	if target.OS == "" {
+		target.OS = LINUX
+	}
+	target = platforms.Normalize(target)
+	reportPlatform := platforms.Normalize(ispec.Platform{
+		OS:           target.OS,
+		Architecture: reportArch,
+		Variant:      strings.TrimSpace(updates.Metadata.Config.Variant),
+	})
+
+	if reportPlatform.Architecture != target.Architecture || reportPlatform.Variant != target.Variant {
+		return fmt.Errorf(
+			"scan report platform %s does not match target platform %s; generate the report for the selected platform or choose a matching --platform",
+			platforms.Format(reportPlatform),
+			platforms.Format(target),
+		)
+	}
+
+	return nil
 }
 
 func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient *client.Client, image string, platform *ispec.Platform) error {

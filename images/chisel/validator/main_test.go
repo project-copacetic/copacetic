@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+const baseFilesSlice = "base_files"
 
 func TestValidate(t *testing.T) {
 	root := t.TempDir()
@@ -28,10 +31,10 @@ func TestValidate(t *testing.T) {
 
 	digest := sha256.Sum256(content)
 	expected := expectedManifest{Paths: []expectedPath{
-		{Path: "/usr/", Mode: "0755", Slices: []string{"base_files"}},
-		{Path: "/usr/current", Mode: fmt.Sprintf("0%o", symlinkInfo.Mode().Perm()), Slices: []string{"base_files"}, Link: "data"},
-		{Path: "/usr/data", Mode: "0644", Slices: []string{"base_files"}, FinalSHA256: hex.EncodeToString(digest[:]), Size: uint64(len(content)), Inode: 1},
-		{Path: "/usr/data-link", Mode: "0644", Slices: []string{"base_files"}, SHA256: hex.EncodeToString(digest[:]), Size: uint64(len(content)), Inode: 1},
+		{Path: "/usr/", Mode: "0755", Slices: []string{baseFilesSlice}},
+		{Path: "/usr/current", Mode: fmt.Sprintf("0%o", symlinkInfo.Mode().Perm()), Slices: []string{baseFilesSlice}, Link: "data"},
+		{Path: "/usr/data", Mode: "0644", Slices: []string{baseFilesSlice}, FinalSHA256: hex.EncodeToString(digest[:]), Size: uint64(len(content)), Inode: 1},
+		{Path: "/usr/data-link", Mode: "0644", Slices: []string{baseFilesSlice}, SHA256: hex.EncodeToString(digest[:]), Size: uint64(len(content)), Inode: 1},
 	}}
 	expectedFile := filepath.Join(t.TempDir(), "expected.json")
 	data, err := json.Marshal(expected)
@@ -41,6 +44,99 @@ func TestValidate(t *testing.T) {
 	manifest, err := readExpectedManifest(expectedFile)
 	require.NoError(t, err)
 	require.NoError(t, validate(root, manifest))
+}
+
+func TestValidateRejectsMissingSpecialModeBits(t *testing.T) {
+	testCases := []struct {
+		name         string
+		manifestPath string
+		mode         string
+		directory    bool
+	}{
+		{name: "setuid", manifestPath: "/entry", mode: "04755"},
+		{name: "setgid", manifestPath: "/entry/", mode: "02755", directory: true},
+		{name: "sticky", manifestPath: "/entry/", mode: "01755", directory: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "entry")
+			if testCase.directory {
+				require.NoError(t, os.Mkdir(path, 0o755))
+			} else {
+				writeFileWithMode(t, path, nil, 0o755)
+			}
+
+			err := validate(root, expectedManifest{Paths: []expectedPath{{
+				Path: testCase.manifestPath,
+				Mode: testCase.mode,
+			}}})
+			require.ErrorContains(t, err, "mode is 0755")
+		})
+	}
+}
+
+func TestReconcilePreservesSpecialModeBits(t *testing.T) {
+	target := t.TempDir()
+	staged := t.TempDir()
+
+	require.NoError(t, os.Mkdir(filepath.Join(staged, "bin"), 0o755))
+	toolPath := filepath.Join(staged, "bin", "tool")
+	writeFileWithMode(t, toolPath, nil, 0o755|fs.ModeSetuid|fs.ModeSetgid)
+	require.NoError(t, os.Mkdir(filepath.Join(staged, "shared"), 0o770))
+	require.NoError(t, os.Chmod(filepath.Join(staged, "shared"), 0o770|fs.ModeSetgid|fs.ModeSticky))
+
+	manifest := expectedManifest{Paths: []expectedPath{
+		{Path: "/bin/", Mode: "0755"},
+		{Path: "/bin/tool", Mode: "06755"},
+		{Path: "/shared/", Mode: "03770"},
+	}}
+	require.NoError(t, reconcile(target, staged, expectedManifest{}, manifest))
+
+	toolInfo, err := os.Lstat(filepath.Join(target, "bin", "tool"))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0o6755), unixMode(toolInfo.Mode()))
+	sharedInfo, err := os.Lstat(filepath.Join(target, "shared"))
+	require.NoError(t, err)
+	assert.Equal(t, uint64(0o3770), unixMode(sharedInfo.Mode()))
+	require.NoError(t, validate(target, manifest))
+}
+
+func TestIdentityFromFileInfo(t *testing.T) {
+	root := t.TempDir()
+	original := filepath.Join(root, "original")
+	linked := filepath.Join(root, "linked")
+	other := filepath.Join(root, "other")
+	require.NoError(t, os.WriteFile(original, nil, 0o600))
+	require.NoError(t, os.Link(original, linked))
+	require.NoError(t, os.WriteFile(other, nil, 0o600))
+
+	identityFor := func(path string) fileIdentity {
+		t.Helper()
+		info, err := os.Lstat(path)
+		require.NoError(t, err)
+		identity, err := identityFromFileInfo(path, info)
+		require.NoError(t, err)
+		return identity
+	}
+
+	originalIdentity := identityFor(original)
+	assert.Equal(t, originalIdentity, identityFor(linked))
+	assert.NotEqual(t, originalIdentity, identityFor(other))
+}
+
+func TestNonNegativeDevice(t *testing.T) {
+	device, ok := nonNegativeDevice(int64(42))
+	require.True(t, ok)
+	assert.Equal(t, uint64(42), device)
+
+	device, ok = nonNegativeDevice(uint64(1 << 63))
+	require.True(t, ok)
+	assert.Equal(t, uint64(1<<63), device)
+
+	_, ok = nonNegativeDevice(int64(-1))
+	assert.False(t, ok)
 }
 
 func TestValidateRejectsDigestMismatch(t *testing.T) {

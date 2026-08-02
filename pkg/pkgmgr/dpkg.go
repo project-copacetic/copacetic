@@ -65,6 +65,7 @@ type dpkgManager struct {
 	installationMode  dpkgInstallationMode
 	statusdNames      string
 	packageInfo       map[string]string
+	heldPackages      map[string]struct{}
 	statusdFileMap    map[string]string // Maps package names to their status.d filenames
 	osVersion         string
 	osType            string
@@ -113,6 +114,7 @@ type parsedDPKGStatus struct {
 	contents         []byte
 	databaseContents []byte
 	packages         map[string]string
+	heldPackages     map[string]struct{}
 }
 
 // Depending on go-deb-version lib for debian version comparison rules.
@@ -390,6 +392,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 			return err
 		}
 		dm.packageInfo = status.packages
+		dm.heldPackages = status.heldPackages
 		if mode == dpkgInstallationModeTargetTools {
 			return nil
 		}
@@ -476,8 +479,9 @@ func (dm *dpkgManager) loadStatusDirectory(ctx context.Context, resultsState *ll
 
 func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 	status := parsedDPKGStatus{
-		contents: bytes.Clone(contents),
-		packages: make(map[string]string),
+		contents:     bytes.Clone(contents),
+		packages:     make(map[string]string),
+		heldPackages: make(map[string]struct{}),
 	}
 
 	paragraphNumber := 0
@@ -497,25 +501,33 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 		if !isValidDebianPackageName(packageName) {
 			return fmt.Errorf("paragraph %d has invalid package name %q", paragraphNumber, packageName)
 		}
-		if packageVersion == "" {
-			return fmt.Errorf("paragraph %d for package %q has no Version field", paragraphNumber, packageName)
-		}
-		if !isValidDebianVersion(packageVersion) {
-			return fmt.Errorf("paragraph %d for package %q has invalid version %q", paragraphNumber, packageName, packageVersion)
-		}
 		// Microsoft-style apt-less Chiseled images retain complete package
 		// control paragraphs but omit dpkg's Status field. Presence in that
 		// inventory means installed. When Status is present, retain normal dpkg
-		// semantics so removed/config-files entries stay excluded.
-		if packageStatus == "" {
-			status.packages[packageName] = packageVersion
-		} else {
+		// semantics so removed/not-installed entries stay excluded. Those dpkg
+		// bookkeeping entries may legitimately omit Version.
+		installed := packageStatus == ""
+		held := false
+		if packageStatus != "" {
 			statusFields := strings.Fields(packageStatus)
 			if len(statusFields) != 3 {
 				return fmt.Errorf("paragraph %d for package %q has invalid status %q", paragraphNumber, packageName, packageStatus)
 			}
-			if statusFields[2] == "installed" {
-				status.packages[packageName] = packageVersion
+			installed = statusFields[2] == "installed"
+			held = installed && statusFields[0] == "hold"
+		}
+
+		if packageVersion == "" {
+			if installed {
+				return fmt.Errorf("paragraph %d for package %q has no Version field", paragraphNumber, packageName)
+			}
+		} else if !isValidDebianVersion(packageVersion) {
+			return fmt.Errorf("paragraph %d for package %q has invalid version %q", paragraphNumber, packageName, packageVersion)
+		}
+		if installed {
+			status.packages[packageName] = packageVersion
+			if held {
+				status.heldPackages[packageName] = struct{}{}
 			}
 		}
 		paragraphHasData = false
@@ -639,7 +651,7 @@ func isValidDebianPackageName(name string) bool {
 // marshalDPKGPackageVersions serializes validated package/version pairs for
 // shell scripts without interpolating package metadata into shell source. The
 // pipe delimiter is excluded by both Debian package-name and version syntax.
-func marshalDPKGPackageVersions(packageInfo map[string]string) ([]byte, error) {
+func marshalDPKGPackageVersions(packageInfo map[string]string, heldPackages map[string]struct{}) ([]byte, error) {
 	packageNames := make([]string, 0, len(packageInfo))
 	for packageName := range packageInfo {
 		packageNames = append(packageNames, packageName)
@@ -655,7 +667,11 @@ func marshalDPKGPackageVersions(packageInfo map[string]string) ([]byte, error) {
 		if !isValidDebianVersion(version) {
 			return nil, fmt.Errorf("invalid installed version %q for package %s", version, packageName)
 		}
-		fmt.Fprintf(&data, "%s|%s\n", packageName, version)
+		selection := "install"
+		if _, held := heldPackages[packageName]; held {
+			selection = "hold"
+		}
+		fmt.Fprintf(&data, "%s|%s|%s\n", packageName, version, selection)
 	}
 
 	return []byte(data.String()), nil
@@ -892,7 +908,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.WithCustomName("Updating package database in tooling container"),
 	).Root()
 
-	installedPackageData, err := marshalDPKGPackageVersions(dm.packageInfo)
+	installedPackageData, err := marshalDPKGPackageVersions(dm.packageInfo, dm.heldPackages)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -954,11 +970,16 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 
                             apt-get -o Acquire::Retries=3 update
 
-                            while IFS='|' read -r pkg_name installed_version extra || [ -n "${pkg_name}${installed_version}${extra}" ]; do
-                                if [ -z "$pkg_name" ] || [ -z "$installed_version" ] || [ -n "$extra" ]; then
+                            while IFS='|' read -r pkg_name installed_version selection extra || [ -n "${pkg_name}${installed_version}${selection}${extra}" ]; do
+                                if [ -z "$pkg_name" ] || [ -z "$installed_version" ] || [ -z "$selection" ] || [ -n "$extra" ]; then
                                     echo "invalid installed package record" >&2
                                     exit 1
                                 fi
+                                case "$selection" in
+                                    hold) continue ;;
+                                    install) ;;
+                                    *) echo "invalid package selection: $selection" >&2; exit 1 ;;
+                                esac
                                 apt-get -o Acquire::Retries=3 install --reinstall -y -- "$pkg_name"
                             done < /copa-dpkg-installed-packages
 

@@ -39,17 +39,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-func TestDiscoverPlatformsPrefersRemoteIndexOverCachedSingleChild(t *testing.T) {
-	originalLocal := localImagePlatforms
-	originalRemote := getRemoteImageDescriptor
-	t.Cleanup(func() {
-		localImagePlatforms = originalLocal
-		getRemoteImageDescriptor = originalRemote
-	})
-
-	localImagePlatforms = func(context.Context, string) ([]ispec.Platform, bool, error) {
-		return []ispec.Platform{{OS: "linux", Architecture: "arm64"}}, true, nil
-	}
+func testRemoteIndexDescriptor(digestHex string) *remote.Descriptor {
 	raw := []byte(`{
 		"schemaVersion":2,
 		"mediaType":"application/vnd.oci.image.index.v1+json",
@@ -68,15 +58,51 @@ func TestDiscoverPlatformsPrefersRemoteIndexOverCachedSingleChild(t *testing.T) 
 			}
 		]
 	}`)
+	return &remote.Descriptor{
+		Descriptor: remotev1.Descriptor{
+			MediaType: remoteTypes.OCIImageIndex,
+			Size:      int64(len(raw)),
+			Digest:    remotev1.Hash{Algorithm: "sha256", Hex: digestHex},
+		},
+		Manifest: raw,
+	}
+}
+
+func TestDiscoverPlatformsMutableTagKeepsLocalPlatform(t *testing.T) {
+	originalLocal := localImagePlatforms
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		localImagePlatforms = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+
+	localImagePlatforms = func(context.Context, string) ([]ispec.Platform, bool, error) {
+		return []ispec.Platform{{OS: "linux", Architecture: "arm64"}}, true, nil
+	}
 	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
-		return &remote.Descriptor{
-			Descriptor: remotev1.Descriptor{
-				MediaType: remoteTypes.OCIImageIndex,
-				Size:      int64(len(raw)),
-				Digest:    remotev1.Hash{Algorithm: "sha256", Hex: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},
-			},
-			Manifest: raw,
-		}, nil
+		t.Fatal("mutable local image reference must not be reconciled with a remote image")
+		return nil, nil
+	}
+
+	platforms, err := DiscoverPlatformsFromReference("example.com/test/image:latest")
+	require.NoError(t, err)
+	require.Len(t, platforms, 1)
+	assert.Equal(t, "arm64", platforms[0].Architecture)
+}
+
+func TestDiscoverPlatformsDigestReconcilesMatchingRemoteIndex(t *testing.T) {
+	originalLocal := localImagePlatforms
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		localImagePlatforms = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+
+	localImagePlatforms = func(context.Context, string) ([]ispec.Platform, bool, error) {
+		return []ispec.Platform{{OS: "linux", Architecture: "arm64"}}, true, nil
+	}
+	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+		return testRemoteIndexDescriptor("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"), nil
 	}
 
 	platforms, err := DiscoverPlatformsFromReference("example.com/test/image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
@@ -84,6 +110,27 @@ func TestDiscoverPlatformsPrefersRemoteIndexOverCachedSingleChild(t *testing.T) 
 	require.Len(t, platforms, 2)
 	assert.Equal(t, "amd64", platforms[0].Architecture)
 	assert.Equal(t, "arm64", platforms[1].Architecture)
+}
+
+func TestDiscoverPlatformsDigestKeepsLocalPlatformWhenRemoteDigestDiffers(t *testing.T) {
+	originalLocal := localImagePlatforms
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		localImagePlatforms = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+
+	localImagePlatforms = func(context.Context, string) ([]ispec.Platform, bool, error) {
+		return []ispec.Platform{{OS: "linux", Architecture: "arm64"}}, true, nil
+	}
+	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+		return testRemoteIndexDescriptor("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"), nil
+	}
+
+	platforms, err := DiscoverPlatformsFromReference("example.com/test/image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+	require.NoError(t, err)
+	require.Len(t, platforms, 1)
+	assert.Equal(t, "arm64", platforms[0].Architecture)
 }
 
 func TestAddOCIExportMetadata(t *testing.T) {
@@ -195,12 +242,12 @@ func newMockBuildkitAPI(t *testing.T, caps ...apicaps.CapID) string {
 		caps:            capList,
 	})
 
-	go srv.Serve(l) // nolint:errcheck
-
 	control := &mockControlServer{
 		ControlServer: &controlapi.UnimplementedControlServer{},
 	}
 	controlapi.RegisterControlServer(srv, control)
+
+	go srv.Serve(l) // nolint:errcheck
 
 	return l.Addr().String()
 }

@@ -11,11 +11,23 @@ rm -f "$UPDATE_PACKAGES_FILE" "$UPDATES_MARKER_FILE" "$tmp_file"
 mkdir -p "$(dirname "$UPDATE_PACKAGES_FILE")"
 : > "$tmp_file"
 
-while IFS='|' read -r package installed_version extra || [ -n "${package}${installed_version}${extra}" ]; do
-    if [ -z "$package" ] || [ -z "$installed_version" ] || [ -n "$extra" ]; then
+while IFS='|' read -r package installed_version selection extra || [ -n "${package}${installed_version}${selection}${extra}" ]; do
+    if [ -z "$package" ] || [ -z "$installed_version" ] || [ -z "$selection" ] || [ -n "$extra" ]; then
         echo "invalid installed package record in $INSTALLED_PACKAGES_FILE" >&2
         exit 1
     fi
+
+    case "$selection" in
+        hold)
+            continue
+            ;;
+        install)
+            ;;
+        *)
+            echo "invalid package selection '$selection' for $package in $INSTALLED_PACKAGES_FILE" >&2
+            exit 1
+            ;;
+    esac
 
     if policy=$(apt-cache policy "$package"); then
         :

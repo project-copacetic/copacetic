@@ -3,7 +3,10 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 
 	"github.com/containerd/errdefs"
 	"github.com/containerd/platforms"
@@ -159,7 +162,7 @@ func StatePathExists(ctx context.Context, c gwclient.Client, state *llb.State, p
 		return false, fmt.Errorf("get image state reference: %w", err)
 	}
 	if _, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path}); err != nil {
-		if errdefs.IsNotFound(err) || status.Code(err) == codes.NotFound {
+		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errdefs.IsNotFound(err) || status.Code(err) == codes.NotFound {
 			return false, nil
 		}
 		return false, fmt.Errorf("stat %s: %w", path, err)

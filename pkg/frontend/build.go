@@ -15,11 +15,13 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 
+	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 const (
@@ -104,11 +106,65 @@ func ensureTempDir() error {
 	return os.MkdirAll(os.TempDir(), 0o1777)
 }
 
+// explicitNativeChiselOSInfo returns the Ubuntu OS metadata needed to select
+// the DPKG manager when a native Chisel image has no /etc/os-release. It only
+// bypasses normal OS detection when both an explicit release override and a
+// native Chisel manifest are present.
+func explicitNativeChiselOSInfo(
+	ctx context.Context,
+	client gwclient.Client,
+	state *llb.State,
+	platform *ocispecs.Platform,
+	override string,
+) (*common.OSInfo, error) {
+	if override == "" {
+		return nil, nil
+	}
+
+	manifestExists, err := common.StatePathExists(ctx, client, state, platform, pkgmgr.NativeChiselManifestPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to inspect target image for native Chisel metadata")
+	}
+	if !manifestExists {
+		return nil, nil
+	}
+
+	release, err := copachisel.ParseRelease(override)
+	if err != nil {
+		return nil, errors.Wrap(err, "invalid Chisel release override")
+	}
+
+	version := ""
+	if release.Kind == copachisel.ReleaseNamed {
+		version = strings.TrimPrefix(release.Location, "ubuntu-")
+	}
+	return &common.OSInfo{Type: utils.OSTypeUbuntu, Version: version}, nil
+}
+
 // BuildPatchedImage builds a patched image using the Copa patching logic.
 // This reuses the same components as the CLI to ensure consistency.
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
-	// Create package manager instance
-	config, pm, err := common.SetupBuildkitConfigAndManagerWithOptions(ctx, f.client, opts.Image, platform, "", nil, pkgmgr.PackageManagerOptions{
+	var osInfo *common.OSInfo
+	if opts.ChiselRelease != "" {
+		imageOptions := []llb.ImageOption{
+			llb.ResolveModePreferLocal,
+			llb.WithMetaResolver(f.client),
+		}
+		if platform != nil {
+			imageOptions = append(imageOptions, llb.Platform(*platform))
+		}
+		imageState := llb.Image(opts.Image, imageOptions...)
+
+		var err error
+		osInfo, err = explicitNativeChiselOSInfo(ctx, f.client, &imageState, platform, opts.ChiselRelease)
+		if err != nil {
+			return llb.State{}, err
+		}
+	}
+
+	// Create package manager instance. A nil osInfo preserves normal target OS
+	// detection for non-native images and native images without an override.
+	config, pm, err := common.SetupBuildkitConfigAndManagerWithOptions(ctx, f.client, opts.Image, platform, "", osInfo, pkgmgr.PackageManagerOptions{
 		ChiselRelease: opts.ChiselRelease,
 	})
 	if err != nil {

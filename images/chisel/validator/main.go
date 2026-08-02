@@ -42,6 +42,11 @@ type fileIdentity struct {
 	Inode  uint64
 }
 
+type integerDevice interface {
+	~int | ~int8 | ~int16 | ~int32 | ~int64 |
+		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "reconcile" {
 		if err := reconcileCommand(os.Args[2:]); err != nil {
@@ -177,12 +182,10 @@ func validatePath(root *os.Root, record *expectedPath, hardLinks map[uint64][]fi
 	if err != nil {
 		return fmt.Errorf("path %q has invalid mode %q: %w", record.Path, record.Mode, err)
 	}
-	actualMode := uint64(info.Mode().Perm())
-	if info.Mode()&fs.ModeSticky != 0 {
-		actualMode |= 0o1000
-	}
-	if actualMode != expectedMode&0o1777 {
-		return fmt.Errorf("path %q mode is %04o, expected %04o", record.Path, actualMode, expectedMode&0o1777)
+	actualMode := unixMode(info.Mode())
+	expectedMode &= 0o7777
+	if actualMode != expectedMode {
+		return fmt.Errorf("path %q mode is %04o, expected %04o", record.Path, actualMode, expectedMode)
 	}
 
 	switch {
@@ -230,15 +233,11 @@ func validatePath(root *os.Root, record *expectedPath, hardLinks map[uint64][]fi
 	}
 
 	if record.Inode != 0 {
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return fmt.Errorf("path %q does not expose inode metadata", record.Path)
+		identity, err := identityFromFileInfo(record.Path, info)
+		if err != nil {
+			return err
 		}
-		if stat.Dev < 0 {
-			return fmt.Errorf("path %q has invalid negative device number %d", record.Path, stat.Dev)
-		}
-		device := uint64(stat.Dev) // #nosec G115 -- non-negative value checked above.
-		hardLinks[record.Inode] = append(hardLinks[record.Inode], fileIdentity{Device: device, Inode: stat.Ino})
+		hardLinks[record.Inode] = append(hardLinks[record.Inode], identity)
 	}
 	return nil
 }
@@ -634,10 +633,49 @@ func isExpectedDir(record *expectedPath) bool {
 func expectedMode(record *expectedPath) fs.FileMode {
 	mode, _ := strconv.ParseUint(record.Mode, 8, 32)
 	result := fs.FileMode(mode & 0o777)
+	if mode&0o4000 != 0 {
+		result |= fs.ModeSetuid
+	}
+	if mode&0o2000 != 0 {
+		result |= fs.ModeSetgid
+	}
 	if mode&0o1000 != 0 {
 		result |= fs.ModeSticky
 	}
 	return result
+}
+
+func unixMode(mode fs.FileMode) uint64 {
+	result := uint64(mode.Perm())
+	if mode&fs.ModeSetuid != 0 {
+		result |= 0o4000
+	}
+	if mode&fs.ModeSetgid != 0 {
+		result |= 0o2000
+	}
+	if mode&fs.ModeSticky != 0 {
+		result |= 0o1000
+	}
+	return result
+}
+
+func identityFromFileInfo(path string, info fs.FileInfo) (fileIdentity, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fileIdentity{}, fmt.Errorf("path %q does not expose inode metadata", path)
+	}
+	device, ok := nonNegativeDevice(stat.Dev)
+	if !ok {
+		return fileIdentity{}, fmt.Errorf("path %q has invalid negative device number %d", path, stat.Dev)
+	}
+	return fileIdentity{Device: device, Inode: stat.Ino}, nil
+}
+
+func nonNegativeDevice[T integerDevice](device T) (uint64, bool) {
+	if device < 0 {
+		return 0, false
+	}
+	return uint64(device), true // #nosec G115 -- the non-negative value fits in uint64.
 }
 
 func expectedPermissions(record *expectedPath) fs.FileMode {

@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
@@ -10,10 +11,13 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
+	buildkitclient "github.com/moby/buildkit/client"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -370,6 +374,110 @@ func TestPatchSingleArchImageReturnsReportParseError(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "is not a supported scan report format")
+}
+
+func TestValidateReportPlatform(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		updates       *unversioned.UpdateManifest
+		target        v1.Platform
+		expectedError string
+	}{
+		{
+			name:   "nil report manifest",
+			target: v1.Platform{OS: LINUX, Architecture: "amd64"},
+		},
+		{
+			name: "missing report architecture",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Variant: "v6"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
+		},
+		{
+			name: "normalizes architecture alias",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "x86_64"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "amd64"},
+		},
+		{
+			name: "normalizes arm64 v8",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "aarch64", Variant: "v8"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "arm64"},
+		},
+		{
+			name: "normalizes arm variant",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "arm", Variant: "7"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
+		},
+		{
+			name: "rejects architecture mismatch",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "amd64"},
+			}},
+			target:        v1.Platform{OS: LINUX, Architecture: "arm64"},
+			expectedError: "scan report platform linux/amd64 does not match target platform linux/arm64",
+		},
+		{
+			name: "rejects variant mismatch",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "arm", Variant: "v6"},
+			}},
+			target:        v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
+			expectedError: "scan report platform linux/arm/v6 does not match target platform linux/arm/v7",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateReportPlatform(tt.updates, &types.PatchPlatform{Platform: tt.target})
+			if tt.expectedError != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.expectedError)
+				assert.ErrorContains(t, err, "generate the report for the selected platform")
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestPatchSingleArchImageRejectsReportPlatformMismatchBeforeBuildKit(t *testing.T) {
+	originalBKNewClient := bkNewClient
+	buildkitCalled := false
+	bkNewClient = func(context.Context, buildkit.Opts) (*buildkitclient.Client, error) {
+		buildkitCalled = true
+		return nil, errors.New("buildkit must not be called for a report platform mismatch")
+	}
+	t.Cleanup(func() { bkNewClient = originalBKNewClient })
+
+	result, err := patchSingleArchImage(
+		context.Background(),
+		&types.Options{
+			Image:             "docker.io/library/alpine:3.20",
+			Report:            filepath.Join("..", "report", "testdata", "trivy_valid.json"),
+			Scanner:           "trivy",
+			PkgTypes:          utils.PkgTypeOS,
+			LibraryPatchLevel: utils.PatchTypePatch,
+		},
+		types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "arm64"}},
+		false,
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorContains(t, err, "scan report platform linux/amd64 does not match target platform linux/arm64")
+	assert.False(t, buildkitCalled, "report platform validation must happen before creating a BuildKit client")
 }
 
 func TestPatchSingleArchImageReturnsNoUpdatesFoundAfterFiltering(t *testing.T) {

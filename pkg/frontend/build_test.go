@@ -12,7 +12,9 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	fstypes "github.com/tonistiigi/fsutil/types"
@@ -406,6 +408,60 @@ func (r *frontendStatePathReference) StatFile(context.Context, gwclient.StatRequ
 		return nil, r.statErr
 	}
 	return &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil
+}
+
+func TestExplicitNativeChiselOSInfo(t *testing.T) {
+	localRelease := t.TempDir()
+	tests := []struct {
+		name        string
+		override    string
+		manifestErr error
+		wantInfo    *common.OSInfo
+	}{
+		{
+			name:     "named release",
+			override: "ubuntu-24.04",
+			wantInfo: &common.OSInfo{Type: utils.OSTypeUbuntu, Version: "24.04"},
+		},
+		{
+			name:     "local release",
+			override: localRelease,
+			wantInfo: &common.OSInfo{Type: utils.OSTypeUbuntu},
+		},
+		{
+			name:     "pinned Git release",
+			override: "https://example.com/chisel-releases.git#v1.0.0",
+			wantInfo: &common.OSInfo{Type: utils.OSTypeUbuntu},
+		},
+		{
+			name:        "non-native image keeps normal OS detection",
+			override:    "ubuntu-24.04",
+			manifestErr: status.Error(codes.NotFound, "missing"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := gwclient.NewResult()
+			result.SetRef(&frontendStatePathReference{statErr: test.manifestErr})
+			client := &frontendMetadataTestClient{result: result}
+			state := llb.Scratch()
+
+			info, err := explicitNativeChiselOSInfo(t.Context(), client, &state, nil, test.override)
+			require.NoError(t, err)
+			assert.Equal(t, test.wantInfo, info)
+		})
+	}
+}
+
+func TestExplicitNativeChiselOSInfoRejectsInvalidNativeOverride(t *testing.T) {
+	result := gwclient.NewResult()
+	result.SetRef(&frontendStatePathReference{})
+	client := &frontendMetadataTestClient{result: result}
+	state := llb.Scratch()
+
+	_, err := explicitNativeChiselOSInfo(t.Context(), client, &state, nil, "https://example.com/chisel-releases.git")
+	require.ErrorContains(t, err, "must include a pinned commit or tag fragment")
 }
 
 func TestRejectTargetedNativeChiselState(t *testing.T) {

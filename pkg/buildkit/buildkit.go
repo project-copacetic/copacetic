@@ -339,10 +339,11 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	// Prefer the local image store. A daemon may expose only the host child of
-	// an otherwise multi-platform remote index, so a one-platform local result
-	// is reconciled with the remote descriptor when available. Local-only
-	// images still fall back to the discovered local platform.
+	// Prefer the local image store. Mutable tags and local references may name a
+	// different image remotely, so a successful local lookup is authoritative.
+	// For immutable digest references only, a daemon may expose just the host
+	// child of the referenced remote index; reconcile that single local platform
+	// with a remote index only after confirming the descriptor digest matches.
 	var desc *remote.Descriptor
 	if locals, ok, localErr := localImagePlatforms(context.Background(), manifestRef); ok {
 		if len(locals) == 0 {
@@ -368,14 +369,26 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			return platforms, nil
 		}
 
+		digestRef, immutable := ref.(name.Digest)
+		if !immutable {
+			return platforms, nil
+		}
+
 		remoteDesc, remoteErr := getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-		if remoteErr != nil || !remoteDesc.MediaType.IsIndex() {
+		if remoteErr != nil || remoteDesc == nil || !remoteDesc.MediaType.IsIndex() {
 			if remoteErr != nil {
 				log.Debugf("Remote platform discovery failed for locally cached %s: %v", manifestRef, remoteErr)
 			}
 			return platforms, nil
 		}
-		log.Debugf("Locally cached child masks a remote index for %s; using remote platform list", manifestRef)
+		if remoteDesc.Digest.String() != digestRef.DigestStr() {
+			log.Debugf(
+				"Remote descriptor digest %s does not match locally cached immutable reference %s; using local platform",
+				remoteDesc.Digest.String(), digestRef.DigestStr(),
+			)
+			return platforms, nil
+		}
+		log.Debugf("Locally cached child masks the matching remote index for %s; using remote platform list", manifestRef)
 		desc = remoteDesc
 		platforms = nil
 	} else {

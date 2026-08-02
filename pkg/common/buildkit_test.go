@@ -3,6 +3,8 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
+	"os"
 	"testing"
 
 	"github.com/containerd/platforms"
@@ -164,8 +166,12 @@ func TestStatePathExists(t *testing.T) {
 			exists: true,
 		},
 		{
-			name:    "path missing",
+			name:    "gRPC path missing",
 			statErr: status.Error(codes.NotFound, "missing"),
+		},
+		{
+			name:    "filesystem path missing",
+			statErr: &os.PathError{Op: "lstat", Path: pkgmgr.NativeChiselManifestPath, Err: fs.ErrNotExist},
 		},
 		{
 			name:      "stat failure",

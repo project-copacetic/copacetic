@@ -210,14 +210,14 @@ func TestMarshalDPKGPackageVersions(t *testing.T) {
 	data, err := marshalDPKGPackageVersions(map[string]string{
 		"zlib1g":     "1:1.3.dfsg+really1.3.1-1ubuntu1",
 		"base-files": "13ubuntu10.2",
-	})
+	}, map[string]struct{}{"zlib1g": {}})
 	assert.NoError(t, err)
-	assert.Equal(t, "base-files|13ubuntu10.2\nzlib1g|1:1.3.dfsg+really1.3.1-1ubuntu1\n", string(data))
+	assert.Equal(t, "base-files|13ubuntu10.2|install\nzlib1g|1:1.3.dfsg+really1.3.1-1ubuntu1|hold\n", string(data))
 
-	_, err = marshalDPKGPackageVersions(map[string]string{"bad;touch": "1.0"})
+	_, err = marshalDPKGPackageVersions(map[string]string{"bad;touch": "1.0"}, nil)
 	assert.ErrorContains(t, err, "invalid package name")
 
-	_, err = marshalDPKGPackageVersions(map[string]string{"base-files": "$(touch /tmp/pwned)"})
+	_, err = marshalDPKGPackageVersions(map[string]string{"base-files": "$(touch /tmp/pwned)"}, nil)
 	assert.ErrorContains(t, err, "invalid installed version")
 }
 
@@ -297,6 +297,7 @@ func TestParseDPKGStatus(t *testing.T) {
 		"libc6":      "2.39-0ubuntu8.5",
 		"tzdata":     "2025b-0ubuntu0.24.04.1",
 	}, parsed.packages)
+	assert.Equal(t, map[string]struct{}{"tzdata": {}}, parsed.heldPackages)
 	assert.Equal(t, fullDPKGStatus, parsed.contents)
 	assert.Contains(t, string(parsed.databaseContents), "Status: install ok installed")
 
@@ -311,6 +312,15 @@ func TestParseDPKGStatusExcludesRemovedPackages(t *testing.T) {
 	parsed, err := parseDPKGStatus(status)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]string{"installed": "1.0"}, parsed.packages)
+	assert.Equal(t, status, parsed.contents)
+}
+
+func TestParseDPKGStatusAllowsNotInstalledPackageWithoutVersion(t *testing.T) {
+	status := []byte("Package: installed\nStatus: install ok installed\nVersion: 1.0\n\nPackage: gnupg\nStatus: purge ok not-installed\n")
+	parsed, err := parseDPKGStatus(status)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{"installed": "1.0"}, parsed.packages)
+	assert.Empty(t, parsed.heldPackages)
 	assert.Equal(t, status, parsed.contents)
 }
 
@@ -413,10 +423,11 @@ func TestSelectDPKGUpdatesScriptOnlySelectsStrictlyNewerCandidates(t *testing.T)
 	installedData, err := marshalDPKGPackageVersions(map[string]string{
 		"epoch":   "1:99.0-1",
 		"equal":   "1.0-1",
+		"held":    "1.0-1",
 		"missing": "1.0-1",
 		"newer":   "1.0~rc1-1",
 		"older":   "2.0-1",
-	})
+	}, map[string]struct{}{"held": {}})
 	assert.NoError(t, err)
 	assert.NoError(t, os.WriteFile(installedPath, installedData, 0o600))
 

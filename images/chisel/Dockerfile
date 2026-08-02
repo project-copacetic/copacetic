@@ -3,7 +3,7 @@
 # The runtime image is intentionally assembled from Alpine so the same recipe
 # covers every Chisel architecture Copa supports, including linux/386 and
 # linux/riscv64. The published image must be consumed by immutable digest.
-ARG GO_IMAGE=golang:1.25.11-alpine
+ARG GO_IMAGE=golang:1.25.12-alpine
 ARG ALPINE_IMAGE=alpine:3.23
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS builder
