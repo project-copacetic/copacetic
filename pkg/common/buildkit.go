@@ -14,6 +14,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	fstypes "github.com/tonistiigi/fsutil/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -176,6 +177,34 @@ func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte,
 // binary from the target image. A missing path is not an error; solve and stat
 // failures that are not NotFound are returned to the caller.
 func StatePathExists(ctx context.Context, c gwclient.Client, state *llb.State, platform *ispec.Platform, path string) (bool, error) {
+	_, exists, err := statePathStat(ctx, c, state, platform, path)
+	return exists, err
+}
+
+// StateFileExists reports whether path is a regular file in state without
+// reading its contents or executing any binary from the target image. A missing
+// path is not an error; a path with another type is rejected as malformed.
+func StateFileExists(ctx context.Context, c gwclient.Client, state *llb.State, platform *ispec.Platform, path string) (bool, error) {
+	stat, exists, err := statePathStat(ctx, c, state, platform, path)
+	if err != nil || !exists {
+		return exists, err
+	}
+	if stat == nil {
+		return false, fmt.Errorf("stat %s: BuildKit returned no file metadata", path)
+	}
+	if !fs.FileMode(stat.Mode).IsRegular() {
+		return false, fmt.Errorf("%s exists but is not a regular file", path)
+	}
+	return true, nil
+}
+
+func statePathStat(
+	ctx context.Context,
+	c gwclient.Client,
+	state *llb.State,
+	platform *ispec.Platform,
+	path string,
+) (*fstypes.Stat, bool, error) {
 	constraints := []llb.ConstraintsOpt{}
 	if platform != nil {
 		constraints = append(constraints, llb.Platform(*platform))
@@ -183,7 +212,7 @@ func StatePathExists(ctx context.Context, c gwclient.Client, state *llb.State, p
 
 	definition, err := state.Marshal(ctx, constraints...)
 	if err != nil {
-		return false, fmt.Errorf("marshal image state: %w", err)
+		return nil, false, fmt.Errorf("marshal image state: %w", err)
 	}
 
 	result, err := c.Solve(ctx, gwclient.SolveRequest{
@@ -191,21 +220,22 @@ func StatePathExists(ctx context.Context, c gwclient.Client, state *llb.State, p
 		Evaluate:   true,
 	})
 	if err != nil {
-		return false, fmt.Errorf("solve image state: %w", err)
+		return nil, false, fmt.Errorf("solve image state: %w", err)
 	}
 
 	reference, err := result.SingleRef()
 	if err != nil {
-		return false, fmt.Errorf("get image state reference: %w", err)
+		return nil, false, fmt.Errorf("get image state reference: %w", err)
 	}
-	if _, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path}); err != nil {
+	stat, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path})
+	if err != nil {
 		if statePathNotFound(err, path) {
-			return false, nil
+			return nil, false, nil
 		}
-		return false, fmt.Errorf("stat %s: %w", path, err)
+		return nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
 
-	return true, nil
+	return stat, true, nil
 }
 
 func statePathNotFound(err error, path string) bool {

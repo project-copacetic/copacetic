@@ -109,7 +109,7 @@ func preflightReportForNativeChisel(
 		return nil
 	}
 
-	manifestExists, err := common.StatePathExists(
+	manifestExists, err := common.StateFileExists(
 		ctx,
 		c,
 		currentSuppliedImageState(config),
@@ -367,12 +367,17 @@ func explicitNativeChiselOS(
 		return "", "", false, nil
 	}
 
-	if _, readErr := buildkit.TryExtractFileFromState(
+	manifestExists, err := common.StateFileExists(
 		ctx,
 		c,
 		currentSuppliedImageState(config),
+		config.Platform,
 		pkgmgr.NativeChiselManifestPath,
-	); readErr != nil {
+	)
+	if err != nil {
+		return "", "", false, fmt.Errorf("inspect target image for native Chisel metadata at %s: %w", pkgmgr.NativeChiselManifestPath, err)
+	}
+	if !manifestExists {
 		return "", "", false, nil
 	}
 

@@ -202,3 +202,50 @@ func TestStatePathExists(t *testing.T) {
 		})
 	}
 }
+
+func TestStateFileExists(t *testing.T) {
+	tests := []struct {
+		name      string
+		stat      *fstypes.Stat
+		statErr   error
+		exists    bool
+		wantError string
+	}{
+		{
+			name:   "regular file exists",
+			stat:   &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath, Mode: 0o644},
+			exists: true,
+		},
+		{
+			name:      "directory is rejected",
+			stat:      &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath, Mode: uint32(os.ModeDir | 0o755)},
+			wantError: "not a regular file",
+		},
+		{
+			name:    "missing file",
+			statErr: &os.PathError{Op: "lstat", Path: pkgmgr.NativeChiselManifestPath, Err: fs.ErrNotExist},
+		},
+		{
+			name:      "stat failure",
+			statErr:   status.Error(codes.PermissionDenied, "denied"),
+			wantError: "stat",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := gwclient.NewResult()
+			result.SetRef(&statePathTestReference{stat: test.stat, statErr: test.statErr})
+			client := &statePathTestClient{result: result}
+			state := llb.Scratch()
+
+			exists, err := StateFileExists(context.Background(), client, &state, nil, pkgmgr.NativeChiselManifestPath)
+			assert.Equal(t, test.exists, exists)
+			if test.wantError != "" {
+				assert.ErrorContains(t, err, test.wantError)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

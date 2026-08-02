@@ -72,7 +72,7 @@ func copyFrontendResultMetadata(destination, source *gwclient.Result) {
 }
 
 func rejectTargetedNativeChiselState(ctx context.Context, client gwclient.Client, state *llb.State, platform *ocispecs.Platform) error {
-	manifestExists, err := common.StatePathExists(ctx, client, state, platform, pkgmgr.NativeChiselManifestPath)
+	manifestExists, err := common.StateFileExists(ctx, client, state, platform, pkgmgr.NativeChiselManifestPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to inspect target image for native Chisel metadata")
 	}
@@ -130,7 +130,7 @@ func explicitNativeChiselOSInfo(
 		return nil, nil
 	}
 
-	manifestExists, err := common.StatePathExists(ctx, client, state, platform, pkgmgr.NativeChiselManifestPath)
+	manifestExists, err := common.StateFileExists(ctx, client, state, platform, pkgmgr.NativeChiselManifestPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to inspect target image for native Chisel metadata")
 	}

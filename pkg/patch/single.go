@@ -504,7 +504,7 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 			return nil, err
 		}
 
-		manifestExists, err = common.StatePathExists(
+		manifestExists, err = common.StateFileExists(
 			ctx,
 			c,
 			currentSuppliedImageState(config),

@@ -42,6 +42,7 @@ func TestStateFileExistsUsesStatOnly(t *testing.T) {
 		wantError string
 	}{
 		{name: "exists regardless of size", stat: &fstypes.Stat{Size: 1 << 40}, want: true},
+		{name: "directory is rejected", stat: &fstypes.Stat{Mode: uint32(os.ModeDir | 0o755)}, wantError: "not a regular file"},
 		{name: "missing", stat: &fstypes.Stat{}, statErr: fs.ErrNotExist},
 		{name: "stat failure", stat: &fstypes.Stat{}, statErr: errors.New("permission denied"), wantError: "stating"},
 		{name: "solve failure is not absence", solveErr: errors.New("solve failed while mentioning manifest.wall"), wantError: "solving state"},
@@ -138,10 +139,11 @@ func TestClassifyDPKGInstallationMode(t *testing.T) {
 		{
 			name: "native manifest wins over every other format",
 			probe: dpkgProbeResult{
-				hasManifest:        true,
-				hasStatus:          true,
-				hasStatusDirectory: true,
-				missingTools:       []string{"apt-get", "sh"},
+				hasManifest:            true,
+				hasStatus:              true,
+				hasStatusDirectory:     true,
+				hasAdministrativeState: true,
+				missingTools:           []string{"apt-get", "sh"},
 			},
 			want: dpkgInstallationModeNativeChisel,
 		},
@@ -155,8 +157,9 @@ func TestClassifyDPKGInstallationMode(t *testing.T) {
 		{
 			name: "full status with tools wins over status directory",
 			probe: dpkgProbeResult{
-				hasStatus:          true,
-				hasStatusDirectory: true,
+				hasStatus:              true,
+				hasStatusDirectory:     true,
+				hasAdministrativeState: true,
 			},
 			want: dpkgInstallationModeTargetTools,
 		},
@@ -178,9 +181,30 @@ func TestClassifyDPKGInstallationMode(t *testing.T) {
 			want: dpkgInstallationModeExternalFullStatus,
 		},
 		{
-			name: "status directory uses external tooling",
+			name: "full status missing tools rejects administrative state",
 			probe: dpkgProbeResult{
-				hasStatusDirectory: true,
+				hasStatus:              true,
+				hasStatusDirectory:     true,
+				hasAdministrativeState: true,
+				missingTools:           []string{"tee"},
+			},
+			want:    dpkgInstallationModeUnknown,
+			wantErr: true,
+			errContains: []string{
+				"external-full-status",
+				"tee",
+				dpkgStatusPath,
+				filepath.Join(dpkgLibPath, "info"),
+				filepath.Join(dpkgLibPath, "triggers"),
+				filepath.Join(dpkgLibPath, "updates"),
+				filepath.Join(dpkgLibPath, "alternatives"),
+			},
+		},
+		{
+			name: "status directory behavior ignores administrative state without full status",
+			probe: dpkgProbeResult{
+				hasStatusDirectory:     true,
+				hasAdministrativeState: true,
 			},
 			want: dpkgInstallationModeExternalStatusDirectory,
 		},
@@ -335,15 +359,16 @@ func TestGetAPTImageName(t *testing.T) {
 }
 
 func TestParseDPKGProbeResult(t *testing.T) {
-	got, err := parseDPKGProbeResult([]byte("manifest=0\nstatus=1\nstatus_directory=1\nmissing_tools=apt-get tee\n"))
+	got, err := parseDPKGProbeResult([]byte("manifest=0\nstatus=1\nstatus_directory=1\nadministrative_state=1\nmissing_tools=apt-get tee\n"))
 	assert.NoError(t, err)
 	assert.Equal(t, dpkgProbeResult{
-		hasStatus:          true,
-		hasStatusDirectory: true,
-		missingTools:       []string{"apt-get", "tee"},
+		hasStatus:              true,
+		hasStatusDirectory:     true,
+		hasAdministrativeState: true,
+		missingTools:           []string{"apt-get", "tee"},
 	}, got)
 
-	_, err = parseDPKGProbeResult([]byte("manifest=maybe\nstatus=1\nstatus_directory=0\nmissing_tools=\n"))
+	_, err = parseDPKGProbeResult([]byte("manifest=maybe\nstatus=1\nstatus_directory=0\nadministrative_state=0\nmissing_tools=\n"))
 	assert.ErrorContains(t, err, "invalid value")
 }
 
@@ -1309,6 +1334,72 @@ func TestDPKGProbeScriptDoesNotExecuteTargetTools(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, fullDPKGStatus, copiedStatus)
 	assert.NoFileExists(t, markerPath, "the probe must not execute target apt/dpkg/shell utilities")
+}
+
+func TestDPKGProbeScriptDetectsAdministrativeState(t *testing.T) {
+	tests := []struct {
+		name         string
+		relativePath string
+		isDirectory  bool
+		want         bool
+	}{
+		{name: "status only"},
+		{name: "status directory is package inventory", relativePath: "var/lib/dpkg/status.d", isDirectory: true},
+		{name: "malformed status directory file", relativePath: "var/lib/dpkg/status.d", want: true},
+		{name: "info directory", relativePath: "var/lib/dpkg/info", isDirectory: true, want: true},
+		{name: "triggers directory", relativePath: "var/lib/dpkg/triggers", isDirectory: true, want: true},
+		{name: "updates directory", relativePath: "var/lib/dpkg/updates", isDirectory: true, want: true},
+		{name: "alternatives directory", relativePath: "var/lib/dpkg/alternatives", isDirectory: true, want: true},
+		{name: "other administrative file", relativePath: "var/lib/dpkg/status-old", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			targetRoot := t.TempDir()
+			resultsDir := t.TempDir()
+			statusPath := filepath.Join(targetRoot, strings.TrimPrefix(dpkgStatusPath, "/"))
+			require.NoError(t, os.MkdirAll(filepath.Dir(statusPath), 0o755))
+			require.NoError(t, os.WriteFile(statusPath, fullDPKGStatus, 0o600))
+
+			if tt.relativePath != "" {
+				path := filepath.Join(targetRoot, tt.relativePath)
+				if tt.isDirectory {
+					require.NoError(t, os.MkdirAll(path, 0o755))
+				} else {
+					require.NoError(t, os.WriteFile(path, []byte("administrative state"), 0o600))
+				}
+			}
+
+			probeOutputPath := filepath.Join(resultsDir, dpkgProbeOutputFilename)
+			runEmbeddedShellScript(t, probeDPKGScript, map[string]string{
+				"TARGET_ROOT":               targetRoot,
+				"CHISEL_MANIFEST_PATH":      chiselManifestPath,
+				"DPKG_STATUS_PATH":          dpkgStatusPath,
+				"DPKG_STATUS_FOLDER":        dpkgStatusFolder,
+				"REQUIRED_DPKG_TOOLS":       strings.Join(requiredDPKGTools, " "),
+				"RESULTS_PATH":              resultsDir,
+				"RESULT_STATUS_PATH":        filepath.Join(resultsDir, dpkgStatusOutputFilename),
+				"RESULT_STATUSD_LIST_PATH":  filepath.Join(resultsDir, dpkgStatusdListFilename),
+				"RESULT_STATUSD_FILES_PATH": filepath.Join(resultsDir, dpkgStatusdFilesFolder),
+				"PROBE_OUTPUT_PATH":         probeOutputPath,
+			})
+
+			probeBytes, err := os.ReadFile(probeOutputPath)
+			require.NoError(t, err)
+			probe, err := parseDPKGProbeResult(probeBytes)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, probe.hasAdministrativeState)
+
+			mode, err := classifyDPKGInstallationMode(probe)
+			if tt.want {
+				require.ErrorContains(t, err, "lifecycle or administrative state")
+				assert.Equal(t, dpkgInstallationModeUnknown, mode)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, dpkgInstallationModeExternalFullStatus, mode)
+			}
+		})
+	}
 }
 
 func TestFinalizeDPKGStatusScript(t *testing.T) {

@@ -120,10 +120,11 @@ func (mode dpkgInstallationMode) usesExternalTools() bool {
 }
 
 type dpkgProbeResult struct {
-	hasManifest        bool
-	hasStatus          bool
-	hasStatusDirectory bool
-	missingTools       []string
+	hasManifest            bool
+	hasStatus              bool
+	hasStatusDirectory     bool
+	hasAdministrativeState bool
+	missingTools           []string
 }
 
 type parsedDPKGStatus struct {
@@ -292,11 +293,18 @@ func stateFileExists(ctx context.Context, client gwclient.Client, state *llb.Sta
 	if reference == nil {
 		return false, fmt.Errorf("resolving state reference: BuildKit returned no reference")
 	}
-	if _, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path}); err != nil {
+	stat, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path})
+	if err != nil {
 		if isStateFileNotFound(err, path) {
 			return false, nil
 		}
 		return false, fmt.Errorf("stating %s: %w", path, err)
+	}
+	if stat == nil {
+		return false, fmt.Errorf("stating %s: BuildKit returned no file metadata", path)
+	}
+	if !fs.FileMode(stat.Mode).IsRegular() {
+		return false, fmt.Errorf("%s exists but is not a regular file", path)
 	}
 	return true, nil
 }
@@ -324,6 +332,21 @@ func classifyDPKGInstallationMode(result dpkgProbeResult) (dpkgInstallationMode,
 		return dpkgInstallationModeNativeChisel, nil
 	case result.hasStatus && len(result.missingTools) == 0:
 		return dpkgInstallationModeTargetTools, nil
+	case result.hasStatus && result.hasAdministrativeState:
+		return dpkgInstallationModeUnknown, fmt.Errorf(
+			"cannot use external-full-status for %s: target is missing required dpkg tools (%s), but %s contains "+
+				"lifecycle or administrative state outside %s and %s (for example %s, %s, %s, or %s); "+
+				"restore the missing tools or use an apt-less image with only the full status inventory",
+			dpkgStatusPath,
+			strings.Join(result.missingTools, ", "),
+			dpkgLibPath,
+			dpkgStatusPath,
+			dpkgStatusFolder,
+			filepath.Join(dpkgLibPath, "info"),
+			filepath.Join(dpkgLibPath, "triggers"),
+			filepath.Join(dpkgLibPath, "updates"),
+			filepath.Join(dpkgLibPath, "alternatives"),
+		)
 	case result.hasStatus:
 		return dpkgInstallationModeExternalFullStatus, nil
 	case result.hasStatusDirectory:
@@ -379,16 +402,21 @@ func parseDPKGProbeResult(b []byte) (dpkgProbeResult, error) {
 	if err != nil {
 		return dpkgProbeResult{}, err
 	}
+	hasAdministrativeState, err := parseFlag("administrative_state")
+	if err != nil {
+		return dpkgProbeResult{}, err
+	}
 	missingTools, ok := values["missing_tools"]
 	if !ok {
 		return dpkgProbeResult{}, fmt.Errorf("probe output is missing %q", "missing_tools")
 	}
 
 	return dpkgProbeResult{
-		hasManifest:        hasManifest,
-		hasStatus:          hasStatus,
-		hasStatusDirectory: hasStatusDirectory,
-		missingTools:       strings.Fields(missingTools),
+		hasManifest:            hasManifest,
+		hasStatus:              hasStatus,
+		hasStatusDirectory:     hasStatusDirectory,
+		hasAdministrativeState: hasAdministrativeState,
+		missingTools:           strings.Fields(missingTools),
 	}, nil
 }
 
