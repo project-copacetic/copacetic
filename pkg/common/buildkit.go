@@ -79,6 +79,42 @@ func SetupBuildkitConfigAndManagerWithOptions(
 	return config, manager, nil
 }
 
+// MergeImageRuntimeConfig preserves base layer metadata while replacing the
+// runtime config object with the one from the supplied image being repatched.
+func MergeImageRuntimeConfig(baseConfig, suppliedConfig []byte) ([]byte, error) {
+	var base map[string]json.RawMessage
+	if err := json.Unmarshal(baseConfig, &base); err != nil {
+		return nil, fmt.Errorf("parse base image config: %w", err)
+	}
+	if base == nil {
+		return nil, fmt.Errorf("base image config is not an object")
+	}
+	var supplied map[string]json.RawMessage
+	if err := json.Unmarshal(suppliedConfig, &supplied); err != nil {
+		return nil, fmt.Errorf("parse supplied image config: %w", err)
+	}
+	if supplied == nil {
+		return nil, fmt.Errorf("supplied image config is not an object")
+	}
+	runtimeConfig, ok := supplied["config"]
+	if !ok {
+		runtimeConfig = json.RawMessage(`{}`)
+	}
+	var runtimeObject map[string]json.RawMessage
+	if err := json.Unmarshal(runtimeConfig, &runtimeObject); err != nil {
+		return nil, fmt.Errorf("supplied image config does not contain an object-valued config field: %w", err)
+	}
+	if runtimeObject == nil {
+		return nil, fmt.Errorf("supplied image config does not contain an object-valued config field")
+	}
+	base["config"] = runtimeConfig
+	merged, err := json.Marshal(base)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config with supplied runtime settings: %w", err)
+	}
+	return merged, nil
+}
+
 // AddImageConfigLabels returns imageConfig with labels merged into its OCI
 // config. The input is left unchanged, and manager-provided values take
 // precedence when a label already exists.

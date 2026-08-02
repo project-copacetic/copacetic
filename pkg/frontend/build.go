@@ -3,7 +3,9 @@ package frontend
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -80,7 +82,14 @@ func rejectTargetedNativeChiselState(ctx context.Context, client gwclient.Client
 	return nil
 }
 
-func frontendResultMetadata(configData []byte, platform *ocispecs.Platform, annotations map[string]string) (map[string][]byte, error) {
+func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocispecs.Platform, annotations map[string]string) (map[string][]byte, error) {
+	if patchedConfigData != nil {
+		merged, err := common.MergeImageRuntimeConfig(configData, patchedConfigData)
+		if err != nil {
+			return nil, err
+		}
+		configData = merged
+	}
 	configData, err := common.AddImageConfigLabels(configData, annotations)
 	if err != nil {
 		return nil, err
@@ -240,7 +249,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		return llb.State{}, errors.Wrap(err, "failed to install package updates")
 	}
 
-	metadata, err := frontendResultMetadata(config.ConfigData, platform, pkgmgr.GetPackageManagerAnnotations(pm))
+	metadata, err := frontendResultMetadata(config.ConfigData, config.PatchedConfigData, platform, pkgmgr.GetPackageManagerAnnotations(pm))
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to prepare frontend image metadata")
 	}
@@ -507,6 +516,45 @@ func extractChiselReleaseFromContext(ctx context.Context, client gwclient.Client
 }
 
 func extractFrontendContextDirectory(ctx context.Context, reference gwclient.Reference, sourcePath, destinationPath string, fileCount *int, totalBytes *int64) error {
+	if err := extractFrontendContextDirectoryWithinRoot(ctx, reference, sourcePath, destinationPath, destinationPath, fileCount, totalBytes); err != nil {
+		return err
+	}
+	return validateExtractedChiselReleaseSymlinks(destinationPath)
+}
+
+func validateExtractedChiselReleaseSymlinks(rootPath string) error {
+	root, err := os.OpenRoot(rootPath)
+	if err != nil {
+		return errors.Wrap(err, "failed to open extracted Chisel release root")
+	}
+	defer root.Close()
+
+	return fs.WalkDir(root.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if relative == "." || entry.Type()&os.ModeSymlink == 0 {
+			return nil
+		}
+		// os.Root resolves the complete symlink chain and rejects traversal out
+		// of the extracted directory, including escapes hidden behind another
+		// in-tree symlink. Dangling links and cycles are rejected as well.
+		if _, err := root.Stat(filepath.FromSlash(relative)); err != nil {
+			return fmt.Errorf("local Chisel release symlink %q does not resolve safely within the release directory: %w", relative, err)
+		}
+		return nil
+	})
+}
+
+func extractFrontendContextDirectoryWithinRoot(
+	ctx context.Context,
+	reference gwclient.Reference,
+	sourcePath,
+	destinationPath,
+	destinationRoot string,
+	fileCount *int,
+	totalBytes *int64,
+) error {
 	entries, err := reference.ReadDir(ctx, gwclient.ReadDirRequest{Path: sourcePath})
 	if err != nil {
 		return errors.Wrapf(err, "failed to read Chisel release directory %s", sourcePath)
@@ -531,7 +579,7 @@ func extractFrontendContextDirectory(ctx context.Context, reference gwclient.Ref
 			if err := os.Mkdir(destinationEntry, mode.Perm()); err != nil {
 				return errors.Wrapf(err, "failed to create local Chisel release directory %s", name)
 			}
-			if err := extractFrontendContextDirectory(ctx, reference, sourceEntry, destinationEntry, fileCount, totalBytes); err != nil {
+			if err := extractFrontendContextDirectoryWithinRoot(ctx, reference, sourceEntry, destinationEntry, destinationRoot, fileCount, totalBytes); err != nil {
 				return err
 			}
 		case mode.IsRegular():
@@ -545,6 +593,22 @@ func extractFrontendContextDirectory(ctx context.Context, reference gwclient.Ref
 			*totalBytes += int64(len(data))
 			if err := os.WriteFile(destinationEntry, data, mode.Perm()); err != nil {
 				return errors.Wrapf(err, "failed to write local Chisel release file %s", name)
+			}
+		case mode&os.ModeSymlink != 0:
+			target := entry.Linkname
+			if target == "" {
+				return fmt.Errorf("local Chisel release symlink %q has an empty target", sourceEntry)
+			}
+			if path.IsAbs(target) {
+				return fmt.Errorf("local Chisel release symlink %q has an absolute target", sourceEntry)
+			}
+			resolvedTarget := filepath.Clean(filepath.Join(filepath.Dir(destinationEntry), filepath.FromSlash(path.Clean(target))))
+			relativeTarget, err := filepath.Rel(destinationRoot, resolvedTarget)
+			if err != nil || relativeTarget == ".." || strings.HasPrefix(relativeTarget, ".."+string(filepath.Separator)) || filepath.IsAbs(relativeTarget) {
+				return fmt.Errorf("local Chisel release symlink %q escapes the release directory", sourceEntry)
+			}
+			if err := os.Symlink(target, destinationEntry); err != nil {
+				return errors.Wrapf(err, "failed to create local Chisel release symlink %s", name)
 			}
 		default:
 			return fmt.Errorf("local Chisel release contains unsupported non-regular entry %q", sourceEntry)

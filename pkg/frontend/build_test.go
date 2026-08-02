@@ -354,7 +354,7 @@ func TestFrontendResultMetadataIncludesChiselAnnotations(t *testing.T) {
 		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
 	}
 
-	metadata, err := frontendResultMetadata(configData, &platform, annotations)
+	metadata, err := frontendResultMetadata(configData, nil, &platform, annotations)
 	require.NoError(t, err)
 
 	configKey := exptypes.ExporterImageConfigKey + "/linux/amd64"
@@ -365,6 +365,50 @@ func TestFrontendResultMetadataIncludesChiselAnnotations(t *testing.T) {
 	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
 	assert.Equal(t, []byte("ubuntu-24.04"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselReleaseAnnotation)])
 	assert.Equal(t, []byte("v1.4.2"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselVersionAnnotation)])
+}
+
+func TestFrontendResultMetadataUsesPatchedConfigWhenPresent(t *testing.T) {
+	baseConfig, err := json.Marshal(ocispecs.Image{
+		Config: ocispecs.ImageConfig{
+			User:       "base-user",
+			Entrypoint: []string{"/base-entrypoint"},
+			Cmd:        []string{"base-command"},
+			Env:        []string{"BASE_ONLY=true"},
+			WorkingDir: "/base",
+			Labels:     map[string]string{"source": "base"},
+		},
+	})
+	require.NoError(t, err)
+	patchedConfig, err := json.Marshal(ocispecs.Image{
+		Config: ocispecs.ImageConfig{
+			User:       "1001:1001",
+			Entrypoint: []string{"/app/entrypoint"},
+			Cmd:        []string{"serve", "--production"},
+			Env:        []string{"APP_ENV=production", "PORT=8080"},
+			WorkingDir: "/app",
+			Labels:     map[string]string{"source": "supplied-image"},
+		},
+	})
+	require.NoError(t, err)
+	platform := ocispecs.Platform{OS: osLinux, Architecture: "amd64"}
+
+	metadata, err := frontendResultMetadata(
+		baseConfig,
+		patchedConfig,
+		&platform,
+		map[string]string{pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04"},
+	)
+	require.NoError(t, err)
+
+	var image ocispecs.Image
+	require.NoError(t, json.Unmarshal(metadata[exptypes.ExporterImageConfigKey+"/linux/amd64"], &image))
+	assert.Equal(t, "1001:1001", image.Config.User)
+	assert.Equal(t, []string{"/app/entrypoint"}, image.Config.Entrypoint)
+	assert.Equal(t, []string{"serve", "--production"}, image.Config.Cmd)
+	assert.Equal(t, []string{"APP_ENV=production", "PORT=8080"}, image.Config.Env)
+	assert.Equal(t, "/app", image.Config.WorkingDir)
+	assert.Equal(t, "supplied-image", image.Config.Labels["source"])
+	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
 }
 
 type frontendMetadataTestClient struct {
@@ -560,6 +604,142 @@ func TestCopyFrontendResultMetadata(t *testing.T) {
 	sourceValue[0] = 'x'
 
 	assert.Equal(t, []byte("ubuntu-24.04"), destination.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
+}
+
+type frontendReleaseContextReference struct {
+	gwclient.Reference
+	directories map[string][]*fstypes.Stat
+	files       map[string][]byte
+}
+
+func (r *frontendReleaseContextReference) ReadDir(_ context.Context, req gwclient.ReadDirRequest) ([]*fstypes.Stat, error) {
+	entries, ok := r.directories[filepath.Clean(req.Path)]
+	if !ok {
+		return nil, fmt.Errorf("unexpected Chisel release directory read %q", req.Path)
+	}
+	return entries, nil
+}
+
+func (r *frontendReleaseContextReference) ReadFile(_ context.Context, req gwclient.ReadRequest) ([]byte, error) {
+	data, ok := r.files[filepath.Clean(req.Filename)]
+	if !ok {
+		return nil, fmt.Errorf("unexpected Chisel release file read %q", req.Filename)
+	}
+	return append([]byte(nil), data...), nil
+}
+
+func TestExtractFrontendContextDirectoryPreservesSafeRelativeSymlinks(t *testing.T) {
+	const releaseContents = "format: v1\n"
+	reference := &frontendReleaseContextReference{
+		directories: map[string][]*fstypes.Stat{
+			"release": {
+				{Path: "release/release.yaml", Mode: uint32(0o644), Size: int64(len(releaseContents))},
+				{Path: "release/slices", Mode: uint32(os.ModeDir | 0o755)},
+			},
+			filepath.Join("release", "slices"): {
+				{
+					Path:     "release/slices/current.yaml",
+					Mode:     uint32(os.ModeSymlink | 0o777),
+					Linkname: "../release.yaml",
+				},
+			},
+		},
+		files: map[string][]byte{
+			filepath.Join("release", "release.yaml"): []byte(releaseContents),
+		},
+	}
+	destination := t.TempDir()
+	fileCount := 0
+	var totalBytes int64
+
+	err := extractFrontendContextDirectory(t.Context(), reference, "release", destination, &fileCount, &totalBytes)
+	require.NoError(t, err)
+	assert.Equal(t, 3, fileCount)
+	assert.Equal(t, int64(len(releaseContents)), totalBytes)
+
+	linkPath := filepath.Join(destination, "slices", "current.yaml")
+	info, err := os.Lstat(linkPath)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink)
+	target, err := os.Readlink(linkPath)
+	require.NoError(t, err)
+	assert.Equal(t, "../release.yaml", target)
+	contents, err := os.ReadFile(linkPath)
+	require.NoError(t, err)
+	assert.Equal(t, releaseContents, string(contents))
+}
+
+func TestExtractFrontendContextDirectoryRejectsEscapeThroughInTreeSymlink(t *testing.T) {
+	reference := &frontendReleaseContextReference{
+		directories: map[string][]*fstypes.Stat{
+			"release": {
+				{Path: "release/pivot", Mode: uint32(os.ModeSymlink | 0o777), Linkname: "."},
+				{Path: "release/bad", Mode: uint32(os.ModeSymlink | 0o777), Linkname: "pivot/../outside"},
+			},
+		},
+	}
+	parent := t.TempDir()
+	destination := filepath.Join(parent, "release")
+	require.NoError(t, os.Mkdir(destination, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(parent, "outside"), []byte("outside"), 0o600))
+	fileCount := 0
+	var totalBytes int64
+
+	err := extractFrontendContextDirectory(t.Context(), reference, "release", destination, &fileCount, &totalBytes)
+	require.ErrorContains(t, err, "does not resolve safely within the release directory")
+}
+
+func TestExtractFrontendContextDirectoryRejectsUnsafeEntries(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        os.FileMode
+		linkTarget  string
+		errContains string
+	}{
+		{
+			name:        "absolute symlink target",
+			mode:        os.ModeSymlink | 0o777,
+			linkTarget:  "/etc/passwd",
+			errContains: "has an absolute target",
+		},
+		{
+			name:        "escaping symlink target",
+			mode:        os.ModeSymlink | 0o777,
+			linkTarget:  "../outside",
+			errContains: "escapes the release directory",
+		},
+		{
+			name:        "empty symlink target",
+			mode:        os.ModeSymlink | 0o777,
+			errContains: "has an empty target",
+		},
+		{
+			name:        "special file",
+			mode:        os.ModeNamedPipe | 0o600,
+			errContains: "unsupported non-regular entry",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reference := &frontendReleaseContextReference{
+				directories: map[string][]*fstypes.Stat{
+					"release": {
+						{
+							Path:     "release/unsafe",
+							Mode:     uint32(test.mode),
+							Linkname: test.linkTarget,
+						},
+					},
+				},
+			}
+			fileCount := 0
+			var totalBytes int64
+
+			err := extractFrontendContextDirectory(t.Context(), reference, "release", t.TempDir(), &fileCount, &totalBytes)
+			require.ErrorContains(t, err, test.errContains)
+		})
+	}
 }
 
 func TestExtractChiselReleaseFromContextRejectsUnsafePaths(t *testing.T) {

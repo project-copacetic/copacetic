@@ -2,6 +2,8 @@ package pkgmgr
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -184,11 +186,63 @@ func TestLocalChiselReleaseState(t *testing.T) {
 	assert.Equal(t, firstDigest, secondDigest)
 }
 
+func TestLocalChiselReleaseStateLengthFramesRegularFilePayloads(t *testing.T) {
+	firstReleaseDir := t.TempDir()
+	secondReleaseDir := t.TempDir()
+	prefix := []byte("prefix")
+	suffix := []byte("suffix")
+	fileMode := os.FileMode(0o644)
+	secondFileHeader := fmt.Appendf(nil, "/b\x00%o\x00", fileMode)
+
+	writePackageManagerTestFile(t, filepath.Join(firstReleaseDir, "a"),
+		append(append(append([]byte{}, prefix...), secondFileHeader...), suffix...), fileMode)
+	writePackageManagerTestFile(t, filepath.Join(secondReleaseDir, "a"), prefix, fileMode)
+	writePackageManagerTestFile(t, filepath.Join(secondReleaseDir, "b"), suffix, fileMode)
+
+	_, firstDigest, err := localChiselReleaseState(firstReleaseDir)
+	require.NoError(t, err)
+	_, secondDigest, err := localChiselReleaseState(secondReleaseDir)
+	require.NoError(t, err)
+	assert.NotEqual(t, firstDigest, secondDigest)
+}
+
+func TestLocalChiselReleaseStateLengthFramesSymlinkTargets(t *testing.T) {
+	releaseDir := t.TempDir()
+	const target = "."
+	symlinkPath := filepath.Join(releaseDir, "link")
+	require.NoError(t, os.Symlink(target, symlinkPath))
+
+	_, digest, err := localChiselReleaseState(releaseDir)
+	require.NoError(t, err)
+
+	info, err := os.Lstat(symlinkPath)
+	require.NoError(t, err)
+	expected := sha256.New()
+	fmt.Fprintf(expected, "/link\x00%o\x00", info.Mode())
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(target)))
+	expected.Write(length[:])
+	expected.Write([]byte(target))
+	assert.Equal(t, fmt.Sprintf("%x", expected.Sum(nil)), digest)
+}
+
 func TestLocalChiselReleaseStateRejectsEscapingSymlink(t *testing.T) {
 	releaseDir := t.TempDir()
 	require.NoError(t, os.Symlink("../../outside", filepath.Join(releaseDir, "bad")))
 	_, _, err := localChiselReleaseState(releaseDir)
 	require.ErrorContains(t, err, "escapes the release directory")
+}
+
+func TestLocalChiselReleaseStateRejectsEscapeThroughInTreeSymlink(t *testing.T) {
+	parent := t.TempDir()
+	releaseDir := filepath.Join(parent, "release")
+	require.NoError(t, os.Mkdir(releaseDir, 0o755))
+	writePackageManagerTestFile(t, filepath.Join(parent, "outside"), []byte("outside"), 0o644)
+	require.NoError(t, os.Symlink(".", filepath.Join(releaseDir, "pivot")))
+	require.NoError(t, os.Symlink("pivot/../outside", filepath.Join(releaseDir, "bad")))
+
+	_, _, err := localChiselReleaseState(releaseDir)
+	require.ErrorContains(t, err, "does not resolve safely within the release directory")
 }
 
 func TestMaterializeChiselRelease(t *testing.T) {

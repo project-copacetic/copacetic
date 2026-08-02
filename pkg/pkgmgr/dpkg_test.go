@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,16 +18,60 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
+
+func TestStateFileExistsUsesStatOnly(t *testing.T) {
+	const path = "/var/lib/chisel/manifest.wall"
+	tests := []struct {
+		name      string
+		stat      *fstypes.Stat
+		statErr   error
+		solveErr  error
+		want      bool
+		wantError string
+	}{
+		{name: "exists regardless of size", stat: &fstypes.Stat{Size: 1 << 40}, want: true},
+		{name: "missing", stat: &fstypes.Stat{}, statErr: fs.ErrNotExist},
+		{name: "stat failure", stat: &fstypes.Stat{}, statErr: errors.New("permission denied"), wantError: "stating"},
+		{name: "solve failure is not absence", solveErr: errors.New("solve failed while mentioning manifest.wall"), wantError: "solving state"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			if test.solveErr != nil {
+				client.On("Solve", mock.Anything, mock.Anything).Return((*gwclient.Result)(nil), test.solveErr).Once()
+			} else {
+				ref := &mocks.MockReference{}
+				ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).Return(test.stat, test.statErr).Once()
+				result := gwclient.NewResult()
+				result.SetRef(ref)
+				client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+				defer ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+			}
+
+			state := llb.Scratch()
+			got, err := stateFileExists(t.Context(), client, &state, path)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, test.want, got)
+			}
+			client.AssertExpectations(t)
+		})
+	}
+}
 
 func TestExternalDPKGPatchedStateAvoidsNestedMergeGraph(t *testing.T) {
 	current := llb.Scratch().
@@ -208,11 +253,11 @@ func TestDebianVersionOrdering(t *testing.T) {
 
 func TestMarshalDPKGPackageVersions(t *testing.T) {
 	data, err := marshalDPKGPackageVersions(map[string]string{
-		"zlib1g":     "1:1.3.dfsg+really1.3.1-1ubuntu1",
-		"base-files": "13ubuntu10.2",
-	}, map[string]struct{}{"zlib1g": {}})
+		"zlib1g:amd64":     "1:1.3.dfsg+really1.3.1-1ubuntu1",
+		"base-files:amd64": "13ubuntu10.2",
+	}, map[string]struct{}{"zlib1g:amd64": {}})
 	assert.NoError(t, err)
-	assert.Equal(t, "base-files|13ubuntu10.2|install\nzlib1g|1:1.3.dfsg+really1.3.1-1ubuntu1|hold\n", string(data))
+	assert.Equal(t, "base-files:amd64|13ubuntu10.2|install\nzlib1g:amd64|1:1.3.dfsg+really1.3.1-1ubuntu1|hold\n", string(data))
 
 	_, err = marshalDPKGPackageVersions(map[string]string{"bad;touch": "1.0"}, nil)
 	assert.ErrorContains(t, err, "invalid package name")
@@ -230,12 +275,26 @@ func TestMarshalDPKGVersionFloorsProtectsDependencyClosure(t *testing.T) {
 	data, err := marshalDPKGVersionFloors(
 		unversioned.UpdatePackages{{Name: "app", FixedVersion: appFixedVersion}},
 		map[string]string{
-			"app":                 "1.0",
-			"existing-dependency": dependencyCurrentVersion,
+			"app:amd64":                 "1.0",
+			"app:i386":                  "0.9",
+			"existing-dependency:amd64": dependencyCurrentVersion,
 		},
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "app|1.0|"+appFixedVersion+"\nexisting-dependency|"+dependencyCurrentVersion+"|\n", string(data))
+	assert.Equal(t, "app:amd64|1.0|"+appFixedVersion+"\napp:i386|0.9|"+appFixedVersion+"\nexisting-dependency:amd64|"+dependencyCurrentVersion+"|\n", string(data))
+
+	packages, err := marshalDPKGUpdatePackageNames(
+		unversioned.UpdatePackages{{Name: "app"}},
+		map[string]string{"app:amd64": "1.0", "app:i386": "0.9"},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "app:amd64\napp:i386\n", string(packages))
+
+	_, err = marshalDPKGUpdatePackageNames(
+		unversioned.UpdatePackages{{Name: "missing"}},
+		map[string]string{"app:amd64": "1.0"},
+	)
+	require.ErrorContains(t, err, "is not installed in the target dpkg inventory")
 }
 
 func TestGetAPTImageName(t *testing.T) {
@@ -310,11 +369,11 @@ func TestParseDPKGStatus(t *testing.T) {
 	parsed, err := parseDPKGStatus(input)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]string{
-		"base-files": "13ubuntu10.2",
-		"libc6":      "2.39-0ubuntu8.5",
-		"tzdata":     "2025b-0ubuntu0.24.04.1",
+		"base-files:amd64": "13ubuntu10.2",
+		"libc6:amd64":      "2.39-0ubuntu8.5",
+		"tzdata:all":       "2025b-0ubuntu0.24.04.1",
 	}, parsed.packages)
-	assert.Equal(t, map[string]struct{}{"tzdata": {}}, parsed.heldPackages)
+	assert.Equal(t, map[string]struct{}{"tzdata:all": {}}, parsed.heldPackages)
 	assert.Equal(t, fullDPKGStatus, parsed.contents)
 	assert.Contains(t, string(parsed.databaseContents), "Status: install ok installed")
 
@@ -346,8 +405,8 @@ func TestParseDPKGStatusAcceptsInventoryWithoutStatusFields(t *testing.T) {
 	parsed, err := parseDPKGStatus(status)
 	assert.NoError(t, err)
 	assert.Equal(t, map[string]string{
-		"base-files": "13ubuntu10.2",
-		"libc6":      "2.39-0ubuntu8.4",
+		"base-files:amd64": "13ubuntu10.2",
+		"libc6:amd64":      "2.39-0ubuntu8.4",
 	}, parsed.packages)
 	assert.Equal(t, status, parsed.contents)
 	expectedDatabase := strings.Join([]string{
@@ -366,6 +425,124 @@ func TestParseDPKGStatusAcceptsInventoryWithoutStatusFields(t *testing.T) {
 	assert.Equal(t, expectedDatabase, string(parsed.databaseContents))
 }
 
+func TestFilterDPKGStatusDependenciesPreservesInstalledRelationships(t *testing.T) {
+	status := []byte(strings.Join([]string{
+		"Package: app",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"Depends: libfoo (= 1.0),",
+		" missing-a | missing-b",
+		"",
+		"Package: libfoo",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"",
+		"Package: provider",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"Provides: virtual-feature (= 1.0)",
+		"",
+		"Package: consumer",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"Pre-Depends: virtual-feature, missing-c",
+		"",
+	}, "\n"))
+	installed := map[string]string{
+		"app:amd64":      "1.0",
+		"libfoo:amd64":   "1.0",
+		"provider:amd64": "1.0",
+		"consumer:amd64": "1.0",
+	}
+
+	filtered, err := filterDPKGStatusDependencies(status, installed, "amd64")
+	require.NoError(t, err)
+	text := string(filtered)
+	assert.Contains(t, text, "Depends: libfoo (= 1.0)\n")
+	assert.NotContains(t, text, "missing-a")
+	assert.NotContains(t, text, "missing-b")
+	assert.Contains(t, text, "Pre-Depends: virtual-feature\n")
+	assert.NotContains(t, text, "missing-c")
+}
+
+func TestFilterDPKGStatusDependenciesDropsUnsatisfiedVersion(t *testing.T) {
+	status := []byte(strings.Join([]string{
+		"Package: app", "Version: 1.0", "Architecture: amd64", "Depends: libfoo (>= 2.0)", "",
+		"Package: libfoo", "Version: 1.0", "Architecture: amd64", "",
+	}, "\n"))
+	filtered, err := filterDPKGStatusDependencies(
+		status, map[string]string{"app:amd64": "1.0", "libfoo:amd64": "1.0"}, "amd64",
+	)
+	require.NoError(t, err)
+	assert.NotContains(t, string(filtered), "Depends: libfoo")
+}
+
+func TestFilterDPKGStatusDependenciesRejectsMalformedRelationship(t *testing.T) {
+	status := []byte("Package: app\nVersion: 1.0\nArchitecture: amd64\nDepends: libfoo (>= 1.0\n")
+	_, err := filterDPKGStatusDependencies(status, map[string]string{"app:amd64": "1.0", "libfoo:amd64": "1.0"}, "amd64")
+	require.ErrorContains(t, err, "unbalanced relationship delimiters")
+}
+
+func TestParseDPKGStatusRetainsSameNameMultiarchInstances(t *testing.T) {
+	status := []byte("Package: libc6\nStatus: install ok installed\nVersion: 2.35-1\nArchitecture: amd64\n\nPackage: libc6\nStatus: hold ok installed\nVersion: 2.35-2\nArchitecture: i386\n")
+	parsed, err := parseDPKGStatus(status)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"libc6:amd64": "2.35-1",
+		"libc6:i386":  "2.35-2",
+	}, parsed.packages)
+	assert.Equal(t, map[string]struct{}{"libc6:i386": {}}, parsed.heldPackages)
+}
+
+func TestForeignDPKGArchitectures(t *testing.T) {
+	tests := []struct {
+		name      string
+		platform  *ocispecs.Platform
+		packages  map[string]string
+		want      []string
+		wantError string
+	}{
+		{
+			name:     "native and architecture independent packages",
+			platform: &ocispecs.Platform{OS: "linux", Architecture: "amd64"},
+			packages: map[string]string{"libc6:amd64": "1", "tzdata:all": "1"},
+			want:     []string{},
+		},
+		{
+			name:     "sorted foreign architectures",
+			platform: &ocispecs.Platform{OS: "linux", Architecture: "amd64"},
+			packages: map[string]string{"libc6:i386": "1", "libc6:arm64": "1", "base-files:amd64": "1"},
+			want:     []string{"arm64", "i386"},
+		},
+		{
+			name:      "unsupported target architecture",
+			platform:  &ocispecs.Platform{OS: "linux", Architecture: "mips64"},
+			packages:  map[string]string{"base-files:mips64": "1"},
+			wantError: "unsupported target architecture",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := foreignDPKGArchitectures(tt.packages, tt.platform)
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNormalizeParsedDPKGArchitectures(t *testing.T) {
+	parsed, err := parseDPKGStatus([]byte("Package: libc6\nVersion: 2.35-1\n"))
+	require.NoError(t, err)
+	normalized, err := normalizeParsedDPKGArchitectures(parsed, "amd64")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"libc6:amd64": "2.35-1"}, normalized.packages)
+}
+
 func TestParseDPKGStatusErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -378,6 +555,8 @@ func TestParseDPKGStatusErrors(t *testing.T) {
 		{name: "invalid package", status: "Package: -option\nStatus: install ok installed\nVersion: 1.0\n", wantErr: "invalid package name"},
 		{name: "invalid version", status: "Package: base-files\nStatus: install ok installed\nVersion: invalid version\n", wantErr: "invalid version"},
 		{name: "invalid status", status: "Package: base-files\nStatus: installed\nVersion: 1.0\n", wantErr: "invalid status"},
+		{name: "invalid architecture any", status: "Package: base-files\nVersion: 1.0\nArchitecture: any\n", wantErr: "invalid architecture"},
+		{name: "invalid architecture native", status: "Package: base-files\nVersion: 1.0\nArchitecture: native\n", wantErr: "invalid architecture"},
 		{name: "malformed field", status: "Package: base-files\nStatus: install ok installed\nnot-a-field\nVersion: 1.0\n", wantErr: "malformed field"},
 	}
 
@@ -433,6 +612,13 @@ func writeTestExecutable(t *testing.T, dir, name, contents string) string {
 	assert.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 	assert.NoError(t, os.Chmod(path, 0o700))
 	return path
+}
+
+func assertFileContent(t *testing.T, path, expected string) {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, expected, string(contents))
 }
 
 func TestSelectDPKGUpdatesScriptOnlySelectsStrictlyNewerCandidates(t *testing.T) {
@@ -505,6 +691,7 @@ func TestAptGetDownloadScriptResolvesClosureAndSkipsUnsafeVersions(t *testing.T)
 	packagesPath := filepath.Join(workDir, "packages.txt")
 	floorsPath := filepath.Join(workDir, "version-floors")
 	finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
+	resolverPath := filepath.Join(downloadDir, "resolver-status")
 	aptLog := filepath.Join(workDir, "apt.log")
 	installLog := filepath.Join(workDir, "install.log")
 
@@ -520,16 +707,20 @@ func TestAptGetDownloadScriptResolvesClosureAndSkipsUnsafeVersions(t *testing.T)
 		"Architecture: amd64",
 	}, "\n"))...)
 	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), statusWithDependencies, 0o600))
-	writeTestExecutable(t, filepath.Join(dpkgRoot, "bin"), "sh", "tooling")
-	writeTestExecutable(t, filepath.Join(dpkgRoot, "usr", "bin"), "apt-get", "tooling")
-	writeTestExecutable(t, filepath.Join(dpkgRoot, "usr", "bin"), "dpkg", "tooling")
+	writeDPKGResolverStatusTestFile(t, resolverPath, statusWithDependencies)
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "bin"), "sh", "application-owned-shell")
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "usr", "bin"), "apt-get", "application-owned-apt")
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "usr", "bin"), "dpkg", "application-owned-dpkg")
 	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "app", "sentinel"), []byte("preserve"), 0o600))
 	require.NoError(t, os.WriteFile(packagesPath, []byte("safe\ndowngrade\nbelow-fixed\n"), 0o600))
 	require.NoError(t, os.WriteFile(floorsPath, []byte(strings.Join([]string{
+		"base-files:amd64|13ubuntu10.2|",
+		"libc6:amd64|2.39-0ubuntu8.5|",
+		"tzdata:all|2025b-0ubuntu0.24.04.1|",
 		"below-fixed|1.0|3.0",
 		"downgrade|3.0|2.0",
 		"safe|1.0|2.0",
-		"tightened-dependency|1.0|",
+		"tightened-dependency:amd64|1.0|",
 		"",
 	}, "\n")), 0o600))
 	require.NoError(t, os.WriteFile(finalizePath, finalizeDPKGStatusScript, 0o600))
@@ -558,18 +749,19 @@ case "$command" in
         ;;
     install)
         case " $* " in
-            *" -o Dir::State::status=$DPKG_ROOT/var/lib/dpkg/status "*) ;;
-            *) echo 'missing reconstructed status option' >&2; exit 91 ;;
+            *" -o Dir::State::status=$DOWNLOAD_DIR/resolver-status "*) ;;
+            *) echo 'missing resolver status option' >&2; exit 91 ;;
         esac
         case " $* " in
             *" -o Dir::Cache::archives=$DOWNLOAD_DIR "*) ;;
             *) echo 'missing archive directory option' >&2; exit 92 ;;
         esac
         case " $* " in *" --download-only "*) ;; *) echo 'missing --download-only' >&2; exit 93 ;; esac
-        case " $* " in *" --fix-broken "*) ;; *) echo 'missing --fix-broken' >&2; exit 94 ;; esac
+        case " $* " in *" --fix-broken "*) echo 'must not repair unrelated installed dependencies' >&2; exit 94 ;; esac
         case " $* " in *" --no-install-recommends "*) ;; *) echo 'missing --no-install-recommends' >&2; exit 95 ;; esac
         case " $* " in *" install -- safe downgrade below-fixed "*) ;; *) echo "unexpected selected packages: $*" >&2; exit 96 ;; esac
         grep -q '^Status: hold ok installed$' "$DPKG_ROOT/var/lib/dpkg/status"
+        ! grep -q '^Depends:' "$DOWNLOAD_DIR/resolver-status"
         : > "$DOWNLOAD_DIR/new-dependency.deb"
         : > "$DOWNLOAD_DIR/tightened-dependency.deb"
         ;;
@@ -591,6 +783,7 @@ case "$1" in
         package=${package%.deb}
         case "$3" in
             Package) printf '%s\n' "$package" ;;
+            Architecture) printf 'amd64\n' ;;
             Version)
                 case "$package" in
                     safe) printf '2.1\n' ;;
@@ -617,20 +810,27 @@ if [ "$1" = '--compare-versions' ]; then
 fi
 printf '%s\n' "$*" >> "$INSTALL_LOG"
 `)
+	writeTestExecutable(t, binDir, "busybox", "#!/bin/sh\n[ \"$1\" = --list ] && printf 'sh\\nsed\\ngrep\\nawk\\n'\n")
 
 	runEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
-		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"IGNORE_ERRORS":               "true",
-		"UPDATE_ALL":                  "false",
-		"DPKG_ROOT":                   dpkgRoot,
-		"DOWNLOAD_DIR":                downloadDir,
-		"PACKAGES_FILE":               packagesPath,
-		"VERSION_FLOORS_FILE":         floorsPath,
-		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
-		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
-		"STATUSD_FILE_MAP":            "{}",
-		"APT_LOG":                     aptLog,
-		"INSTALL_LOG":                 installLog,
+		"PATH":                          binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":                 "true",
+		"UPDATE_ALL":                    "false",
+		"DPKG_ROOT":                     dpkgRoot,
+		"DOWNLOAD_DIR":                  downloadDir,
+		"PACKAGES_FILE":                 packagesPath,
+		"RESOLVER_STATUS_FILE":          resolverPath,
+		"VERSION_FLOORS_FILE":           floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT":   finalizePath,
+		"DPKG_INSTALLATION_MODE":        dpkgInstallationModeExternalFullStatus.String(),
+		"LIFECYCLE_PACKAGES":            "",
+		"ALLOW_BUSYBOX_LIFECYCLE_SHELL": "true",
+		"ALLOW_REGULAR_DEV_NULL":        "true",
+		"TARGET_DPKG_ARCH":              "amd64",
+		"STATUSD_FILE_MAP":              "{}",
+		"APT_LOG":                       aptLog,
+		"INSTALL_LOG":                   installLog,
+		"BUSYBOX":                       filepath.Join(binDir, "busybox"),
 	})
 
 	aptCalls, err := os.ReadFile(aptLog)
@@ -655,30 +855,34 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 	require.NoError(t, err)
 	manifestPackages, err := dpkgParseResultsManifest(manifest)
 	require.NoError(t, err)
-	assert.Equal(t, "1.0", manifestPackages["new-dependency"])
-	assert.Equal(t, "2.0", manifestPackages["tightened-dependency"])
+	assert.Equal(t, "1.0", manifestPackages["new-dependency:amd64"])
+	assert.Equal(t, "2.0", manifestPackages["tightened-dependency:amd64"])
 	errorPkgs, err := validateDebianPackageVersions(
 		unversioned.UpdatePackages{
 			{Name: "safe", FixedVersion: "2.0"},
 			{Name: "downgrade", FixedVersion: "2.0"},
 			{Name: "below-fixed", FixedVersion: "3.0"},
 		},
-		map[string]string{"safe": "1.0", "downgrade": "3.0", "below-fixed": "1.0"},
+		map[string]string{"safe:amd64": "1.0", "downgrade:amd64": "3.0", "below-fixed:amd64": "1.0"},
 		VersionComparer{isValidDebianVersion, isLessThanDebianVersion},
 		manifest,
 		true,
+		"amd64",
 	)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"downgrade", "below-fixed"}, errorPkgs)
 
 	status, err := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
 	require.NoError(t, err)
-	assert.Equal(t, statusWithDependencies, status)
+	assert.Equal(t, bytes.TrimSpace(statusWithDependencies), bytes.TrimSpace(status))
 	assert.Contains(t, string(status), "Status: hold ok installed")
 	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d"))
-	assert.NoFileExists(t, filepath.Join(dpkgRoot, "bin", "sh"))
-	assert.NoFileExists(t, filepath.Join(dpkgRoot, "usr", "bin", "apt-get"))
-	assert.NoFileExists(t, filepath.Join(dpkgRoot, "usr", "bin", "dpkg"))
+	assert.FileExists(t, filepath.Join(dpkgRoot, "bin", "sh"))
+	assert.FileExists(t, filepath.Join(dpkgRoot, "usr", "bin", "apt-get"))
+	assert.FileExists(t, filepath.Join(dpkgRoot, "usr", "bin", "dpkg"))
+	assertFileContent(t, filepath.Join(dpkgRoot, "bin", "sh"), "application-owned-shell")
+	assertFileContent(t, filepath.Join(dpkgRoot, "usr", "bin", "apt-get"), "application-owned-apt")
+	assertFileContent(t, filepath.Join(dpkgRoot, "usr", "bin", "dpkg"), "application-owned-dpkg")
 	assert.FileExists(t, filepath.Join(dpkgRoot, "app", "sentinel"))
 }
 
@@ -690,6 +894,7 @@ func TestAptGetDownloadScriptRejectsUnsafeDependencyClosure(t *testing.T) {
 	packagesPath := filepath.Join(workDir, "packages.txt")
 	floorsPath := filepath.Join(workDir, "version-floors")
 	finalizePath := filepath.Join(workDir, "finalize.sh")
+	resolverPath := filepath.Join(downloadDir, "resolver-status")
 	finalizeMarker := filepath.Join(workDir, "finalize-called")
 	dpkgMarker := filepath.Join(workDir, "dpkg-called")
 	status := []byte(strings.Join([]string{
@@ -707,6 +912,7 @@ func TestAptGetDownloadScriptRejectsUnsafeDependencyClosure(t *testing.T) {
 
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), status, 0o600))
+	writeDPKGResolverStatusTestFile(t, resolverPath, status)
 	require.NoError(t, os.WriteFile(packagesPath, []byte("app\n"), 0o600))
 	require.NoError(t, os.WriteFile(floorsPath, []byte("app|1.0|2.0\ndependency|3.0|\n"), 0o600))
 	writeTestExecutable(t, workDir, "finalize.sh", "#!/bin/sh\n: > \"$FINALIZE_MARKER\"\n")
@@ -733,6 +939,7 @@ case "$1" in
         package=${package%.deb}
         case "$3" in
             Package) printf '%s\n' "$package" ;;
+            Architecture) printf 'amd64\n' ;;
             Version)
                 case "$package" in
                     app|dependency) printf '2.0\n' ;;
@@ -757,22 +964,27 @@ fi
 `)
 
 	output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
-		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"IGNORE_ERRORS":               "true",
-		"UPDATE_ALL":                  "false",
-		"DPKG_ROOT":                   dpkgRoot,
-		"DOWNLOAD_DIR":                downloadDir,
-		"PACKAGES_FILE":               packagesPath,
-		"VERSION_FLOORS_FILE":         floorsPath,
-		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
-		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
-		"STATUSD_FILE_MAP":            "{}",
-		"FINALIZE_MARKER":             finalizeMarker,
-		"DPKG_MARKER":                 dpkgMarker,
+		"PATH":                          binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":                 "true",
+		"UPDATE_ALL":                    "false",
+		"DPKG_ROOT":                     dpkgRoot,
+		"DOWNLOAD_DIR":                  downloadDir,
+		"PACKAGES_FILE":                 packagesPath,
+		"RESOLVER_STATUS_FILE":          resolverPath,
+		"VERSION_FLOORS_FILE":           floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT":   finalizePath,
+		"DPKG_INSTALLATION_MODE":        dpkgInstallationModeExternalFullStatus.String(),
+		"LIFECYCLE_PACKAGES":            "",
+		"ALLOW_BUSYBOX_LIFECYCLE_SHELL": "true",
+		"ALLOW_REGULAR_DEV_NULL":        "true",
+		"TARGET_DPKG_ARCH":              "amd64",
+		"STATUSD_FILE_MAP":              "{}",
+		"FINALIZE_MARKER":               finalizeMarker,
+		"DPKG_MARKER":                   dpkgMarker,
 	})
 	require.Error(t, err)
-	assert.Contains(t, string(output), "downloaded package dependency version 2.0 is lower than installed version 3.0")
-	assert.Contains(t, string(output), "unsafe package dependency is part of the resolved dependency closure")
+	assert.Contains(t, string(output), "downloaded package dependency:amd64 version 2.0 is lower than installed version 3.0")
+	assert.Contains(t, string(output), "unsafe package dependency:amd64 is part of the resolved dependency closure")
 	assert.NoFileExists(t, filepath.Join(downloadDir, "dependency.deb"))
 	assert.NoFileExists(t, finalizeMarker)
 	assert.NoFileExists(t, dpkgMarker)
@@ -790,11 +1002,13 @@ func TestAptGetDownloadScriptFailsWhenDependencyClosureCannotBeResolved(t *testi
 	packagesPath := filepath.Join(workDir, "packages.txt")
 	floorsPath := filepath.Join(workDir, "version-floors")
 	finalizePath := filepath.Join(workDir, "finalize.sh")
+	resolverPath := filepath.Join(downloadDir, "resolver-status")
 	finalizeMarker := filepath.Join(workDir, "finalize-called")
 	dpkgMarker := filepath.Join(workDir, "dpkg-called")
 
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), fullDPKGStatus, 0o600))
+	writeDPKGResolverStatusTestFile(t, resolverPath, fullDPKGStatus)
 	require.NoError(t, os.WriteFile(packagesPath, []byte("base-files\n"), 0o600))
 	require.NoError(t, os.WriteFile(floorsPath, []byte("base-files|13ubuntu10.2|13ubuntu10.3\n"), 0o600))
 	writeTestExecutable(t, workDir, "finalize.sh", "#!/bin/sh\n: > \"$FINALIZE_MARKER\"\n")
@@ -818,18 +1032,23 @@ esac
 	writeTestExecutable(t, binDir, "dpkg-deb", "#!/bin/sh\n: > \"$DPKG_MARKER\"\n")
 
 	output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
-		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"IGNORE_ERRORS":               "true",
-		"UPDATE_ALL":                  "false",
-		"DPKG_ROOT":                   dpkgRoot,
-		"DOWNLOAD_DIR":                downloadDir,
-		"PACKAGES_FILE":               packagesPath,
-		"VERSION_FLOORS_FILE":         floorsPath,
-		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
-		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
-		"STATUSD_FILE_MAP":            "{}",
-		"FINALIZE_MARKER":             finalizeMarker,
-		"DPKG_MARKER":                 dpkgMarker,
+		"PATH":                          binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":                 "true",
+		"UPDATE_ALL":                    "false",
+		"DPKG_ROOT":                     dpkgRoot,
+		"DOWNLOAD_DIR":                  downloadDir,
+		"PACKAGES_FILE":                 packagesPath,
+		"RESOLVER_STATUS_FILE":          resolverPath,
+		"VERSION_FLOORS_FILE":           floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT":   finalizePath,
+		"DPKG_INSTALLATION_MODE":        dpkgInstallationModeExternalFullStatus.String(),
+		"LIFECYCLE_PACKAGES":            "",
+		"ALLOW_BUSYBOX_LIFECYCLE_SHELL": "true",
+		"ALLOW_REGULAR_DEV_NULL":        "true",
+		"TARGET_DPKG_ARCH":              "amd64",
+		"STATUSD_FILE_MAP":              "{}",
+		"FINALIZE_MARKER":               finalizeMarker,
+		"DPKG_MARKER":                   dpkgMarker,
 	})
 	require.Error(t, err)
 	assert.Contains(t, string(output), "unmet dependency: base-files depends on missing-runtime")
@@ -1073,6 +1292,28 @@ func TestDpkgParseResultsManifest(t *testing.T) {
 		}
 	})
 
+	t.Run("accepts architecture after version", func(t *testing.T) {
+		manifest := []byte("Package: libc6\nVersion: 2.35-0ubuntu3.14\nArchitecture: amd64\n")
+		actualMap, err := dpkgParseResultsManifest(manifest)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"libc6:amd64": "2.35-0ubuntu3.14"}, actualMap)
+	})
+
+	t.Run("last duplicate record wins", func(t *testing.T) {
+		manifest := []byte(strings.Join([]string{
+			"Package: libc6",
+			"Architecture: amd64",
+			"Version: 1.0",
+			"Package: libc6",
+			"Architecture: amd64",
+			"Version: 2.0",
+			"",
+		}, "\n"))
+		actualMap, err := dpkgParseResultsManifest(manifest)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]string{"libc6:amd64": "2.0"}, actualMap)
+	})
+
 	t.Run("non-existing manifest file", func(t *testing.T) {
 		expectedErr := fmt.Errorf("%s could not be opened", nonExistingManifest)
 		_, actualErr := dpkgParseResultsManifest(nonExistingManifest)
@@ -1208,6 +1449,35 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 			ignoreErrors:      false,
 		},
 		{
+			name: "qualified installed identity accepts unqualified result",
+			updates: unversioned.UpdatePackages{
+				{Name: "apt-get", FixedVersion: "1.8.2.3"},
+			},
+			installedVersions: map[string]string{"apt-get:amd64": "1.0"},
+			cmp:               dpkgComparer,
+			resultsBytes:      validDPKGManifest,
+		},
+		{
+			name: "different qualified result does not validate installed architecture",
+			updates: unversioned.UpdatePackages{
+				{Name: "libc6", FixedVersion: "2.0"},
+			},
+			installedVersions: map[string]string{"libc6:i386": "1.0"},
+			cmp:               dpkgComparer,
+			resultsBytes:      []byte("Package: libc6\nArchitecture: amd64\nVersion: 2.0\n"),
+			expectedError:     "installed package libc6:i386 was not present in the patch result",
+			expectedErrPkgs:   []string{"libc6"},
+		},
+		{
+			name: "unchanged current multiarch identity needs no archive",
+			updates: unversioned.UpdatePackages{
+				{Name: "libc6", FixedVersion: "2.0"},
+			},
+			installedVersions: map[string]string{"libc6:amd64": "1.0", "libc6:i386": "2.0"},
+			cmp:               dpkgComparer,
+			resultsBytes:      []byte("Package: libc6\nArchitecture: amd64\nVersion: 2.0\n"),
+		},
+		{
 			name: "version greater than requested",
 			updates: unversioned.UpdatePackages{
 				{Name: "apt-get", FixedVersion: "0.9"},
@@ -1221,7 +1491,9 @@ func TestValidateDebianPackageVersions(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			errorPkgs, err := validateDebianPackageVersions(tc.updates, tc.installedVersions, tc.cmp, tc.resultsBytes, tc.ignoreErrors)
+			errorPkgs, err := validateDebianPackageVersions(
+				tc.updates, tc.installedVersions, tc.cmp, tc.resultsBytes, tc.ignoreErrors, "amd64",
+			)
 			if tc.expectedError != "" {
 				if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
@@ -1483,6 +1755,17 @@ func Test_installUpdates_DPKG(t *testing.T) {
 			mockRef.AssertExpectations(t)
 		})
 	}
+}
+
+func writeDPKGResolverStatusTestFile(t *testing.T, path string, status []byte) {
+	t.Helper()
+	parsed, err := parseDPKGStatus(status)
+	require.NoError(t, err)
+	resolver, err := filterDPKGStatusDependencies(parsed.databaseContents, parsed.packages, "amd64")
+	require.NoError(t, err)
+	directory := filepath.Dir(path)
+	require.NoError(t, os.MkdirAll(directory, 0o755))
+	require.NoError(t, os.WriteFile(path, resolver, 0o600))
 }
 
 func writeDPKGTestFile(t *testing.T, path string, contents []byte, mode os.FileMode) {

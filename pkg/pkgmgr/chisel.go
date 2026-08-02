@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io/fs"
 	"maps"
 	"os"
@@ -335,7 +337,7 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 				return err
 			}
 			totalBytes += int64(len(contents))
-			hash.Write(contents)
+			writeLocalChiselReleaseHashPayload(hash, contents)
 			state = state.File(llb.Mkfile(destination, info.Mode().Perm(), contents))
 		case info.Mode()&os.ModeSymlink != 0:
 			target, err := rootHandle.Readlink(relative)
@@ -349,7 +351,13 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 			if resolved == ".." || strings.HasPrefix(resolved, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("local Chisel release symlink %q escapes the release directory", relative)
 			}
-			hash.Write([]byte(target))
+			// Lexical cleaning alone is insufficient when another in-tree symlink
+			// appears before a '..' component. Root.Stat resolves the full chain and
+			// rejects escapes, dangling links, and cycles without leaving the root.
+			if _, err := rootHandle.Stat(relative); err != nil {
+				return fmt.Errorf("local Chisel release symlink %q does not resolve safely within the release directory: %w", relative, err)
+			}
+			writeLocalChiselReleaseHashPayload(hash, []byte(target))
 			state = state.File(llb.Symlink(filepath.ToSlash(target), destination))
 		default:
 			return fmt.Errorf("local Chisel release contains unsupported file type at %q", relative)
@@ -360,6 +368,13 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 		return llb.State{}, "", fmt.Errorf("materialize local Chisel release %q: %w", root, err)
 	}
 	return state, hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func writeLocalChiselReleaseHashPayload(digest hash.Hash, payload []byte) {
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(len(payload)))
+	digest.Write(length[:])
+	digest.Write(payload)
 }
 
 func validateChiselUpgrade(oldManifest, newManifest *copachisel.Manifest, expectedArch string) error {

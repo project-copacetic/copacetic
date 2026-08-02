@@ -459,3 +459,147 @@ ID=debian`,
 		})
 	}
 }
+
+func TestParseOSReleaseShellEscapes(t *testing.T) {
+	values, err := parseOSRelease([]byte("NAME=Amazon\\ Linux\nVERSION_ID=2023\\ \n"))
+	assert.NoError(t, err)
+	assert.Equal(t, "Amazon Linux", values["NAME"])
+	assert.Equal(t, "2023 ", values["VERSION_ID"])
+}
+
+func TestParseOSReleaseValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "empty",
+			value: "",
+			want:  "",
+		},
+		{
+			name:  "plain value",
+			value: "3.7.3",
+			want:  "3.7.3",
+		},
+		{
+			name:  "unquoted escaped whitespace",
+			value: `Amazon\ Linux`,
+			want:  "Amazon Linux",
+		},
+		{
+			name:  "unquoted escaped trailing whitespace",
+			value: `Amazon\ `,
+			want:  "Amazon ",
+		},
+		{
+			name:  "unquoted escaped shell characters",
+			value: `price=\$5\;stable`,
+			want:  "price=$5;stable",
+		},
+		{
+			name:  "double quoted value",
+			value: `"Amazon Linux"`,
+			want:  "Amazon Linux",
+		},
+		{
+			name:  "double quoted shell escapes",
+			value: "\"quote=\\\" dollar=\\$ backtick=\\` slash=\\\\\"",
+			want:  "quote=\" dollar=$ backtick=` slash=\\",
+		},
+		{
+			name:  "double quoted non-special escape remains literal",
+			value: `"literal\n"`,
+			want:  `literal\n`,
+		},
+		{
+			name:  "single quoted value is literal",
+			value: `'Amazon $Linux \path'`,
+			want:  `Amazon $Linux \path`,
+		},
+		{
+			name:  "surrounding whitespace remains accepted",
+			value: "  \"Amazon Linux\"   ",
+			want:  "Amazon Linux",
+		},
+		{
+			name:  "trailing unquoted whitespace remains ignored",
+			value: "Amazon   ",
+			want:  "Amazon",
+		},
+		{
+			name:    "unescaped whitespace",
+			value:   "Amazon Linux",
+			wantErr: true,
+		},
+		{
+			name:    "trailing escape",
+			value:   `Amazon\`,
+			wantErr: true,
+		},
+		{
+			name:    "lone double quote",
+			value:   `"`,
+			wantErr: true,
+		},
+		{
+			name:    "unterminated double quote",
+			value:   `"Amazon`,
+			wantErr: true,
+		},
+		{
+			name:    "unterminated single quote",
+			value:   `'Amazon`,
+			wantErr: true,
+		},
+		{
+			name:    "escaped closing double quote without terminator",
+			value:   `"Amazon\"`,
+			wantErr: true,
+		},
+		{
+			name:    "quoted concatenation",
+			value:   `"Amazon"Linux`,
+			wantErr: true,
+		},
+		{
+			name:    "quote in unquoted value",
+			value:   `Amazon"Linux"`,
+			wantErr: true,
+		},
+		{
+			name:    "unescaped variable expansion",
+			value:   `Amazon$Linux`,
+			wantErr: true,
+		},
+		{
+			name:    "unescaped command substitution",
+			value:   "Amazon`Linux`",
+			wantErr: true,
+		},
+		{
+			name:    "unescaped shell separator",
+			value:   `Amazon;Linux`,
+			wantErr: true,
+		},
+		{
+			name:    "unescaped expansion in double quotes",
+			value:   `"Amazon $Linux"`,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseOSReleaseValue(tt.value)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

@@ -6,8 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	remotev1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/remote"
+	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -23,6 +28,45 @@ func stubLocalPlatformDescriptor(
 	orig := localPlatformDescriptor
 	localPlatformDescriptor = fn
 	return func() { localPlatformDescriptor = orig }
+}
+
+func stubVerifiedRemoteIndex(
+	t *testing.T,
+	fn func(ref name.Digest) (*remote.Descriptor, error),
+) func() {
+	t.Helper()
+	orig := getVerifiedRemoteIndex
+	getVerifiedRemoteIndex = fn
+	return func() { getVerifiedRemoteIndex = orig }
+}
+
+func platformTestRemoteIndexDescriptor(indexDigest string) *remote.Descriptor {
+	raw := []byte(`{
+		"schemaVersion":2,
+		"mediaType":"application/vnd.oci.image.index.v1+json",
+		"manifests":[
+			{
+				"mediaType":"application/vnd.oci.image.manifest.v1+json",
+				"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"size":123,
+				"platform":{"os":"linux","architecture":"amd64"}
+			},
+			{
+				"mediaType":"application/vnd.oci.image.manifest.v1+json",
+				"digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				"size":456,
+				"platform":{"os":"linux","architecture":"arm64"}
+			}
+		]
+	}`)
+	return &remote.Descriptor{
+		Descriptor: remotev1.Descriptor{
+			MediaType: remoteTypes.OCIImageIndex,
+			Size:      int64(len(raw)),
+			Digest:    remotev1.Hash{Algorithm: "sha256", Hex: indexDigest},
+		},
+		Manifest: raw,
+	}
 }
 
 // TestGetPlatformDescriptorFromManifest_LocalHit verifies that when the local
@@ -50,6 +94,34 @@ func TestGetPlatformDescriptorFromManifest_LocalHit(t *testing.T) {
 	require.Same(t, want, got)
 }
 
+// TestGetPlatformDescriptorFromManifest_LocalDigestUsesVerifiedRemoteIndex
+// reproduces a legacy daemon exposing only the locally cached child of a remote
+// index. Discovery has already accepted the immutable remote index, so
+// preserved-platform descriptor lookup must apply the same verified fallback.
+func TestGetPlatformDescriptorFromManifest_LocalDigestUsesVerifiedRemoteIndex(t *testing.T) {
+	const indexDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	imageRef := "example.com/test/image@sha256:" + indexDigest
+
+	defer stubLocalPlatformDescriptor(t, func(_ context.Context, _ string, _ *ispec.Platform) (*ispec.Descriptor, bool, error) {
+		return nil, true, nil
+	})()
+	defer stubVerifiedRemoteIndex(t, func(ref name.Digest) (*remote.Descriptor, error) {
+		require.Equal(t, "sha256:"+indexDigest, ref.DigestStr())
+		return platformTestRemoteIndexDescriptor(indexDigest), nil
+	})()
+
+	got, err := getPlatformDescriptorFromManifest(
+		imageRef,
+		&types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}},
+	)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, digest.Digest("sha256:"+strings.Repeat("b", 64)), got.Digest)
+	assert.Equal(t, int64(456), got.Size)
+	require.NotNil(t, got.Platform)
+	assert.Equal(t, "arm64", got.Platform.Architecture)
+}
+
 // TestGetPlatformDescriptorFromManifest_LocalAmbiguous verifies the error
 // surfaced when the local daemon found the image but did not return a
 // per-platform descriptor. This happens when either (a) the requested platform
@@ -66,6 +138,10 @@ func TestGetPlatformDescriptorFromManifest_LocalHit(t *testing.T) {
 func TestGetPlatformDescriptorFromManifest_LocalAmbiguous(t *testing.T) {
 	defer stubLocalPlatformDescriptor(t, func(_ context.Context, _ string, _ *ispec.Platform) (*ispec.Descriptor, bool, error) {
 		return nil, true, nil // ok=true, no descriptor — the ambiguous case
+	})()
+	defer stubVerifiedRemoteIndex(t, func(name.Digest) (*remote.Descriptor, error) {
+		t.Fatal("mutable local image reference must not be reconciled with a remote image")
+		return nil, nil
 	})()
 
 	_, err := getPlatformDescriptorFromManifest(

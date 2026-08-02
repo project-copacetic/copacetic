@@ -60,6 +60,18 @@ func patchSingleArchImage(
 	multiPlatform bool,
 	sharedProgressCh chan<- *client.SolveStatus,
 ) (*types.PatchResult, error) {
+	return patchSingleArchImageWithUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil)
+}
+
+func patchSingleArchImageWithUpdates(
+	ctx context.Context,
+	opts *types.Options,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
+	updates *unversioned.UpdateManifest,
+) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
 	reportFile := opts.Report
@@ -119,12 +131,14 @@ func patchSingleArchImage(
 	}
 	defer cleanup()
 
-	// Parse report for update packages
-	var updates *unversioned.UpdateManifest
+	// Parse report for update packages unless the single-report orchestration
+	// already parsed it to derive an implicit target platform.
 	if reportFile != "" {
-		updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
-		if err != nil {
-			return nil, err
+		if updates == nil {
+			updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if err := validateReportPlatform(updates, &targetPlatform); err != nil {
 			return nil, err

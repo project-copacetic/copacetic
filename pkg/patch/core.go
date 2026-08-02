@@ -225,7 +225,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Preserve the state and config for potential OCI export use. Mirror the
 	// annotations into image-config labels as well as manifest annotations so
 	// frontends and exporters that consume config metadata retain the provenance.
-	preservedConfig, err := common.AddImageConfigLabels(config.ConfigData, managerAnnotations)
+	preservedConfig, err := imageConfigWithAnnotations(config, managerAnnotations)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
@@ -295,6 +295,21 @@ func preservedImageState(state *llb.State, config []byte) (*llb.State, error) {
 		return nil, fmt.Errorf("attach image config to preserved state: %w", err)
 	}
 	return &preserved, nil
+}
+
+// imageConfigWithAnnotations returns the configuration that belongs to the
+// image being patched. Repatching starts package operations from the recorded
+// base image, but must publish the supplied patched image's configuration.
+func imageConfigWithAnnotations(config *buildkit.Config, annotations map[string]string) ([]byte, error) {
+	configData := config.ConfigData
+	if config.PatchedConfigData != nil {
+		merged, err := common.MergeImageRuntimeConfig(config.ConfigData, config.PatchedConfigData)
+		if err != nil {
+			return nil, err
+		}
+		configData = merged
+	}
+	return common.AddImageConfigLabels(configData, annotations)
 }
 
 // addPackageManagerAnnotations exposes manager-provided OCI annotations to the exporter.

@@ -625,7 +625,9 @@ func assertForbiddenToolingAbsent(t *testing.T, snapshot *imageSnapshot) {
 	for _, path := range []string{
 		"bin/sh", "bin/bash", "bin/busybox",
 		"usr/bin/apt", "usr/bin/apt-get", "usr/bin/apt-mark", "usr/bin/dpkg",
-		"usr/bin/dpkg-query", "usr/bin/sh", "usr/bin/grep", "usr/bin/tee",
+		"usr/bin/dpkg-query", "usr/bin/update-alternatives", "usr/bin/sh",
+		"usr/bin/grep", "usr/bin/tee", "usr/libexec/dpkg/dpkg-db-backup",
+		"sbin/start-stop-daemon",
 	} {
 		assert.NotContains(t, snapshot.Paths, path)
 	}

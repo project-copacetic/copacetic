@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -21,6 +22,65 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
+
+func TestImageConfigWithAnnotationsPreservesSuppliedImageConfig(t *testing.T) {
+	baseConfig, err := json.Marshal(v1.Image{
+		Config: v1.ImageConfig{
+			User:       "base-user",
+			Entrypoint: []string{"/base-entrypoint"},
+			Cmd:        []string{"base-command"},
+			Env:        []string{"BASE_ONLY=true"},
+			WorkingDir: "/base",
+			Labels:     map[string]string{"source": "base"},
+		},
+	})
+	require.NoError(t, err)
+	patchedConfig, err := json.Marshal(v1.Image{
+		Config: v1.ImageConfig{
+			User:       "1001:1001",
+			Entrypoint: []string{"/app/entrypoint"},
+			Cmd:        []string{"serve", "--production"},
+			Env:        []string{"APP_ENV=production", "PORT=8080"},
+			WorkingDir: "/app",
+			Labels:     map[string]string{"source": "supplied-image"},
+		},
+	})
+	require.NoError(t, err)
+
+	config := &buildkit.Config{
+		ConfigData:        baseConfig,
+		PatchedConfigData: patchedConfig,
+	}
+	annotations := map[string]string{pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04"}
+
+	resultConfig, err := imageConfigWithAnnotations(config, annotations)
+	require.NoError(t, err)
+
+	var image v1.Image
+	require.NoError(t, json.Unmarshal(resultConfig, &image))
+	assert.Equal(t, "1001:1001", image.Config.User)
+	assert.Equal(t, []string{"/app/entrypoint"}, image.Config.Entrypoint)
+	assert.Equal(t, []string{"serve", "--production"}, image.Config.Cmd)
+	assert.Equal(t, []string{"APP_ENV=production", "PORT=8080"}, image.Config.Env)
+	assert.Equal(t, "/app", image.Config.WorkingDir)
+	assert.Equal(t, "supplied-image", image.Config.Labels["source"])
+	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
+}
+
+func TestImageConfigWithAnnotationsUsesBaseConfigForFirstPatch(t *testing.T) {
+	baseConfig := []byte(`{"config":{"User":"base-user","Labels":{"source":"base"}}}`)
+	resultConfig, err := imageConfigWithAnnotations(
+		&buildkit.Config{ConfigData: baseConfig},
+		map[string]string{pkgmgr.ChiselVersionAnnotation: "v1.4.2"},
+	)
+	require.NoError(t, err)
+
+	var image v1.Image
+	require.NoError(t, json.Unmarshal(resultConfig, &image))
+	assert.Equal(t, "base-user", image.Config.User)
+	assert.Equal(t, "base", image.Config.Labels["source"])
+	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+}
 
 func TestPreservedImageStateCarriesExecutionEnvironment(t *testing.T) {
 	config := []byte(`{

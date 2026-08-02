@@ -6,7 +6,9 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -16,6 +18,7 @@ import (
 	"github.com/hashicorp/go-multierror"
 	debVer "github.com/knqyf263/go-deb-version"
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -52,26 +55,33 @@ const (
 
 	dpkgInstalledPackagesPath   = "/copa-dpkg-installed-packages"
 	dpkgVersionFloorsPath       = "/copa-dpkg-version-floors"
+	dpkgResolverStatusPath      = "/copa-dpkg-resolver-status"
 	dpkgSelectUpdatesScriptPath = "/select_dpkg_updates.sh"
 	dpkgUpdatePackagesPath      = dpkgDownloadPath + "/packages.txt"
 	dpkgUpdatesMarkerPath       = "/updates.txt"
+	dpkgArchitectureField       = "Architecture"
+	dpkgNativeQualifier         = "native"
+	dpkgArchitectureAll         = "all"
+	dpkgArchitectureAny         = "any"
 )
 
 var requiredDPKGTools = []string{"apt-get", "apt-mark", "dpkg", "sh", "grep", "tee"}
 
 type dpkgManager struct {
-	config            *buildkit.Config
-	workingFolder     string
-	installationMode  dpkgInstallationMode
-	statusdNames      string
-	packageInfo       map[string]string
-	heldPackages      map[string]struct{}
-	statusdFileMap    map[string]string // Maps package names to their status.d filenames
-	osVersion         string
-	osType            string
-	tempStatusFile    []byte
-	chiselRelease     string
-	chiselAnnotations map[string]string
+	config                 *buildkit.Config
+	workingFolder          string
+	installationMode       dpkgInstallationMode
+	statusdNames           string
+	packageInfo            map[string]string
+	heldPackages           map[string]struct{}
+	statusdFileMap         map[string]string // Maps package names to their status.d filenames
+	osVersion              string
+	osType                 string
+	tempStatusFile         []byte
+	resolverStatusFile     []byte
+	targetDPKGArchitecture string
+	chiselRelease          string
+	chiselAnnotations      map[string]string
 }
 
 type dpkgInstallationMode uint
@@ -113,8 +123,8 @@ type dpkgProbeResult struct {
 type parsedDPKGStatus struct {
 	contents         []byte
 	databaseContents []byte
-	packages         map[string]string
-	heldPackages     map[string]struct{}
+	packages         map[string]string   // keyed by name[:architecture]
+	heldPackages     map[string]struct{} // keyed by name[:architecture]
 }
 
 // Depending on go-deb-version lib for debian version comparison rules.
@@ -167,12 +177,14 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 	// resolving an apt tooling image so native images never depend on target
 	// binaries or on the availability of a matching apt container.
 	currentState := dm.currentImageState()
-	if _, readErr := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &currentState, chiselManifestPath); readErr == nil {
+	hasNativeManifest, err := stateFileExists(ctx, dm.config.Client, &currentState, chiselManifestPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("probing for native Chisel manifest %s: %w", chiselManifestPath, err)
+	}
+	if hasNativeManifest {
 		dm.installationMode = dpkgInstallationModeNativeChisel
 		log.Infof("Detected Debian installation mode: %s", dm.installationMode)
 		return dm.installNativeChiselUpdates(ctx, manifest)
-	} else if !isMarkerMissingErr(readErr, chiselManifestPath) {
-		return nil, nil, fmt.Errorf("probing for native Chisel manifest %s: %w", chiselManifestPath, readErr)
 	}
 
 	imagePlatform, err := currentState.GetPlatform(ctx)
@@ -242,12 +254,62 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 
 	// Validate that deployed packages did not regress below either the target's
 	// currently installed version or the requested fixed version.
-	errPkgs, err := validateDebianPackageVersions(updates, dm.packageInfo, debComparer, resultManifestBytes, ignoreErrors)
+	errPkgs, err := validateDebianPackageVersions(
+		updates, dm.packageInfo, debComparer, resultManifestBytes, ignoreErrors, dm.targetDPKGArchitecture,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	return updatedImageState, errPkgs, nil
+}
+
+// stateFileExists solves the state and probes path with StatFile only. Keeping
+// this separate from manifest extraction prevents an existence check from
+// reading an arbitrarily large, untrusted manifest into the client process.
+func stateFileExists(ctx context.Context, client gwclient.Client, state *llb.State, path string) (bool, error) {
+	definition, err := state.Marshal(ctx)
+	if err != nil {
+		return false, fmt.Errorf("marshaling state: %w", err)
+	}
+	result, err := client.Solve(ctx, gwclient.SolveRequest{
+		Evaluate:   true,
+		Definition: definition.ToPB(),
+	})
+	if err != nil {
+		return false, fmt.Errorf("solving state: %w", err)
+	}
+	reference, err := result.SingleRef()
+	if err != nil {
+		return false, fmt.Errorf("resolving state reference: %w", err)
+	}
+	if reference == nil {
+		return false, fmt.Errorf("resolving state reference: BuildKit returned no reference")
+	}
+	if _, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path}); err != nil {
+		if isStateFileNotFound(err, path) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stating %s: %w", path, err)
+	}
+	return true, nil
+}
+
+// isStateFileNotFound only inspects an error produced by StatFile, so path
+// matching cannot accidentally classify an earlier solve failure as absence.
+func isStateFileNotFound(err error, path string) bool {
+	if err == nil || path == "" {
+		return false
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return true
+	}
+	errText := strings.ToLower(err.Error())
+	if !strings.Contains(errText, "no such file or directory") && !strings.Contains(errText, "not found") {
+		return false
+	}
+	path = strings.ToLower(path)
+	return strings.Contains(errText, path) || strings.Contains(errText, strings.ToLower(filepath.Base(path)))
 }
 
 func classifyDPKGInstallationMode(result dpkgProbeResult) (dpkgInstallationMode, error) {
@@ -382,6 +444,11 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		return err
 	}
 	dm.installationMode = mode
+	targetDPKGArchitecture, err := debianArchitectureForPlatform(platform)
+	if err != nil {
+		return fmt.Errorf("resolving target Debian architecture: %w", err)
+	}
+	dm.targetDPKGArchitecture = targetDPKGArchitecture
 
 	switch mode {
 	case dpkgInstallationModeNativeChisel:
@@ -397,7 +464,18 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 			return nil
 		}
 
+		status, err = normalizeParsedDPKGArchitectures(status, targetDPKGArchitecture)
+		if err != nil {
+			return fmt.Errorf("normalizing dpkg package architectures: %w", err)
+		}
+		resolverContents, err := filterDPKGStatusDependencies(
+			status.databaseContents, status.packages, targetDPKGArchitecture,
+		)
+		if err != nil {
+			return fmt.Errorf("filtering dpkg dependency relationships for APT resolution: %w", err)
+		}
 		dm.tempStatusFile = status.databaseContents
+		dm.resolverStatusFile = resolverContents
 		dm.statusdFileMap = nil
 
 		log.Warnf(
@@ -488,6 +566,7 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 	paragraphHasData := false
 	packageName := ""
 	packageVersion := ""
+	packageArchitecture := ""
 	packageStatus := ""
 
 	flushParagraph := func() error {
@@ -524,15 +603,23 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 		} else if !isValidDebianVersion(packageVersion) {
 			return fmt.Errorf("paragraph %d for package %q has invalid version %q", paragraphNumber, packageName, packageVersion)
 		}
+		if packageArchitecture != "" && !isValidDebianArchitecture(packageArchitecture) {
+			return fmt.Errorf("paragraph %d for package %q has invalid architecture %q", paragraphNumber, packageName, packageArchitecture)
+		}
 		if installed {
-			status.packages[packageName] = packageVersion
+			identity := dpkgPackageIdentity(packageName, packageArchitecture)
+			if _, duplicate := status.packages[identity]; duplicate {
+				return fmt.Errorf("paragraph %d duplicates installed package identity %q", paragraphNumber, identity)
+			}
+			status.packages[identity] = packageVersion
 			if held {
-				status.heldPackages[packageName] = struct{}{}
+				status.heldPackages[identity] = struct{}{}
 			}
 		}
 		paragraphHasData = false
 		packageName = ""
 		packageVersion = ""
+		packageArchitecture = ""
 		packageStatus = ""
 		return nil
 	}
@@ -559,6 +646,8 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 			packageName = strings.TrimSpace(value)
 		case "Version":
 			packageVersion = strings.TrimSpace(value)
+		case dpkgArchitectureField:
+			packageArchitecture = strings.TrimSpace(value)
 		case "Status":
 			packageStatus = strings.TrimSpace(value)
 		}
@@ -570,7 +659,31 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 		return parsedDPKGStatus{}, fmt.Errorf("status file contains no package paragraphs")
 	}
 	status.databaseContents = normalizeDPKGStatusForDatabase(contents)
+	return status, nil
+}
 
+func normalizeParsedDPKGArchitectures(status parsedDPKGStatus, targetArchitecture string) (parsedDPKGStatus, error) {
+	normalizedPackages := make(map[string]string, len(status.packages))
+	normalizedHeld := make(map[string]struct{}, len(status.heldPackages))
+	for identity, version := range status.packages {
+		name, architecture, err := splitDPKGPackageIdentity(identity)
+		if err != nil {
+			return parsedDPKGStatus{}, err
+		}
+		if architecture == "" {
+			architecture = targetArchitecture
+		}
+		normalizedIdentity := dpkgPackageIdentity(name, architecture)
+		if _, duplicate := normalizedPackages[normalizedIdentity]; duplicate {
+			return parsedDPKGStatus{}, fmt.Errorf("duplicate package identity %q after architecture normalization", normalizedIdentity)
+		}
+		normalizedPackages[normalizedIdentity] = version
+		if _, held := status.heldPackages[identity]; held {
+			normalizedHeld[normalizedIdentity] = struct{}{}
+		}
+	}
+	status.packages = normalizedPackages
+	status.heldPackages = normalizedHeld
 	return status, nil
 }
 
@@ -615,6 +728,393 @@ func normalizeDPKGStatusForDatabase(contents []byte) []byte {
 	return output.Bytes()
 }
 
+type dpkgCapabilityVersions map[string]map[string][]string
+
+func filterDPKGStatusDependencies(
+	contents []byte,
+	installedPackages map[string]string,
+	targetArchitecture string,
+) ([]byte, error) {
+	capabilities := make(dpkgCapabilityVersions)
+	addCapability := func(name, architecture, version string) {
+		if name == "" || architecture == "" {
+			return
+		}
+		architectures := capabilities[name]
+		if architectures == nil {
+			architectures = make(map[string][]string)
+			capabilities[name] = architectures
+		}
+		architectures[architecture] = append(architectures[architecture], version)
+	}
+
+	paragraphs := splitDPKGControlParagraphs(contents)
+	for _, paragraph := range paragraphs {
+		fields, err := parseDPKGControlFields(paragraph)
+		if err != nil {
+			return nil, err
+		}
+		if !dpkgControlParagraphInstalled(fields, installedPackages) {
+			continue
+		}
+		packageName, packageArchitecture := dpkgControlParagraphPackage(fields, targetArchitecture)
+		identity := dpkgPackageIdentity(packageName, packageArchitecture)
+		version := installedPackages[identity]
+		if version == "" {
+			version = installedPackages[packageName]
+		}
+		addCapability(packageName, packageArchitecture, version)
+		for _, field := range fields {
+			if field.name != "Provides" {
+				continue
+			}
+			items, err := splitDPKGRelationship(field.value, ',')
+			if err != nil {
+				return nil, fmt.Errorf("invalid Provides field %q: %w", field.value, err)
+			}
+			for _, item := range items {
+				ref, err := parseDPKGRelationshipPackage(item)
+				if err != nil {
+					return nil, fmt.Errorf("invalid Provides entry %q: %w", item, err)
+				}
+				providedVersion := ""
+				suffix := strings.TrimSpace(item[ref.end:])
+				if suffix != "" {
+					parts := strings.Fields(strings.Trim(suffix, "()"))
+					if len(parts) != 2 || parts[0] != "=" || !isValidDebianVersion(parts[1]) {
+						return nil, fmt.Errorf("invalid versioned Provides entry %q", item)
+					}
+					providedVersion = parts[1]
+				}
+				addCapability(ref.name, packageArchitecture, providedVersion)
+			}
+		}
+	}
+
+	var output strings.Builder
+	for _, paragraph := range paragraphs {
+		fields, err := parseDPKGControlFields(paragraph)
+		if err != nil {
+			return nil, err
+		}
+		_, sourceArchitecture := dpkgControlParagraphPackage(fields, targetArchitecture)
+		for _, field := range fields {
+			switch field.name {
+			case "Depends", "Pre-Depends":
+				clauses, err := splitDPKGRelationship(field.value, ',')
+				if err != nil {
+					return nil, fmt.Errorf("invalid %s field %q: %w", field.name, field.value, err)
+				}
+				kept := make([]string, 0, len(clauses))
+				for _, clause := range clauses {
+					alternatives, err := splitDPKGRelationship(clause, '|')
+					if err != nil {
+						return nil, fmt.Errorf("invalid %s clause %q: %w", field.name, clause, err)
+					}
+					keep := false
+					for _, alternative := range alternatives {
+						ref, err := parseDPKGRelationshipPackage(alternative)
+						if err != nil {
+							return nil, fmt.Errorf("invalid %s alternative %q: %w", field.name, alternative, err)
+						}
+						if dpkgCapabilitySatisfies(capabilities, ref, alternative, sourceArchitecture, targetArchitecture) {
+							keep = true
+							break
+						}
+					}
+					if keep {
+						kept = append(kept, strings.TrimSpace(clause))
+					}
+				}
+				if len(kept) > 0 {
+					fmt.Fprintf(&output, "%s: %s\n", field.name, strings.Join(kept, ", "))
+				}
+			default:
+				for _, line := range field.lines {
+					output.WriteString(line)
+					output.WriteByte('\n')
+				}
+			}
+		}
+		output.WriteByte('\n')
+	}
+	return []byte(output.String()), nil
+}
+
+func dpkgControlParagraphPackage(fields []dpkgControlField, targetArchitecture string) (string, string) {
+	packageName := ""
+	architecture := ""
+	for _, field := range fields {
+		switch field.name {
+		case "Package":
+			packageName = field.value
+		case dpkgArchitectureField:
+			architecture = field.value
+		}
+	}
+	if architecture == "" {
+		architecture = targetArchitecture
+	}
+	return packageName, architecture
+}
+
+func dpkgCapabilitySatisfies(
+	capabilities dpkgCapabilityVersions,
+	ref dpkgRelationshipPackage,
+	alternative,
+	sourceArchitecture,
+	targetArchitecture string,
+) bool {
+	architectures := capabilities[ref.name]
+	if len(architectures) == 0 {
+		return false
+	}
+	requiredArchitecture := ref.qualifier
+	switch requiredArchitecture {
+	case dpkgArchitectureAny:
+		// Explicit :any can use any installed architecture.
+	case dpkgNativeQualifier:
+		if ref.explicitQualifier {
+			requiredArchitecture = targetArchitecture
+		} else {
+			requiredArchitecture = sourceArchitecture
+			if requiredArchitecture == "" || requiredArchitecture == dpkgArchitectureAll {
+				requiredArchitecture = targetArchitecture
+			}
+		}
+	}
+
+	operator := ""
+	requiredVersion := ""
+	suffix := strings.TrimSpace(alternative[ref.end:])
+	if suffix != "" {
+		parts := strings.Fields(strings.Trim(suffix, "()"))
+		if len(parts) != 2 || !isValidDebianVersion(parts[1]) {
+			return false
+		}
+		operator, requiredVersion = parts[0], parts[1]
+	}
+
+	for architecture, versions := range architectures {
+		if requiredArchitecture != dpkgArchitectureAny && architecture != requiredArchitecture && architecture != dpkgArchitectureAll {
+			continue
+		}
+		for _, version := range versions {
+			if operator == "" {
+				return true
+			}
+			if version != "" && dpkgVersionSatisfies(version, operator, requiredVersion) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func dpkgVersionSatisfies(actual, operator, required string) bool {
+	actualVersion, err := debVer.NewVersion(actual)
+	if err != nil {
+		return false
+	}
+	requiredVersion, err := debVer.NewVersion(required)
+	if err != nil {
+		return false
+	}
+	comparison := actualVersion.Compare(requiredVersion)
+	switch operator {
+	case "<<":
+		return comparison < 0
+	case "<=":
+		return comparison <= 0
+	case "=":
+		return comparison == 0
+	case ">=":
+		return comparison >= 0
+	case ">>":
+		return comparison > 0
+	default:
+		return false
+	}
+}
+
+type dpkgControlField struct {
+	name  string
+	value string
+	lines []string
+}
+
+func dpkgControlParagraphInstalled(fields []dpkgControlField, installedPackages map[string]string) bool {
+	packageName := ""
+	architecture := ""
+	for _, field := range fields {
+		switch field.name {
+		case "Package":
+			packageName = field.value
+		case dpkgArchitectureField:
+			architecture = field.value
+		}
+	}
+	if packageName == "" {
+		return false
+	}
+	if _, ok := installedPackages[dpkgPackageIdentity(packageName, architecture)]; ok {
+		return true
+	}
+	if architecture != "" {
+		return false
+	}
+	if _, ok := installedPackages[packageName]; ok {
+		return true
+	}
+	return len(matchingDPKGPackageIdentities(installedPackages, packageName)) > 0
+}
+
+func splitDPKGControlParagraphs(contents []byte) [][]string {
+	paragraphs := make([][]string, 0)
+	paragraph := make([]string, 0)
+	flush := func() {
+		if len(paragraph) == 0 {
+			return
+		}
+		paragraphs = append(paragraphs, paragraph)
+		paragraph = nil
+	}
+	for _, rawLine := range bytes.Split(contents, []byte{'\n'}) {
+		line := strings.TrimSuffix(string(rawLine), "\r")
+		if strings.TrimSpace(line) == "" {
+			flush()
+			continue
+		}
+		paragraph = append(paragraph, line)
+	}
+	flush()
+	return paragraphs
+}
+
+func parseDPKGControlFields(paragraph []string) ([]dpkgControlField, error) {
+	fields := make([]dpkgControlField, 0)
+	for _, line := range paragraph {
+		if len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
+			if len(fields) == 0 {
+				return nil, fmt.Errorf("control paragraph begins with a continuation line")
+			}
+			last := &fields[len(fields)-1]
+			last.lines = append(last.lines, line)
+			last.value += " " + strings.TrimSpace(line)
+			continue
+		}
+		name, value, ok := strings.Cut(line, ":")
+		if !ok || name == "" {
+			return nil, fmt.Errorf("malformed control field %q", line)
+		}
+		fields = append(fields, dpkgControlField{
+			name:  name,
+			value: strings.TrimSpace(value),
+			lines: []string{line},
+		})
+	}
+	return fields, nil
+}
+
+func splitDPKGRelationship(value string, separator byte) ([]string, error) {
+	parts := make([]string, 0, 1)
+	start := 0
+	roundDepth := 0
+	squareDepth := 0
+	for i := 0; i < len(value); i++ {
+		switch value[i] {
+		case '(':
+			roundDepth++
+		case ')':
+			roundDepth--
+		case '[':
+			squareDepth++
+		case ']':
+			squareDepth--
+		default:
+			if value[i] == separator && roundDepth == 0 && squareDepth == 0 {
+				part := strings.TrimSpace(value[start:i])
+				if part == "" {
+					return nil, fmt.Errorf("empty relationship component")
+				}
+				parts = append(parts, part)
+				start = i + 1
+			}
+		}
+		if roundDepth < 0 || squareDepth < 0 {
+			return nil, fmt.Errorf("unbalanced relationship delimiters")
+		}
+	}
+	if roundDepth != 0 || squareDepth != 0 {
+		return nil, fmt.Errorf("unbalanced relationship delimiters")
+	}
+	last := strings.TrimSpace(value[start:])
+	if last == "" {
+		return nil, fmt.Errorf("empty relationship component")
+	}
+	parts = append(parts, last)
+	return parts, nil
+}
+
+type dpkgRelationshipPackage struct {
+	name              string
+	qualifier         string
+	explicitQualifier bool
+	end               int
+}
+
+func parseDPKGRelationshipPackage(value string) (dpkgRelationshipPackage, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return dpkgRelationshipPackage{}, fmt.Errorf("package relationship is empty")
+	}
+	end := 0
+	for end < len(value) {
+		c := value[end]
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+' || c == '.' || c == '-' {
+			end++
+			continue
+		}
+		break
+	}
+	if end == 0 {
+		return dpkgRelationshipPackage{}, fmt.Errorf("package name is missing")
+	}
+	name := value[:end]
+	if !isValidDebianPackageName(name) {
+		return dpkgRelationshipPackage{}, fmt.Errorf("invalid package name %q", name)
+	}
+	qualifier := dpkgNativeQualifier
+	explicitQualifier := false
+	if end < len(value) && value[end] == ':' {
+		explicitQualifier = true
+		end++
+		archStart := end
+		for end < len(value) {
+			c := value[end]
+			if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' {
+				end++
+				continue
+			}
+			break
+		}
+		if end == archStart {
+			return dpkgRelationshipPackage{}, fmt.Errorf("architecture qualifier is empty")
+		}
+		qualifier = value[archStart:end]
+	}
+	if end < len(value) {
+		switch value[end] {
+		case ' ', '\t', '(', '[', '<':
+		default:
+			return dpkgRelationshipPackage{}, fmt.Errorf("unexpected character %q after package name", value[end])
+		}
+	}
+	return dpkgRelationshipPackage{
+		name: name, qualifier: qualifier, explicitQualifier: explicitQualifier, end: end,
+	}, nil
+}
+
 func GetPackageInfo(file string) (string, string, error) {
 	var packageName string
 	var packageVersion string
@@ -642,10 +1142,106 @@ func GetPackageInfo(file string) (string, string, error) {
 }
 
 // debPkgNameRE matches valid Debian package names: lowercase, digits, plus, hyphen, period.
-var debPkgNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
+var (
+	debPkgNameRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*$`)
+	debArchitectureRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+)
 
 func isValidDebianPackageName(name string) bool {
 	return debPkgNameRE.MatchString(name)
+}
+
+func isValidDebianArchitecture(architecture string) bool {
+	if architecture == dpkgArchitectureAny || architecture == dpkgNativeQualifier {
+		return false
+	}
+	return debArchitectureRE.MatchString(architecture)
+}
+
+func debianArchitectureForPlatform(platform *ocispecs.Platform) (string, error) {
+	if platform == nil {
+		return "", fmt.Errorf("target platform is nil")
+	}
+	switch platform.Architecture {
+	case "amd64":
+		return "amd64", nil
+	case "arm64":
+		return "arm64", nil
+	case "386":
+		return "i386", nil
+	case "arm":
+		switch platform.Variant {
+		case "", "v7":
+			return "armhf", nil
+		case "v5", "v6":
+			return "armel", nil
+		default:
+			return "", fmt.Errorf("unsupported ARM variant %q", platform.Variant)
+		}
+	case "ppc64le":
+		return "ppc64el", nil
+	case "s390x", "riscv64":
+		return platform.Architecture, nil
+	default:
+		return "", fmt.Errorf("unsupported target architecture %q", platform.Architecture)
+	}
+}
+
+func foreignDPKGArchitectures(packageInfo map[string]string, platform *ocispecs.Platform) ([]string, error) {
+	nativeArchitecture, err := debianArchitectureForPlatform(platform)
+	if err != nil {
+		return nil, err
+	}
+	foreign := make(map[string]struct{})
+	for identity := range packageInfo {
+		_, architecture, err := splitDPKGPackageIdentity(identity)
+		if err != nil {
+			return nil, fmt.Errorf("invalid installed package identity %q: %w", identity, err)
+		}
+		if architecture == "" || architecture == dpkgArchitectureAll || architecture == nativeArchitecture {
+			continue
+		}
+		foreign[architecture] = struct{}{}
+	}
+	architectures := make([]string, 0, len(foreign))
+	for architecture := range foreign {
+		architectures = append(architectures, architecture)
+	}
+	sort.Strings(architectures)
+	return architectures, nil
+}
+
+func dpkgPackageIdentity(name, architecture string) string {
+	if architecture == "" {
+		return name
+	}
+	return name + ":" + architecture
+}
+
+func splitDPKGPackageIdentity(identity string) (string, string, error) {
+	name, architecture, hasArchitecture := strings.Cut(identity, ":")
+	if !isValidDebianPackageName(name) {
+		return "", "", fmt.Errorf("invalid package name %q", name)
+	}
+	if !hasArchitecture {
+		return name, "", nil
+	}
+	if !isValidDebianArchitecture(architecture) {
+		return "", "", fmt.Errorf("invalid package architecture %q for package %s", architecture, name)
+	}
+	return name, architecture, nil
+}
+
+func matchingDPKGPackageIdentities(packageInfo map[string]string, packageName string) []string {
+	identities := make([]string, 0, 1)
+	for identity := range packageInfo {
+		name, _, err := splitDPKGPackageIdentity(identity)
+		if err == nil && name == packageName {
+			identities = append(identities, identity)
+		}
+	}
+	sort.Strings(identities)
+	return identities
 }
 
 // marshalDPKGPackageVersions serializes validated package/version pairs for
@@ -659,32 +1255,42 @@ func marshalDPKGPackageVersions(packageInfo map[string]string, heldPackages map[
 	sort.Strings(packageNames)
 
 	var data strings.Builder
-	for _, packageName := range packageNames {
-		if !isValidDebianPackageName(packageName) {
-			return nil, fmt.Errorf("invalid package name %q in installed package metadata", packageName)
+	for _, identity := range packageNames {
+		if _, _, err := splitDPKGPackageIdentity(identity); err != nil {
+			return nil, fmt.Errorf("invalid package identity %q in installed package metadata: %w", identity, err)
 		}
-		version := packageInfo[packageName]
+		version := packageInfo[identity]
 		if !isValidDebianVersion(version) {
-			return nil, fmt.Errorf("invalid installed version %q for package %s", version, packageName)
+			return nil, fmt.Errorf("invalid installed version %q for package %s", version, identity)
 		}
 		selection := "install"
-		if _, held := heldPackages[packageName]; held {
+		if _, held := heldPackages[identity]; held {
 			selection = "hold"
 		}
-		fmt.Fprintf(&data, "%s|%s|%s\n", packageName, version, selection)
+		fmt.Fprintf(&data, "%s|%s|%s\n", identity, version, selection)
 	}
 
 	return []byte(data.String()), nil
 }
 
-func marshalDPKGUpdatePackageNames(updates unversioned.UpdatePackages) ([]byte, error) {
+func marshalDPKGUpdatePackageNames(updates unversioned.UpdatePackages, installedVersions map[string]string) ([]byte, error) {
 	if err := ValidateOSPackageNames(updates); err != nil {
 		return nil, err
 	}
 
-	packageNames := make([]string, 0, len(updates))
+	packageSet := make(map[string]struct{}, len(updates))
 	for _, update := range updates {
-		packageNames = append(packageNames, update.Name)
+		identities := matchingDPKGPackageIdentities(installedVersions, update.Name)
+		if len(identities) == 0 {
+			return nil, fmt.Errorf("requested package %s is not installed in the target dpkg inventory", update.Name)
+		}
+		for _, identity := range identities {
+			packageSet[identity] = struct{}{}
+		}
+	}
+	packageNames := make([]string, 0, len(packageSet))
+	for packageName := range packageSet {
+		packageNames = append(packageNames, packageName)
 	}
 	sort.Strings(packageNames)
 
@@ -714,9 +1320,15 @@ func marshalDPKGVersionFloors(updates unversioned.UpdatePackages, installedVersi
 			floors[packageName] = versionFloor{installed: installedVersion}
 		}
 		for _, update := range updates {
-			floor := floors[update.Name]
-			floor.fixed = update.FixedVersion
-			floors[update.Name] = floor
+			identities := matchingDPKGPackageIdentities(installedVersions, update.Name)
+			if len(identities) == 0 {
+				identities = []string{update.Name}
+			}
+			for _, identity := range identities {
+				floor := floors[identity]
+				floor.fixed = update.FixedVersion
+				floors[identity] = floor
+			}
 		}
 	}
 
@@ -728,8 +1340,8 @@ func marshalDPKGVersionFloors(updates unversioned.UpdatePackages, installedVersi
 
 	var data strings.Builder
 	for _, packageName := range packageNames {
-		if !isValidDebianPackageName(packageName) {
-			return nil, fmt.Errorf("invalid package name %q in package version floor", packageName)
+		if _, _, err := splitDPKGPackageIdentity(packageName); err != nil {
+			return nil, fmt.Errorf("invalid package identity %q in package version floor: %w", packageName, err)
 		}
 		floor := floors[packageName]
 		if floor.installed != "" && !isValidDebianVersion(floor.installed) {
@@ -839,7 +1451,7 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 	}
 
 	// Write results.manifest to host for post-patch validation
-	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Version:" "%s" >> "%s"'`
+	const outputResultsTemplate = `sh -c 'grep "^Package:\|^Architecture:\|^Version:" "%s" >> "%s"'`
 	outputResultsCmd := fmt.Sprintf(outputResultsTemplate, dpkgStatusPath, resultManifest)
 	resultsWritten := aptGetInstalled.Dir(resultsPath).Run(
 		llb.Shlex(outputResultsCmd),
@@ -894,19 +1506,40 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		return nil, nil, fmt.Errorf("unable to get image platform %w", err)
 	}
 
-	// First try with the target platform, then fall back to the host platform.
+	// External package installation must use tooling for the target platform.
+	// Falling back to the host can download and install the wrong architecture.
 	toolingBase, err := tryImage(ctx, toolImage, dm.config.Client, imagePlatform)
 	if err != nil {
-		log.Debugf("Failed to resolve tooling image %s with platform %v, falling back to host platform: %v", toolImage, imagePlatform, err)
-		toolingBase, err = tryImage(ctx, toolImage, dm.config.Client, nil)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to resolve tooling image %s even with host platform fallback: %w", toolImage, err)
-		}
-		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
+		return nil, nil, fmt.Errorf("failed to resolve external dpkg tooling image %s for target platform %s/%s: %w", toolImage, imagePlatform.OS, imagePlatform.Architecture, err)
 	}
 
+	targetDPKGArchitecture, err := debianArchitectureForPlatform(imagePlatform)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving target Debian architecture: %w", err)
+	}
+	foreignArchitectures, err := foreignDPKGArchitectures(dm.packageInfo, imagePlatform)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving Debian package architectures: %w", err)
+	}
+	if dm.installationMode == dpkgInstallationModeExternalFullStatus && len(foreignArchitectures) > 0 {
+		return nil, nil, fmt.Errorf(
+			"external full-status images with foreign package architectures are not supported: %s",
+			strings.Join(foreignArchitectures, ", "),
+		)
+	}
+	var toolingSetup strings.Builder
+	for _, architecture := range foreignArchitectures {
+		fmt.Fprintf(&toolingSetup, "dpkg --add-architecture %s && ", architecture)
+	}
+	toolingSetup.WriteString("apt-get -o Acquire::Retries=3 update")
+	toolingSetupCommand := toolingSetup.String()
+	if dm.installationMode == dpkgInstallationModeExternalFullStatus {
+		// BusyBox supplies root-confined metadata helpers while temporary
+		// lifecycle-package payloads are removed after the script-free install.
+		toolingSetupCommand += " && apt-get -o Acquire::Retries=3 install -y busybox-static"
+	}
 	updated := toolingBase.Run(
-		llb.Shlex("apt-get -o Acquire::Retries=3 update"),
+		buildkit.Sh(toolingSetupCommand),
 		llb.WithProxy(utils.GetProxy()),
 		llb.IgnoreCache,
 		llb.WithCustomName("Updating package database in tooling container"),
@@ -925,6 +1558,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		File(llb.Mkfile(dpkgInstalledPackagesPath, 0o444, installedPackageData)).
 		File(llb.Mkfile(dpkgVersionFloorsPath, 0o444, versionFloorData)).
 		File(llb.Mkfile(dpkgSelectUpdatesScriptPath, 0o555, selectDPKGUpdatesScript))
+	if dm.installationMode == dpkgInstallationModeExternalFullStatus {
+		updated = updated.File(llb.Mkfile(dpkgResolverStatusPath, 0o444, dm.resolverStatusFile))
+	}
 
 	// For comprehensive updates, select only repository candidates that are
 	// strictly newer under Debian version ordering. Equal or older candidates
@@ -943,7 +1579,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			return nil, nil, types.ErrNoUpdatesFound
 		}
 	} else {
-		packageNames, err := marshalDPKGUpdatePackageNames(updates)
+		packageNames, err := marshalDPKGUpdatePackageNames(updates, dm.packageInfo)
 		if err != nil {
 			return nil, nil, fmt.Errorf("serializing requested package names: %w", err)
 		}
@@ -1033,6 +1669,9 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.AddEnv("UPDATE_ALL", updateAll),
 		llb.AddEnv("DOWNLOAD_DIR", dpkgDownloadPath),
 		llb.AddEnv("PACKAGES_FILE", dpkgUpdatePackagesPath),
+		llb.AddEnv("RESOLVER_STATUS_FILE", dpkgResolverStatusPath),
+		llb.AddEnv("TARGET_DPKG_ARCH", targetDPKGArchitecture),
+		llb.AddEnv("FOREIGN_DPKG_ARCHES", strings.Join(foreignArchitectures, " ")),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		llb.AddEnv("DPKG_INSTALLATION_MODE", dm.installationMode.String()),
 		llb.AddEnv("STATUSD_FILE_MAP", string(jsonStatusdFileMap)),
@@ -1065,43 +1704,70 @@ func (dm *dpkgManager) GetPackageType() string {
 }
 
 func dpkgParseResultsManifest(b []byte) (map[string]string, error) {
-	buf := bytes.NewBuffer(b)
-
-	// results.manifest file is expected to be subset of DPKG status or debian info format
-	// consisting of repeating consecutive blocks of:
-	//
-	// Package: <package name>
-	// Version: <version value>
-	// ...
+	// The result manifest contains Package, optional Architecture, and Version
+	// fields. Architecture is included when available so same-name multiarch
+	// instances remain distinct through validation. Field order is not assumed.
 	updateMap := map[string]string{}
-	fs := bufio.NewScanner(buf)
-	var packageName string
-	for fs.Scan() {
-		kv := strings.Split(fs.Text(), " ")
-		if len(kv) != 2 {
-			err := fmt.Errorf("unexpected %s file entry: %s", resultManifest, fs.Text())
-			log.Error(err)
-			return nil, err
+	fs := bufio.NewScanner(bytes.NewReader(b))
+	packageName := ""
+	packageArchitecture := ""
+	packageVersion := ""
+
+	flush := func() error {
+		if packageName == "" {
+			return nil
 		}
-		switch {
-		case kv[0] == "Package:":
-			if packageName != "" {
-				log.Debugf("ignoring held or not-installed Package without Version: %s", packageName)
-			}
-			packageName = kv[1]
-		case kv[0] == "Version:" && packageName != "":
-			updateMap[packageName] = kv[1]
+		if packageVersion == "" {
+			log.Debugf("ignoring held or not-installed Package without Version: %s", packageName)
 			packageName = ""
-		default:
-			err := fmt.Errorf("unexpected field found: %s", fs.Text())
-			log.Error(err)
-			return nil, err
+			packageArchitecture = ""
+			return nil
 		}
-	}
-	if packageName != "" {
-		log.Debugf("ignoring held or not-installed Package without Version: %s", packageName)
+		identity := dpkgPackageIdentity(packageName, packageArchitecture)
+		// The external installer may record the downloaded archive and then append
+		// the final status inventory. The final record is authoritative.
+		updateMap[identity] = packageVersion
+		packageName = ""
+		packageArchitecture = ""
+		packageVersion = ""
+		return nil
 	}
 
+	for fs.Scan() {
+		line := fs.Text()
+		field, value, ok := strings.Cut(line, " ")
+		if !ok || value == "" || strings.Contains(value, " ") {
+			return nil, fmt.Errorf("unexpected %s file entry: %s", resultManifest, line)
+		}
+		switch field {
+		case "Package:":
+			if err := flush(); err != nil {
+				return nil, err
+			}
+			if !isValidDebianPackageName(value) {
+				return nil, fmt.Errorf("invalid package name %q in %s", value, resultManifest)
+			}
+			packageName = value
+		case "Architecture:":
+			if packageName == "" || packageArchitecture != "" || !isValidDebianArchitecture(value) {
+				return nil, fmt.Errorf("unexpected field found: %s", line)
+			}
+			packageArchitecture = value
+		case "Version:":
+			if packageName == "" || packageVersion != "" {
+				return nil, fmt.Errorf("unexpected field found: %s", line)
+			}
+			packageVersion = value
+		default:
+			return nil, fmt.Errorf("unexpected field found: %s", line)
+		}
+	}
+	if err := fs.Err(); err != nil {
+		return nil, fmt.Errorf("reading %s: %w", resultManifest, err)
+	}
+	if err := flush(); err != nil {
+		return nil, err
+	}
 	return updateMap, nil
 }
 
@@ -1111,62 +1777,110 @@ func validateDebianPackageVersions(
 	cmp VersionComparer,
 	results []byte,
 	ignoreErrors bool,
+	targetArchitecture string,
 ) ([]string, error) {
-	// Load file into map[string]string for package:version lookup
 	updateMap, err := dpkgParseResultsManifest(results)
 	if err != nil {
 		return nil, err
 	}
 
-	// For each target package, validate the resulting version is at least both
-	// the current installed version and the requested fixed version.
 	var allErrors *multierror.Error
 	errorPkgs := []string{}
 	for _, update := range updates {
-		version, ok := updateMap[update.Name]
-		if !ok {
-			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
-			continue
+		identities := matchingDPKGPackageIdentities(installedVersions, update.Name)
+		if len(identities) == 0 {
+			identities = []string{update.Name}
 		}
-		if !cmp.IsValid(version) {
-			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
-			log.Error(err)
-			errorPkgs = append(errorPkgs, update.Name)
-			allErrors = multierror.Append(allErrors, err)
-			continue
-		}
-		installedVersion, hasInstalledVersion := installedVersions[update.Name]
-		if hasInstalledVersion {
-			if !cmp.IsValid(installedVersion) {
-				err := fmt.Errorf("invalid installed version %s found for package %s", installedVersion, update.Name)
+		for _, identity := range identities {
+			version, ok := updateMap[identity]
+			if !ok && len(identities) == 1 {
+				name, architecture, splitErr := splitDPKGPackageIdentity(identity)
+				if splitErr == nil {
+					if architecture != "" {
+						// Legacy manifests may omit Architecture for a qualified installed identity.
+						version, ok = updateMap[name]
+					} else {
+						// Conversely, status.d inventories are unqualified while archive
+						// metadata is qualified. Accept only one unambiguous result.
+						matches := matchingDPKGPackageIdentities(updateMap, name)
+						if len(matches) == 1 {
+							_, resultArchitecture, matchErr := splitDPKGPackageIdentity(matches[0])
+							if matchErr == nil && (resultArchitecture == targetArchitecture || resultArchitecture == dpkgArchitectureAll) {
+								version, ok = updateMap[matches[0]]
+							}
+						}
+					}
+				}
+			}
+			if !ok {
+				installedVersion, wasInstalled := installedVersions[identity]
+				if !wasInstalled {
+					log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", identity)
+					continue
+				}
+				// APT does not download an archive for an already-current multiarch
+				// instance. Its unchanged installed version is a valid final state.
+				if cmp.IsValid(installedVersion) && !cmp.LessThan(installedVersion, update.FixedVersion) {
+					log.Infof("Validated unchanged package %s version %s meets requested version %s", identity, installedVersion, update.FixedVersion)
+					continue
+				}
+				err := fmt.Errorf("installed package %s was not present in the patch result", identity)
 				log.Error(err)
 				errorPkgs = append(errorPkgs, update.Name)
 				allErrors = multierror.Append(allErrors, err)
 				continue
 			}
-			if cmp.LessThan(version, installedVersion) {
-				err = fmt.Errorf("downloaded package %s version %s lower than currently installed version %s", update.Name, version, installedVersion)
+			if !cmp.IsValid(version) {
+				err := fmt.Errorf("invalid version %s found for package %s", version, identity)
 				log.Error(err)
 				errorPkgs = append(errorPkgs, update.Name)
 				allErrors = multierror.Append(allErrors, err)
 				continue
 			}
+			if installedVersion, hasInstalledVersion := installedVersions[identity]; hasInstalledVersion {
+				if !cmp.IsValid(installedVersion) {
+					err := fmt.Errorf("invalid installed version %s found for package %s", installedVersion, identity)
+					log.Error(err)
+					errorPkgs = append(errorPkgs, update.Name)
+					allErrors = multierror.Append(allErrors, err)
+					continue
+				}
+				if cmp.LessThan(version, installedVersion) {
+					err := fmt.Errorf("downloaded package %s version %s lower than currently installed version %s", identity, version, installedVersion)
+					log.Error(err)
+					errorPkgs = append(errorPkgs, update.Name)
+					allErrors = multierror.Append(allErrors, err)
+					continue
+				}
+			}
+			if cmp.LessThan(version, update.FixedVersion) {
+				err := fmt.Errorf("downloaded package %s version %s lower than required %s for update", identity, version, update.FixedVersion)
+				log.Error(err)
+				errorPkgs = append(errorPkgs, update.Name)
+				allErrors = multierror.Append(allErrors, err)
+				continue
+			}
+			log.Infof("Validated package %s version %s meets requested version %s", identity, version, update.FixedVersion)
 		}
-		if cmp.LessThan(version, update.FixedVersion) {
-			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
-			log.Error(err)
-			errorPkgs = append(errorPkgs, update.Name)
-			allErrors = multierror.Append(allErrors, err)
-			continue
-		}
-		log.Infof("Validated package %s version %s meets requested version %s", update.Name, version, update.FixedVersion)
 	}
 
 	if ignoreErrors {
-		return errorPkgs, nil
+		return uniqueStrings(errorPkgs), nil
 	}
+	return uniqueStrings(errorPkgs), allErrors.ErrorOrNil()
+}
 
-	return errorPkgs, allErrors.ErrorOrNil()
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	unique := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		unique = append(unique, value)
+	}
+	return unique
 }
 
 func getJSONStatusdFileMap(statusdFileMap map[string]string) ([]byte, error) {

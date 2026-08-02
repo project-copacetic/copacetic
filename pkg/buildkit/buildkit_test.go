@@ -70,6 +70,68 @@ func testRemoteIndexDescriptor(digestHex string) *remote.Descriptor {
 	}
 }
 
+func TestGetVerifiedRemoteIndex(t *testing.T) {
+	const requestedDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	ref, err := name.NewDigest("example.com/test/image@sha256:" + requestedDigest)
+	require.NoError(t, err)
+
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() { getRemoteImageDescriptor = originalRemote })
+
+	tests := []struct {
+		name     string
+		desc     *remote.Descriptor
+		fetchErr error
+		wantErr  string
+	}{
+		{
+			name: "matching immutable index",
+			desc: testRemoteIndexDescriptor(requestedDigest),
+		},
+		{
+			name:    "mismatched index digest",
+			desc:    testRemoteIndexDescriptor("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+			wantErr: "does not match immutable reference",
+		},
+		{
+			name: "single image manifest",
+			desc: &remote.Descriptor{Descriptor: remotev1.Descriptor{
+				MediaType: remoteTypes.OCIManifestSchema1,
+				Digest:    remotev1.Hash{Algorithm: "sha256", Hex: requestedDigest},
+			}},
+			wantErr: "is not an image index",
+		},
+		{
+			name:    "empty registry response",
+			wantErr: "returned no descriptor",
+		},
+		{
+			name:     "registry error",
+			fetchErr: errors.New("registry unavailable"),
+			wantErr:  "registry unavailable",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			getRemoteImageDescriptor = func(gotRef name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+				assert.Equal(t, ref.String(), gotRef.String())
+				return tt.desc, tt.fetchErr
+			}
+
+			got, err := GetVerifiedRemoteIndex(ref)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.wantErr)
+				assert.Nil(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Same(t, tt.desc, got)
+		})
+	}
+}
+
 func TestDiscoverPlatformsMutableTagKeepsLocalPlatform(t *testing.T) {
 	originalLocal := localImagePlatforms
 	originalRemote := getRemoteImageDescriptor

@@ -47,8 +47,11 @@ A full dpkg status file records packages, not the exact subset of files that was
 selected when the image was originally chiseled. Updating this layout installs
 content from complete `.deb` archives. The patched image can therefore contain
 additional files from those packages even though package-manager and tooling
-executables are removed before export. Review the resulting filesystem and test
-the application before deployment.
+executables are removed before export. Because these images do not retain the
+original dpkg lifecycle database, Copa applies archive payloads with maintainer
+scripts and dpkg triggers disabled rather than executing them against incomplete
+package state. Review the resulting filesystem and test the application before
+deployment, especially when a package normally generates files in `postinst`.
 
 :::
 
