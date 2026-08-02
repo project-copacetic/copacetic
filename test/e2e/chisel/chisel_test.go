@@ -29,7 +29,7 @@ import (
 //go:embed fixtures/test-images.json
 var fixtureData []byte
 
-const chiselToolingImage = "ghcr.io/project-copacetic/copacetic/chisel:v1.4.2"
+const chiselToolingImage = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
 
 type realImageFixture struct {
 	ID                      string   `json:"id"`
@@ -745,7 +745,7 @@ func requireLocalImage(t *testing.T, image string) {
 	cmd := exec.Command("docker", "image", "inspect", image)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err,
-		"required local tooling image %s is unavailable; build it with `docker buildx build --platform linux/amd64 --file images/chisel/Dockerfile --tag %s --load .`:\n%s",
+		"required pinned tooling image %s is unavailable; pull it with `docker pull --platform linux/amd64 %s`:\n%s",
 		image, image, string(output))
 }
 

@@ -33,12 +33,8 @@ Build the prerequisites from the repository root:
 ```bash
 make build
 
-docker buildx build \
-  --platform linux/amd64 \
-  --file images/chisel/Dockerfile \
-  --tag ghcr.io/project-copacetic/copacetic/chisel:v1.4.2 \
-  --load \
-  .
+docker pull --platform linux/amd64 \
+  ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80
 ```
 
 Run the complete package:
@@ -71,7 +67,4 @@ archive bandwidth, and the locally tagged tooling image.
 
 ## CI
 
-The `test-chisel` job in `.github/workflows/build.yml` builds the tooling image
-from the repository source and runs this package on an amd64 runner. This proves
-the source-built tooling and patching flow work together. Validation of a
-published tooling image by immutable digest remains a separate release check.
+The `test-chisel` job in `.github/workflows/build.yml` pulls `ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80` and runs this package on an amd64 runner. The publication workflow separately verifies every supported platform, SBOM and provenance attestations, commit labels, and amd64/arm64 runtime behavior.

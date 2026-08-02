@@ -1013,16 +1013,13 @@ jobs:
         run: |
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
-      - name: Build local Chisel tooling image
+      - name: Pull and verify pinned Chisel tooling image
         shell: bash
+        env:
+          CHISEL_TOOLING_IMAGE: ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80
         run: |
-          docker buildx build \
-            --platform linux/amd64 \
-            --file images/chisel/Dockerfile \
-            --tag ghcr.io/project-copacetic/copacetic/chisel:v1.4.2 \
-            --load \
-            .
-          test "$(docker run --rm ghcr.io/project-copacetic/copacetic/chisel:v1.4.2 version)" = "v1.4.2"
+          docker pull --platform linux/amd64 "${CHISEL_TOOLING_IMAGE}"
+          test "$(docker run --rm --platform linux/amd64 "${CHISEL_TOOLING_IMAGE}" version)" = "v1.4.2"
       - name: Run Ubuntu Chiseled e2e tests
         shell: bash
         run: |

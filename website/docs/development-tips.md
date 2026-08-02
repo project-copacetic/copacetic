@@ -33,12 +33,8 @@ root:
 ```bash
 make build
 
-docker buildx build \
-  --platform linux/amd64 \
-  --file images/chisel/Dockerfile \
-  --tag ghcr.io/project-copacetic/copacetic/chisel:v1.4.2 \
-  --load \
-  .
+docker pull --platform linux/amd64 \
+  ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80
 
 COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
 go test ./test/e2e/chisel \

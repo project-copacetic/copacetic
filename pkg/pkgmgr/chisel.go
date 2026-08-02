@@ -30,7 +30,7 @@ import (
 const (
 	// TODO: replace the tag with the published multi-platform digest before the
 	// tooling image is released. The image build is defined in images/chisel.
-	chiselToolImage   = "ghcr.io/project-copacetic/copacetic/chisel:v1.4.2"
+	chiselToolImage   = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
 	chiselToolVersion = "v1.4.2"
 
 	chiselStageRoot        = "/copa-chisel-root"
