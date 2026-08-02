@@ -234,23 +234,16 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		}
 	}
 
-	// Check if there are packages to update
-	if um != nil && len(um.OSUpdates) == 0 && len(um.LangUpdates) == 0 {
-		bklog.G(ctx).WithField("component", "copa-frontend").Info("No packages to update, returning original image")
-		return config.ImageState, nil
-	}
-
-	// Apply package updates using the same logic as CLI
-	patchedState, _, err := pm.InstallUpdates(ctx, um, opts.IgnoreError)
+	patchedState, updatesInstalled, err := installFrontendUpdates(ctx, config, pm, um, opts.IgnoreError)
 	if err != nil {
-		if opts.IgnoreError {
-			bklog.G(ctx).WithError(err).WithField("component", "copa-frontend").Warn("Failed to install updates (ignored)")
-			return config.ImageState, nil
-		}
-		return llb.State{}, errors.Wrap(err, "failed to install package updates")
+		return llb.State{}, err
 	}
 
-	metadata, err := frontendResultMetadata(config.ConfigData, config.PatchedConfigData, platform, pkgmgr.GetPackageManagerAnnotations(pm))
+	var managerAnnotations map[string]string
+	if updatesInstalled {
+		managerAnnotations = pkgmgr.GetPackageManagerAnnotations(pm)
+	}
+	metadata, err := frontendResultMetadata(config.ConfigData, config.PatchedConfigData, platform, managerAnnotations)
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to prepare frontend image metadata")
 	}
@@ -260,7 +253,46 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		metadata: metadata,
 	}
 
-	return *patchedState, nil
+	return patchedState, nil
+}
+
+func currentFrontendImageState(config *copabuildkit.Config) llb.State {
+	if config.PatchedConfigData != nil {
+		return config.PatchedImageState
+	}
+	return config.ImageState
+}
+
+// installFrontendUpdates applies OS updates and reports whether a new state was
+// produced. Empty scanner reports retain their existing fast path, while the
+// no-update sentinel is a successful idempotent result that returns the image
+// the caller actually supplied (which may itself be a previously patched image).
+func installFrontendUpdates(
+	ctx context.Context,
+	config *copabuildkit.Config,
+	pm pkgmgr.PackageManager,
+	manifest *unversioned.UpdateManifest,
+	ignoreErrors bool,
+) (llb.State, bool, error) {
+	if manifest != nil && len(manifest.OSUpdates) == 0 && len(manifest.LangUpdates) == 0 {
+		bklog.G(ctx).WithField("component", "copa-frontend").Info("No packages to update, returning current image")
+		return currentFrontendImageState(config), false, nil
+	}
+
+	patchedState, _, err := pm.InstallUpdates(ctx, manifest, ignoreErrors)
+	if errors.Is(err, types.ErrNoUpdatesFound) {
+		bklog.G(ctx).WithField("component", "copa-frontend").Info("No package updates found, returning current image")
+		return currentFrontendImageState(config), false, nil
+	}
+	if err != nil {
+		if ignoreErrors {
+			bklog.G(ctx).WithError(err).WithField("component", "copa-frontend").Warn("Failed to install updates (ignored)")
+			return currentFrontendImageState(config), false, nil
+		}
+		return llb.State{}, false, errors.Wrap(err, "failed to install package updates")
+	}
+
+	return *patchedState, true, nil
 }
 
 // extractReportFromContext extracts a report file or directory from the BuildKit context.

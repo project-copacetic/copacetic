@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/distribution/reference"
 	"github.com/google/go-containerregistry/pkg/name"
 	remotev1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -128,6 +129,116 @@ func TestGetVerifiedRemoteIndex(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Same(t, tt.desc, got)
+		})
+	}
+}
+
+func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.T) {
+	const requestedDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	immutableRef, err := name.NewDigest("example.com/test/image@sha256:" + requestedDigest)
+	require.NoError(t, err)
+	mutableRef, err := name.ParseReference("example.com/test/image:latest")
+	require.NoError(t, err)
+
+	localChild := &remote.Descriptor{Descriptor: remotev1.Descriptor{
+		MediaType: remoteTypes.OCIManifestSchema1,
+		Digest:    remotev1.Hash{Algorithm: "sha256", Hex: requestedDigest},
+	}}
+
+	originalLocal := tryGetManifestFromLocal
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		tryGetManifestFromLocal = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+
+	remoteFailure := errors.New("registry unavailable")
+	tests := []struct {
+		name              string
+		ref               name.Reference
+		remoteDesc        *remote.Descriptor
+		remoteErr         error
+		wantRemoteCall    bool
+		wantLocal         bool
+		wantDescriptor    *remote.Descriptor
+		wantManifestCount int
+		wantErr           string
+	}{
+		{
+			name:              "matching remote index replaces locally cached child",
+			ref:               immutableRef,
+			remoteDesc:        testRemoteIndexDescriptor(requestedDigest),
+			wantRemoteCall:    true,
+			wantLocal:         false,
+			wantManifestCount: 2,
+		},
+		{
+			name:           "matching remote single manifest keeps local child",
+			ref:            immutableRef,
+			remoteDesc:     localChild,
+			wantRemoteCall: true,
+			wantLocal:      true,
+			wantDescriptor: localChild,
+		},
+		{
+			name:           "mismatched remote digest fails closed",
+			ref:            immutableRef,
+			remoteDesc:     testRemoteIndexDescriptor("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+			wantRemoteCall: true,
+			wantErr:        "does not match immutable reference",
+		},
+		{
+			name:           "remote verification failure fails closed",
+			ref:            immutableRef,
+			remoteErr:      remoteFailure,
+			wantRemoteCall: true,
+			wantErr:        "verify immutable descriptor",
+		},
+		{
+			name:           "mutable tag keeps locally cached child",
+			ref:            mutableRef,
+			wantLocal:      true,
+			wantDescriptor: localChild,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			remoteCalls := 0
+			tryGetManifestFromLocal = func(gotRef name.Reference) (*remote.Descriptor, error) {
+				assert.Equal(t, tt.ref.String(), gotRef.String())
+				return localChild, nil
+			}
+			getRemoteImageDescriptor = func(gotRef name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+				remoteCalls++
+				assert.Equal(t, tt.ref.String(), gotRef.String())
+				return tt.remoteDesc, tt.remoteErr
+			}
+
+			got, isLocal, err := resolvePreservedPlatformsDescriptor(tt.ref)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				assert.Nil(t, got)
+				assert.False(t, isLocal)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantLocal, isLocal)
+			}
+			if tt.wantRemoteCall {
+				assert.Equal(t, 1, remoteCalls)
+			} else {
+				assert.Zero(t, remoteCalls)
+			}
+			if tt.wantDescriptor != nil {
+				assert.Same(t, tt.wantDescriptor, got)
+			}
+			if tt.wantManifestCount > 0 {
+				index, err := got.ImageIndex()
+				require.NoError(t, err)
+				manifest, err := index.IndexManifest()
+				require.NoError(t, err)
+				assert.Len(t, manifest.Manifests, tt.wantManifestCount)
+			}
 		})
 	}
 }
@@ -890,6 +1001,71 @@ func TestQemuAvailable_Mocked(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("QemuAvailable() = %v, want %v", got, tc.want)
 			}
+		})
+	}
+}
+
+func TestOCIPlatformExportMetadataRewritesVersionAnnotation(t *testing.T) {
+	tests := []struct {
+		name       string
+		patchedRef string
+		want       string
+	}{
+		{
+			name:       "patched tag contains original version",
+			patchedRef: "example.com/app:1.0.0-patched-amd64",
+			want:       "1.0.0-patched-amd64",
+		},
+		{
+			name:       "patched tag is a suffix",
+			patchedRef: "example.com/app:patched-amd64",
+			want:       "1.0.0-patched-amd64",
+		},
+		{
+			name:       "coincidental substring is not a version component",
+			patchedRef: "example.com/app:11.0.0-patched",
+			want:       "1.0.0-11.0.0-patched",
+		},
+		{
+			name:       "version component after separator uses patched tag",
+			patchedRef: "example.com/app:release-1.0.0-patched",
+			want:       "release-1.0.0-patched",
+		},
+		{
+			name:       "v-prefixed version uses patched tag",
+			patchedRef: "example.com/app:v1.0.0-patched",
+			want:       "v1.0.0-patched",
+		},
+		{
+			name:       "v-prefixed version after separator uses patched tag",
+			patchedRef: "example.com/app:release-v1.0.0-patched",
+			want:       "release-v1.0.0-patched",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patchedRef, err := reference.ParseNormalizedNamed(tt.patchedRef)
+			require.NoError(t, err)
+			originalVersion := "1.0.0"
+			annotations := map[string]string{
+				"org.opencontainers.image.source":  "https://example.com/source",
+				"org.opencontainers.image.version": originalVersion,
+			}
+			result := &types.PatchResult{
+				PatchedRef: patchedRef,
+				PatchedDesc: &ispec.Descriptor{
+					Annotations: annotations,
+				},
+				ConfigData: []byte("config"),
+			}
+
+			metadata := ociPlatformExportMetadata(result)
+
+			assert.Equal(t, []byte("config"), metadata.Config)
+			assert.Equal(t, tt.want, metadata.Annotations["org.opencontainers.image.version"])
+			assert.Equal(t, "https://example.com/source", metadata.Annotations["org.opencontainers.image.source"])
+			assert.Equal(t, originalVersion, annotations["org.opencontainers.image.version"], "source descriptor annotations must remain unchanged")
 		})
 	}
 }

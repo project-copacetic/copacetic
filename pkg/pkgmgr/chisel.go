@@ -18,6 +18,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
@@ -35,14 +36,15 @@ const (
 	chiselToolImage   = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
 	chiselToolVersion = "v1.4.2"
 
-	chiselStageRoot        = "/copa-chisel-root"
-	chiselReleaseRoot      = "/copa-chisel-release"
-	chiselExpectedFilePath = "/copa-chisel-expected.json"
-	chiselValidationMark   = "/copa-chisel-validation-ok"
-	chiselOldExpectedPath  = "/copa-chisel-old.json"
-	chiselNewExpectedPath  = "/copa-chisel-new.json"
-	maxLocalReleaseBytes   = 64 << 20
-	maxLocalReleaseFiles   = 10000
+	chiselStageRoot                 = "/copa-chisel-root"
+	chiselReleaseRoot               = "/copa-chisel-release"
+	chiselExpectedFilePath          = "/copa-chisel-expected.json"
+	chiselValidationMark            = "/copa-chisel-validation-ok"
+	chiselOldExpectedPath           = "/copa-chisel-old.json"
+	chiselNewExpectedPath           = "/copa-chisel-new.json"
+	maxChiselExpectationInlineBytes = 8 << 20
+	maxLocalReleaseBytes            = 64 << 20
+	maxLocalReleaseFiles            = 10000
 	// Bound the compressed input before ParseManifest applies the same limit
 	// to the decompressed JSONWall data.
 	maxChiselManifestInputBytes = copachisel.MaxManifestSize
@@ -429,17 +431,61 @@ func chiselManifestsEqual(oldManifest, newManifest *copachisel.Manifest) bool {
 		maps.EqualFunc(oldManifest.OwnedPaths, newManifest.OwnedPaths, func(left, right copachisel.PathMetadata) bool { return reflect.DeepEqual(left, right) })
 }
 
+func compressChiselExpectations(payloads ...[]byte) ([][]byte, error) {
+	encoder, err := zstd.NewWriter(nil,
+		zstd.WithEncoderConcurrency(1),
+		zstd.WithEncoderLevel(zstd.SpeedBetterCompression),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create chisel expectation compressor: %w", err)
+	}
+	defer encoder.Close()
+
+	compressed := make([][]byte, 0, len(payloads))
+	totalCompressed := 0
+	for _, payload := range payloads {
+		if len(payload) > copachisel.MaxManifestSize {
+			return nil, fmt.Errorf(
+				"chisel filesystem expectation is %d bytes, exceeding the %d MiB generated-input limit",
+				len(payload), copachisel.MaxManifestSize>>20,
+			)
+		}
+		encoded := encoder.EncodeAll(payload, nil)
+		totalCompressed += len(encoded)
+		if totalCompressed > maxChiselExpectationInlineBytes {
+			return nil, fmt.Errorf(
+				"compressed chisel filesystem expectations are %d bytes, exceeding the %d MiB BuildKit inline transfer limit",
+				totalCompressed, maxChiselExpectationInlineBytes>>20,
+			)
+		}
+		compressed = append(compressed, encoded)
+	}
+	return compressed, nil
+}
+
+func decompressChiselExpectationCommand(compressedPath, destinationPath string) string {
+	return "zstd -q -d -c " + compressedPath + " > " + destinationPath
+}
+
 //nolint:gocritic // llb.State is an immutable graph handle passed by value throughout the BuildKit API.
 func validateChiselState(ctx context.Context, client gwclient.Client, tooling, target llb.State, manifest *copachisel.Manifest) (llb.State, error) {
 	expectedBytes, err := marshalChiselExpectedManifest(manifest)
 	if err != nil {
 		return llb.State{}, err
 	}
+	compressed, err := compressChiselExpectations(expectedBytes)
+	if err != nil {
+		return llb.State{}, err
+	}
+	compressedPath := chiselExpectedFilePath + ".zst"
 	validator := tooling.
-		File(llb.Mkfile(chiselExpectedFilePath, 0o600, expectedBytes)).
+		File(llb.Mkfile(compressedPath, 0o600, compressed[0])).
 		File(llb.Rm(chiselValidationMark, llb.WithAllowNotFound(true)))
+	command := decompressChiselExpectationCommand(compressedPath, chiselExpectedFilePath) +
+		" && /usr/local/bin/copa-chisel-validate --root /target --expected " + chiselExpectedFilePath +
+		" && touch " + chiselValidationMark
 	run := validator.Run(
-		llb.Args([]string{"/bin/sh", "-c", "/usr/local/bin/copa-chisel-validate --root /target --expected " + chiselExpectedFilePath + " && touch " + chiselValidationMark}),
+		llb.Args([]string{"/bin/sh", "-c", command}),
 		llb.WithCustomName(fmt.Sprintf("Validating %d Chisel-managed paths", len(manifest.OwnedPaths))),
 	)
 	validatedTarget := run.AddMount("/target", target)
@@ -488,12 +534,19 @@ func reconcileChiselState(ctx context.Context, client gwclient.Client, tooling, 
 	if err != nil {
 		return llb.State{}, err
 	}
+	compressed, err := compressChiselExpectations(oldExpected, newExpected)
+	if err != nil {
+		return llb.State{}, err
+	}
+	oldCompressedPath := chiselOldExpectedPath + ".zst"
+	newCompressedPath := chiselNewExpectedPath + ".zst"
 
 	reconciler := tooling.
-		File(llb.Mkfile(chiselOldExpectedPath, 0o600, oldExpected)).
-		File(llb.Mkfile(chiselNewExpectedPath, 0o600, newExpected)).
+		File(llb.Mkfile(oldCompressedPath, 0o600, compressed[0])).
+		File(llb.Mkfile(newCompressedPath, 0o600, compressed[1])).
 		File(llb.Rm(chiselValidationMark, llb.WithAllowNotFound(true)))
-	command := strings.Join([]string{
+	command := decompressChiselExpectationCommand(oldCompressedPath, chiselOldExpectedPath) + " && " +
+		decompressChiselExpectationCommand(newCompressedPath, chiselNewExpectedPath) + " && " + strings.Join([]string{
 		"/usr/local/bin/copa-chisel-validate reconcile",
 		"--target /target",
 		"--staged /staged",

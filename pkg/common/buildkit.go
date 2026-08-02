@@ -148,13 +148,32 @@ func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte,
 	}
 
 	labelsKey := "Labels"
-	labelsData, exists := config[labelsKey]
-	if !exists {
-		if lowerLabels, lowerExists := config["labels"]; lowerExists {
-			labelsKey = "labels"
-			labelsData = lowerLabels
+	labelsData, upperExists := config[labelsKey]
+	if lowerLabels, lowerExists := config["labels"]; !upperExists && lowerExists {
+		labelsKey = "labels"
+		labelsData = lowerLabels
+	} else if !upperExists && !lowerExists {
+		for key, data := range config {
+			if !strings.EqualFold(key, "labels") {
+				continue
+			}
+			if labelsData != nil {
+				return nil, fmt.Errorf("image config contains multiple case-insensitive labels fields")
+			}
+			labelsKey = key
+			labelsData = data
 		}
 	}
+
+	// JSON field matching is case-insensitive. Remove every spelling except the
+	// selected source so stale or attacker-controlled variants cannot shadow the
+	// updated labels when consumers decode the config.
+	for key := range config {
+		if strings.EqualFold(key, "labels") {
+			delete(config, key)
+		}
+	}
+
 	configLabels := make(map[string]string)
 	if len(labelsData) > 0 && string(labelsData) != "null" {
 		if err := json.Unmarshal(labelsData, &configLabels); err != nil {

@@ -1,7 +1,9 @@
 package pkgmgr
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -9,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
@@ -255,6 +258,84 @@ func TestMaterializeChiselRelease(t *testing.T) {
 	assert.Equal(t, "ubuntu-24.04", provenance)
 	_, err = state.Marshal(t.Context())
 	require.NoError(t, err)
+}
+
+func TestReconcileChiselStateCompressesLargeExpectations(t *testing.T) {
+	const pathCount = 24000
+	oldMarker := "OLD_CHISEL_EXPECTATION_SENTINEL"
+	newMarker := "NEW_CHISEL_EXPECTATION_SENTINEL"
+	oldManifest := largeChiselExpectationManifest(oldMarker, pathCount)
+	newManifest := largeChiselExpectationManifest(newMarker, pathCount)
+
+	oldExpected, err := marshalChiselExpectedManifest(oldManifest)
+	require.NoError(t, err)
+	newExpected, err := marshalChiselExpectedManifest(newManifest)
+	require.NoError(t, err)
+	assert.Greater(t, len(oldExpected), 8<<20)
+	assert.Greater(t, len(newExpected), 8<<20)
+
+	ref := new(mocks.MockReference)
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{Filename: chiselValidationMark}).
+		Return([]byte{}, nil).
+		Once()
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := new(mocks.MockGWClient)
+	var captured gwclient.SolveRequest
+	client.On("Solve", mock.Anything, mock.MatchedBy(func(request gwclient.SolveRequest) bool {
+		captured = request
+		return true
+	})).Return(result, nil).Once()
+
+	_, err = reconcileChiselState(
+		t.Context(),
+		client,
+		llb.Scratch(),
+		llb.Scratch(),
+		llb.Scratch(),
+		oldManifest,
+		newManifest,
+	)
+	require.NoError(t, err)
+
+	definition, err := captured.Definition.MarshalVT()
+	require.NoError(t, err)
+	assert.Less(t, len(definition), 16<<20)
+	assert.NotContains(t, string(definition), oldMarker)
+	assert.NotContains(t, string(definition), newMarker)
+	assert.Contains(t, string(definition), "zstd -q -d -c")
+	assert.True(t, bytes.Contains(definition, []byte{0x28, 0xb5, 0x2f, 0xfd}), "definition should contain zstd-compressed expectations")
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func TestCompressChiselExpectationsRejectsOversizedInlinePayload(t *testing.T) {
+	payload := make([]byte, maxChiselExpectationInlineBytes+1)
+	_, err := rand.Read(payload)
+	require.NoError(t, err)
+
+	_, err = compressChiselExpectations(payload)
+	require.ErrorContains(t, err, "BuildKit inline transfer limit")
+}
+
+func largeChiselExpectationManifest(marker string, pathCount int) *copachisel.Manifest {
+	ownedPaths := make(map[string]copachisel.PathMetadata, pathCount)
+	for index := range pathCount {
+		manifestPath := fmt.Sprintf(
+			"/usr/share/copa/%s/%05d-%s",
+			marker,
+			index,
+			strings.Repeat("x", 180),
+		)
+		ownedPaths[manifestPath] = copachisel.PathMetadata{
+			Path:   manifestPath,
+			Mode:   0o644,
+			Slices: []string{"base-files_data"},
+			SHA256: digestA,
+			Size:   1,
+		}
+	}
+	return &copachisel.Manifest{OwnedPaths: ownedPaths}
 }
 
 func TestNativeTargetedPatchError(t *testing.T) {

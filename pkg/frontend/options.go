@@ -99,12 +99,20 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 		options.Suffix = v
 	}
 
-	// Parse Chisel release override. Named releases and pinned HTTPS Git URLs
-	// are passed through directly. A path is extracted from the dedicated
-	// BuildKit local context named "chisel-release" so frontend users can use
-	// the same local-directory form as the CLI.
+	// Parse Chisel release override. Named releases are passed through directly.
+	// A path is extracted from the dedicated BuildKit local context named
+	// "chisel-release" so frontend users can use the same local-directory form
+	// as the CLI. Git URLs are intentionally rejected because accepting one from
+	// an untrusted frontend caller would let it make the BuildKit worker access
+	// an arbitrary network location.
 	if value, ok := getOpt(keyChiselRelease); ok {
-		if strings.Contains(value, "://") || strings.HasPrefix(value, "ubuntu-") {
+		if strings.Contains(value, "://") {
+			return nil, errors.New(
+				"Chisel release Git URLs are not supported by the BuildKit frontend; " +
+					"use a named release such as ubuntu-24.04 or provide a release directory through the dedicated \"chisel-release\" build context",
+			)
+		}
+		if strings.HasPrefix(value, "ubuntu-") {
 			release, parseErr := copachisel.ParseRelease(value)
 			if parseErr != nil {
 				return nil, errors.Wrap(parseErr, "invalid Chisel release override")

@@ -126,7 +126,7 @@ The Copa BuildKit frontend accepts the following options via `--build-arg` (or `
 | Option           | Description                                                               | Default          | Example          |
 | ---------------- | ------------------------------------------------------------------------- | ---------------- | ---------------- |
 | `ignore-errors`  | Continue patching on non-critical errors                                  | `false`          | `true`           |
-| `chisel-release` | Native Chisel release name, available local directory, or pinned HTTPS Git URL override | Target inference | `ubuntu-24.04`   |
+| `chisel-release` | Native Chisel release name or path in the dedicated `chisel-release` build context | Target inference | `ubuntu-24.04`   |
 
 ### Ubuntu Chiseled images
 
@@ -146,9 +146,14 @@ buildctl build \
   --output type=image,name=example.com/app:1.0-patched
 ```
 
-The release override also accepts a pinned HTTPS Git URL such as
-`https://example.com/releases.git#abc123`. For a local release directory, add a
-dedicated context and refer to a path within it:
+The BuildKit frontend rejects Git URL values for `chisel-release`. This
+prevents a frontend caller from making the BuildKit worker fetch an arbitrary
+network location. Use a named release or provide a release directory through
+the dedicated `chisel-release` build context. Pinned HTTPS Git release sources
+remain available through the Copa CLI and bulk configuration.
+
+For a local release directory, add a dedicated context and refer to a path
+within it:
 
 ```bash
 buildctl build \

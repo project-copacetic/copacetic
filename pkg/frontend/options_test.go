@@ -45,6 +45,36 @@ func TestParseOptionsChiselRelease(t *testing.T) {
 	}
 }
 
+func TestParseOptionsRejectsChiselReleaseGitURL(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "direct frontend option", key: keyChiselRelease},
+		{name: "build argument", key: "build-arg:" + keyChiselRelease},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := new(mocks.MockGWClient)
+			client.On("BuildOpts").Return(gwclient.BuildOpts{
+				Opts: map[string]string{
+					keyImage: "ubuntu:24.04",
+					tt.key:   "https://127.0.0.1/chisel-releases.git#abc123",
+				},
+				LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
+			})
+
+			opts, err := ParseOptions(context.Background(), client)
+			require.Error(t, err)
+			assert.Nil(t, opts)
+			assert.Contains(t, err.Error(), "Chisel release Git URLs are not supported by the BuildKit frontend")
+			assert.Contains(t, err.Error(), `dedicated "chisel-release" build context`)
+			client.AssertExpectations(t)
+		})
+	}
+}
+
 func TestValidateLibraryPatchLevel(t *testing.T) {
 	t.Run("Valid patch levels", func(t *testing.T) {
 		validLevels := []string{utils.PatchTypePatch, utils.PatchTypeMinor, utils.PatchTypeMajor}

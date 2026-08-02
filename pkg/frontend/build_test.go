@@ -15,9 +15,11 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	copabuildkit "github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -592,6 +594,118 @@ func TestRejectTargetedNativeChiselState(t *testing.T) {
 		state := llb.Scratch()
 
 		require.NoError(t, rejectTargetedNativeChiselState(context.Background(), client, &state, nil))
+	})
+}
+
+type frontendInstallManager struct {
+	state          *llb.State
+	err            error
+	calls          int
+	gotManifest    *unversioned.UpdateManifest
+	gotIgnoreError bool
+}
+
+func (m *frontendInstallManager) InstallUpdates(
+	_ context.Context,
+	manifest *unversioned.UpdateManifest,
+	ignoreErrors bool,
+) (*llb.State, []string, error) {
+	m.calls++
+	m.gotManifest = manifest
+	m.gotIgnoreError = ignoreErrors
+	return m.state, nil, m.err
+}
+
+func (m *frontendInstallManager) GetPackageType() string {
+	return "dpkg"
+}
+
+func requireFrontendStateEqual(t *testing.T, expected, actual *llb.State) {
+	t.Helper()
+
+	expectedDefinition, err := expected.Marshal(t.Context())
+	require.NoError(t, err)
+	actualDefinition, err := actual.Marshal(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, expectedDefinition.ToPB(), actualDefinition.ToPB())
+}
+
+func TestInstallFrontendUpdatesNativeNoUpdatesReturnsSuppliedState(t *testing.T) {
+	baseState := llb.Scratch().File(llb.Mkfile("/base", 0o644, []byte("base")))
+	suppliedState := llb.Scratch().File(llb.Mkfile("/supplied", 0o644, []byte("supplied")))
+
+	for _, ignoreErrors := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ignore-errors=%t", ignoreErrors), func(t *testing.T) {
+			manager := &frontendInstallManager{
+				err: fmt.Errorf("native Chisel image is current: %w", types.ErrNoUpdatesFound),
+			}
+			config := &copabuildkit.Config{
+				ImageState:        baseState,
+				PatchedConfigData: []byte(`{"config":{}}`),
+				PatchedImageState: suppliedState,
+			}
+
+			state, installed, err := installFrontendUpdates(t.Context(), config, manager, nil, ignoreErrors)
+
+			require.NoError(t, err)
+			assert.False(t, installed)
+			assert.Equal(t, 1, manager.calls)
+			assert.Nil(t, manager.gotManifest)
+			assert.Equal(t, ignoreErrors, manager.gotIgnoreError)
+			requireFrontendStateEqual(t, &suppliedState, &state)
+		})
+	}
+}
+
+func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing.T) {
+	baseState := llb.Scratch().File(llb.Mkfile("/base", 0o644, []byte("base")))
+	suppliedState := llb.Scratch().File(llb.Mkfile("/supplied", 0o644, []byte("supplied")))
+	config := &copabuildkit.Config{
+		ImageState:        baseState,
+		PatchedConfigData: []byte(`{"config":{}}`),
+		PatchedImageState: suppliedState,
+	}
+
+	t.Run("empty report returns supplied image without installing", func(t *testing.T) {
+		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
+		emptyReport := &unversioned.UpdateManifest{}
+
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, emptyReport, true)
+
+		require.NoError(t, err)
+		assert.False(t, installed)
+		assert.Zero(t, manager.calls)
+		requireFrontendStateEqual(t, &suppliedState, &state)
+	})
+
+	report := &unversioned.UpdateManifest{
+		OSUpdates: unversioned.UpdatePackages{{Name: "libc6", FixedVersion: "1.2.3"}},
+	}
+	installErr := fmt.Errorf("repository unavailable")
+
+	t.Run("unrelated install error remains fatal", func(t *testing.T) {
+		manager := &frontendInstallManager{err: installErr}
+
+		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, false)
+
+		require.ErrorContains(t, err, "failed to install package updates: repository unavailable")
+		assert.False(t, installed)
+		assert.Equal(t, 1, manager.calls)
+		assert.Same(t, report, manager.gotManifest)
+		assert.False(t, manager.gotIgnoreError)
+	})
+
+	t.Run("ignore-errors returns supplied image for unrelated failures", func(t *testing.T) {
+		manager := &frontendInstallManager{err: installErr}
+
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, true)
+
+		require.NoError(t, err)
+		assert.False(t, installed)
+		assert.Equal(t, 1, manager.calls)
+		assert.Same(t, report, manager.gotManifest)
+		assert.True(t, manager.gotIgnoreError)
+		requireFrontendStateEqual(t, &suppliedState, &state)
 	})
 }
 

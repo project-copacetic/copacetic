@@ -138,11 +138,18 @@ Use `--chisel-release` to override inference for a single-image CLI operation:
 | Local release directory | `--chisel-release ./releases/ubuntu-24.04` | The directory must contain a valid Chisel release definition. Relative paths are resolved from the Copa process. |
 | Pinned HTTPS Git URL | `--chisel-release https://example.com/releases.git#abc123` | A commit or tag fragment is mandatory. An unpinned URL is rejected. |
 
-Pinned Git release sources must use public HTTPS and must not contain embedded credentials. Copa does not
-persist mutable release definitions in the target image. The Chisel tooling
-image is an internal implementation detail and has no user-facing override.
+CLI and bulk pinned Git release sources must use HTTPS and must not contain
+embedded credentials. Copa does not persist mutable release definitions in the
+target image. The Chisel tooling image is an internal implementation detail and
+has no user-facing override.
 
 ### BuildKit frontend
+
+The BuildKit frontend accepts a standard release name or a path supplied through
+the dedicated `chisel-release` build context. It rejects Git URL values so a
+frontend caller cannot make the BuildKit worker fetch an arbitrary network
+location. Use the Copa CLI or bulk configuration when a pinned HTTPS Git release
+source is required.
 
 Pass the matching frontend option through `buildctl`:
 

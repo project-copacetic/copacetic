@@ -83,6 +83,7 @@ var (
 	lookPath                 = exec.LookPath
 	localImagePlatforms      = utils.LocalImagePlatforms
 	getRemoteImageDescriptor = remote.Get
+	tryGetManifestFromLocal  = TryGetManifestFromLocal
 )
 
 // GetVerifiedRemoteIndex fetches an image index through an immutable digest
@@ -1093,11 +1094,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 		if result, exists := resultMap[platformKey]; exists && result.PatchedState != nil {
 			platformStates = append(platformStates, *result.PatchedState)
 			platformSpecs = append(platformSpecs, platform.Platform)
-			metadata := platformExportMetadata{Config: result.ConfigData}
-			if result.PatchedDesc != nil {
-				metadata.Annotations = result.PatchedDesc.Annotations
-			}
-			platformMetadata = append(platformMetadata, metadata)
+			platformMetadata = append(platformMetadata, ociPlatformExportMetadata(result))
 		}
 	}
 
@@ -1192,6 +1189,68 @@ func solveMultiPlatformOCI(
 
 	// Multi-platform case - solve each platform and combine
 	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
+}
+
+func ociPlatformExportMetadata(result *types.PatchResult) platformExportMetadata {
+	metadata := platformExportMetadata{Config: result.ConfigData}
+	if result.PatchedDesc == nil || len(result.PatchedDesc.Annotations) == 0 {
+		return metadata
+	}
+
+	metadata.Annotations = make(map[string]string, len(result.PatchedDesc.Annotations))
+	for key, value := range result.PatchedDesc.Annotations {
+		metadata.Annotations[key] = value
+	}
+
+	const versionAnnotation = "org.opencontainers.image.version"
+	originalVersion, ok := metadata.Annotations[versionAnnotation]
+	if !ok || result.PatchedRef == nil {
+		return metadata
+	}
+	patchedRef, ok := result.PatchedRef.(reference.Tagged)
+	if !ok || patchedRef.Tag() == "" {
+		return metadata
+	}
+
+	patchedTag := patchedRef.Tag()
+	metadata.Annotations[versionAnnotation] = rewriteOCIExportVersionAnnotation(originalVersion, patchedTag)
+	return metadata
+}
+
+func rewriteOCIExportVersionAnnotation(originalVersion, patchedTag string) string {
+	if originalVersion == "" || patchedTag == "" {
+		return originalVersion
+	}
+	if ociTagContainsVersionComponent(patchedTag, originalVersion) {
+		return patchedTag
+	}
+	return originalVersion + "-" + patchedTag
+}
+
+func ociTagContainsVersionComponent(tag, version string) bool {
+	for searchFrom := 0; searchFrom <= len(tag)-len(version); {
+		relative := strings.Index(tag[searchFrom:], version)
+		if relative < 0 {
+			return false
+		}
+		start := searchFrom + relative
+		end := start + len(version)
+		beforeBoundary := start == 0 || isOCIVersionTagSeparator(tag[start-1])
+		if !beforeBoundary && (tag[start-1] == 'v' || tag[start-1] == 'V') {
+			versionPrefix := start - 1
+			beforeBoundary = versionPrefix == 0 || isOCIVersionTagSeparator(tag[versionPrefix-1])
+		}
+		afterBoundary := end == len(tag) || isOCIVersionTagSeparator(tag[end])
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		searchFrom = start + 1
+	}
+	return false
+}
+
+func isOCIVersionTagSeparator(character byte) bool {
+	return character == '-' || character == '_' || character == '.' || character == '+'
 }
 
 func ociExporterAttrs(exportOpts OCILayoutExportOptions) map[string]string {
@@ -1738,6 +1797,56 @@ func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) erro
 	})
 }
 
+func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor, bool, error) {
+	desc, err := tryGetManifestFromLocal(ref)
+	if err != nil {
+		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		desc, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to get remote descriptor: %w", err)
+		}
+		if desc == nil {
+			return nil, false, fmt.Errorf("remote registry returned no descriptor for %q", ref.String())
+		}
+		log.Debugf("Successfully fetched descriptor from remote registry for preserved platforms")
+		return desc, false, nil
+	}
+	if desc == nil {
+		return nil, false, fmt.Errorf("local daemon returned no descriptor for %q", ref.String())
+	}
+
+	// A local daemon may cache an immutable index digest as only the selected
+	// child image. Resolve the immutable reference remotely to distinguish a
+	// genuine single-image digest from a masked index. Fail closed when the
+	// remote descriptor cannot be verified so preserved platforms are never
+	// silently dropped. Mutable tags continue to use the local descriptor.
+	if digestRef, immutable := ref.(name.Digest); immutable && !desc.MediaType.IsIndex() {
+		remoteDesc, remoteErr := getRemoteImageDescriptor(digestRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		if remoteErr != nil {
+			return nil, false, fmt.Errorf("verify immutable descriptor %q for preserved platforms: %w", ref.String(), remoteErr)
+		}
+		if remoteDesc == nil {
+			return nil, false, fmt.Errorf("verify immutable descriptor %q for preserved platforms: registry returned no descriptor", ref.String())
+		}
+		if remoteDesc.Digest.String() != digestRef.DigestStr() {
+			return nil, false, fmt.Errorf(
+				"remote descriptor digest %s does not match immutable reference %s",
+				remoteDesc.Digest.String(), digestRef.DigestStr(),
+			)
+		}
+		if remoteDesc.MediaType.IsIndex() {
+			log.Debugf("Locally cached child masks the matching remote index for %s; using remote index for preserved platforms", ref.String())
+			return remoteDesc, false, nil
+		}
+
+		log.Debugf("Verified %s as a genuine single-image digest; using the local descriptor", ref.String())
+		return desc, true, nil
+	}
+
+	log.Debugf("Successfully fetched descriptor from local daemon for preserved platforms")
+	return desc, true, nil
+}
+
 // exportPreservedPlatformsToOutput exports preserved platforms from original image to output directory.
 func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Named, preservedPlatforms []types.PatchPlatform, blobsSet map[string]bool) ([]map[string]interface{}, error) {
 	// Convert reference.Named to name.Reference for go-containerregistry
@@ -1746,18 +1855,9 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 		return nil, fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	// Try local daemon first, then fall back to remote
-	desc, err := TryGetManifestFromLocal(ref)
-	isLocal := (err == nil)
+	desc, isLocal, err := resolvePreservedPlatformsDescriptor(ref)
 	if err != nil {
-		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
-		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-		if err != nil {
-			return nil, fmt.Errorf("failed to get remote descriptor: %w", err)
-		}
-		log.Debugf("Successfully fetched descriptor from remote registry for preserved platforms")
-	} else {
-		log.Debugf("Successfully fetched descriptor from local daemon for preserved platforms")
+		return nil, err
 	}
 
 	var manifests []map[string]interface{}

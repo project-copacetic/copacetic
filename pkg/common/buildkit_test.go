@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/containerd/platforms"
@@ -210,6 +211,137 @@ func TestAddImageConfigLabels(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(updated, &raw))
 	assert.Equal(t, map[string]any{"preserved": true}, raw["x-extra"])
+}
+
+func TestAddImageConfigLabelsNormalizesLabelFieldCasing(t *testing.T) {
+	const (
+		updatedRelease = "ubuntu-24.04"
+		updatedVersion = "v1.4.2"
+	)
+
+	tests := []struct {
+		name       string
+		input      string
+		wantKey    string
+		wantLabels map[string]string
+	}{
+		{
+			name:    "uppercase only",
+			input:   `{"config":{"Labels":{"existing":"uppercase","sh.copa.chisel.release":"stale"}}}`,
+			wantKey: "Labels",
+			wantLabels: map[string]string{
+				"existing":                     "uppercase",
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "lowercase only",
+			input:   `{"config":{"labels":{"existing":"lowercase","sh.copa.chisel.release":"stale"}}}`,
+			wantKey: "labels",
+			wantLabels: map[string]string{
+				"existing":                     "lowercase",
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "uppercase before lowercase",
+			input:   `{"config":{"Labels":{"existing":"uppercase"},"labels":{"existing":"lowercase","stale-only":"discard","sh.copa.chisel.release":"attacker"}}}`,
+			wantKey: "Labels",
+			wantLabels: map[string]string{
+				"existing":                     "uppercase",
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "lowercase before uppercase",
+			input:   `{"config":{"labels":{"existing":"lowercase","stale-only":"discard","sh.copa.chisel.release":"attacker"},"Labels":{"existing":"uppercase"}}}`,
+			wantKey: "Labels",
+			wantLabels: map[string]string{
+				"existing":                     "uppercase",
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "canonical field discards other case variant",
+			input:   `{"config":{"Labels":{"existing":"canonical"},"LABELS":{"stale-only":"discard","sh.copa.chisel.release":"attacker"}}}`,
+			wantKey: "Labels",
+			wantLabels: map[string]string{
+				"existing":                     "canonical",
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "single mixed-case field is preserved",
+			input:   `{"config":{"lAbElS":{"existing":"mixed"}}}`,
+			wantKey: "lAbElS",
+			wantLabels: map[string]string{
+				"existing":                     "mixed",
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "uppercase null with lowercase duplicate",
+			input:   `{"config":{"Labels":null,"labels":{"stale-only":"discard","sh.copa.chisel.release":"attacker"}}}`,
+			wantKey: "Labels",
+			wantLabels: map[string]string{
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+		{
+			name:    "lowercase null only",
+			input:   `{"config":{"labels":null}}`,
+			wantKey: "labels",
+			wantLabels: map[string]string{
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			updated, err := AddImageConfigLabels([]byte(test.input), map[string]string{
+				pkgmgr.ChiselReleaseAnnotation: updatedRelease,
+				pkgmgr.ChiselVersionAnnotation: updatedVersion,
+			})
+			require.NoError(t, err)
+
+			var rawImage map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(updated, &rawImage))
+			var rawConfig map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(rawImage["config"], &rawConfig))
+
+			require.Contains(t, rawConfig, test.wantKey)
+			for key := range rawConfig {
+				if strings.EqualFold(key, "labels") {
+					assert.Equal(t, test.wantKey, key)
+				}
+			}
+
+			var gotLabels map[string]string
+			require.NoError(t, json.Unmarshal(rawConfig[test.wantKey], &gotLabels))
+			assert.Equal(t, test.wantLabels, gotLabels)
+
+			var image ocispecs.Image
+			require.NoError(t, json.Unmarshal(updated, &image))
+			assert.Equal(t, test.wantLabels, image.Config.Labels)
+		})
+	}
+}
+
+func TestAddImageConfigLabelsRejectsAmbiguousCaseVariants(t *testing.T) {
+	_, err := AddImageConfigLabels(
+		[]byte(`{"config":{"LABELS":{"first":"value"},"lAbElS":{"second":"value"}}}`),
+		map[string]string{pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04"},
+	)
+	require.ErrorContains(t, err, "multiple case-insensitive labels fields")
 }
 
 type statePathTestClient struct {
