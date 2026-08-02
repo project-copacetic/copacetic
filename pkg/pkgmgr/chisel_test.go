@@ -1,17 +1,69 @@
 package pkgmgr
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	fstypes "github.com/tonistiigi/fsutil/types"
+
+	"github.com/project-copacetic/copacetic/mocks"
 	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChiselStateExtractionLimits(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		limit   int64
+		extract func(context.Context, gwclient.Client, *llb.State) ([]byte, error)
+	}{
+		{
+			name:    "native manifest",
+			path:    chiselManifestPath,
+			limit:   maxChiselManifestInputBytes,
+			extract: extractNativeChiselManifest,
+		},
+		{
+			name:    "os release",
+			path:    "/etc/os-release",
+			limit:   maxChiselOSReleaseBytes,
+			extract: extractChiselOSRelease,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ref := &mocks.MockReference{}
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: test.path}).
+				Return(&fstypes.Stat{Size: test.limit + 1}, nil).
+				Once()
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client := &mocks.MockGWClient{}
+			client.On("Solve", mock.Anything, mock.Anything).
+				Return(result, nil).
+				Once()
+			state := llb.Scratch()
+
+			_, err := test.extract(t.Context(), client, &state)
+			require.ErrorContains(t, err, fmt.Sprintf("maximum allowed size of %d bytes", test.limit))
+			ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
+}
 
 func TestValidateChiselUpgrade(t *testing.T) {
 	base := &copachisel.Manifest{

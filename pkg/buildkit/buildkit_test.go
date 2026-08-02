@@ -18,10 +18,12 @@ import (
 	remotev1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/moby/buildkit/client/llb"
 	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -131,6 +133,109 @@ func TestDiscoverPlatformsDigestKeepsLocalPlatformWhenRemoteDigestDiffers(t *tes
 	require.NoError(t, err)
 	require.Len(t, platforms, 1)
 	assert.Equal(t, "arm64", platforms[0].Architecture)
+}
+
+func TestExtractFileFromStateWithLimit(t *testing.T) {
+	const (
+		path  = "/untrusted/file"
+		limit = int64(4)
+	)
+
+	statFailure := errors.New("stat failed")
+	readFailure := errors.New("read failed")
+	tests := []struct {
+		name          string
+		stat          *fstypes.Stat
+		statErr       error
+		readData      []byte
+		readErr       error
+		want          []byte
+		wantErr       error
+		wantErrText   string
+		wantRead      bool
+		wantReadRange *gwclient.FileRange
+	}{
+		{
+			name:          "exact boundary",
+			stat:          &fstypes.Stat{Size: limit},
+			readData:      []byte("data"),
+			want:          []byte("data"),
+			wantRead:      true,
+			wantReadRange: &gwclient.FileRange{Offset: 0, Length: int(limit)},
+		},
+		{
+			name:        "oversized",
+			stat:        &fstypes.Stat{Size: limit + 1},
+			wantErrText: "exceeding the maximum allowed size of 4 bytes",
+		},
+		{
+			name:        "missing",
+			stat:        &fstypes.Stat{},
+			statErr:     fs.ErrNotExist,
+			wantErr:     fs.ErrNotExist,
+			wantErrText: "unable to stat",
+		},
+		{
+			name:        "stat failure",
+			stat:        &fstypes.Stat{},
+			statErr:     statFailure,
+			wantErr:     statFailure,
+			wantErrText: "unable to stat",
+		},
+		{
+			name:          "read failure",
+			stat:          &fstypes.Stat{Size: limit},
+			readData:      []byte{},
+			readErr:       readFailure,
+			wantErr:       readFailure,
+			wantErrText:   "unable to read",
+			wantRead:      true,
+			wantReadRange: &gwclient.FileRange{Offset: 0, Length: int(limit)},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ref := &mocks.MockReference{}
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).
+				Return(test.stat, test.statErr).
+				Once()
+			if test.wantRead {
+				ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+					Filename: path,
+					Range:    test.wantReadRange,
+				}).Return(test.readData, test.readErr).Once()
+			}
+
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client := &mocks.MockGWClient{}
+			client.On("Solve", mock.Anything, mock.Anything).
+				Return(result, nil).
+				Once()
+			state := llb.Scratch()
+
+			got, err := ExtractFileFromStateWithLimit(t.Context(), client, &state, path, limit)
+			if test.wantErr == nil && test.wantErrText == "" {
+				require.NoError(t, err)
+				assert.Equal(t, test.want, got)
+			} else {
+				require.Error(t, err)
+				if test.wantErr != nil {
+					require.ErrorIs(t, err, test.wantErr)
+				}
+				if test.wantErrText != "" {
+					require.ErrorContains(t, err, test.wantErrText)
+				}
+			}
+
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+			if !test.wantRead {
+				ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+			}
+		})
+	}
 }
 
 func TestAddOCIExportMetadata(t *testing.T) {

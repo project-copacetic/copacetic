@@ -3,17 +3,21 @@ package frontend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/client/llb/sourceresolver"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -372,6 +376,15 @@ func (c *frontendMetadataTestClient) Solve(context.Context, gwclient.SolveReques
 	return c.result, nil
 }
 
+func (c *frontendMetadataTestClient) ResolveImageConfig(
+	_ context.Context,
+	ref string,
+	_ sourceresolver.Opt,
+) (string, digest.Digest, []byte, error) {
+	config := []byte(`{"architecture":"amd64","os":"linux","config":{"labels":{}}}`)
+	return ref, digest.FromString(ref), config, nil
+}
+
 func TestResultMetadataClientDecoratesNextSolveAndRestoresClient(t *testing.T) {
 	baseResult := gwclient.NewResult()
 	baseClient := &frontendMetadataTestClient{result: baseResult}
@@ -400,14 +413,66 @@ func TestNativeChiselTargetedPatchErrorText(t *testing.T) {
 
 type frontendStatePathReference struct {
 	gwclient.Reference
-	statErr error
+	statErr       error
+	readData      []byte
+	readErr       error
+	statCalls     int
+	readFileCalls int
 }
 
 func (r *frontendStatePathReference) StatFile(context.Context, gwclient.StatRequest) (*fstypes.Stat, error) {
+	r.statCalls++
 	if r.statErr != nil {
 		return nil, r.statErr
 	}
 	return &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil
+}
+
+func (r *frontendStatePathReference) ReadFile(context.Context, gwclient.ReadRequest) ([]byte, error) {
+	r.readFileCalls++
+	return r.readData, r.readErr
+}
+
+func TestBuildPatchedImageRejectsNativeChiselReportBeforeSetup(t *testing.T) {
+	for _, ignoreErrors := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ignore-errors=%t", ignoreErrors), func(t *testing.T) {
+			reference := &frontendStatePathReference{}
+			result := gwclient.NewResult()
+			result.SetRef(reference)
+			frontend := &Frontend{client: &frontendMetadataTestClient{result: result}}
+
+			_, err := frontend.buildPatchedImage(t.Context(), &types.Options{
+				Image:       "example.com/community/native-chisel:latest",
+				Report:      filepath.Join(t.TempDir(), "not-parsed.json"),
+				IgnoreError: ignoreErrors,
+			}, nil)
+
+			require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
+			assert.Equal(t, 1, reference.statCalls)
+			assert.Zero(t, reference.readFileCalls, "/etc/os-release must not be read before rejecting targeted native patching")
+		})
+	}
+}
+
+func TestBuildPatchedImageReportPreservesNonNativeSetup(t *testing.T) {
+	reference := &frontendStatePathReference{
+		statErr:  status.Error(codes.NotFound, "missing manifest"),
+		readData: []byte("ID=alpine\nVERSION_ID=3.23\n"),
+	}
+	result := gwclient.NewResult()
+	result.SetRef(reference)
+	frontend := &Frontend{client: &frontendMetadataTestClient{result: result}}
+	reportPath := filepath.Join(t.TempDir(), "missing-report.json")
+
+	_, err := frontend.buildPatchedImage(t.Context(), &types.Options{
+		Image:   "example.com/non-native:latest",
+		Report:  reportPath,
+		Scanner: "trivy",
+	}, nil)
+
+	require.ErrorContains(t, err, "failed to parse vulnerability report")
+	assert.GreaterOrEqual(t, reference.statCalls, 1)
+	assert.GreaterOrEqual(t, reference.readFileCalls, 1, "non-native images must continue through normal OS detection")
 }
 
 func TestExplicitNativeChiselOSInfo(t *testing.T) {

@@ -221,6 +221,23 @@ func TestMarshalDPKGPackageVersions(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid installed version")
 }
 
+func TestMarshalDPKGVersionFloorsProtectsDependencyClosure(t *testing.T) {
+	const (
+		appFixedVersion          = "2.0"
+		dependencyCurrentVersion = "3.0"
+	)
+
+	data, err := marshalDPKGVersionFloors(
+		unversioned.UpdatePackages{{Name: "app", FixedVersion: appFixedVersion}},
+		map[string]string{
+			"app":                 "1.0",
+			"existing-dependency": dependencyCurrentVersion,
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "app|1.0|"+appFixedVersion+"\nexisting-dependency|"+dependencyCurrentVersion+"|\n", string(data))
+}
+
 func TestGetAPTImageName(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -380,7 +397,7 @@ func TestParseDPKGStatusAcceptsCRLFAndNoFinalNewline(t *testing.T) {
 	assert.Equal(t, status, parsed.contents)
 }
 
-func runEmbeddedShellScript(t *testing.T, script []byte, env map[string]string) []byte {
+func executeEmbeddedShellScript(t *testing.T, script []byte, env map[string]string) ([]byte, error) {
 	t.Helper()
 
 	sh, err := exec.LookPath("sh")
@@ -388,15 +405,21 @@ func runEmbeddedShellScript(t *testing.T, script []byte, env map[string]string) 
 		t.Skip("sh is required for script tests")
 	}
 	scriptPath := filepath.Join(t.TempDir(), "script.sh")
-	assert.NoError(t, os.WriteFile(scriptPath, script, 0o600))
-	assert.NoError(t, os.Chmod(scriptPath, 0o700))
+	require.NoError(t, os.WriteFile(scriptPath, script, 0o600))
+	require.NoError(t, os.Chmod(scriptPath, 0o700))
 
 	cmd := exec.Command(sh, scriptPath)
 	cmd.Env = os.Environ()
 	for key, value := range env {
 		cmd.Env = append(cmd.Env, key+"="+value)
 	}
-	output, err := cmd.CombinedOutput()
+	return cmd.CombinedOutput()
+}
+
+func runEmbeddedShellScript(t *testing.T, script []byte, env map[string]string) []byte {
+	t.Helper()
+
+	output, err := executeEmbeddedShellScript(t, script, env)
 	if !assert.NoError(t, err, "script output: %s", output) {
 		t.FailNow()
 	}
@@ -474,7 +497,7 @@ esac
 	}, "\n")+"\n", string(comparisons))
 }
 
-func TestAptGetDownloadScriptSkipsUnsafeTargetedVersions(t *testing.T) {
+func TestAptGetDownloadScriptResolvesClosureAndSkipsUnsafeVersions(t *testing.T) {
 	binDir := t.TempDir()
 	workDir := t.TempDir()
 	downloadDir := filepath.Join(workDir, "downloads")
@@ -482,30 +505,76 @@ func TestAptGetDownloadScriptSkipsUnsafeTargetedVersions(t *testing.T) {
 	packagesPath := filepath.Join(workDir, "packages.txt")
 	floorsPath := filepath.Join(workDir, "version-floors")
 	finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
+	aptLog := filepath.Join(workDir, "apt.log")
 	installLog := filepath.Join(workDir, "install.log")
 
-	assert.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
-	assert.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), fullDPKGStatus, 0o600))
-	assert.NoError(t, os.WriteFile(packagesPath, []byte("safe\ndowngrade\nbelow-fixed\n"), 0o600))
-	assert.NoError(t, os.WriteFile(floorsPath, []byte("safe|1.0|2.0\ndowngrade|3.0|2.0\nbelow-fixed|1.0|3.0\n"), 0o600))
-	assert.NoError(t, os.WriteFile(finalizePath, finalizeDPKGStatusScript, 0o600))
-	assert.NoError(t, os.Chmod(finalizePath, 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "bin"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "usr", "bin"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "app"), 0o755))
+	statusWithDependencies := append(bytes.Clone(fullDPKGStatus), []byte(strings.Join([]string{
+		"",
+		"Package: tightened-dependency",
+		"Status: install ok installed",
+		"Version: 1.0",
+		"Architecture: amd64",
+	}, "\n"))...)
+	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), statusWithDependencies, 0o600))
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "bin"), "sh", "tooling")
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "usr", "bin"), "apt-get", "tooling")
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "usr", "bin"), "dpkg", "tooling")
+	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "app", "sentinel"), []byte("preserve"), 0o600))
+	require.NoError(t, os.WriteFile(packagesPath, []byte("safe\ndowngrade\nbelow-fixed\n"), 0o600))
+	require.NoError(t, os.WriteFile(floorsPath, []byte(strings.Join([]string{
+		"below-fixed|1.0|3.0",
+		"downgrade|3.0|2.0",
+		"safe|1.0|2.0",
+		"tightened-dependency|1.0|",
+		"",
+	}, "\n")), 0o600))
+	require.NoError(t, os.WriteFile(finalizePath, finalizeDPKGStatusScript, 0o600))
+	require.NoError(t, os.Chmod(finalizePath, 0o700))
 
 	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
-mode=''
+printf '%s\n' "$*" >> "$APT_LOG"
+command=''
 after_separator=false
 for arg in "$@"; do
     case "$arg" in
-        update) exit 0 ;;
-        download|install) mode=download ;;
+        update|download|install) command=$arg ;;
         --) after_separator=true ;;
         *)
-            if [ "$mode" = download ] && [ "$after_separator" = true ]; then
-                : > "./$arg.deb"
+            if [ "$command" = install ] && [ "$after_separator" = true ]; then
+                : > "$DOWNLOAD_DIR/$arg.deb"
             fi
             ;;
     esac
 done
+case "$command" in
+    update) exit 0 ;;
+    download)
+        echo 'external full-status updates must use apt-get install --download-only' >&2
+        exit 90
+        ;;
+    install)
+        case " $* " in
+            *" -o Dir::State::status=$DPKG_ROOT/var/lib/dpkg/status "*) ;;
+            *) echo 'missing reconstructed status option' >&2; exit 91 ;;
+        esac
+        case " $* " in
+            *" -o Dir::Cache::archives=$DOWNLOAD_DIR "*) ;;
+            *) echo 'missing archive directory option' >&2; exit 92 ;;
+        esac
+        case " $* " in *" --download-only "*) ;; *) echo 'missing --download-only' >&2; exit 93 ;; esac
+        case " $* " in *" --fix-broken "*) ;; *) echo 'missing --fix-broken' >&2; exit 94 ;; esac
+        case " $* " in *" --no-install-recommends "*) ;; *) echo 'missing --no-install-recommends' >&2; exit 95 ;; esac
+        case " $* " in *" install -- safe downgrade below-fixed "*) ;; *) echo "unexpected selected packages: $*" >&2; exit 96 ;; esac
+        grep -q '^Status: hold ok installed$' "$DPKG_ROOT/var/lib/dpkg/status"
+        : > "$DOWNLOAD_DIR/new-dependency.deb"
+        : > "$DOWNLOAD_DIR/tightened-dependency.deb"
+        ;;
+    *) echo "unexpected apt-get command: $*" >&2; exit 94 ;;
+esac
 `)
 	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
 case "$1" in
@@ -527,6 +596,8 @@ case "$1" in
                     safe) printf '2.1\n' ;;
                     downgrade) printf '2.5\n' ;;
                     below-fixed) printf '2.0\n' ;;
+                    new-dependency) printf '1.0\n' ;;
+                    tightened-dependency) printf '2.0\n' ;;
                     *) exit 2 ;;
                 esac
                 ;;
@@ -558,20 +629,34 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
 		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
 		"STATUSD_FILE_MAP":            "{}",
+		"APT_LOG":                     aptLog,
 		"INSTALL_LOG":                 installLog,
 	})
 
+	aptCalls, err := os.ReadFile(aptLog)
+	require.NoError(t, err)
+	assert.Contains(t, string(aptCalls), "install -- safe downgrade below-fixed")
+	assert.NotContains(t, string(aptCalls), " download ")
+
 	installArgs, err := os.ReadFile(installLog)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Contains(t, string(installArgs), "safe.deb")
+	assert.Contains(t, string(installArgs), "new-dependency.deb")
+	assert.Contains(t, string(installArgs), "tightened-dependency.deb")
 	assert.NotContains(t, string(installArgs), "downgrade.deb")
 	assert.NotContains(t, string(installArgs), "below-fixed.deb")
 	assert.FileExists(t, filepath.Join(downloadDir, "safe.deb"))
+	assert.FileExists(t, filepath.Join(downloadDir, "new-dependency.deb"))
+	assert.FileExists(t, filepath.Join(downloadDir, "tightened-dependency.deb"))
 	assert.NoFileExists(t, filepath.Join(downloadDir, "downgrade.deb"))
 	assert.NoFileExists(t, filepath.Join(downloadDir, "below-fixed.deb"))
 
 	manifest, err := os.ReadFile(filepath.Join(dpkgRoot, "manifest"))
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	manifestPackages, err := dpkgParseResultsManifest(manifest)
+	require.NoError(t, err)
+	assert.Equal(t, "1.0", manifestPackages["new-dependency"])
+	assert.Equal(t, "2.0", manifestPackages["tightened-dependency"])
 	errorPkgs, err := validateDebianPackageVersions(
 		unversioned.UpdatePackages{
 			{Name: "safe", FixedVersion: "2.0"},
@@ -583,11 +668,279 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 		manifest,
 		true,
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{"downgrade", "below-fixed"}, errorPkgs)
 
-	assert.FileExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
+	status, err := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
+	require.NoError(t, err)
+	assert.Equal(t, statusWithDependencies, status)
+	assert.Contains(t, string(status), "Status: hold ok installed")
 	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d"))
+	assert.NoFileExists(t, filepath.Join(dpkgRoot, "bin", "sh"))
+	assert.NoFileExists(t, filepath.Join(dpkgRoot, "usr", "bin", "apt-get"))
+	assert.NoFileExists(t, filepath.Join(dpkgRoot, "usr", "bin", "dpkg"))
+	assert.FileExists(t, filepath.Join(dpkgRoot, "app", "sentinel"))
+}
+
+func TestAptGetDownloadScriptRejectsUnsafeDependencyClosure(t *testing.T) {
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	downloadDir := filepath.Join(workDir, "downloads")
+	dpkgRoot := filepath.Join(workDir, "rootfs")
+	packagesPath := filepath.Join(workDir, "packages.txt")
+	floorsPath := filepath.Join(workDir, "version-floors")
+	finalizePath := filepath.Join(workDir, "finalize.sh")
+	finalizeMarker := filepath.Join(workDir, "finalize-called")
+	dpkgMarker := filepath.Join(workDir, "dpkg-called")
+	status := []byte(strings.Join([]string{
+		"Package: app",
+		"Status: install ok installed",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"",
+		"Package: dependency",
+		"Status: install ok installed",
+		"Version: 3.0",
+		"Architecture: amd64",
+		"",
+	}, "\n"))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), status, 0o600))
+	require.NoError(t, os.WriteFile(packagesPath, []byte("app\n"), 0o600))
+	require.NoError(t, os.WriteFile(floorsPath, []byte("app|1.0|2.0\ndependency|3.0|\n"), 0o600))
+	writeTestExecutable(t, workDir, "finalize.sh", "#!/bin/sh\n: > \"$FINALIZE_MARKER\"\n")
+
+	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+command=''
+for arg in "$@"; do
+    case "$arg" in update|download|install) command=$arg ;; esac
+done
+case "$command" in
+    update) exit 0 ;;
+    install)
+        : > "$DOWNLOAD_DIR/app.deb"
+        : > "$DOWNLOAD_DIR/dependency.deb"
+        ;;
+    download) echo 'unexpected direct download' >&2; exit 90 ;;
+    *) exit 91 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+case "$1" in
+    -f)
+        package=${2##*/}
+        package=${package%.deb}
+        case "$3" in
+            Package) printf '%s\n' "$package" ;;
+            Version)
+                case "$package" in
+                    app|dependency) printf '2.0\n' ;;
+                    *) exit 2 ;;
+                esac
+                ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+if [ "$1" = '--compare-versions' ]; then
+    case "$2|$3|$4" in
+        '2.0|ge|1.0'|'2.0|ge|2.0') exit 0 ;;
+        '2.0|ge|3.0') exit 1 ;;
+        *) exit 2 ;;
+    esac
+fi
+: > "$DPKG_MARKER"
+`)
+
+	output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":               "true",
+		"UPDATE_ALL":                  "false",
+		"DPKG_ROOT":                   dpkgRoot,
+		"DOWNLOAD_DIR":                downloadDir,
+		"PACKAGES_FILE":               packagesPath,
+		"VERSION_FLOORS_FILE":         floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
+		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
+		"STATUSD_FILE_MAP":            "{}",
+		"FINALIZE_MARKER":             finalizeMarker,
+		"DPKG_MARKER":                 dpkgMarker,
+	})
+	require.Error(t, err)
+	assert.Contains(t, string(output), "downloaded package dependency version 2.0 is lower than installed version 3.0")
+	assert.Contains(t, string(output), "unsafe package dependency is part of the resolved dependency closure")
+	assert.NoFileExists(t, filepath.Join(downloadDir, "dependency.deb"))
+	assert.NoFileExists(t, finalizeMarker)
+	assert.NoFileExists(t, dpkgMarker)
+	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d"))
+	actualStatus, readErr := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
+	require.NoError(t, readErr)
+	assert.Equal(t, status, actualStatus)
+}
+
+func TestAptGetDownloadScriptFailsWhenDependencyClosureCannotBeResolved(t *testing.T) {
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	downloadDir := filepath.Join(workDir, "downloads")
+	dpkgRoot := filepath.Join(workDir, "rootfs")
+	packagesPath := filepath.Join(workDir, "packages.txt")
+	floorsPath := filepath.Join(workDir, "version-floors")
+	finalizePath := filepath.Join(workDir, "finalize.sh")
+	finalizeMarker := filepath.Join(workDir, "finalize-called")
+	dpkgMarker := filepath.Join(workDir, "dpkg-called")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), fullDPKGStatus, 0o600))
+	require.NoError(t, os.WriteFile(packagesPath, []byte("base-files\n"), 0o600))
+	require.NoError(t, os.WriteFile(floorsPath, []byte("base-files|13ubuntu10.2|13ubuntu10.3\n"), 0o600))
+	writeTestExecutable(t, workDir, "finalize.sh", "#!/bin/sh\n: > \"$FINALIZE_MARKER\"\n")
+
+	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+command=''
+for arg in "$@"; do
+    case "$arg" in update|download|install) command=$arg ;; esac
+done
+case "$command" in
+    update) exit 0 ;;
+    install)
+        echo 'unmet dependency: base-files depends on missing-runtime' >&2
+        exit 42
+        ;;
+    download) echo 'unexpected direct download' >&2; exit 90 ;;
+    *) exit 91 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg", "#!/bin/sh\n: > \"$DPKG_MARKER\"\n")
+	writeTestExecutable(t, binDir, "dpkg-deb", "#!/bin/sh\n: > \"$DPKG_MARKER\"\n")
+
+	output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":               "true",
+		"UPDATE_ALL":                  "false",
+		"DPKG_ROOT":                   dpkgRoot,
+		"DOWNLOAD_DIR":                downloadDir,
+		"PACKAGES_FILE":               packagesPath,
+		"VERSION_FLOORS_FILE":         floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
+		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
+		"STATUSD_FILE_MAP":            "{}",
+		"FINALIZE_MARKER":             finalizeMarker,
+		"DPKG_MARKER":                 dpkgMarker,
+	})
+	require.Error(t, err)
+	assert.Contains(t, string(output), "unmet dependency: base-files depends on missing-runtime")
+	assert.Contains(t, string(output), "failed to resolve and download the selected package dependency closure")
+	assert.NoFileExists(t, finalizeMarker)
+	assert.NoFileExists(t, dpkgMarker)
+	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d"))
+	status, readErr := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
+	require.NoError(t, readErr)
+	assert.Equal(t, fullDPKGStatus, status)
+}
+
+func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	downloadDir := filepath.Join(workDir, "downloads")
+	dpkgRoot := filepath.Join(workDir, "rootfs")
+	packagesPath := filepath.Join(workDir, "packages.txt")
+	floorsPath := filepath.Join(workDir, "version-floors")
+	finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
+	aptLog := filepath.Join(workDir, "apt.log")
+	installLog := filepath.Join(workDir, "install.log")
+	status := []byte("Package: safe\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "bin"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), status, 0o600))
+	writeTestExecutable(t, filepath.Join(dpkgRoot, "bin"), "sh", "application-owned")
+	require.NoError(t, os.WriteFile(packagesPath, []byte("safe\n"), 0o600))
+	require.NoError(t, os.WriteFile(floorsPath, []byte("safe|1.0|2.0\n"), 0o600))
+	require.NoError(t, os.WriteFile(finalizePath, finalizeDPKGStatusScript, 0o600))
+	require.NoError(t, os.Chmod(finalizePath, 0o700))
+
+	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+printf '%s\n' "$*" >> "$APT_LOG"
+command=''
+after_separator=false
+for arg in "$@"; do
+    case "$arg" in
+        update|download|install) command=$arg ;;
+        --) after_separator=true ;;
+        *)
+            if [ "$command" = download ] && [ "$after_separator" = true ]; then
+                : > "$DOWNLOAD_DIR/$arg.deb"
+            fi
+            ;;
+    esac
+done
+case "$command" in
+    update|download) exit 0 ;;
+    install) echo 'status.d flow must not resolve against the mounted target status' >&2; exit 90 ;;
+    *) exit 91 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+case "$1" in
+    -f)
+        case "$3" in
+            Package) printf 'safe\n' ;;
+            Version) printf '2.0\n' ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+if [ "$1" = '--compare-versions' ]; then
+    case "$2|$3|$4" in
+        '2.0|ge|1.0'|'2.0|ge|2.0') exit 0 ;;
+        *) exit 2 ;;
+    esac
+fi
+printf '%s\n' "$*" >> "$INSTALL_LOG"
+case " $* " in
+    *" --install "*)
+        cat >> "$DPKG_ROOT/var/lib/dpkg/status" <<'EOF'
+
+Package: safe
+Status: install ok installed
+Version: 2.0
+Architecture: amd64
+EOF
+        ;;
+esac
+`)
+
+	runEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":               "false",
+		"UPDATE_ALL":                  "false",
+		"DPKG_ROOT":                   dpkgRoot,
+		"DOWNLOAD_DIR":                downloadDir,
+		"PACKAGES_FILE":               packagesPath,
+		"VERSION_FLOORS_FILE":         floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
+		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalStatusDirectory.String(),
+		"STATUSD_FILE_MAP":            `{"safe":"encoded-safe"}`,
+		"APT_LOG":                     aptLog,
+		"INSTALL_LOG":                 installLog,
+	})
+
+	aptCalls, err := os.ReadFile(aptLog)
+	require.NoError(t, err)
+	assert.Contains(t, string(aptCalls), "download --no-install-recommends -- safe")
+	assert.NotContains(t, string(aptCalls), " install ")
+	assert.NoFileExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
+	updatedStatus, err := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d", "encoded-safe"))
+	require.NoError(t, err)
+	assert.Contains(t, string(updatedStatus), "Version: 2.0")
+	assert.FileExists(t, filepath.Join(dpkgRoot, "bin", "sh"), "status.d behavior must not apply full-status tooling cleanup")
 }
 
 func TestDPKGProbeScriptDoesNotExecuteTargetTools(t *testing.T) {

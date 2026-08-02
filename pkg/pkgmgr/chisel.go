@@ -41,6 +41,11 @@ const (
 	chiselNewExpectedPath  = "/copa-chisel-new.json"
 	maxLocalReleaseBytes   = 64 << 20
 	maxLocalReleaseFiles   = 10000
+	// Bound the compressed input before ParseManifest applies the same limit
+	// to the decompressed JSONWall data.
+	maxChiselManifestInputBytes = copachisel.MaxManifestSize
+	// Keep extraction aligned with the limit enforced by chisel.InferRelease.
+	maxChiselOSReleaseBytes = 1 << 20
 )
 
 const nativeTargetedPatchError = NativeChiselTargetedPatchError
@@ -60,6 +65,34 @@ type chiselExpectedPath struct {
 	Inode       uint64   `json:"inode,omitempty"`
 }
 
+func extractNativeChiselManifest(
+	ctx context.Context,
+	client gwclient.Client,
+	state *llb.State,
+) ([]byte, error) {
+	return buildkit.ExtractFileFromStateWithLimit(
+		ctx,
+		client,
+		state,
+		chiselManifestPath,
+		maxChiselManifestInputBytes,
+	)
+}
+
+func extractChiselOSRelease(
+	ctx context.Context,
+	client gwclient.Client,
+	state *llb.State,
+) ([]byte, error) {
+	return buildkit.ExtractFileFromStateWithLimit(
+		ctx,
+		client,
+		state,
+		"/etc/os-release",
+		maxChiselOSReleaseBytes,
+	)
+}
+
 func (dm *dpkgManager) installNativeChiselUpdates(ctx context.Context, updateManifest *unversioned.UpdateManifest) (*llb.State, []string, error) {
 	if updateManifest != nil {
 		return nil, nil, errors.New(nativeTargetedPatchError)
@@ -75,7 +108,7 @@ func (dm *dpkgManager) installNativeChiselUpdates(ctx context.Context, updateMan
 		return nil, nil, err
 	}
 
-	oldManifestBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &current, chiselManifestPath)
+	oldManifestBytes, err := extractNativeChiselManifest(ctx, dm.config.Client, &current)
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read native Chisel manifest %s: %w", chiselManifestPath, err)
 	}
@@ -88,7 +121,7 @@ func (dm *dpkgManager) installNativeChiselUpdates(ctx context.Context, updateMan
 	if dm.chiselRelease != "" {
 		release, err = copachisel.ParseRelease(dm.chiselRelease)
 	} else {
-		osReleaseBytes, extractErr := buildkit.ExtractFileFromState(ctx, dm.config.Client, &current, "/etc/os-release")
+		osReleaseBytes, extractErr := extractChiselOSRelease(ctx, dm.config.Client, &current)
 		if extractErr != nil {
 			return nil, nil, fmt.Errorf("unable to read /etc/os-release for Chisel release inference: %w", extractErr)
 		}
@@ -112,7 +145,7 @@ func (dm *dpkgManager) installNativeChiselUpdates(ctx context.Context, updateMan
 	if err != nil {
 		return nil, nil, err
 	}
-	newManifestBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &staged, chiselManifestPath)
+	newManifestBytes, err := extractNativeChiselManifest(ctx, dm.config.Client, &staged)
 	if err != nil {
 		return nil, nil, fmt.Errorf("chisel did not generate %s in the staged root: %w", chiselManifestPath, err)
 	}

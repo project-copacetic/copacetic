@@ -706,6 +706,10 @@ func marshalDPKGVersionFloors(updates unversioned.UpdatePackages, installedVersi
 		if err := ValidateOSPackageNames(updates); err != nil {
 			return nil, err
 		}
+		// Protect the complete installed package set, not only explicitly selected
+		// updates. The external full-status path asks APT to resolve a dependency
+		// closure, and an existing dependency must never be downloaded below the
+		// version already present in the target.
 		for packageName, installedVersion := range installedVersions {
 			floors[packageName] = versionFloor{installed: installedVersion}
 		}

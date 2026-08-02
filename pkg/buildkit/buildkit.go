@@ -707,9 +707,8 @@ func setupLabels(image string, configData []byte) (string, []byte, error) {
 	return baseImage, imageWithLabels, nil
 }
 
-// Extracts the bytes of the file denoted by `path` from the state `st`.
-func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
-	// since platform is obtained from host, override it in the case of Darwin
+func solveStateReference(ctx context.Context, c gwclient.Client, st *llb.State) (gwclient.Reference, error) {
+	// Since the platform is obtained from the host, override it for non-Linux hosts.
 	platform := platforms.Normalize(platforms.DefaultSpec())
 	if platform.OS != linux {
 		platform.OS = linux
@@ -728,14 +727,74 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 		return nil, err
 	}
 
-	ref, err := resp.SingleRef()
+	return resp.SingleRef()
+}
+
+// ExtractFileFromState extracts the bytes of the file denoted by path from st.
+func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
+	ref, err := solveStateReference(ctx, c, st)
 	if err != nil {
 		return nil, err
 	}
 
-	return ref.ReadFile(ctx, gwclient.ReadRequest{
+	return ref.ReadFile(ctx, gwclient.ReadRequest{Filename: path})
+}
+
+// ExtractFileFromStateWithLimit extracts path after verifying its size without
+// issuing an unbounded BuildKit read. The stat check happens before converting
+// the file size to int or asking BuildKit to allocate the response buffer.
+func ExtractFileFromStateWithLimit(
+	ctx context.Context,
+	c gwclient.Client,
+	st *llb.State,
+	path string,
+	maxSize int64,
+) ([]byte, error) {
+	ref, err := solveStateReference(ctx, c, st)
+	if err != nil {
+		return nil, err
+	}
+	return readFileWithLimit(ctx, ref, path, maxSize)
+}
+
+func readFileWithLimit(ctx context.Context, ref gwclient.Reference, path string, maxSize int64) ([]byte, error) {
+	if maxSize < 0 {
+		return nil, fmt.Errorf("maximum size for %q must not be negative", path)
+	}
+
+	stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: path})
+	if err != nil {
+		return nil, fmt.Errorf("unable to stat %q: %w", path, err)
+	}
+	if stat == nil {
+		return nil, fmt.Errorf("unable to stat %q: BuildKit returned no file metadata", path)
+	}
+	if stat.Size < 0 {
+		return nil, fmt.Errorf("unable to read %q: BuildKit reported a negative size of %d bytes", path, stat.Size)
+	}
+	if stat.Size > maxSize {
+		return nil, fmt.Errorf("file %q is %d bytes, exceeding the maximum allowed size of %d bytes", path, stat.Size, maxSize)
+	}
+
+	maxInt := int64(^uint(0) >> 1)
+	if stat.Size > maxInt {
+		return nil, fmt.Errorf("unable to read %q: file size %d exceeds the platform read limit", path, stat.Size)
+	}
+
+	data, err := ref.ReadFile(ctx, gwclient.ReadRequest{
 		Filename: path,
+		Range: &gwclient.FileRange{
+			Offset: 0,
+			Length: int(stat.Size),
+		},
 	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to read %q: %w", path, err)
+	}
+	if int64(len(data)) != stat.Size {
+		return nil, fmt.Errorf("unable to read %q: expected %d bytes from BuildKit, received %d", path, stat.Size, len(data))
+	}
+	return data, nil
 }
 
 // ReadFileErr distinguishes the cause of a file extraction failure so callers
@@ -773,25 +832,7 @@ func (e *ReadFileErr) Unwrap() error {
 // error with which phase failed. Prefer this when callers need to treat a
 // missing file differently from a real failure of the build graph.
 func TryExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, *ReadFileErr) {
-	platform := platforms.Normalize(platforms.DefaultSpec())
-	if platform.OS != linux {
-		platform.OS = linux
-	}
-
-	def, err := st.Marshal(ctx, llb.Platform(platform))
-	if err != nil {
-		return nil, &ReadFileErr{Err: err, SolveFailed: true}
-	}
-
-	resp, err := c.Solve(ctx, gwclient.SolveRequest{
-		Evaluate:   true,
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, &ReadFileErr{Err: err, SolveFailed: true}
-	}
-
-	ref, err := resp.SingleRef()
+	ref, err := solveStateReference(ctx, c, st)
 	if err != nil {
 		return nil, &ReadFileErr{Err: err, SolveFailed: true}
 	}
@@ -1766,98 +1807,110 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 			return nil, fmt.Errorf("failed to get index manifest: %w", err)
 		}
 
-		// Filter manifests for the preserved platforms we want and materialize their blobs
+		// Resolve and materialize any image-manifest descriptor from the source
+		// index. Attestation manifests use the same OCI image-manifest shape, so
+		// this also copies their config and in-toto layer blobs.
+		materializeDescriptor := func(mdesc *v1.Descriptor) (map[string]interface{}, error) {
+			var img v1.Image
+			if isLocal {
+				digestRef := fmt.Sprintf("%s@%s", originalRef.Name(), mdesc.Digest.String())
+				platformRef, err := name.ParseReference(digestRef)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse preserved descriptor reference: %w", err)
+				}
+				platformDesc, err := TryGetManifestFromLocal(platformRef)
+				if err == nil {
+					img, err = platformDesc.Image()
+					if err != nil {
+						return nil, fmt.Errorf("failed to get preserved image from local descriptor %s: %w", mdesc.Digest, err)
+					}
+				} else {
+					img, err = remote.Image(platformRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+					if err != nil {
+						return nil, fmt.Errorf("failed to get preserved descriptor %s: %w", mdesc.Digest, err)
+					}
+				}
+			} else {
+				var err error
+				img, err = idx.Image(mdesc.Digest)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get preserved descriptor %s: %w", mdesc.Digest, err)
+				}
+			}
+
+			rawManifest, err := img.RawManifest()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get raw preserved manifest %s: %w", mdesc.Digest, err)
+			}
+			if err := writeBlobIfAbsent(mdesc.Digest, rawManifest); err != nil {
+				return nil, err
+			}
+
+			cfgHash, err := img.ConfigName()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get preserved config digest for %s: %w", mdesc.Digest, err)
+			}
+			rawConfig, err := img.RawConfigFile()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get raw preserved config for %s: %w", mdesc.Digest, err)
+			}
+			if err := writeBlobIfAbsent(cfgHash, rawConfig); err != nil {
+				return nil, err
+			}
+
+			layers, err := img.Layers()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get preserved layers for %s: %w", mdesc.Digest, err)
+			}
+			for _, layer := range layers {
+				if err := writeLayerIfAbsent(layer); err != nil {
+					return nil, err
+				}
+			}
+
+			descriptorJSON, err := json.Marshal(mdesc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal preserved descriptor %s: %w", mdesc.Digest, err)
+			}
+			var entry map[string]interface{}
+			if err := json.Unmarshal(descriptorJSON, &entry); err != nil {
+				return nil, fmt.Errorf("failed to decode preserved descriptor %s: %w", mdesc.Digest, err)
+			}
+			return entry, nil
+		}
+
+		// Filter image manifests for the preserved platforms, then preserve any
+		// source attestations whose subject points to those unchanged children.
 		for _, platformSpec := range preservedPlatforms {
 			for i := range manifest.Manifests {
 				mdesc := &manifest.Manifests[i]
-				if mdesc.Platform != nil &&
-					mdesc.Platform.OS == platformSpec.OS &&
-					mdesc.Platform.Architecture == platformSpec.Architecture {
-					var img v1.Image
-
-					// For local images, we need to fetch by digest using the daemon
-					// For remote images, we can use idx.Image() which has proper remote context
-					if isLocal {
-						// Construct digest reference for this platform
-						digestRef := fmt.Sprintf("%s@%s", originalRef.Name(), mdesc.Digest.String())
-						platformRef, err := name.ParseReference(digestRef)
-						if err != nil {
-							return nil, fmt.Errorf("failed to parse platform digest reference: %w", err)
-						}
-
-						// Try to get from local daemon first
-						platformDesc, err := TryGetManifestFromLocal(platformRef)
-						if err != nil {
-							// Fall back to remote if local fails
-							img, err = remote.Image(platformRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-							if err != nil {
-								return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
-							}
-						} else {
-							img, err = platformDesc.Image()
-							if err != nil {
-								return nil, fmt.Errorf("failed to get image from local descriptor for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
-							}
-						}
-					} else {
-						// Remote image - can use idx.Image() directly
-						img, err = idx.Image(mdesc.Digest)
-						if err != nil {
-							return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
-						}
-					}
-
-					// Write manifest blob (raw bytes) so index reference is resolvable offline
-					rawManifest, err := img.RawManifest()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get raw manifest: %w", err)
-					}
-					if err := writeBlobIfAbsent(mdesc.Digest, rawManifest); err != nil {
-						return nil, err
-					}
-
-					// Write config blob
-					cfgHash, err := img.ConfigName()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get config digest: %w", err)
-					}
-					rawConfig, err := img.RawConfigFile()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get raw config: %w", err)
-					}
-					if err := writeBlobIfAbsent(cfgHash, rawConfig); err != nil {
-						return nil, err
-					}
-
-					// Write layer blobs
-					layers, err := img.Layers()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get layers: %w", err)
-					}
-					for _, layer := range layers {
-						if err := writeLayerIfAbsent(layer); err != nil {
-							return nil, err
-						}
-					}
-
-					// Create manifest entry for this preserved platform (index level descriptor)
-					manifestEntry := map[string]interface{}{
-						"mediaType": string(mdesc.MediaType),
-						"digest":    mdesc.Digest.String(),
-						"size":      mdesc.Size,
-						"platform": map[string]interface{}{
-							"os":           mdesc.Platform.OS,
-							"architecture": mdesc.Platform.Architecture,
-						},
-					}
-					if mdesc.Platform.Variant != "" {
-						if platform, ok := manifestEntry["platform"].(map[string]interface{}); ok {
-							platform["variant"] = mdesc.Platform.Variant
-						}
-					}
-					manifests = append(manifests, manifestEntry)
-					break
+				if mdesc.Platform == nil ||
+					mdesc.Platform.OS != platformSpec.OS ||
+					mdesc.Platform.Architecture != platformSpec.Architecture ||
+					(platformSpec.Variant != "" && mdesc.Platform.Variant != platformSpec.Variant) {
+					continue
 				}
+
+				entry, err := materializeDescriptor(mdesc)
+				if err != nil {
+					return nil, fmt.Errorf("failed to preserve platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
+				}
+				manifests = append(manifests, entry)
+
+				subject := mdesc.Digest.String()
+				for j := range manifest.Manifests {
+					attestation := &manifest.Manifests[j]
+					if attestation.Annotations["vnd.docker.reference.type"] != "attestation-manifest" ||
+						attestation.Annotations["vnd.docker.reference.digest"] != subject {
+						continue
+					}
+					attestationEntry, err := materializeDescriptor(attestation)
+					if err != nil {
+						return nil, fmt.Errorf("failed to preserve attestation for %s: %w", subject, err)
+					}
+					manifests = append(manifests, attestationEntry)
+				}
+				break
 			}
 		}
 	} else {

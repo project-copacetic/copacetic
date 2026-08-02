@@ -144,8 +144,8 @@ func explicitNativeChiselOSInfo(
 // BuildPatchedImage builds a patched image using the Copa patching logic.
 // This reuses the same components as the CLI to ensure consistency.
 func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, platform *ocispecs.Platform) (llb.State, error) {
-	var osInfo *common.OSInfo
-	if opts.ChiselRelease != "" {
+	var inspectionState *llb.State
+	if opts.Report != "" || opts.ChiselRelease != "" {
 		imageOptions := []llb.ImageOption{
 			llb.ResolveModePreferLocal,
 			llb.WithMetaResolver(f.client),
@@ -153,10 +153,24 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		if platform != nil {
 			imageOptions = append(imageOptions, llb.Platform(*platform))
 		}
-		imageState := llb.Image(opts.Image, imageOptions...)
+		state := llb.Image(opts.Image, imageOptions...)
+		inspectionState = &state
+	}
 
+	// Native Chisel manifests cannot be patched from a scanner report. Perform
+	// this check before OS/package-manager setup so community images without
+	// /etc/os-release return the targeted-patching error instead of an OS
+	// detection error. This preflight is intentionally outside ignore-errors.
+	if opts.Report != "" {
+		if err := rejectTargetedNativeChiselState(ctx, f.client, inspectionState, platform); err != nil {
+			return llb.State{}, err
+		}
+	}
+
+	var osInfo *common.OSInfo
+	if opts.ChiselRelease != "" {
 		var err error
-		osInfo, err = explicitNativeChiselOSInfo(ctx, f.client, &imageState, platform, opts.ChiselRelease)
+		osInfo, err = explicitNativeChiselOSInfo(ctx, f.client, inspectionState, platform, opts.ChiselRelease)
 		if err != nil {
 			return llb.State{}, err
 		}
@@ -194,9 +208,6 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 					bklog.G(ctx).WithField("component", "copa-frontend").
 						WithField("platform", platformFile).
 						Warn("No report found for platform, skipping patch")
-					if err := rejectTargetedNativeChiselState(ctx, f.client, &config.ImageState, platform); err != nil {
-						return llb.State{}, err
-					}
 					return config.ImageState, nil
 				}
 			}
@@ -215,9 +226,6 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 
 	// Check if there are packages to update
 	if um != nil && len(um.OSUpdates) == 0 && len(um.LangUpdates) == 0 {
-		if err := rejectTargetedNativeChiselState(ctx, f.client, &config.ImageState, platform); err != nil {
-			return llb.State{}, err
-		}
 		bklog.G(ctx).WithField("component", "copa-frontend").Info("No packages to update, returning original image")
 		return config.ImageState, nil
 	}

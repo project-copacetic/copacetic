@@ -91,6 +91,27 @@ func trySendError(ch chan error, err error) {
 	}
 }
 
+func preflightReportForNativeChisel(
+	ctx context.Context,
+	c gwclient.Client,
+	config *buildkit.Config,
+	platform *types.PatchPlatform,
+	updates *unversioned.UpdateManifest,
+) error {
+	if updates == nil {
+		return nil
+	}
+
+	manifestExists, err := common.StatePathExists(ctx, c, &config.ImageState, &platform.Platform, pkgmgr.NativeChiselManifestPath)
+	if err != nil {
+		return fmt.Errorf("inspect target image for native Chisel metadata: %w", err)
+	}
+	if manifestExists {
+		return errors.New(pkgmgr.NativeChiselTargetedPatchError)
+	}
+	return nil
+}
+
 // ExecutePatchCore executes the core patching logic that can be used by both
 // the patch command and a buildkit frontend.
 func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
@@ -107,21 +128,15 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 
+	if err := preflightReportForNativeChisel(ctx, c, config, opts.TargetPlatform, updates); err != nil {
+		trySendError(opts.ErrorChannel, err)
+		return nil, err
+	}
+
 	// Determine if we need OS-level patching or language-only patching.
 	// Language-only mode applies when the report has lang updates but no OS updates
 	// (common for scratch/distroless/busybox Go binary images).
 	langOnlyMode := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) > 0
-	if langOnlyMode {
-		manifestExists, preflightErr := common.StatePathExists(ctx, c, &config.ImageState, &opts.TargetPlatform.Platform, pkgmgr.NativeChiselManifestPath)
-		if preflightErr != nil {
-			// Preserve existing language-only behavior when optional native metadata
-			// inspection is unavailable; actual OS package flows still classify in
-			// the package manager.
-			log.Debugf("Unable to preflight language-only image for native Chisel metadata: %v", preflightErr)
-		} else if manifestExists {
-			return nil, errors.New(pkgmgr.NativeChiselTargetedPatchError)
-		}
-	}
 
 	var manager pkgmgr.PackageManager
 	var patchedImageState *llb.State

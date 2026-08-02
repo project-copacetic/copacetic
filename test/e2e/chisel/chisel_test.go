@@ -257,8 +257,14 @@ func TestNativeChiselPartialPlatformOCI(t *testing.T) {
 		require.Contains(t, outputDescriptors, key, "output index is missing expected platform")
 	}
 	require.NotEqual(t, sourceDescriptors["linux/amd64"].Digest, outputDescriptors["linux/amd64"].Digest)
+	sourceAttestations := attestationsBySubject(sourceIndex)
+	outputAttestations := attestationsBySubject(index)
 	for _, key := range []string{"linux/arm64", "linux/ppc64le", "linux/s390x"} {
-		assert.Equal(t, sourceDescriptors[key], outputDescriptors[key], "unselected platform descriptor changed")
+		sourceDescriptor := sourceDescriptors[key]
+		assert.Equal(t, sourceDescriptor, outputDescriptors[key], "unselected platform descriptor changed")
+		require.NotEmpty(t, sourceAttestations[sourceDescriptor.Digest], "source platform is missing expected attestations")
+		assert.Equal(t, sourceAttestations[sourceDescriptor.Digest], outputAttestations[sourceDescriptor.Digest],
+			"unselected platform attestations changed")
 	}
 
 	platformManifests := make(map[string]ociImageManifest)
@@ -763,6 +769,20 @@ func descriptorsByPlatform(index ociIndex) map[string]ociDescriptor {
 		}
 	}
 	return descriptors
+}
+
+func attestationsBySubject(index ociIndex) map[string][]ociDescriptor {
+	attestations := make(map[string][]ociDescriptor)
+	for _, descriptor := range index.Manifests {
+		if descriptor.Annotations["vnd.docker.reference.type"] != "attestation-manifest" {
+			continue
+		}
+		subject := descriptor.Annotations["vnd.docker.reference.digest"]
+		if subject != "" {
+			attestations[subject] = append(attestations[subject], descriptor)
+		}
+	}
+	return attestations
 }
 
 func descriptorPlatformKey(descriptor ociDescriptor) string {

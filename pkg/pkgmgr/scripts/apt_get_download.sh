@@ -43,9 +43,11 @@ fi
 apt-get -o Acquire::Retries=3 update
 mkdir -p "$DOWNLOAD_DIR/partial"
 if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
-    # Download the closure needed to make the target's intentionally minimal
-    # package inventory dependency-consistent. This is download-only.
-    apt-get \
+    # Resolve the explicitly selected upgrades and their complete dependency
+    # closure against the reconstructed target status. A plain `apt-get
+    # download` fetches only the named archives and can leave a newly introduced
+    # or tightened dependency absent from the patched root.
+    if ! apt-get \
         -o Acquire::Retries=3 \
         -o "Dir::State::status=$DPKG_ROOT/var/lib/dpkg/status" \
         -o "Dir::Cache::archives=$DOWNLOAD_DIR" \
@@ -53,12 +55,15 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
         --download-only \
         --fix-broken \
         --no-install-recommends \
-        -y install
+        -y install -- "$@"; then
+        echo "failed to resolve and download the selected package dependency closure" >&2
+        exit 1
+    fi
+else
+    # Preserve the established status.d flow: its temporary database is built
+    # by reinstalling the complete package inventory before this script runs.
+    apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
 fi
-
-# Download the explicitly selected upgrades as candidates. The full-status
-# closure above may already contain some of them.
-apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
 
 lookup_version_floor() {
     wanted_package=$1
@@ -94,6 +99,19 @@ version_satisfies() {
         echo "invalid Debian version comparison: actual=$actual relation=$relation required=$required" >&2
         exit 1
     fi
+    return 1
+}
+
+is_selected_package() {
+    wanted_package=$1
+
+    while IFS= read -r selected_package || [ -n "$selected_package" ]; do
+        [ -n "$selected_package" ] || continue
+        if [ "$selected_package" = "$wanted_package" ]; then
+            return 0
+        fi
+    done < "$PACKAGES_FILE"
+
     return 1
 }
 
@@ -133,10 +151,20 @@ for deb in ./*.deb; do
     if [ -n "$unsafe_reason" ]; then
         echo "$unsafe_reason; refusing to install it" >&2
         # Preserve the attempted version in the result manifest so Go-side
-        # validation reports the package when --ignore-errors is active.
+        # validation reports explicitly selected packages when --ignore-errors
+        # is active.
         record_package_version "$package" "$version"
         rm -f "$deb"
         unsafe_downloads=true
+
+        # A dependency archive cannot be skipped independently: installing the
+        # selected package set without it would break the closure APT resolved.
+        # Fail closed even under --ignore-errors rather than produce an
+        # inconsistent target filesystem.
+        if ! is_selected_package "$package"; then
+            echo "unsafe package $package is part of the resolved dependency closure; refusing to install an incomplete closure" >&2
+            exit 1
+        fi
         if [ "$IGNORE_ERRORS" != "true" ]; then
             exit 1
         fi

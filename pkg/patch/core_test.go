@@ -1,9 +1,11 @@
 package patch
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	fsutiltypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -70,6 +72,88 @@ func TestSetupPackageManagerUsesExplicitNativeChiselReleaseWithoutOSRelease(t *t
 	assert.Equal(t, "deb", manager.GetPackageType())
 	client.AssertExpectations(t)
 	ref.AssertExpectations(t)
+}
+
+func TestPreflightReportForNativeChiselRejectsEveryReportKind(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates *unversioned.UpdateManifest
+	}{
+		{
+			name: "OS update report",
+			updates: &unversioned.UpdateManifest{
+				Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: utils.OSTypeUbuntu, Version: "24.04"}},
+				OSUpdates: unversioned.UpdatePackages{{Name: "libc6", FixedVersion: "2.39-0ubuntu8.6"}},
+			},
+		},
+		{
+			name: "language-only report",
+			updates: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{{Name: "urllib3", FixedVersion: "2.5.0", Type: "python-pkg"}},
+			},
+		},
+		{
+			name: "non-DPKG report metadata",
+			updates: &unversioned.UpdateManifest{
+				Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: utils.OSTypeAlpine, Version: "3.22"}},
+				OSUpdates: unversioned.UpdatePackages{{Name: "musl", FixedVersion: "1.2.5-r10"}},
+			},
+		},
+		{
+			name:    "empty non-nil report",
+			updates: &unversioned.UpdateManifest{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mocks.MockGWClient)
+			ref := new(mocks.MockReference)
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+			ref.On("StatFile", mock.Anything, mock.MatchedBy(func(req gwclient.StatRequest) bool {
+				return req.Path == pkgmgr.NativeChiselManifestPath
+			})).Return(&fsutiltypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil).Once()
+
+			config := &buildkit.Config{ImageState: llb.Scratch()}
+			platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+
+			err := preflightReportForNativeChisel(t.Context(), client, config, platform, test.updates)
+			require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
+}
+
+func TestPreflightReportForNativeChiselFailsClosedOnInspectionError(t *testing.T) {
+	inspectionErr := errors.New("manifest inspection denied")
+	client := new(mocks.MockGWClient)
+	ref := new(mocks.MockReference)
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+	ref.On("StatFile", mock.Anything, mock.Anything).Return(&fsutiltypes.Stat{}, inspectionErr).Once()
+
+	config := &buildkit.Config{ImageState: llb.Scratch()}
+	platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+	err := preflightReportForNativeChisel(t.Context(), client, config, platform, &unversioned.UpdateManifest{})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "inspect target image for native Chisel metadata")
+	assert.ErrorIs(t, err, inspectionErr)
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func TestPreflightReportForNativeChiselPreservesNoReportBehavior(t *testing.T) {
+	client := new(mocks.MockGWClient)
+	config := &buildkit.Config{ImageState: llb.Scratch()}
+	platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+
+	require.NoError(t, preflightReportForNativeChisel(t.Context(), client, config, platform, nil))
+	client.AssertNotCalled(t, "Solve", mock.Anything, mock.Anything)
 }
 
 func TestExitOnEOLFunctionality(t *testing.T) {
