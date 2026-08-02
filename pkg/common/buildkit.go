@@ -24,7 +24,17 @@ import (
 
 const (
 	LINUX = "linux"
+
+	osReleasePath     = "/etc/os-release"
+	maxOSReleaseBytes = int64(1 << 20)
 )
+
+// ExtractOSReleaseFromState reads /etc/os-release after enforcing the same
+// 1 MiB input limit used by Chisel release inference. The bounded BuildKit
+// helper stats before allocating and uses ranged reads for the file contents.
+func ExtractOSReleaseFromState(ctx context.Context, c gwclient.Client, state *llb.State) ([]byte, error) {
+	return buildkit.ExtractFileFromStateWithLimit(ctx, c, state, osReleasePath, maxOSReleaseBytes)
+}
 
 // SetupBuildkitConfigAndManager initializes buildkit config and package manager.
 // This combines the common pattern used in both generate and patch commands.
@@ -59,9 +69,9 @@ func SetupBuildkitConfigAndManagerWithOptions(
 	var manager pkgmgr.PackageManager
 	if osInfo == nil {
 		// Need to determine OS from image
-		fileBytes, err := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+		fileBytes, err := ExtractOSReleaseFromState(ctx, c, &config.ImageState)
 		if err != nil {
-			return nil, nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", err)
+			return nil, nil, fmt.Errorf("unable to extract %s file from state %w", osReleasePath, err)
 		}
 
 		detectedOSInfo, err := GetOSInfo(ctx, fileBytes)

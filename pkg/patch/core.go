@@ -402,7 +402,7 @@ func setupPackageManager(ctx context.Context, c gwclient.Client, config *buildki
 		}
 		if !explicitNative {
 			// No vulnerability report provided - detect OS from image.
-			fileBytes, extractErr := buildkit.ExtractFileFromState(ctx, c, &config.ImageState, "/etc/os-release")
+			fileBytes, extractErr := common.ExtractOSReleaseFromState(ctx, c, &config.ImageState)
 			if extractErr != nil {
 				return nil, fmt.Errorf("unable to extract /etc/os-release file from state %w", extractErr)
 			}

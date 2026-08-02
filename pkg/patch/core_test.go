@@ -227,6 +227,58 @@ func TestSetupPackageManagerUsesExplicitNativeChiselReleaseWithoutOSRelease(t *t
 	ref.AssertExpectations(t)
 }
 
+func TestSetupPackageManagerBoundsOSReleaseAndPreservesMissingError(t *testing.T) {
+	missingErr := &os.PathError{Op: "stat", Path: "/etc/os-release", Err: fs.ErrNotExist}
+	tests := []struct {
+		name      string
+		stat      *fsutiltypes.Stat
+		statErr   error
+		wantError string
+		wantCause error
+	}{
+		{
+			name:      "oversized",
+			stat:      &fsutiltypes.Stat{Size: 1<<20 + 1},
+			wantError: "maximum allowed size of 1048576 bytes",
+		},
+		{
+			name:      "missing",
+			statErr:   missingErr,
+			wantError: "unable to extract /etc/os-release file from state",
+			wantCause: fs.ErrNotExist,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mocks.MockGWClient)
+			ref := new(mocks.MockReference)
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/etc/os-release"}).
+				Return(test.stat, test.statErr).
+				Once()
+
+			config := &buildkit.Config{
+				Client:     client,
+				ImageState: llb.Scratch(),
+				Platform:   &v1.Platform{OS: "linux", Architecture: "amd64"},
+			}
+			_, err := setupPackageManager(t.Context(), client, config, &Options{
+				WorkingFolder: t.TempDir(),
+			})
+			require.ErrorContains(t, err, test.wantError)
+			if test.wantCause != nil {
+				require.ErrorIs(t, err, test.wantCause)
+			}
+			ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
+}
+
 func TestExplicitNativeChiselOSManifestInspection(t *testing.T) {
 	statErr := errors.New("manifest stat denied")
 	solveErr := errors.New("manifest solve failed")

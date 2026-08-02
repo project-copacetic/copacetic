@@ -460,6 +460,38 @@ ID=debian`,
 	}
 }
 
+func TestValidOSReleaseKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{name: "canonical name", key: "NAME", want: true},
+		{name: "canonical version ID", key: "VERSION_ID", want: true},
+		{name: "canonical ID like", key: "ID_LIKE", want: true},
+		{name: "lowercase extension", key: "x_vendor_feature", want: true},
+		{name: "leading underscore", key: "_VENDOR_EXTENSION", want: true},
+		{name: "non-ASCII uppercase", key: "NÄME", want: false},
+		{name: "non-ASCII digit", key: "NAME١", want: false},
+		{name: "leading digit", key: "1NAME", want: false},
+		{name: "leading punctuation", key: ".NAME", want: false},
+		{name: "embedded punctuation", key: "NAME-DASH", want: false},
+		{name: "empty", key: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, validOSReleaseKey(tt.key))
+		})
+	}
+}
+
+func TestParseOSReleaseAcceptsLowercaseExtensionKey(t *testing.T) {
+	values, err := parseOSRelease([]byte("NAME=Ubuntu\nVERSION_ID=24.04\nx_vendor_feature=enabled\n"))
+	assert.NoError(t, err)
+	assert.Equal(t, "enabled", values["x_vendor_feature"])
+}
+
 func TestParseOSReleaseShellEscapes(t *testing.T) {
 	values, err := parseOSRelease([]byte("NAME=Amazon\\ Linux\nVERSION_ID=2023\\ \n"))
 	assert.NoError(t, err)

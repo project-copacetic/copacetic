@@ -465,12 +465,12 @@ type frontendStatePathReference struct {
 	readFileCalls int
 }
 
-func (r *frontendStatePathReference) StatFile(context.Context, gwclient.StatRequest) (*fstypes.Stat, error) {
+func (r *frontendStatePathReference) StatFile(_ context.Context, req gwclient.StatRequest) (*fstypes.Stat, error) {
 	r.statCalls++
-	if r.statErr != nil {
+	if req.Path == pkgmgr.NativeChiselManifestPath && r.statErr != nil {
 		return nil, r.statErr
 	}
-	return &fstypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil
+	return &fstypes.Stat{Path: req.Path, Size: int64(len(r.readData))}, nil
 }
 
 func (r *frontendStatePathReference) ReadFile(context.Context, gwclient.ReadRequest) ([]byte, error) {

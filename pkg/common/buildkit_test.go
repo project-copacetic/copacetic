@@ -11,13 +11,16 @@ import (
 	"github.com/containerd/platforms"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	fstypes "github.com/tonistiigi/fsutil/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 )
 
@@ -101,6 +104,82 @@ func TestGetDefaultLinuxPlatform_DifferentArchitectures(t *testing.T) {
 func TestLinuxConstant(t *testing.T) {
 	assert.Equal(t, "linux", LINUX)
 	assert.NotEmpty(t, LINUX)
+}
+
+func TestExtractOSReleaseFromStateEnforcesOneMiBLimit(t *testing.T) {
+	ref := new(mocks.MockReference)
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: osReleasePath}).
+		Return(&fstypes.Stat{Size: maxOSReleaseBytes + 1}, nil).
+		Once()
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := new(mocks.MockGWClient)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+	state := llb.Scratch()
+
+	_, err := ExtractOSReleaseFromState(t.Context(), client, &state)
+	require.ErrorContains(t, err, "maximum allowed size of 1048576 bytes")
+	ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func TestSetupBuildkitConfigAndManagerWithOptionsPreservesOSReleaseErrors(t *testing.T) {
+	missingErr := &os.PathError{Op: "stat", Path: osReleasePath, Err: fs.ErrNotExist}
+	tests := []struct {
+		name      string
+		stat      *fstypes.Stat
+		statErr   error
+		wantError string
+		wantCause error
+	}{
+		{
+			name:      "oversized",
+			stat:      &fstypes.Stat{Size: maxOSReleaseBytes + 1},
+			wantError: "maximum allowed size of 1048576 bytes",
+		},
+		{
+			name:      "missing",
+			statErr:   missingErr,
+			wantError: "unable to extract /etc/os-release file from state",
+			wantCause: fs.ErrNotExist,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const image = "docker.io/example/os-release-test:latest"
+
+			ref := new(mocks.MockReference)
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: osReleasePath}).
+				Return(test.stat, test.statErr).
+				Once()
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client := new(mocks.MockGWClient)
+			client.On("ResolveImageConfig", mock.Anything, image, mock.Anything).
+				Return(image, digest.FromString(image), []byte(`{"config":{}}`), nil).
+				Twice()
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+
+			_, _, err := SetupBuildkitConfigAndManagerWithOptions(
+				t.Context(),
+				client,
+				image,
+				nil,
+				t.TempDir(),
+				nil,
+				pkgmgr.PackageManagerOptions{},
+			)
+			require.ErrorContains(t, err, test.wantError)
+			if test.wantCause != nil {
+				require.ErrorIs(t, err, test.wantCause)
+			}
+			ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
 }
 
 func TestAddImageConfigLabels(t *testing.T) {

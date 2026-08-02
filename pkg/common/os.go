@@ -66,16 +66,23 @@ func parseOSRelease(data []byte) (map[string]string, error) {
 }
 
 func validOSReleaseKey(key string) bool {
-	if key == "" {
+	if key == "" || !isASCIIOSReleaseKeyStart(key[0]) {
 		return false
 	}
-	for i, r := range key {
-		if r == '_' || unicode.IsUpper(r) || (i > 0 && unicode.IsDigit(r)) {
-			continue
+	for i := 1; i < len(key); i++ {
+		if !isASCIIOSReleaseKeyCharacter(key[i]) {
+			return false
 		}
-		return false
 	}
 	return true
+}
+
+func isASCIIOSReleaseKeyStart(character byte) bool {
+	return character == '_' || character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z'
+}
+
+func isASCIIOSReleaseKeyCharacter(character byte) bool {
+	return isASCIIOSReleaseKeyStart(character) || character >= '0' && character <= '9'
 }
 
 func parseOSReleaseValue(value string) (string, error) {
