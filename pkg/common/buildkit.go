@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 
 	"github.com/containerd/errdefs"
 	"github.com/containerd/platforms"
@@ -162,13 +163,26 @@ func StatePathExists(ctx context.Context, c gwclient.Client, state *llb.State, p
 		return false, fmt.Errorf("get image state reference: %w", err)
 	}
 	if _, err := reference.StatFile(ctx, gwclient.StatRequest{Path: path}); err != nil {
-		if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errdefs.IsNotFound(err) || status.Code(err) == codes.NotFound {
+		if statePathNotFound(err, path) {
 			return false, nil
 		}
 		return false, fmt.Errorf("stat %s: %w", path, err)
 	}
 
 	return true, nil
+}
+
+func statePathNotFound(err error, path string) bool {
+	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) || errdefs.IsNotFound(err) || status.Code(err) == codes.NotFound {
+		return true
+	}
+
+	// BuildKit gateway errors can lose their typed NotFound status while being
+	// serialized across the frontend boundary. Match only the requested path's
+	// filesystem-style missing error instead of treating arbitrary text as
+	// absence.
+	missingPath := strings.ToLower(path + ": no such file or directory")
+	return strings.Contains(strings.ToLower(err.Error()), missingPath)
 }
 
 // GetDefaultLinuxPlatform returns a normalized Linux platform, defaulting to Linux if not already Linux.

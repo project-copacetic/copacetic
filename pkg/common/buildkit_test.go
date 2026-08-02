@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"testing"
@@ -172,6 +173,10 @@ func TestStatePathExists(t *testing.T) {
 		{
 			name:    "filesystem path missing",
 			statErr: &os.PathError{Op: "lstat", Path: pkgmgr.NativeChiselManifestPath, Err: fs.ErrNotExist},
+		},
+		{
+			name:    "serialized BuildKit lstat missing",
+			statErr: errors.New("failed to solve: lstat " + pkgmgr.NativeChiselManifestPath + ": no such file or directory"),
 		},
 		{
 			name:      "stat failure",
