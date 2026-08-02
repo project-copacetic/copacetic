@@ -60,6 +60,7 @@ const (
 	dpkgUpdatePackagesPath      = dpkgDownloadPath + "/packages.txt"
 	dpkgUpdatesMarkerPath       = "/updates.txt"
 	dpkgArchitectureField       = "Architecture"
+	dpkgPackageField            = "Package"
 	dpkgNativeQualifier         = "native"
 	dpkgArchitectureAll         = "all"
 	dpkgArchitectureAny         = "any"
@@ -642,7 +643,7 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 			return parsedDPKGStatus{}, fmt.Errorf("paragraph %d contains malformed field %q", paragraphNumber+1, line)
 		}
 		switch field {
-		case "Package":
+		case dpkgPackageField:
 			packageName = strings.TrimSpace(value)
 		case "Version":
 			packageVersion = strings.TrimSpace(value)
@@ -846,7 +847,7 @@ func dpkgControlParagraphPackage(fields []dpkgControlField, targetArchitecture s
 	architecture := ""
 	for _, field := range fields {
 		switch field.name {
-		case "Package":
+		case dpkgPackageField:
 			packageName = field.value
 		case dpkgArchitectureField:
 			architecture = field.value
@@ -948,7 +949,7 @@ func dpkgControlParagraphInstalled(fields []dpkgControlField, installedPackages 
 	architecture := ""
 	for _, field := range fields {
 		switch field.name {
-		case "Package":
+		case dpkgPackageField:
 			packageName = field.value
 		case dpkgArchitectureField:
 			architecture = field.value
