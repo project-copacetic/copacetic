@@ -27,7 +27,8 @@ import (
 )
 
 const (
-	osLinux = "linux"
+	osLinux             = "linux"
+	frontendReleaseRoot = "release"
 )
 
 // Note: buildPatchedImage tests are covered by e2e tests in test/e2e/frontend/
@@ -608,8 +609,9 @@ func TestCopyFrontendResultMetadata(t *testing.T) {
 
 type frontendReleaseContextReference struct {
 	gwclient.Reference
-	directories map[string][]*fstypes.Stat
-	files       map[string][]byte
+	directories  map[string][]*fstypes.Stat
+	files        map[string][]byte
+	readRequests []gwclient.ReadRequest
 }
 
 func (r *frontendReleaseContextReference) ReadDir(_ context.Context, req gwclient.ReadDirRequest) ([]*fstypes.Stat, error) {
@@ -620,23 +622,76 @@ func (r *frontendReleaseContextReference) ReadDir(_ context.Context, req gwclien
 	return entries, nil
 }
 
+func (r *frontendReleaseContextReference) StatFile(_ context.Context, req gwclient.StatRequest) (*fstypes.Stat, error) {
+	data, ok := r.files[filepath.Clean(req.Path)]
+	if !ok {
+		return nil, fmt.Errorf("unexpected Chisel release file stat %q", req.Path)
+	}
+	return &fstypes.Stat{Path: req.Path, Mode: uint32(0o644), Size: int64(len(data))}, nil
+}
+
 func (r *frontendReleaseContextReference) ReadFile(_ context.Context, req gwclient.ReadRequest) ([]byte, error) {
 	data, ok := r.files[filepath.Clean(req.Filename)]
 	if !ok {
 		return nil, fmt.Errorf("unexpected Chisel release file read %q", req.Filename)
 	}
-	return append([]byte(nil), data...), nil
+	if req.Range == nil {
+		r.readRequests = append(r.readRequests, req)
+		return append([]byte(nil), data...), nil
+	}
+
+	requestRange := *req.Range
+	req.Range = &requestRange
+	r.readRequests = append(r.readRequests, req)
+	if requestRange.Offset < 0 || requestRange.Length < 0 || requestRange.Offset > len(data) {
+		return nil, fmt.Errorf("invalid Chisel release file range %+v for %q", requestRange, req.Filename)
+	}
+	end := min(requestRange.Offset+requestRange.Length, len(data))
+	return append([]byte(nil), data[requestRange.Offset:end]...), nil
+}
+
+func TestExtractFrontendContextDirectoryReadsLargeFilesInChunks(t *testing.T) {
+	const gatewayChunkSize = 8 << 20
+
+	contents := make([]byte, gatewayChunkSize+17)
+	for i := range contents {
+		contents[i] = byte(i)
+	}
+	releaseFile := filepath.Join(frontendReleaseRoot, "large.yaml")
+	reference := &frontendReleaseContextReference{
+		directories: map[string][]*fstypes.Stat{
+			frontendReleaseRoot: {
+				{Path: releaseFile, Mode: uint32(0o644), Size: int64(len(contents))},
+			},
+		},
+		files: map[string][]byte{releaseFile: contents},
+	}
+	destination := t.TempDir()
+	fileCount := 0
+	var totalBytes int64
+
+	err := extractFrontendContextDirectory(t.Context(), reference, frontendReleaseRoot, destination, &fileCount, &totalBytes)
+	require.NoError(t, err)
+	assert.Equal(t, 1, fileCount)
+	assert.Equal(t, int64(len(contents)), totalBytes)
+
+	extracted, err := os.ReadFile(filepath.Join(destination, "large.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, contents, extracted)
+	require.Len(t, reference.readRequests, 2)
+	assert.Equal(t, &gwclient.FileRange{Offset: 0, Length: gatewayChunkSize}, reference.readRequests[0].Range)
+	assert.Equal(t, &gwclient.FileRange{Offset: gatewayChunkSize, Length: len(contents) - gatewayChunkSize}, reference.readRequests[1].Range)
 }
 
 func TestExtractFrontendContextDirectoryPreservesSafeRelativeSymlinks(t *testing.T) {
 	const releaseContents = "format: v1\n"
 	reference := &frontendReleaseContextReference{
 		directories: map[string][]*fstypes.Stat{
-			"release": {
+			frontendReleaseRoot: {
 				{Path: "release/release.yaml", Mode: uint32(0o644), Size: int64(len(releaseContents))},
 				{Path: "release/slices", Mode: uint32(os.ModeDir | 0o755)},
 			},
-			filepath.Join("release", "slices"): {
+			filepath.Join(frontendReleaseRoot, "slices"): {
 				{
 					Path:     "release/slices/current.yaml",
 					Mode:     uint32(os.ModeSymlink | 0o777),
@@ -645,14 +700,14 @@ func TestExtractFrontendContextDirectoryPreservesSafeRelativeSymlinks(t *testing
 			},
 		},
 		files: map[string][]byte{
-			filepath.Join("release", "release.yaml"): []byte(releaseContents),
+			filepath.Join(frontendReleaseRoot, "release.yaml"): []byte(releaseContents),
 		},
 	}
 	destination := t.TempDir()
 	fileCount := 0
 	var totalBytes int64
 
-	err := extractFrontendContextDirectory(t.Context(), reference, "release", destination, &fileCount, &totalBytes)
+	err := extractFrontendContextDirectory(t.Context(), reference, frontendReleaseRoot, destination, &fileCount, &totalBytes)
 	require.NoError(t, err)
 	assert.Equal(t, 3, fileCount)
 	assert.Equal(t, int64(len(releaseContents)), totalBytes)
@@ -672,20 +727,20 @@ func TestExtractFrontendContextDirectoryPreservesSafeRelativeSymlinks(t *testing
 func TestExtractFrontendContextDirectoryRejectsEscapeThroughInTreeSymlink(t *testing.T) {
 	reference := &frontendReleaseContextReference{
 		directories: map[string][]*fstypes.Stat{
-			"release": {
+			frontendReleaseRoot: {
 				{Path: "release/pivot", Mode: uint32(os.ModeSymlink | 0o777), Linkname: "."},
 				{Path: "release/bad", Mode: uint32(os.ModeSymlink | 0o777), Linkname: "pivot/../outside"},
 			},
 		},
 	}
 	parent := t.TempDir()
-	destination := filepath.Join(parent, "release")
+	destination := filepath.Join(parent, frontendReleaseRoot)
 	require.NoError(t, os.Mkdir(destination, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(parent, "outside"), []byte("outside"), 0o600))
 	fileCount := 0
 	var totalBytes int64
 
-	err := extractFrontendContextDirectory(t.Context(), reference, "release", destination, &fileCount, &totalBytes)
+	err := extractFrontendContextDirectory(t.Context(), reference, frontendReleaseRoot, destination, &fileCount, &totalBytes)
 	require.ErrorContains(t, err, "does not resolve safely within the release directory")
 }
 
@@ -724,7 +779,7 @@ func TestExtractFrontendContextDirectoryRejectsUnsafeEntries(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			reference := &frontendReleaseContextReference{
 				directories: map[string][]*fstypes.Stat{
-					"release": {
+					frontendReleaseRoot: {
 						{
 							Path:     "release/unsafe",
 							Mode:     uint32(test.mode),
@@ -736,7 +791,7 @@ func TestExtractFrontendContextDirectoryRejectsUnsafeEntries(t *testing.T) {
 			fileCount := 0
 			var totalBytes int64
 
-			err := extractFrontendContextDirectory(t.Context(), reference, "release", t.TempDir(), &fileCount, &totalBytes)
+			err := extractFrontendContextDirectory(t.Context(), reference, frontendReleaseRoot, t.TempDir(), &fileCount, &totalBytes)
 			require.ErrorContains(t, err, test.errContains)
 		})
 	}

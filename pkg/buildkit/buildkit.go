@@ -71,8 +71,9 @@ type platformExportMetadata struct {
 }
 
 const (
-	linux = "linux"
-	arm64 = "arm64"
+	linux                       = "linux"
+	arm64                       = "arm64"
+	maxGatewayReadFileChunkSize = int64(8 << 20)
 )
 
 // for testing.
@@ -769,10 +770,13 @@ func ExtractFileFromStateWithLimit(
 	if err != nil {
 		return nil, err
 	}
-	return readFileWithLimit(ctx, ref, path, maxSize)
+	return ReadFileWithLimit(ctx, ref, path, maxSize)
 }
 
-func readFileWithLimit(ctx context.Context, ref gwclient.Reference, path string, maxSize int64) ([]byte, error) {
+// ReadFileWithLimit reads path from a BuildKit reference after enforcing a
+// maximum file size. It uses bounded range requests so each unary gateway
+// response remains safely below BuildKit's 16 MiB gRPC message limit.
+func ReadFileWithLimit(ctx context.Context, ref gwclient.Reference, path string, maxSize int64) ([]byte, error) {
 	if maxSize < 0 {
 		return nil, fmt.Errorf("maximum size for %q must not be negative", path)
 	}
@@ -796,18 +800,27 @@ func readFileWithLimit(ctx context.Context, ref gwclient.Reference, path string,
 		return nil, fmt.Errorf("unable to read %q: file size %d exceeds the platform read limit", path, stat.Size)
 	}
 
-	data, err := ref.ReadFile(ctx, gwclient.ReadRequest{
-		Filename: path,
-		Range: &gwclient.FileRange{
-			Offset: 0,
-			Length: int(stat.Size),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("unable to read %q: %w", path, err)
-	}
-	if int64(len(data)) != stat.Size {
-		return nil, fmt.Errorf("unable to read %q: expected %d bytes from BuildKit, received %d", path, stat.Size, len(data))
+	data := make([]byte, 0, int(stat.Size))
+	for offset := int64(0); offset < stat.Size; {
+		chunkSize := min(maxGatewayReadFileChunkSize, stat.Size-offset)
+		chunk, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+			Filename: path,
+			Range: &gwclient.FileRange{
+				Offset: int(offset),
+				Length: int(chunkSize),
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("unable to read %q at offset %d: %w", path, offset, err)
+		}
+		if int64(len(chunk)) != chunkSize {
+			return nil, fmt.Errorf(
+				"unable to read %q at offset %d: expected %d bytes from BuildKit, received %d",
+				path, offset, chunkSize, len(chunk),
+			)
+		}
+		data = append(data, chunk...)
+		offset += chunkSize
 	}
 	return data, nil
 }

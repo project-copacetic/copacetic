@@ -300,6 +300,43 @@ func TestExtractFileFromStateWithLimit(t *testing.T) {
 	}
 }
 
+func TestReadFileWithLimitChunksGatewayResponses(t *testing.T) {
+	const path = "/large/untrusted/file"
+
+	firstChunk := make([]byte, int(maxGatewayReadFileChunkSize))
+	for i := range firstChunk {
+		firstChunk[i] = byte(i)
+	}
+	lastChunk := []byte("tail")
+	fileSize := int64(len(firstChunk) + len(lastChunk))
+
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).
+		Return(&fstypes.Stat{Size: fileSize}, nil).
+		Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: path,
+		Range: &gwclient.FileRange{
+			Offset: 0,
+			Length: int(maxGatewayReadFileChunkSize),
+		},
+	}).Return(firstChunk, nil).Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: path,
+		Range: &gwclient.FileRange{
+			Offset: int(maxGatewayReadFileChunkSize),
+			Length: len(lastChunk),
+		},
+	}).Return(lastChunk, nil).Once()
+
+	got, err := ReadFileWithLimit(t.Context(), ref, path, fileSize)
+	require.NoError(t, err)
+	require.Len(t, got, int(fileSize))
+	assert.Equal(t, firstChunk, got[:len(firstChunk)])
+	assert.Equal(t, lastChunk, got[len(firstChunk):])
+	ref.AssertExpectations(t)
+}
+
 func TestAddOCIExportMetadata(t *testing.T) {
 	result := gwclient.NewResult()
 	metadata := platformExportMetadata{

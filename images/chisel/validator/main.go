@@ -281,7 +281,11 @@ func reconcile(targetPath, stagedPath string, oldManifest, newManifest expectedM
 func pathMap(manifest expectedManifest) map[string]expectedPath {
 	result := make(map[string]expectedPath, len(manifest.Paths))
 	for _, record := range manifest.Paths {
-		result[record.Path] = record
+		manifestPath := record.Path
+		if manifestPath != "/" {
+			manifestPath = strings.TrimSuffix(manifestPath, "/")
+		}
+		result[manifestPath] = record
 	}
 	return result
 }

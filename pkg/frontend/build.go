@@ -17,6 +17,7 @@ import (
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/pkg/errors"
 
+	copabuildkit "github.com/project-copacetic/copacetic/pkg/buildkit"
 	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
@@ -586,7 +587,8 @@ func extractFrontendContextDirectoryWithinRoot(
 			if entry.Size < 0 || entry.Size > maxFrontendReleaseBytes || *totalBytes+entry.Size > maxFrontendReleaseBytes {
 				return fmt.Errorf("local Chisel release exceeds the %d MiB size limit", maxFrontendReleaseBytes>>20)
 			}
-			data, err := reference.ReadFile(ctx, gwclient.ReadRequest{Filename: sourceEntry})
+			remainingBytes := maxFrontendReleaseBytes - *totalBytes
+			data, err := copabuildkit.ReadFileWithLimit(ctx, reference, sourceEntry, remainingBytes)
 			if err != nil {
 				return errors.Wrapf(err, "failed to read local Chisel release file %s", sourceEntry)
 			}

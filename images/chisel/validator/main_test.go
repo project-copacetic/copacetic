@@ -219,6 +219,52 @@ func TestReconcilePreservesUnmanagedContentAndHardLinks(t *testing.T) {
 	assert.True(t, os.SameFile(one, two))
 }
 
+func TestReconcileManagedPathTypeTransitions(t *testing.T) {
+	t.Run("directory to file", func(t *testing.T) {
+		target := t.TempDir()
+		staged := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(target, "managed"), 0o755))
+		content := []byte("replacement")
+		writeFileWithMode(t, filepath.Join(staged, "managed"), content, 0o640)
+
+		oldManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0755"}}}
+		newManifest := expectedManifest{Paths: []expectedPath{{
+			Path:   "/managed",
+			Mode:   "0640",
+			SHA256: hashString(string(content)),
+			Size:   uint64(len(content)),
+		}}}
+
+		require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
+		info, err := os.Lstat(filepath.Join(target, "managed"))
+		require.NoError(t, err)
+		assert.True(t, info.Mode().IsRegular())
+		got, err := os.ReadFile(filepath.Join(target, "managed"))
+		require.NoError(t, err)
+		assert.Equal(t, content, got)
+	})
+
+	t.Run("file to directory", func(t *testing.T) {
+		target := t.TempDir()
+		staged := t.TempDir()
+		writeFileWithMode(t, filepath.Join(target, "managed"), []byte("old"), 0o640)
+		require.NoError(t, os.Mkdir(filepath.Join(staged, "managed"), 0o750))
+
+		oldManifest := expectedManifest{Paths: []expectedPath{{
+			Path:   "/managed",
+			Mode:   "0640",
+			SHA256: hashString("old"),
+			Size:   3,
+		}}}
+		newManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0750"}}}
+
+		require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
+		info, err := os.Lstat(filepath.Join(target, "managed"))
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+	})
+}
+
 func TestReconcileRejectsSymlinkAncestorWithoutDeletingTarget(t *testing.T) {
 	target := t.TempDir()
 	staged := t.TempDir()
