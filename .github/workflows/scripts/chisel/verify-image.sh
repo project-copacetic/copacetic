@@ -165,7 +165,28 @@ done
 } >>"${report_path}"
 
 for platform in linux/amd64 linux/arm64; do
-	version_output="$(docker run --rm --pull=always --platform "${platform}" "${image_ref}" version)"
+	IFS=/ read -r platform_os platform_arch platform_variant <<<"${platform}"
+	runtime_digests=()
+	while IFS= read -r digest; do
+		runtime_digests+=("${digest}")
+	done < <(jq -r \
+		--arg os "${platform_os}" \
+		--arg arch "${platform_arch}" \
+		--arg variant "${platform_variant:-}" '
+		[
+			.manifests[]
+			| select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
+			| select(.platform.os == $os and .platform.architecture == $arch)
+			| select((.platform.variant // "") == $variant)
+			| .digest
+		][]
+	' "${index_file}")
+	if (( ${#runtime_digests[@]} != 1 )); then
+		fail "expected exactly one runtime image manifest for ${platform}, found ${#runtime_digests[@]}"
+	fi
+
+	runtime_ref="${image_name}@${runtime_digests[0]}"
+	version_output="$(docker run --rm --pull=always --platform "${platform}" "${runtime_ref}" version)"
 	version_output="${version_output//$'\r'/}"
 	if [[ "${version_output}" != "${expected_version}" ]]; then
 		printf -v quoted_version_output '%q' "${version_output}"
