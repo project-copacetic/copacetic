@@ -38,7 +38,7 @@ case "$DPKG_INSTALLATION_MODE" in
 
         get_original_filename() {
             pkg=$1
-            printf '%s\n' "$STATUSD_FILE_MAP" | grep "\"$pkg\":" | sed 's/.*"'"$pkg"'":"\([^"]*\)".*/\1/'
+            printf '%s\n' "$STATUSD_FILE_MAP" | awk -F '\t' -v wanted="$pkg" '"x" $1 == "x" wanted { print $2; exit }'
         }
 
         write_package_block() {

@@ -385,6 +385,23 @@ func TestUnpackAndMergeUpdatesRejectsLifecyclePackageBeforeBuildKit(t *testing.T
 	require.ErrorContains(t, err, "complete /var/lib/dpkg database")
 }
 
+func TestMarshalStatusdFileMap(t *testing.T) {
+	const basePackage = "base"
+	data, err := marshalStatusdFileMap(map[string]string{
+		"foo.bar":   "encoded-dot",
+		basePackage: "encoded-base",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "base\tencoded-base\nfoo.bar\tencoded-dot\n", string(data))
+
+	_, err = marshalStatusdFileMap(map[string]string{"bad;package": "encoded"})
+	require.ErrorContains(t, err, "invalid package name")
+	_, err = marshalStatusdFileMap(map[string]string{basePackage: "nested/name"})
+	require.ErrorContains(t, err, "invalid status.d filename")
+	_, err = marshalStatusdFileMap(map[string]string{basePackage: "bad\tname"})
+	require.ErrorContains(t, err, "invalid status.d filename")
+}
+
 func TestGetAPTImageName(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -2076,7 +2093,7 @@ esac
 		"VERSION_FLOORS_FILE":         floorsPath,
 		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
 		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalStatusDirectory.String(),
-		"STATUSD_FILE_MAP":            `{"safe":"encoded-safe"}`,
+		"STATUSD_FILE_MAP":            "safe\tencoded-safe\n",
 		"APT_LOG":                     aptLog,
 		"INSTALL_LOG":                 installLog,
 	})
@@ -2244,7 +2261,7 @@ func TestFinalizeDPKGStatusScript(t *testing.T) {
 		runEmbeddedShellScript(t, finalizeDPKGStatusScript, map[string]string{
 			"DPKG_ROOT":              root,
 			"DPKG_INSTALLATION_MODE": dpkgInstallationModeExternalStatusDirectory.String(),
-			"STATUSD_FILE_MAP":       `{"base-files":"encoded-base-files"}`,
+			"STATUSD_FILE_MAP":       "base-files\tencoded-base-files\n",
 		})
 
 		entries, err := os.ReadDir(dpkgDir)
@@ -2261,6 +2278,50 @@ func TestFinalizeDPKGStatusScript(t *testing.T) {
 		tzdata, err := os.ReadFile(filepath.Join(dpkgDir, "status.d", "tzdata"))
 		assert.NoError(t, err)
 		assert.Contains(t, string(tzdata), "Package: tzdata")
+	})
+
+	t.Run("status directory filename map uses exact package keys", func(t *testing.T) {
+		root := t.TempDir()
+		dpkgDir := filepath.Join(root, "var", "lib", "dpkg")
+		require.NoError(t, os.MkdirAll(dpkgDir, 0o755))
+		status := strings.Join([]string{
+			"Package: foo.bar",
+			"Status: install ok installed",
+			"Version: 1.0",
+			"",
+			"Package: fooxbar",
+			"Status: install ok installed",
+			"Version: 2.0",
+			"",
+			"Package: 01",
+			"Status: install ok installed",
+			"Version: 3.0",
+			"",
+			"Package: 1.0",
+			"Status: install ok installed",
+			"Version: 4.0",
+			"",
+		}, "\n")
+		writeDPKGTestFile(t, filepath.Join(dpkgDir, "status"), []byte(status), 0o644)
+
+		runEmbeddedShellScript(t, finalizeDPKGStatusScript, map[string]string{
+			"DPKG_ROOT":              root,
+			"DPKG_INSTALLATION_MODE": dpkgInstallationModeExternalStatusDirectory.String(),
+			"STATUSD_FILE_MAP":       "01\tthird\n1.0\tfourth\nfoo.bar\tfirst\nfooxbar\tsecond\n",
+		})
+
+		first, err := os.ReadFile(filepath.Join(dpkgDir, "status.d", "first"))
+		require.NoError(t, err)
+		assert.Contains(t, string(first), "Package: foo.bar")
+		second, err := os.ReadFile(filepath.Join(dpkgDir, "status.d", "second"))
+		require.NoError(t, err)
+		assert.Contains(t, string(second), "Package: fooxbar")
+		third, err := os.ReadFile(filepath.Join(dpkgDir, "status.d", "third"))
+		require.NoError(t, err)
+		assert.Contains(t, string(third), "Package: 01")
+		fourth, err := os.ReadFile(filepath.Join(dpkgDir, "status.d", "fourth"))
+		require.NoError(t, err)
+		assert.Contains(t, string(fourth), "Package: 1.0")
 	})
 }
 

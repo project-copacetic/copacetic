@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -590,6 +589,9 @@ func (dm *dpkgManager) loadStatusDirectoryWithLimit(
 		name := scanner.Text()
 		if name == "" {
 			continue
+		}
+		if name == "." || name == ".." || strings.ContainsAny(name, "/\t\r\n") {
+			return fmt.Errorf("invalid filename %q in %s", name, dpkgStatusFolder)
 		}
 		fileBytes, err := buildkit.ExtractFileFromStateWithLimit(
 			ctx,
@@ -1777,7 +1779,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		errorValidation = trueConst
 	}
 
-	jsonStatusdFileMap, err := getJSONStatusdFileMap(dm.statusdFileMap)
+	statusdFileMapData, err := marshalStatusdFileMap(dm.statusdFileMap)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1810,7 +1812,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		llb.AddEnv("DPKG_INSTALLATION_MODE", dm.installationMode.String()),
 		llb.AddEnv("LIFECYCLE_PACKAGES", externalFullStatusLifecyclePackageList),
-		llb.AddEnv("STATUSD_FILE_MAP", string(jsonStatusdFileMap)),
+		llb.AddEnv("STATUSD_FILE_MAP", string(statusdFileMapData)),
 		buildkit.Sh(`/download.sh`),
 		llb.WithProxy(utils.GetProxy()),
 		llb.WithCustomName(downloadCustomName),
@@ -2019,10 +2021,23 @@ func uniqueStrings(values []string) []string {
 	return unique
 }
 
-func getJSONStatusdFileMap(statusdFileMap map[string]string) ([]byte, error) {
-	jsonBytes, err := json.Marshal(statusdFileMap)
-	if err != nil {
-		return nil, fmt.Errorf("unable to marshal statusd file map to JSON: %w", err)
+func marshalStatusdFileMap(statusdFileMap map[string]string) ([]byte, error) {
+	packageNames := make([]string, 0, len(statusdFileMap))
+	for packageName := range statusdFileMap {
+		if !isValidDebianPackageName(packageName) {
+			return nil, fmt.Errorf("invalid package name %q in status.d file map", packageName)
+		}
+		packageNames = append(packageNames, packageName)
 	}
-	return jsonBytes, nil
+	sort.Strings(packageNames)
+
+	var data strings.Builder
+	for _, packageName := range packageNames {
+		filename := statusdFileMap[packageName]
+		if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, "/\t\r\n") {
+			return nil, fmt.Errorf("invalid status.d filename %q for package %s", filename, packageName)
+		}
+		fmt.Fprintf(&data, "%s\t%s\n", packageName, filename)
+	}
+	return []byte(data.String()), nil
 }
