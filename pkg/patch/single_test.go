@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	buildkitclient "github.com/moby/buildkit/client"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -64,18 +63,92 @@ func TestPatchSingleArchImageRejectsInvalidReference(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse reference")
 }
 
-func TestValidatePlatformEmulationAllowsHostPlatform(t *testing.T) {
-	t.Parallel()
+func TestValidateBuildkitPlatformSupport(t *testing.T) {
+	const amd64Architecture = "amd64"
+	originalListWorkers := listWorkers
+	t.Cleanup(func() { listWorkers = originalListWorkers })
 
-	// validatePlatformEmulation forces the host OS to "linux" before comparing
-	// against the target, so the cross-platform happy path is always
-	// linux/<host-arch>, regardless of the developer's actual OS.
-	host := platforms.Normalize(platforms.DefaultSpec())
-	target := types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: host.Architecture, Variant: host.Variant}}
+	listErr := errors.New("workers unavailable")
+	tests := []struct {
+		name      string
+		target    v1.Platform
+		workers   []*buildkitclient.WorkerInfo
+		listErr   error
+		wantError string
+	}{
+		{
+			name:   "remote native worker supports target",
+			target: v1.Platform{OS: LINUX, Architecture: ARM64},
+			workers: []*buildkitclient.WorkerInfo{{
+				ID:        "remote-arm64",
+				Platforms: []v1.Platform{{OS: LINUX, Architecture: ARM64, Variant: "v8"}},
+			}},
+		},
+		{
+			name:      "amd64-only worker does not claim unadvertised 386 target",
+			target:    v1.Platform{OS: LINUX, Architecture: "386"},
+			workers:   []*buildkitclient.WorkerInfo{{ID: amd64Architecture, Platforms: []v1.Platform{{OS: LINUX, Architecture: amd64Architecture}}}},
+			wantError: "emulation is not enabled for platform linux/386 on any BuildKit worker",
+		},
+		{
+			name:   "explicitly advertised 386 target is supported",
+			target: v1.Platform{OS: LINUX, Architecture: "386"},
+			workers: []*buildkitclient.WorkerInfo{{
+				ID: "amd64-with-386",
+				Platforms: []v1.Platform{
+					{OS: LINUX, Architecture: amd64Architecture},
+					{OS: LINUX, Architecture: "386"},
+				},
+			}},
+		},
+		{
+			name:      "386 worker does not satisfy amd64 target",
+			target:    v1.Platform{OS: LINUX, Architecture: amd64Architecture},
+			workers:   []*buildkitclient.WorkerInfo{{ID: "386", Platforms: []v1.Platform{{OS: LINUX, Architecture: "386"}}}},
+			wantError: "emulation is not enabled for platform linux/amd64 on any BuildKit worker",
+		},
+		{
+			name:   "worker advertised emulation supports target",
+			target: v1.Platform{OS: LINUX, Architecture: "s390x"},
+			workers: []*buildkitclient.WorkerInfo{{
+				ID: "remote-amd64-with-qemu",
+				Platforms: []v1.Platform{
+					{OS: LINUX, Architecture: amd64Architecture},
+					{OS: LINUX, Architecture: "s390x"},
+				},
+			}},
+		},
+		{
+			name:      "unsupported target is actionable",
+			target:    v1.Platform{OS: LINUX, Architecture: "riscv64"},
+			workers:   []*buildkitclient.WorkerInfo{{ID: amd64Architecture, Platforms: []v1.Platform{{OS: LINUX, Architecture: amd64Architecture}}}},
+			wantError: "emulation is not enabled for platform linux/riscv64 on any BuildKit worker",
+		},
+		{
+			name:      "worker listing failure is preserved",
+			target:    v1.Platform{OS: LINUX, Architecture: ARM64},
+			listErr:   listErr,
+			wantError: "list BuildKit workers for platform validation",
+		},
+	}
 
-	err := validatePlatformEmulation(target)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listWorkers = func(context.Context, *buildkitclient.Client) ([]*buildkitclient.WorkerInfo, error) {
+				return tt.workers, tt.listErr
+			}
 
-	assert.NoError(t, err)
+			err := validateBuildkitPlatformSupport(t.Context(), nil, types.PatchPlatform{Platform: tt.target})
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				if tt.listErr != nil {
+					require.ErrorIs(t, err, tt.listErr)
+				}
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestSetupWorkingFolderCreatesTemporaryDirectory(t *testing.T) {

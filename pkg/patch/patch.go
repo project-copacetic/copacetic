@@ -10,6 +10,7 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
+	buildkitclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
@@ -26,6 +27,9 @@ import (
 // for testing.
 var (
 	bkNewClient = buildkit.NewClient
+	listWorkers = func(ctx context.Context, client *buildkitclient.Client) ([]*buildkitclient.WorkerInfo, error) {
+		return client.ListWorkers(ctx)
+	}
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report for a given set of options.

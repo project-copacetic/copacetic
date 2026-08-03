@@ -112,7 +112,7 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 					"use a named release such as ubuntu-24.04 or provide a release directory through the dedicated \"chisel-release\" build context",
 			)
 		}
-		if strings.HasPrefix(value, "ubuntu-") {
+		if isNamedChiselRelease(value) {
 			release, parseErr := copachisel.ParseRelease(value)
 			if parseErr != nil {
 				return nil, errors.Wrap(parseErr, "invalid Chisel release override")
@@ -166,6 +166,27 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	}
 
 	return options, nil
+}
+
+// isNamedChiselRelease reports whether value uses the exact standard release
+// name form accepted by Chisel. Other values identify paths in the dedicated
+// BuildKit context, even when their directory name starts with "ubuntu-".
+func isNamedChiselRelease(value string) bool {
+	const prefix = "ubuntu-"
+	if len(value) != len(prefix)+5 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+
+	version := value[len(prefix):]
+	return isASCIIDigit(version[0]) &&
+		isASCIIDigit(version[1]) &&
+		version[2] == '.' &&
+		isASCIIDigit(version[3]) &&
+		isASCIIDigit(version[4])
+}
+
+func isASCIIDigit(value byte) bool {
+	return value >= '0' && value <= '9'
 }
 
 // validateLibraryPatchLevel validates the library patch level flag and its usage.

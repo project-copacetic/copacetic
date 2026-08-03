@@ -1,6 +1,7 @@
 package pkgmgr
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -17,6 +18,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/moby/buildkit/client/llb"
@@ -42,9 +44,14 @@ const (
 	chiselValidationMark            = "/copa-chisel-validation-ok"
 	chiselOldExpectedPath           = "/copa-chisel-old.json"
 	chiselNewExpectedPath           = "/copa-chisel-new.json"
+	chiselLocalReleaseArchivePath   = "/release.tar.zst"
+	chiselLocalReleaseArchiveMount  = "/copa-chisel-release-input"
 	maxChiselExpectationInlineBytes = 8 << 20
-	maxLocalReleaseBytes            = 64 << 20
-	maxLocalReleaseFiles            = 10000
+	// Leave half of BuildKit's 16 MiB gateway request allowance for the
+	// surrounding protobuf and LLB graph.
+	maxLocalReleaseInlineBytes = 8 << 20
+	maxLocalReleaseBytes       = 64 << 20
+	maxLocalReleaseFiles       = 10000
 	// Bound the compressed input before ParseManifest applies the same limit
 	// to the decompressed JSONWall data.
 	maxChiselManifestInputBytes = copachisel.MaxManifestSize
@@ -273,12 +280,20 @@ rm -rf "$RELEASE_DIR/.git"
 		if err != nil {
 			return llb.State{}, "", "", err
 		}
-		withRelease := tooling.File(llb.Copy(releaseState, "/", chiselReleaseRoot, &llb.CopyInfo{
-			CopyDirContentsOnly: true,
-			CreateDestPath:      true,
-		}))
+		const materializeScript = `set -eu
+rm -rf "$RELEASE_DIR"
+mkdir -p "$RELEASE_DIR"
+zstd -q -d -c "$RELEASE_ARCHIVE" | tar -xpf - -C "$RELEASE_DIR"
+`
+		run := tooling.Run(
+			llb.Args([]string{"/bin/sh", "-c", materializeScript}),
+			llb.AddEnv("RELEASE_DIR", chiselReleaseRoot),
+			llb.AddEnv("RELEASE_ARCHIVE", chiselLocalReleaseArchiveMount+chiselLocalReleaseArchivePath),
+			llb.WithCustomName("Materializing local Chisel release definitions"),
+		)
+		_ = run.AddMount(chiselLocalReleaseArchiveMount, releaseState, llb.Readonly)
 		provenance := fmt.Sprintf("local:%s@sha256:%s", filepath.Base(release.Location), digest)
-		return withRelease, chiselReleaseRoot, provenance, nil
+		return run.Root(), chiselReleaseRoot, provenance, nil
 	default:
 		return llb.State{}, "", "", fmt.Errorf("unsupported Chisel release source kind %q", release.Kind)
 	}
@@ -299,10 +314,19 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 	}
 	defer rootHandle.Close()
 
-	state := llb.Scratch()
 	hash := sha256.New()
 	fileCount := 0
 	var totalBytes int64
+	var archive bytes.Buffer
+	encoder, err := zstd.NewWriter(
+		&archive,
+		zstd.WithEncoderConcurrency(1),
+		zstd.WithEncoderLevel(zstd.SpeedBetterCompression),
+	)
+	if err != nil {
+		return llb.State{}, "", fmt.Errorf("create local Chisel release compressor: %w", err)
+	}
+	tarWriter := tar.NewWriter(encoder)
 	err = fs.WalkDir(rootHandle.FS(), ".", func(relative string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -327,9 +351,18 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 		}
 		destination := "/" + filepath.ToSlash(relative)
 		fmt.Fprintf(hash, "%s\x00%o\x00", destination, info.Mode())
+		header := &tar.Header{
+			Name:    filepath.ToSlash(relative),
+			Mode:    int64(info.Mode().Perm()),
+			ModTime: time.Unix(0, 0).UTC(),
+		}
 		switch {
 		case entry.IsDir():
-			state = state.File(llb.Mkdir(destination, info.Mode().Perm(), llb.WithParents(true)))
+			header.Name += "/"
+			header.Typeflag = tar.TypeDir
+			if err := tarWriter.WriteHeader(header); err != nil {
+				return fmt.Errorf("archive directory %q: %w", relative, err)
+			}
 		case info.Mode().IsRegular():
 			if info.Size() > maxLocalReleaseBytes || totalBytes+info.Size() > maxLocalReleaseBytes {
 				return fmt.Errorf("local Chisel release exceeds the %d MiB size limit", maxLocalReleaseBytes>>20)
@@ -338,9 +371,19 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 			if err != nil {
 				return err
 			}
+			if int64(len(contents)) != info.Size() {
+				return fmt.Errorf("local Chisel release file %q changed size during materialization", relative)
+			}
 			totalBytes += int64(len(contents))
 			writeLocalChiselReleaseHashPayload(hash, contents)
-			state = state.File(llb.Mkfile(destination, info.Mode().Perm(), contents))
+			header.Typeflag = tar.TypeReg
+			header.Size = int64(len(contents))
+			if err := tarWriter.WriteHeader(header); err != nil {
+				return fmt.Errorf("archive regular file %q: %w", relative, err)
+			}
+			if _, err := tarWriter.Write(contents); err != nil {
+				return fmt.Errorf("archive regular file contents %q: %w", relative, err)
+			}
 		case info.Mode()&os.ModeSymlink != 0:
 			target, err := rootHandle.Readlink(relative)
 			if err != nil {
@@ -360,15 +403,34 @@ func localChiselReleaseState(root string) (llb.State, string, error) {
 				return fmt.Errorf("local Chisel release symlink %q does not resolve safely within the release directory: %w", relative, err)
 			}
 			writeLocalChiselReleaseHashPayload(hash, []byte(target))
-			state = state.File(llb.Symlink(filepath.ToSlash(target), destination))
+			header.Typeflag = tar.TypeSymlink
+			header.Linkname = filepath.ToSlash(target)
+			if err := tarWriter.WriteHeader(header); err != nil {
+				return fmt.Errorf("archive symlink %q: %w", relative, err)
+			}
 		default:
 			return fmt.Errorf("local Chisel release contains unsupported file type at %q", relative)
 		}
 		return nil
 	})
+	tarCloseErr := tarWriter.Close()
+	encoderCloseErr := encoder.Close()
 	if err != nil {
 		return llb.State{}, "", fmt.Errorf("materialize local Chisel release %q: %w", root, err)
 	}
+	if tarCloseErr != nil {
+		return llb.State{}, "", fmt.Errorf("finish local Chisel release archive %q: %w", root, tarCloseErr)
+	}
+	if encoderCloseErr != nil {
+		return llb.State{}, "", fmt.Errorf("finish local Chisel release compression %q: %w", root, encoderCloseErr)
+	}
+	if archive.Len() > maxLocalReleaseInlineBytes {
+		return llb.State{}, "", fmt.Errorf(
+			"compressed local Chisel release %q is %d bytes, exceeding the %d MiB BuildKit inline transfer limit; reduce the release contents or use a named Chisel release",
+			root, archive.Len(), maxLocalReleaseInlineBytes>>20,
+		)
+	}
+	state := llb.Scratch().File(llb.Mkfile(chiselLocalReleaseArchivePath, 0o600, archive.Bytes()))
 	return state, hex.EncodeToString(hash.Sum(nil)), nil
 }
 

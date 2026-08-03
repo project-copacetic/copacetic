@@ -2,20 +2,44 @@ package frontend
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
+const standardChiselRelease = "ubuntu-24.04"
+
 // Note: ParseOptions tests are covered by e2e tests in test/e2e/frontend/
 // since it requires a real BuildKit gateway client. This file focuses on
 // testing the validation helper functions that can be unit tested.
+
+func TestIsNamedChiselRelease(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    string
+		expected bool
+	}{
+		{name: "standard release", value: standardChiselRelease, expected: true},
+		{name: "custom directory suffix", value: "ubuntu-24.04-custom", expected: false},
+		{name: "short version component", value: "ubuntu-24.4", expected: false},
+		{name: "non-digit version component", value: "ubuntu-2a.04", expected: false},
+		{name: "different distribution", value: "debian-24.04", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isNamedChiselRelease(tt.value))
+		})
+	}
+}
 
 func TestParseOptionsChiselRelease(t *testing.T) {
 	tests := []struct {
@@ -32,14 +56,48 @@ func TestParseOptionsChiselRelease(t *testing.T) {
 			client.On("BuildOpts").Return(gwclient.BuildOpts{
 				Opts: map[string]string{
 					keyImage: "ubuntu:24.04",
-					tt.key:   "ubuntu-24.04",
+					tt.key:   standardChiselRelease,
 				},
 				LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
 			})
 
 			opts, err := ParseOptions(context.Background(), client)
 			require.NoError(t, err)
-			assert.Equal(t, "ubuntu-24.04", opts.ChiselRelease)
+			assert.Equal(t, standardChiselRelease, opts.ChiselRelease)
+			client.AssertExpectations(t)
+		})
+	}
+}
+
+func TestParseOptionsChiselReleaseDirectoryWithNamedPrefixUsesContext(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "direct frontend option", key: keyChiselRelease},
+		{name: "build argument", key: "build-arg:" + keyChiselRelease},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			solveErr := errors.New("failed to load release context")
+			client := new(mocks.MockGWClient)
+			client.On("BuildOpts").Return(gwclient.BuildOpts{
+				Opts: map[string]string{
+					keyImage: "ubuntu:24.04",
+					tt.key:   "ubuntu-24.04-custom",
+				},
+				LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
+			})
+			client.On("Solve", mock.Anything, mock.Anything).
+				Return((*gwclient.Result)(nil), solveErr).Once()
+
+			opts, err := ParseOptions(context.Background(), client)
+			require.Error(t, err)
+			assert.Nil(t, opts)
+			assert.ErrorIs(t, err, solveErr)
+			assert.Contains(t, err.Error(), "failed to extract local Chisel release from context")
+			assert.NotContains(t, err.Error(), "invalid Chisel release override")
 			client.AssertExpectations(t)
 		})
 	}

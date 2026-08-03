@@ -69,6 +69,11 @@ const (
 	// list and every copied metadata file combined.
 	maxDPKGStatusBytes          = 64 << 20
 	maxDPKGStatusDirectoryBytes = 64 << 20
+
+	// Full-status images do not retain the dpkg lifecycle database needed to
+	// safely update these packages directly. Keep this list in sync with the
+	// LIFECYCLE_PACKAGES value supplied to apt_get_download.sh.
+	externalFullStatusLifecyclePackageList = "dpkg dash init-system-helpers debconf perl-base tar apt apt-utils bash busybox busybox-static"
 )
 
 var requiredDPKGTools = []string{"apt-get", "apt-mark", "dpkg", "sh", "grep", "tee"}
@@ -1371,6 +1376,46 @@ func marshalDPKGUpdatePackageNames(updates unversioned.UpdatePackages, installed
 	return []byte(strings.Join(packageNames, "\n") + "\n"), nil
 }
 
+func rejectExternalFullStatusLifecyclePackages(packageData []byte) error {
+	lifecyclePackages := make(map[string]struct{})
+	for _, packageName := range strings.Fields(externalFullStatusLifecyclePackageList) {
+		lifecyclePackages[packageName] = struct{}{}
+	}
+
+	selected := make(map[string]struct{})
+	scanner := bufio.NewScanner(bytes.NewReader(packageData))
+	for scanner.Scan() {
+		identity := strings.TrimSpace(scanner.Text())
+		if identity == "" {
+			continue
+		}
+		packageName, _, err := splitDPKGPackageIdentity(identity)
+		if err != nil {
+			return fmt.Errorf("invalid selected package identity %q: %w", identity, err)
+		}
+		if _, isLifecyclePackage := lifecyclePackages[packageName]; isLifecyclePackage {
+			selected[packageName] = struct{}{}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read selected package identities: %w", err)
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+
+	packageNames := make([]string, 0, len(selected))
+	for packageName := range selected {
+		packageNames = append(packageNames, packageName)
+	}
+	sort.Strings(packageNames)
+	return fmt.Errorf(
+		"external full-status images cannot safely update lifecycle package(s) %s because the required dpkg lifecycle metadata is unavailable; "+
+			"rebuild the source image or use an image that preserves the complete %s database",
+		strings.Join(packageNames, ", "), dpkgLibPath,
+	)
+}
+
 func marshalDPKGVersionFloors(updates unversioned.UpdatePackages, installedVersions map[string]string) ([]byte, error) {
 	type versionFloor struct {
 		installed string
@@ -1568,9 +1613,20 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	if !dm.installationMode.usesExternalTools() {
 		return nil, nil, fmt.Errorf("installation mode %s does not use external dpkg tooling", dm.installationMode)
 	}
+	var selectedPackageData []byte
 	if updates != nil {
 		if err := ValidateOSPackageNames(updates); err != nil {
 			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
+		}
+		var err error
+		selectedPackageData, err = marshalDPKGUpdatePackageNames(updates, dm.packageInfo)
+		if err != nil {
+			return nil, nil, fmt.Errorf("serializing requested package names: %w", err)
+		}
+		if dm.installationMode == dpkgInstallationModeExternalFullStatus {
+			if err := rejectExternalFullStatusLifecyclePackages(selectedPackageData); err != nil {
+				return nil, nil, err
+			}
 		}
 	}
 
@@ -1652,14 +1708,19 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			log.Info("No upgradable packages found for this image (external dpkg path).")
 			return nil, nil, types.ErrNoUpdatesFound
 		}
-	} else {
-		packageNames, err := marshalDPKGUpdatePackageNames(updates, dm.packageInfo)
-		if err != nil {
-			return nil, nil, fmt.Errorf("serializing requested package names: %w", err)
+		if dm.installationMode == dpkgInstallationModeExternalFullStatus {
+			selectedPackageData, err = buildkit.ExtractFileFromState(ctx, dm.config.Client, &updated, dpkgUpdatePackagesPath)
+			if err != nil {
+				return nil, nil, fmt.Errorf("reading selected external dpkg updates: %w", err)
+			}
+			if err := rejectExternalFullStatusLifecyclePackages(selectedPackageData); err != nil {
+				return nil, nil, err
+			}
 		}
+	} else {
 		updated = updated.
 			File(llb.Mkdir(dpkgDownloadPath, 0o755, llb.WithParents(true))).
-			File(llb.Mkfile(dpkgUpdatePackagesPath, 0o444, packageNames))
+			File(llb.Mkfile(dpkgUpdatePackagesPath, 0o444, selectedPackageData))
 	}
 
 	// Rebuild enough of the temporary dpkg administrative database to run
@@ -1748,6 +1809,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.AddEnv("FOREIGN_DPKG_ARCHES", strings.Join(foreignArchitectures, " ")),
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		llb.AddEnv("DPKG_INSTALLATION_MODE", dm.installationMode.String()),
+		llb.AddEnv("LIFECYCLE_PACKAGES", externalFullStatusLifecyclePackageList),
 		llb.AddEnv("STATUSD_FILE_MAP", string(jsonStatusdFileMap)),
 		buildkit.Sh(`/download.sh`),
 		llb.WithProxy(utils.GetProxy()),

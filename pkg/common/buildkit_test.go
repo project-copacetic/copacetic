@@ -336,6 +336,14 @@ func TestAddImageConfigLabelsNormalizesLabelFieldCasing(t *testing.T) {
 	}
 }
 
+func TestAddImageConfigLabelsRejectsNullConfig(t *testing.T) {
+	_, err := AddImageConfigLabels(
+		[]byte(`{"config":null}`),
+		map[string]string{pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04"},
+	)
+	require.EqualError(t, err, "image config does not contain an object-valued config field")
+}
+
 func TestAddImageConfigLabelsRejectsAmbiguousCaseVariants(t *testing.T) {
 	_, err := AddImageConfigLabels(
 		[]byte(`{"config":{"LABELS":{"first":"value"},"lAbElS":{"second":"value"}}}`),

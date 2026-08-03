@@ -146,6 +146,9 @@ func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte,
 	if err := json.Unmarshal(configData, &config); err != nil {
 		return nil, fmt.Errorf("image config does not contain an object-valued config field: %w", err)
 	}
+	if config == nil {
+		return nil, fmt.Errorf("image config does not contain an object-valued config field")
+	}
 
 	labelsKey := "Labels"
 	labelsData, upperExists := config[labelsKey]

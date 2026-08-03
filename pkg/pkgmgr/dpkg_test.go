@@ -31,6 +31,8 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
+const finalizeMarkerEnv = "FINALIZE_MARKER"
+
 func TestStateFileExistsUsesStatOnly(t *testing.T) {
 	const path = "/var/lib/chisel/manifest.wall"
 	tests := []struct {
@@ -319,6 +321,68 @@ func TestMarshalDPKGVersionFloorsProtectsDependencyClosure(t *testing.T) {
 		map[string]string{"app:amd64": "1.0"},
 	)
 	require.ErrorContains(t, err, "is not installed in the target dpkg inventory")
+}
+
+func TestRejectExternalFullStatusLifecyclePackages(t *testing.T) {
+	tests := []struct {
+		name        string
+		packages    string
+		wantErr     string
+		wantNoError bool
+	}{
+		{
+			name:        "ordinary packages are accepted",
+			packages:    "base-files:amd64\nlibssl3:amd64\n",
+			wantNoError: true,
+		},
+		{
+			name:     "qualified lifecycle packages are rejected and sorted",
+			packages: "dpkg:amd64\nbash:amd64\ndpkg:amd64\n",
+			wantErr:  "lifecycle package(s) bash, dpkg",
+		},
+		{
+			name:     "unqualified lifecycle package is rejected",
+			packages: "perl-base\n",
+			wantErr:  "lifecycle package(s) perl-base",
+		},
+		{
+			name:     "malformed package identity fails closed",
+			packages: "bad;package:amd64\n",
+			wantErr:  "invalid selected package identity",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := rejectExternalFullStatusLifecyclePackages([]byte(tt.packages))
+			if tt.wantNoError {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestUnpackAndMergeUpdatesRejectsLifecyclePackageBeforeBuildKit(t *testing.T) {
+	const lifecyclePackageFixedVersion = "2.0"
+	manager := dpkgManager{
+		installationMode: dpkgInstallationModeExternalFullStatus,
+		packageInfo: map[string]string{
+			"dpkg:amd64": "1.0",
+		},
+	}
+
+	// A nil BuildKit config is intentional: lifecycle validation must return
+	// before resolving a platform, tooling image, or target mutation state.
+	_, _, err := manager.unpackAndMergeUpdates(
+		context.Background(),
+		unversioned.UpdatePackages{{Name: "dpkg", FixedVersion: lifecyclePackageFixedVersion}},
+		"unused-tool-image",
+		true,
+	)
+	require.ErrorContains(t, err, "cannot safely update lifecycle package(s) dpkg")
+	require.ErrorContains(t, err, "complete /var/lib/dpkg database")
 }
 
 func TestGetAPTImageName(t *testing.T) {
@@ -1010,6 +1074,748 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 	assert.FileExists(t, filepath.Join(dpkgRoot, "app", "sentinel"))
 }
 
+func TestAptGetDownloadScriptRejectsDirectLifecyclePackageBeforeTargetMutation(t *testing.T) {
+	tests := []struct {
+		name      string
+		selection string
+		updateAll string
+	}{
+		{name: "targeted qualified selection", selection: "dpkg:amd64\n", updateAll: "false"},
+		{name: "comprehensive unqualified selection", selection: "dpkg\n", updateAll: "true"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			workDir := t.TempDir()
+			downloadDir := filepath.Join(workDir, "downloads")
+			dpkgRoot := filepath.Join(workDir, "rootfs")
+			packagesPath := filepath.Join(workDir, "packages.txt")
+			toolMarker := filepath.Join(workDir, "tool-ran")
+			finalizeMarker := filepath.Join(workDir, "finalize-ran")
+			statusPath := filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status")
+			manifestPath := filepath.Join(dpkgRoot, "manifest")
+			sentinelPath := filepath.Join(dpkgRoot, "app", "sentinel")
+
+			require.NoError(t, os.MkdirAll(filepath.Dir(statusPath), 0o755))
+			require.NoError(t, os.MkdirAll(filepath.Dir(sentinelPath), 0o755))
+			writeDPKGTestFile(t, statusPath, []byte("Package: dpkg\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n"), 0o640)
+			writeDPKGTestFile(t, manifestPath, []byte("original-manifest"), 0o600)
+			writeDPKGTestFile(t, sentinelPath, []byte("application-data"), 0o640)
+			require.NoError(t, os.WriteFile(packagesPath, []byte(tt.selection), 0o600))
+
+			toolScript := "#!/bin/sh\n: > \"$TOOL_MARKER\"\nexit 97\n"
+			for _, tool := range []string{"apt-get", "dpkg", "dpkg-deb"} {
+				writeTestExecutable(t, binDir, tool, toolScript)
+			}
+			finalizePath := writeTestExecutable(t, workDir, "finalize.sh", "#!/bin/sh\n: > \"$FINALIZE_MARKER\"\n")
+
+			output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+				"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"IGNORE_ERRORS":               "true",
+				"UPDATE_ALL":                  tt.updateAll,
+				"DPKG_ROOT":                   dpkgRoot,
+				"DOWNLOAD_DIR":                downloadDir,
+				"PACKAGES_FILE":               packagesPath,
+				"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
+				"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
+				"LIFECYCLE_PACKAGES":          externalFullStatusLifecyclePackageList,
+				"TOOL_MARKER":                 toolMarker,
+				finalizeMarkerEnv:             finalizeMarker,
+			})
+			require.Error(t, err)
+			assert.Contains(t, string(output), "cannot safely update lifecycle package dpkg")
+			assertFileContent(t, manifestPath, "original-manifest")
+			assertFileContent(t, statusPath, "Package: dpkg\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
+			assertFileContent(t, sentinelPath, "application-data")
+			assert.NoFileExists(t, toolMarker)
+			assert.NoFileExists(t, finalizeMarker)
+
+			manifestInfo, statErr := os.Stat(manifestPath)
+			require.NoError(t, statErr)
+			assert.Equal(t, os.FileMode(0o600), manifestInfo.Mode().Perm())
+			statusInfo, statErr := os.Stat(statusPath)
+			require.NoError(t, statErr)
+			assert.Equal(t, os.FileMode(0o640), statusInfo.Mode().Perm())
+		})
+	}
+}
+
+//nolint:goconst // Shell environment names intentionally mirror the script contract across tests.
+func TestAptGetDownloadScriptRestoresTransientLifecycleDependency(t *testing.T) {
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	downloadDir := filepath.Join(workDir, "downloads")
+	dpkgRoot := filepath.Join(workDir, "rootfs")
+	packagesPath := filepath.Join(workDir, "packages.txt")
+	floorsPath := filepath.Join(workDir, "version-floors")
+	resolverPath := filepath.Join(downloadDir, "resolver-status")
+	statusPath := filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status")
+
+	originalStatus := []byte(strings.Join([]string{
+		"Package: app",
+		"Status: install ok installed",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"Depends: dash (>= 1.0)",
+		"",
+		"Package: dash",
+		"Status: install ok installed",
+		"Version: 1.0",
+		"Architecture: amd64",
+		"",
+	}, "\n"))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "triggers"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "usr", "lib"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "bin"), 0o755))
+	writeDPKGTestFile(t, statusPath, originalStatus, 0o600)
+	writeDPKGResolverStatusTestFile(t, resolverPath, originalStatus)
+	writeDPKGTestFile(t, filepath.Join(dpkgRoot, "usr", "lib", "app"), []byte("old-app"), 0o644)
+	writeDPKGTestFile(t, filepath.Join(dpkgRoot, "bin", "sh"), []byte("application-owned-shell"), 0o700)
+	require.NoError(t, os.WriteFile(packagesPath, []byte("app:amd64\n"), 0o600))
+	require.NoError(t, os.WriteFile(floorsPath, []byte("app:amd64|1.0|2.0\ndash:amd64|1.0|\n"), 0o600))
+
+	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+command=''
+for arg in "$@"; do
+    case "$arg" in update|download|install) command=$arg ;; esac
+done
+case "$command" in
+    update) exit 0 ;;
+    install)
+        : > "$DOWNLOAD_DIR/app.deb"
+        : > "$DOWNLOAD_DIR/dash.deb"
+        ;;
+    download) exit 90 ;;
+    *) exit 91 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+package=${2##*/}
+package=${package%.deb}
+case "$1" in
+    -R)
+        mkdir -p "$3/DEBIAN"
+        case "$package" in
+            app)
+                mkdir -p "$3/usr/lib"
+                printf 'new-app' > "$3/usr/lib/app"
+                ;;
+            dash)
+                mkdir -p "$3/bin"
+                printf 'transient-dash' > "$3/bin/dash"
+                printf 'transient-shell' > "$3/bin/sh"
+                ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    -b)
+        rm -rf "$3.contents"
+        mkdir -p "$3.contents"
+        cp -R "$2/." "$3.contents/"
+        : > "$3"
+        ;;
+    -f)
+        case "$3" in
+            Package) printf '%s\n' "$package" ;;
+            Architecture) printf 'amd64\n' ;;
+            Version) printf '2.0\n' ;;
+            Depends) [ "$package" = app ] && printf 'dash (>= 1.0)\n' ;;
+            Pre-Depends|Multi-Arch|Provides) exit 0 ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+if [ "$1" = '--compare-versions' ]; then
+    case "$2|$3|$4" in
+        '2.0|ge|1.0'|'2.0|ge|2.0'|'1.0|ge|1.0'|'1.0|lt|2.0') exit 0 ;;
+        '1.0|lt|1.0') exit 1 ;;
+        *) exit 2 ;;
+    esac
+fi
+for arg in "$@"; do
+    case "$arg" in
+        *.deb)
+            payload=$arg.contents
+            [ -d "$payload" ] || exit 92
+            (
+                cd "$payload"
+                find . -mindepth 1 ! -path './DEBIAN' ! -path './DEBIAN/*' -print
+            ) | while IFS= read -r path; do
+                source=$payload/${path#./}
+                target=$DPKG_ROOT/${path#./}
+                if [ -d "$source" ] && [ ! -L "$source" ]; then
+                    mkdir -p "$target"
+                else
+                    mkdir -p "$(dirname "$target")"
+                    cp -a "$source" "$target"
+                fi
+            done
+            ;;
+    esac
+done
+cat > "$DPKG_ROOT/var/lib/dpkg/status" <<'EOF'
+Package: app
+Status: install ok installed
+Version: 2.0
+Architecture: amd64
+Depends: dash (>= 1.0)
+
+Package: dash
+Status: install ok installed
+Version: 2.0
+Architecture: amd64
+EOF
+`)
+	writeTestExecutable(t, binDir, "busybox", `#!/bin/sh
+case "$1" in
+    --list) printf 'sh\nsed\ngrep\nawk\n' ;;
+    stat) printf '755|%s|%s\n' "$(id -u)" "$(id -g)" ;;
+    *) exit 2 ;;
+esac
+`)
+
+	output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":               "false",
+		"UPDATE_ALL":                  "false",
+		"DPKG_ROOT":                   dpkgRoot,
+		"DOWNLOAD_DIR":                downloadDir,
+		"PACKAGES_FILE":               packagesPath,
+		"RESOLVER_STATUS_FILE":        resolverPath,
+		"VERSION_FLOORS_FILE":         floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT": writeTestExecutable(t, workDir, "finalize.sh", string(finalizeDPKGStatusScript)),
+		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalFullStatus.String(),
+		"LIFECYCLE_PACKAGES":          "dash",
+		"TARGET_DPKG_ARCH":            "amd64",
+		"STATUSD_FILE_MAP":            "{}",
+		"BUSYBOX":                     filepath.Join(binDir, "busybox"),
+	})
+	require.NoError(t, err, "script output: %s", output)
+
+	assertFileContent(t, filepath.Join(dpkgRoot, "usr", "lib", "app"), "new-app")
+	assertFileContent(t, filepath.Join(dpkgRoot, "bin", "sh"), "application-owned-shell")
+	assert.NoFileExists(t, filepath.Join(dpkgRoot, "bin", "dash"))
+	updatedStatus, err := os.ReadFile(statusPath)
+	require.NoError(t, err)
+	parsedStatus, err := parseDPKGStatus(updatedStatus)
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", parsedStatus.packages["app:amd64"])
+	assert.Equal(t, "1.0", parsedStatus.packages["dash:amd64"])
+	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"))
+	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "triggers"))
+
+	manifest, err := os.ReadFile(filepath.Join(dpkgRoot, "manifest"))
+	require.NoError(t, err)
+	manifestPackages, err := dpkgParseResultsManifest(manifest)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"app:amd64": "2.0"}, manifestPackages)
+}
+
+func TestAptGetDownloadScriptValidatesDependencyArchitectures(t *testing.T) {
+	const (
+		dependencyPackage          = "dependency"
+		dependencyNative           = "dependency:native"
+		dependencyI386             = "dependency:i386"
+		multiArchAllowed           = "allowed"
+		virtualDependency          = "virtual-dependency"
+		virtualDependencyAny       = "virtual-dependency:any"
+		virtualDependencyQualified = "virtual-dependency:amd64"
+		missingVirtualDependency   = "missing-virtual-dependency"
+	)
+	tests := []struct {
+		name                       string
+		sourceArchitecture         string
+		dependencyClause           string
+		installedArchitecture      string
+		installedMultiArch         string
+		installedProvides          string
+		installedStatus            string
+		omitInstalledFloor         bool
+		sourceMultiArch            string
+		sourceProvides             string
+		originalSourceArchitecture string
+		originalDependencyClause   string
+		originalSourceProvides     string
+		wantUnresolved             bool
+	}{
+		{
+			name:                  "unqualified dependency accepts source architecture",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyPackage,
+			installedArchitecture: "amd64",
+		},
+		{
+			name:                  "compact version constraint is accepted",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      "dependency (>=1.0)",
+			installedArchitecture: "amd64",
+		},
+		{
+			name:                  "unqualified dependency rejects foreign architecture",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyPackage,
+			installedArchitecture: "i386",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "architecture all source uses target architecture",
+			sourceArchitecture:    dpkgArchitectureAll,
+			dependencyClause:      dependencyPackage,
+			installedArchitecture: "amd64",
+		},
+		{
+			name:                  "architecture all source rejects foreign architecture",
+			sourceArchitecture:    dpkgArchitectureAll,
+			dependencyClause:      dependencyPackage,
+			installedArchitecture: "i386",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "native qualifier accepts target architecture",
+			sourceArchitecture:    dpkgArchitectureAll,
+			dependencyClause:      dependencyNative,
+			installedArchitecture: "amd64",
+		},
+		{
+			name:                  "native qualifier rejects foreign architecture",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyNative,
+			installedArchitecture: "i386",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "unqualified dependency accepts multi-arch foreign provider",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyPackage,
+			installedArchitecture: "i386",
+			installedMultiArch:    "foreign",
+		},
+		{
+			name:                  "any qualifier rejects package without multi-arch allowed",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      "dependency:any",
+			installedArchitecture: "i386",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "any qualifier accepts multi-arch allowed provider",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      "dependency:any",
+			installedArchitecture: "i386",
+			installedMultiArch:    multiArchAllowed,
+		},
+		{
+			name:                  "explicit qualifier accepts matching architecture",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyI386,
+			installedArchitecture: "i386",
+		},
+		{
+			name:                  "explicit qualifier rejects nonmatching architecture",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyI386,
+			installedArchitecture: "amd64",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "architecture all dependency satisfies native qualifier",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyNative,
+			installedArchitecture: dpkgArchitectureAll,
+		},
+		{
+			name:                  "architecture all dependency does not satisfy foreign qualifier",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      dependencyI386,
+			installedArchitecture: dpkgArchitectureAll,
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "architecture all dependency does not satisfy foreign source architecture",
+			sourceArchitecture:    "i386",
+			dependencyClause:      dependencyPackage,
+			installedArchitecture: dpkgArchitectureAll,
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "architecture all dependency satisfies explicit target qualifier",
+			sourceArchitecture:    "i386",
+			dependencyClause:      "dependency:amd64",
+			installedArchitecture: dpkgArchitectureAll,
+		},
+		{
+			name:                  "retained provider preserves multi-arch allowed metadata",
+			sourceArchitecture:    "i386",
+			sourceMultiArch:       multiArchAllowed,
+			sourceProvides:        virtualDependency,
+			dependencyClause:      virtualDependencyAny,
+			installedArchitecture: "amd64",
+		},
+		{
+			name:                  "explicit retained provide qualifier does not synthesize any",
+			sourceArchitecture:    "amd64",
+			sourceMultiArch:       multiArchAllowed,
+			sourceProvides:        virtualDependencyQualified,
+			dependencyClause:      virtualDependencyAny,
+			installedArchitecture: "amd64",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "explicit any provide requires provider multi-arch allowed",
+			sourceArchitecture:    "amd64",
+			sourceProvides:        virtualDependencyAny,
+			dependencyClause:      virtualDependencyAny,
+			installedArchitecture: "amd64",
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "explicit any provide accepts provider multi-arch allowed",
+			sourceArchitecture:    "amd64",
+			sourceMultiArch:       multiArchAllowed,
+			sourceProvides:        virtualDependencyAny,
+			dependencyClause:      virtualDependencyAny,
+			installedArchitecture: "amd64",
+		},
+		{
+			name:                  "explicit any foreign provider does not satisfy unqualified dependency",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      virtualDependency,
+			installedArchitecture: "i386",
+			installedMultiArch:    multiArchAllowed,
+			installedProvides:     virtualDependencyAny,
+			wantUnresolved:        true,
+		},
+		{
+			name:                     "satisfied original clause is not exempt after provider removal",
+			sourceArchitecture:       "amd64",
+			dependencyClause:         virtualDependency,
+			installedArchitecture:    "amd64",
+			originalDependencyClause: virtualDependency,
+			originalSourceProvides:   virtualDependency,
+			wantUnresolved:           true,
+		},
+		{
+			name:                     "already unresolved original clause remains grandfathered",
+			sourceArchitecture:       "amd64",
+			dependencyClause:         missingVirtualDependency,
+			installedArchitecture:    "amd64",
+			originalDependencyClause: missingVirtualDependency,
+		},
+		{
+			name:                       "original dependency exemption is source architecture specific",
+			sourceArchitecture:         "i386",
+			dependencyClause:           dependencyPackage,
+			installedArchitecture:      "amd64",
+			originalSourceArchitecture: "amd64",
+			originalDependencyClause:   dependencyPackage,
+			wantUnresolved:             true,
+		},
+		{
+			name:                  "removed virtual provider is ignored",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      virtualDependency,
+			installedArchitecture: "amd64",
+			installedStatus:       "deinstall ok config-files",
+			installedProvides:     virtualDependency,
+			omitInstalledFloor:    true,
+			wantUnresolved:        true,
+		},
+		{
+			name:                  "unchanged virtual provider inherits multi-arch foreign metadata",
+			sourceArchitecture:    "amd64",
+			dependencyClause:      virtualDependency,
+			installedArchitecture: "i386",
+			installedMultiArch:    "foreign",
+			installedProvides:     virtualDependency,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := runAptGetDownloadRelationshipTest(t, &aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:         tt.sourceArchitecture,
+				dependencyClause:           tt.dependencyClause,
+				installedArchitecture:      tt.installedArchitecture,
+				installedMultiArch:         tt.installedMultiArch,
+				installedProvides:          tt.installedProvides,
+				installedStatus:            tt.installedStatus,
+				omitInstalledFloor:         tt.omitInstalledFloor,
+				sourceMultiArch:            tt.sourceMultiArch,
+				sourceProvides:             tt.sourceProvides,
+				originalSourceArchitecture: tt.originalSourceArchitecture,
+				originalDependencyClause:   tt.originalDependencyClause,
+				originalSourceProvides:     tt.originalSourceProvides,
+			})
+			if tt.wantUnresolved {
+				require.Error(t, err)
+				assert.Contains(t, string(output), "package app has unresolved final dependency clause '"+tt.dependencyClause+"'")
+				return
+			}
+			require.NoError(t, err, "script output: %s", output)
+		})
+	}
+}
+
+func TestAptGetDownloadScriptValidatesNegativeRelationships(t *testing.T) {
+	const virtualApp = "virtual-app"
+	tests := []struct {
+		name      string
+		options   aptGetDownloadRelationshipTestOptions
+		wantError string
+	}{
+		{
+			name: "breaks matching final version",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "amd64",
+				breaksClause:          "dependency (<< 2.0)",
+			},
+			wantError: "final Breaks relationship",
+		},
+		{
+			name: "compact breaks constraint",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "amd64",
+				breaksClause:          "dependency (<<2.0)",
+			},
+			wantError: "final Breaks relationship",
+		},
+		{
+			name: "breaks nonmatching final version",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "amd64",
+				breaksClause:          "dependency (<< 1.0)",
+			},
+		},
+		{
+			name: "conflicts matching final package",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "amd64",
+				conflictsClause:       "dependency",
+			},
+			wantError: "final Conflicts relationship",
+		},
+		{
+			name: "unqualified conflict matches foreign architecture",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "i386",
+				conflictsClause:       "dependency",
+			},
+			wantError: "final Conflicts relationship",
+		},
+		{
+			name: "all to native transition retires original provider",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:         "amd64",
+				originalSourceArchitecture: dpkgArchitectureAll,
+				installedArchitecture:      "amd64",
+				originalSourceProvides:     virtualApp,
+				installedDepends:           virtualApp,
+			},
+			wantError: "package dependency has unresolved final dependency clause",
+		},
+		{
+			name: "unchanged package conflict is validated",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "amd64",
+				installedConflicts:    "app (>= 2.0)",
+			},
+			wantError: "package dependency has final Conflicts relationship",
+		},
+		{
+			name: "self-provided conflict excludes source package",
+			options: aptGetDownloadRelationshipTestOptions{
+				sourceArchitecture:    "amd64",
+				installedArchitecture: "amd64",
+				sourceProvides:        virtualApp,
+				conflictsClause:       virtualApp,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := runAptGetDownloadRelationshipTest(t, &tt.options)
+			if tt.wantError != "" {
+				require.Error(t, err, "script output: %s", output)
+				assert.Contains(t, string(output), tt.wantError)
+				return
+			}
+			require.NoError(t, err, "script output: %s", output)
+		})
+	}
+}
+
+type aptGetDownloadRelationshipTestOptions struct {
+	sourceArchitecture         string
+	dependencyClause           string
+	breaksClause               string
+	conflictsClause            string
+	installedArchitecture      string
+	installedMultiArch         string
+	installedProvides          string
+	installedStatus            string
+	omitInstalledFloor         bool
+	sourceMultiArch            string
+	sourceProvides             string
+	originalSourceArchitecture string
+	originalDependencyClause   string
+	originalSourceProvides     string
+	installedDepends           string
+	installedBreaks            string
+	installedConflicts         string
+}
+
+func runAptGetDownloadRelationshipTest(t *testing.T, options *aptGetDownloadRelationshipTestOptions) ([]byte, error) {
+	t.Helper()
+
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	downloadDir := filepath.Join(workDir, "downloads")
+	dpkgRoot := filepath.Join(workDir, "rootfs")
+	packagesPath := filepath.Join(workDir, "packages.txt")
+	floorsPath := filepath.Join(workDir, "version-floors")
+	finalizePath := filepath.Join(workDir, "finalize.sh")
+	resolverPath := filepath.Join(downloadDir, "resolver-status")
+	originalSourceArchitecture := options.originalSourceArchitecture
+	if originalSourceArchitecture == "" {
+		originalSourceArchitecture = options.sourceArchitecture
+	}
+	installedStatus := options.installedStatus
+	if installedStatus == "" {
+		installedStatus = "install ok installed"
+	}
+	statusFields := []string{
+		"Package: app",
+		"Status: install ok installed",
+		"Version: 1.0",
+		"Architecture: " + originalSourceArchitecture,
+	}
+	if options.originalDependencyClause != "" {
+		statusFields = append(statusFields, "Depends: "+options.originalDependencyClause)
+	}
+	if options.originalSourceProvides != "" {
+		statusFields = append(statusFields, "Provides: "+options.originalSourceProvides)
+	}
+	statusFields = append(statusFields,
+		"",
+		"Package: dependency",
+		"Status: "+installedStatus,
+		"Version: 1.0",
+		"Architecture: "+options.installedArchitecture,
+	)
+	if options.installedMultiArch != "" {
+		statusFields = append(statusFields, "Multi-Arch: "+options.installedMultiArch)
+	}
+	if options.installedDepends != "" {
+		statusFields = append(statusFields, "Depends: "+options.installedDepends)
+	}
+	if options.installedProvides != "" {
+		statusFields = append(statusFields, "Provides: "+options.installedProvides)
+	}
+	if options.installedBreaks != "" {
+		statusFields = append(statusFields, "Breaks: "+options.installedBreaks)
+	}
+	if options.installedConflicts != "" {
+		statusFields = append(statusFields, "Conflicts: "+options.installedConflicts)
+	}
+	statusFields = append(statusFields, "")
+	status := []byte(strings.Join(statusFields, "\n"))
+
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "triggers"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), status, 0o600))
+	writeDPKGResolverStatusTestFile(t, resolverPath, status)
+	require.NoError(t, os.WriteFile(packagesPath, []byte("app:"+originalSourceArchitecture+"\n"), 0o600))
+	floors := []string{"app:" + originalSourceArchitecture + "|1.0|2.0"}
+	if !options.omitInstalledFloor {
+		floors = append(floors, "dependency:"+options.installedArchitecture+"|1.0|")
+	}
+	require.NoError(t, os.WriteFile(floorsPath, []byte(strings.Join(append(floors, ""), "\n")), 0o600))
+	writeTestExecutable(t, workDir, "finalize.sh", "#!/bin/sh\nexit 0\n")
+
+	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+command=''
+for arg in "$@"; do
+    case "$arg" in update|download|install) command=$arg ;; esac
+done
+case "$command" in
+    update) exit 0 ;;
+    install) : > "$DOWNLOAD_DIR/app.deb" ;;
+    download) exit 90 ;;
+    *) exit 91 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+case "$1" in
+    -R)
+        mkdir -p "$3/DEBIAN" "$3/usr/lib"
+        : > "$3/usr/lib/app"
+        ;;
+    -b) : > "$3" ;;
+    -f)
+        case "$3" in
+            Package) printf 'app\n' ;;
+            Architecture) printf '%s\n' "$SOURCE_ARCHITECTURE" ;;
+            Version) printf '2.0\n' ;;
+            Depends) printf '%s\n' "$DEPENDENCY_CLAUSE" ;;
+            Breaks) printf '%s\n' "$BREAKS_CLAUSE" ;;
+            Conflicts) printf '%s\n' "$CONFLICTS_CLAUSE" ;;
+            Multi-Arch) printf '%s\n' "$SOURCE_MULTI_ARCH" ;;
+            Provides) printf '%s\n' "$SOURCE_PROVIDES" ;;
+            Pre-Depends) exit 0 ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+if [ "$1" = '--compare-versions' ]; then
+    case "$2|$3|$4" in
+        '2.0|ge|1.0'|'2.0|ge|2.0'|'1.0|ge|1.0'|'1.0|lt|2.0') exit 0 ;;
+        '1.0|lt|1.0') exit 1 ;;
+        *) exit 2 ;;
+    esac
+fi
+exit 0
+`)
+
+	return executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+		"PATH":                          binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":                 "false",
+		"UPDATE_ALL":                    "false",
+		"DPKG_ROOT":                     dpkgRoot,
+		"DOWNLOAD_DIR":                  downloadDir,
+		"PACKAGES_FILE":                 packagesPath,
+		"RESOLVER_STATUS_FILE":          resolverPath,
+		"VERSION_FLOORS_FILE":           floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT":   finalizePath,
+		"DPKG_INSTALLATION_MODE":        dpkgInstallationModeExternalFullStatus.String(),
+		"LIFECYCLE_PACKAGES":            "",
+		"ALLOW_BUSYBOX_LIFECYCLE_SHELL": "true",
+		"ALLOW_REGULAR_DEV_NULL":        "true",
+		"TARGET_DPKG_ARCH":              "amd64",
+		"STATUSD_FILE_MAP":              "{}",
+		"SOURCE_ARCHITECTURE":           options.sourceArchitecture,
+		"SOURCE_MULTI_ARCH":             options.sourceMultiArch,
+		"SOURCE_PROVIDES":               options.sourceProvides,
+		"DEPENDENCY_CLAUSE":             options.dependencyClause,
+		"BREAKS_CLAUSE":                 options.breaksClause,
+		"CONFLICTS_CLAUSE":              options.conflictsClause,
+	})
+}
+
 func TestAptGetDownloadScriptRejectsUnsafeDependencyClosure(t *testing.T) {
 	binDir := t.TempDir()
 	workDir := t.TempDir()
@@ -1103,7 +1909,7 @@ fi
 		"ALLOW_REGULAR_DEV_NULL":        "true",
 		"TARGET_DPKG_ARCH":              "amd64",
 		"STATUSD_FILE_MAP":              "{}",
-		"FINALIZE_MARKER":               finalizeMarker,
+		finalizeMarkerEnv:               finalizeMarker,
 		"DPKG_MARKER":                   dpkgMarker,
 	})
 	require.Error(t, err)
@@ -1171,7 +1977,7 @@ esac
 		"ALLOW_REGULAR_DEV_NULL":        "true",
 		"TARGET_DPKG_ARCH":              "amd64",
 		"STATUSD_FILE_MAP":              "{}",
-		"FINALIZE_MARKER":               finalizeMarker,
+		finalizeMarkerEnv:               finalizeMarker,
 		"DPKG_MARKER":                   dpkgMarker,
 	})
 	require.Error(t, err)

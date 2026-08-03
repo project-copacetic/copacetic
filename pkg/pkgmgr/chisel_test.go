@@ -181,12 +181,63 @@ func TestLocalChiselReleaseState(t *testing.T) {
 	require.NoError(t, os.Mkdir(filepath.Join(releaseDir, "slices"), 0o755))
 	writePackageManagerTestFile(t, filepath.Join(releaseDir, "slices", "base.yaml"), []byte("package: base-files\n"), 0o644)
 
-	_, firstDigest, err := localChiselReleaseState(releaseDir)
+	firstState, firstDigest, err := localChiselReleaseState(releaseDir)
 	require.NoError(t, err)
-	_, secondDigest, err := localChiselReleaseState(releaseDir)
+	secondState, secondDigest, err := localChiselReleaseState(releaseDir)
 	require.NoError(t, err)
 	assert.Len(t, firstDigest, 64)
 	assert.Equal(t, firstDigest, secondDigest)
+	firstDefinition, err := firstState.Marshal(t.Context())
+	require.NoError(t, err)
+	secondDefinition, err := secondState.Marshal(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, firstDefinition.Def, secondDefinition.Def)
+}
+
+func TestMaterializeLocalChiselReleaseCompressesLargeRelease(t *testing.T) {
+	releaseDir := t.TempDir()
+	const marker = "LARGE_LOCAL_CHISEL_RELEASE_SENTINEL"
+	contents := bytes.Repeat([]byte(marker), (20<<20)/len(marker)+1)
+	writePackageManagerTestFile(t, filepath.Join(releaseDir, "large.yaml"), contents, 0o644)
+	_, expectedDigest, err := localChiselReleaseState(releaseDir)
+	require.NoError(t, err)
+
+	state, argument, provenance, err := materializeChiselRelease(t.Context(), nil, llb.Scratch(), copachisel.Release{
+		Kind:     copachisel.ReleaseLocal,
+		Location: releaseDir,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, chiselReleaseRoot, argument)
+	assert.Equal(t, fmt.Sprintf("local:%s@sha256:%s", filepath.Base(releaseDir), expectedDigest), provenance)
+	definition, err := state.Marshal(t.Context())
+	require.NoError(t, err)
+	serialized, err := definition.ToPB().MarshalVT()
+	require.NoError(t, err)
+
+	assert.Less(t, len(serialized), 16<<20)
+	assert.NotContains(t, string(serialized), marker)
+	assert.Contains(t, string(serialized), "zstd -q -d -c")
+	assert.Contains(t, string(serialized), "tar -xpf -")
+	assert.True(t, bytes.Contains(serialized, []byte{0x28, 0xb5, 0x2f, 0xfd}), "definition should contain a zstd-compressed release archive")
+}
+
+func TestLocalChiselReleaseStateRejectsCompressedArchiveOverInlineLimit(t *testing.T) {
+	releaseDir := t.TempDir()
+	contents := deterministicChiselTestBytes(maxLocalReleaseInlineBytes + (1 << 20))
+	writePackageManagerTestFile(t, filepath.Join(releaseDir, "incompressible.yaml"), contents, 0o644)
+
+	_, _, err := localChiselReleaseState(releaseDir)
+	require.ErrorContains(t, err, fmt.Sprintf("exceeding the %d MiB BuildKit inline transfer limit", maxLocalReleaseInlineBytes>>20))
+}
+
+func TestLocalChiselReleaseStateRejectsReleaseOverContentLimit(t *testing.T) {
+	releaseDir := t.TempDir()
+	path := filepath.Join(releaseDir, "oversized.yaml")
+	writePackageManagerTestFile(t, path, nil, 0o644)
+	require.NoError(t, os.Truncate(path, maxLocalReleaseBytes+1))
+
+	_, _, err := localChiselReleaseState(releaseDir)
+	require.ErrorContains(t, err, fmt.Sprintf("exceeds the %d MiB size limit", maxLocalReleaseBytes>>20))
 }
 
 func TestLocalChiselReleaseStateLengthFramesRegularFilePayloads(t *testing.T) {
@@ -336,6 +387,17 @@ func largeChiselExpectationManifest(marker string, pathCount int) *copachisel.Ma
 		}
 	}
 	return &copachisel.Manifest{OwnedPaths: ownedPaths}
+}
+
+func deterministicChiselTestBytes(size int) []byte {
+	contents := make([]byte, 0, size)
+	var counter [8]byte
+	for index := uint64(0); len(contents) < size; index++ {
+		binary.BigEndian.PutUint64(counter[:], index)
+		digest := sha256.Sum256(counter[:])
+		contents = append(contents, digest[:]...)
+	}
+	return contents[:size]
 }
 
 func TestNativeTargetedPatchError(t *testing.T) {

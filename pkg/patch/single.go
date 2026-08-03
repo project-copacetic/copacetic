@@ -104,14 +104,6 @@ func patchSingleArchImageWithUpdates(
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
 
-	// if the target platform is different from the host platform, we need to check if emulation is enabled
-	// only need to do this check if we're patching a multi-platform image
-	if multiPlatform {
-		if err := validatePlatformEmulation(targetPlatform); err != nil {
-			return nil, err
-		}
-	}
-
 	// parse the image reference
 	imageName, err := reference.ParseNormalizedNamed(image)
 	if err != nil {
@@ -204,6 +196,13 @@ func patchSingleArchImageWithUpdates(
 		res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
 		res.Summary = updates.CombinedSummary()
 		return res, types.ErrNoUpdatesFound
+	}
+
+	// Validate against the selected BuildKit workers instead of the Copa host.
+	// Remote and multi-node builders may support the target natively or through
+	// worker-side emulation even when the client machine does not.
+	if err := validateBuildkitPlatformSupport(ctx, bkClient, targetPlatform); err != nil {
+		return nil, err
 	}
 
 	// Determine the loader type
@@ -336,36 +335,33 @@ func patchSingleArchImageWithUpdates(
 	return result, nil
 }
 
-// validatePlatformEmulation checks if emulation is available for cross-platform builds.
-func validatePlatformEmulation(targetPlatform types.PatchPlatform) error { //nolint:gocritic
-	hostPlatform := platforms.Normalize(platforms.DefaultSpec())
-	if hostPlatform.OS != LINUX {
-		hostPlatform.OS = LINUX
+// validateBuildkitPlatformSupport checks whether any selected BuildKit worker
+// advertises the resolved target platform. Worker platform lists account for
+// native architecture and worker-side binfmt/QEMU support.
+func validateBuildkitPlatformSupport(ctx context.Context, client *client.Client, targetPlatform types.PatchPlatform) error { //nolint:gocritic
+	workers, err := listWorkers(ctx, client)
+	if err != nil {
+		return fmt.Errorf("list BuildKit workers for platform validation: %w", err)
 	}
 
-	platformsEqual := hostPlatform.OS == targetPlatform.OS &&
-		hostPlatform.Architecture == targetPlatform.Architecture
-
-	if platformsEqual {
-		log.Debugf("Host platform %+v matches target platform %+v", hostPlatform, targetPlatform)
-		return nil
+	target := platforms.Normalize(targetPlatform.Platform)
+	for _, worker := range workers {
+		if worker == nil {
+			continue
+		}
+		for _, workerPlatform := range worker.Platforms {
+			if platforms.OnlyStrict(platforms.Normalize(workerPlatform)).Match(target) {
+				log.Debugf("BuildKit worker %s supports target platform %s", worker.ID, platforms.Format(target))
+				return nil
+			}
+		}
 	}
 
-	log.Debugf("Host platform %+v does not match target platform %+v", hostPlatform, targetPlatform)
-
-	if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
-		platform := targetPlatform.OS + "/" + targetPlatform.Architecture
-
-		log.Warnf("Emulation is not enabled for platform %s.\n"+
-			"To enable emulation, see docs: \n"+
-			"https://docs.docker.com/build/building/multi-platform/#qemu",
-			platform)
-
-		return fmt.Errorf("emulation is not enabled for platform %s", platform)
-	}
-
-	log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
-	return nil
+	platform := platforms.Format(target)
+	return fmt.Errorf(
+		"emulation is not enabled for platform %s on any BuildKit worker; configure a native worker or QEMU/binfmt support",
+		platform,
+	)
 }
 
 // setupWorkingFolder creates and configures the working directory.

@@ -15,6 +15,16 @@ LIFECYCLE_PACKAGES=${LIFECYCLE_PACKAGES-dpkg dash init-system-helpers debconf pe
 DPKG_TOOL=${DPKG_TOOL:-$(command -v dpkg)}
 DPKG_DEB_TOOL=${DPKG_DEB_TOOL:-$(command -v dpkg-deb)}
 
+is_lifecycle_package() {
+    wanted_package=$1
+    for lifecycle_package in $LIFECYCLE_PACKAGES; do
+        if [ "$lifecycle_package" = "$wanted_package" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 case "$UPDATE_ALL" in
     true|false) ;;
     *)
@@ -25,7 +35,6 @@ esac
 
 mkdir -p "$DOWNLOAD_DIR"
 cd "$DOWNLOAD_DIR"
-: > "$RESULT_MANIFEST"
 
 set --
 while IFS= read -r package || [ -n "$package" ]; do
@@ -37,6 +46,20 @@ if [ "$#" -eq 0 ]; then
     echo "no packages were selected for download" >&2
     exit 1
 fi
+
+# Reject direct lifecycle-package selections before writing to the mounted
+# target root. The downloaded-archive check below remains as defense in depth.
+if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
+    for selected_identity in "$@"; do
+        selected_package=${selected_identity%%:*}
+        if is_lifecycle_package "$selected_package"; then
+            echo "external full-status images cannot safely update lifecycle package $selected_package because the required dpkg lifecycle metadata is unavailable" >&2
+            exit 1
+        fi
+    done
+fi
+
+: > "$RESULT_MANIFEST"
 
 apt-get -o Acquire::Retries=3 update
 mkdir -p "$DOWNLOAD_DIR/partial"
@@ -61,6 +84,23 @@ else
     apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
 fi
 
+package_identity_matches() {
+    pim_left=$1
+    pim_right=$2
+    [ "$pim_left" = "$pim_right" ] && return 0
+
+    pim_left_name=${pim_left%%:*}
+    pim_right_name=${pim_right%%:*}
+    [ "$pim_left_name" = "$pim_right_name" ] || return 1
+    case "$pim_left" in *:*) pim_left_architecture=${pim_left#*:} ;; *) return 0 ;; esac
+    case "$pim_right" in *:*) pim_right_architecture=${pim_right#*:} ;; *) return 0 ;; esac
+    if { [ "$pim_left_architecture" = all ] && [ "$pim_right_architecture" = "$TARGET_DPKG_ARCH" ]; } ||
+        { [ "$pim_right_architecture" = all ] && [ "$pim_left_architecture" = "$TARGET_DPKG_ARCH" ]; }; then
+        return 0
+    fi
+    return 1
+}
+
 lookup_version_floor() {
     wanted_package=$1
     FLOOR_INSTALLED=""
@@ -70,7 +110,7 @@ lookup_version_floor() {
             echo "invalid package version floor record in $VERSION_FLOORS_FILE" >&2
             exit 1
         fi
-        if [ "$floor_package" = "$wanted_package" ]; then
+        if package_identity_matches "$floor_package" "$wanted_package"; then
             FLOOR_INSTALLED=$installed_version
             FLOOR_FIXED=$fixed_version
             return 0
@@ -99,20 +139,10 @@ is_selected_package() {
     wanted_package=$1
     while IFS= read -r selected_package || [ -n "$selected_package" ]; do
         [ -n "$selected_package" ] || continue
-        if [ "$selected_package" = "$wanted_package" ]; then
+        if package_identity_matches "$selected_package" "$wanted_package"; then
             return 0
         fi
     done < "$PACKAGES_FILE"
-    return 1
-}
-
-is_lifecycle_package() {
-    wanted_package=$1
-    for lifecycle_package in $LIFECYCLE_PACKAGES; do
-        if [ "$lifecycle_package" = "$wanted_package" ]; then
-            return 0
-        fi
-    done
     return 1
 }
 
@@ -120,25 +150,66 @@ normalize_dependency_text() {
     printf '%s\n' "$1" | awk '{$1=$1; print}'
 }
 
+provided_capability_record() {
+    pci_provide=$1
+    pci_provider_architecture=$2
+    pci_package=$(printf '%s\n' "$pci_provide" | sed -n 's/^[[:space:]]*\([a-z0-9][a-z0-9+.-]*\).*/\1/p')
+    [ -n "$pci_package" ] || return 1
+    pci_qualifier=$(printf '%s\n' "$pci_provide" | sed -n 's/^[[:space:]]*[a-z0-9][a-z0-9+.-]*:\([a-z0-9][a-z0-9-]*\).*/\1/p')
+    case "$pci_qualifier" in
+        '')
+            pci_architecture=$pci_provider_architecture
+            if [ -z "$pci_architecture" ] || [ "$pci_architecture" = all ]; then
+                pci_architecture=$TARGET_DPKG_ARCH
+            fi
+            ;;
+        native)
+            pci_architecture=$TARGET_DPKG_ARCH
+            ;;
+        any)
+            pci_architecture=$pci_provider_architecture
+            if [ -z "$pci_architecture" ] || [ "$pci_architecture" = all ]; then
+                pci_architecture=$TARGET_DPKG_ARCH
+            fi
+            ;;
+        *)
+            pci_architecture=$pci_qualifier
+            ;;
+    esac
+    if [ -z "$pci_qualifier" ]; then
+        pci_qualifier=unqualified
+    fi
+    printf '%s:%s|%s\n' "$pci_package" "$pci_architecture" "$pci_qualifier"
+}
+
 original_dependency_clause_present() {
     odcp_source=$1
-    odcp_clause=$(normalize_dependency_text "$2")
-    awk -v source="$odcp_source" '
+    odcp_source_architecture=$2
+    odcp_clause=$(normalize_dependency_text "$3")
+    awk -v source="$odcp_source" -v source_architecture="$odcp_source_architecture" -v target_architecture="$TARGET_DPKG_ARCH" '
         BEGIN { RS = "" }
         {
-            package_name = ""
-            active = 0
+            package_name = ""; architecture = ""
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
                 if (lines[i] ~ /^Package:[[:space:]]*/) {
                     package_name = lines[i]
                     sub(/^Package:[[:space:]]*/, "", package_name)
-                    active = 0
-                } else if (lines[i] ~ /^(Depends|Pre-Depends):[[:space:]]*/) {
+                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
+                    architecture = lines[i]
+                    sub(/^Architecture:[[:space:]]*/, "", architecture)
+                }
+            }
+            if (architecture == "") architecture = target_architecture
+            if (package_name != source || architecture != source_architecture) next
+
+            active = 0
+            for (i = 1; i <= count; i++) {
+                if (lines[i] ~ /^(Depends|Pre-Depends):[[:space:]]*/) {
                     relation = lines[i]
                     sub(/^(Depends|Pre-Depends):[[:space:]]*/, "", relation)
-                    if (package_name == source) print relation
-                    active = package_name == source
+                    print relation
+                    active = 1
                 } else if (lines[i] ~ /^[[:space:]]/ && active) {
                     print lines[i]
                 } else if (lines[i] !~ /^[[:space:]]/) {
@@ -154,43 +225,146 @@ original_dependency_clause_present() {
 
 final_alternative_satisfied() {
     fas_alternative=$1
+    fas_source_architecture=$2
+    fas_excluded_provider=${3:-}
+    fas_versions_file=${4:-$final_versions}
+    fas_relationship_mode=${5:-positive}
+    case "$fas_relationship_mode" in
+        positive|negative) ;;
+        *) return 1 ;;
+    esac
+
     fas_package=$(printf '%s\n' "$fas_alternative" | sed -n 's/^[[:space:]]*\([a-z0-9][a-z0-9+.-]*\).*/\1/p')
     [ -n "$fas_package" ] || return 1
-    fas_constraint=$(printf '%s\n' "$fas_alternative" | sed -n 's/.*([[:space:]]*\(<<\|<=\|=\|>=\|>>\)[[:space:]]*\([^)]*\)).*/\1|\2/p')
-    fas_operator=""
-    fas_required=""
-    if [ -n "$fas_constraint" ]; then
-        fas_operator=${fas_constraint%%|*}
-        fas_required=${fas_constraint#*|}
-        case "$fas_operator" in
-            '<<') fas_operator=lt ;;
-            '<=') fas_operator=le ;;
-            '=') fas_operator=eq ;;
-            '>=') fas_operator=ge ;;
-            '>>') fas_operator=gt ;;
-            *) return 1 ;;
+    fas_qualifier=$(printf '%s\n' "$fas_alternative" | sed -n 's/^[[:space:]]*[a-z0-9][a-z0-9+.-]*:\([a-z0-9][a-z0-9-]*\).*/\1/p')
+    if [ "$fas_relationship_mode" = negative ]; then
+        case "$fas_qualifier" in
+            ''|any) fas_required_architecture=any ;;
+            native) fas_required_architecture=$TARGET_DPKG_ARCH ;;
+            *) fas_required_architecture=$fas_qualifier ;;
+        esac
+    else
+        case "$fas_qualifier" in
+            any)
+                fas_required_architecture=any
+                ;;
+            native)
+                fas_required_architecture=$TARGET_DPKG_ARCH
+                ;;
+            '')
+                fas_required_architecture=$fas_source_architecture
+                if [ -z "$fas_required_architecture" ] || [ "$fas_required_architecture" = all ]; then
+                    fas_required_architecture=$TARGET_DPKG_ARCH
+                fi
+                ;;
+            *)
+                fas_required_architecture=$fas_qualifier
+                ;;
         esac
     fi
-    while IFS='|' read -r fas_identity fas_version fas_extra || [ -n "${fas_identity}${fas_version}${fas_extra}" ]; do
-        [ "${fas_identity%%:*}" = "$fas_package" ] || continue
+
+    fas_operator=""
+    fas_required=""
+    case "$fas_alternative" in
+        *"("*")"*)
+            fas_constraint=${fas_alternative#*(}
+            fas_constraint=${fas_constraint%%)*}
+            fas_constraint=$(normalize_dependency_text "$fas_constraint")
+            case "$fas_constraint" in
+                '<<'*) fas_operator=lt; fas_required=${fas_constraint#<<} ;;
+                '<='*) fas_operator=le; fas_required=${fas_constraint#<=} ;;
+                '>='*) fas_operator=ge; fas_required=${fas_constraint#>=} ;;
+                '>>'*) fas_operator=gt; fas_required=${fas_constraint#>>} ;;
+                '='*) fas_operator=eq; fas_required=${fas_constraint#=} ;;
+                *) return 1 ;;
+            esac
+            fas_required=$(normalize_dependency_text "$fas_required")
+            [ -n "$fas_required" ] || return 1
+            case "$fas_required" in *" "*) return 1 ;; esac
+            ;;
+    esac
+
+    while IFS='|' read -r fas_identity fas_version fas_multiarch fas_provider_identity fas_candidate_kind fas_extra || [ -n "${fas_identity}${fas_version}${fas_multiarch}${fas_provider_identity}${fas_candidate_kind}${fas_extra}" ]; do
+        [ -z "$fas_extra" ] || continue
+        if [ -n "$fas_excluded_provider" ] && [ "$fas_provider_identity" = "$fas_excluded_provider" ]; then
+            continue
+        fi
+        fas_identity_package=${fas_identity%%:*}
+        [ "$fas_identity_package" = "$fas_package" ] || continue
+        fas_identity_architecture=${fas_identity#*:}
+        if [ "$fas_identity_architecture" = "$fas_identity" ] || [ "$fas_identity_architecture" = all ]; then
+            fas_identity_architecture=$TARGET_DPKG_ARCH
+        fi
+
+        if [ "$fas_relationship_mode" = negative ]; then
+            if [ "$fas_required_architecture" != any ] && [ "$fas_identity_architecture" != "$fas_required_architecture" ]; then
+                continue
+            fi
+        else
+            case "$fas_qualifier" in
+                any)
+                    case "$fas_candidate_kind" in
+                        any|package|unqualified) [ "$fas_multiarch" = allowed ] || continue ;;
+                        *) continue ;;
+                    esac
+                    ;;
+                native)
+                    if [ "$fas_identity_architecture" != "$TARGET_DPKG_ARCH" ]; then
+                        continue
+                    fi
+                    ;;
+                '')
+                    if [ "$fas_identity_architecture" != "$fas_required_architecture" ] && \
+                        [ "$fas_multiarch" != foreign ]; then
+                        continue
+                    fi
+                    ;;
+                *)
+                    if [ "$fas_identity_architecture" != "$fas_required_architecture" ]; then
+                        continue
+                    fi
+                    ;;
+            esac
+        fi
+
         if [ -z "$fas_operator" ]; then
             return 0
         fi
         if [ -n "$fas_version" ] && "$DPKG_TOOL" --compare-versions "$fas_version" "$fas_operator" "$fas_required"; then
             return 0
         fi
-    done < "$final_versions"
+    done < "$fas_versions_file"
     return 1
 }
 
-validate_final_dependencies() {
-    vfd_archive=$1
-    vfd_source=$("$DPKG_DEB_TOOL" -f "$vfd_archive" Package)
+original_dependency_clause_was_unresolved() {
+    odcu_source=$1
+    odcu_source_architecture=$2
+    odcu_clause=$3
+    original_dependency_clause_present "$odcu_source" "$odcu_source_architecture" "$odcu_clause" || return 1
+
+    odcu_satisfied=false
+    odcu_alternatives=$(mktemp)
+    printf '%s\n' "$odcu_clause" | tr '|' '\n' > "$odcu_alternatives"
+    while IFS= read -r odcu_alternative || [ -n "$odcu_alternative" ]; do
+        if final_alternative_satisfied "$odcu_alternative" "$odcu_source_architecture" "" "$original_versions" positive; then
+            odcu_satisfied=true
+            break
+        fi
+    done < "$odcu_alternatives"
+    rm -f "$odcu_alternatives"
+    [ "$odcu_satisfied" != true ]
+}
+
+validate_final_dependency_value() {
+    vfd_source=$1
+    vfd_source_architecture=$2
+    vfd_value=$3
+    [ -n "$vfd_value" ] || return 0
+
+    vfd_error=""
     vfd_clauses=$(mktemp)
-    {
-        "$DPKG_DEB_TOOL" -f "$vfd_archive" Depends 2>/dev/null || true
-        "$DPKG_DEB_TOOL" -f "$vfd_archive" Pre-Depends 2>/dev/null || true
-    } | tr ',' '\n' > "$vfd_clauses"
+    printf '%s\n' "$vfd_value" | tr ',' '\n' > "$vfd_clauses"
     while IFS= read -r vfd_clause || [ -n "$vfd_clause" ]; do
         [ -n "$vfd_clause" ] || continue
         vfd_safe=false
@@ -199,21 +373,79 @@ validate_final_dependencies() {
         while IFS= read -r vfd_alternative || [ -n "$vfd_alternative" ]; do
             vfd_dependency=$(printf '%s\n' "$vfd_alternative" | sed -n 's/^[[:space:]]*\([a-z0-9][a-z0-9+.-]*\).*/\1/p')
             [ -n "$vfd_dependency" ] || continue
-            if final_alternative_satisfied "$vfd_alternative"; then
+            if final_alternative_satisfied "$vfd_alternative" "$vfd_source_architecture" "" "$final_versions" positive; then
                 vfd_safe=true
                 break
             fi
         done < "$vfd_alternatives"
         rm -f "$vfd_alternatives"
-        if [ "$vfd_safe" != true ] && original_dependency_clause_present "$vfd_source" "$vfd_clause"; then
+        # Full-status Chiseled inventories can intentionally retain incomplete
+        # pre-existing dependency relationships. Grandfather a clause only when
+        # the same source architecture already had that unresolved clause.
+        if [ "$vfd_safe" != true ] && original_dependency_clause_was_unresolved "$vfd_source" "$vfd_source_architecture" "$vfd_clause"; then
             vfd_safe=true
         fi
         if [ "$vfd_safe" != true ]; then
-            echo "package $vfd_source has unresolved final dependency clause '$vfd_clause'" >&2
-            return 1
+            vfd_error="package $vfd_source has unresolved final dependency clause '$vfd_clause'"
+            break
         fi
     done < "$vfd_clauses"
     rm -f "$vfd_clauses"
+    if [ -n "$vfd_error" ]; then
+        echo "$vfd_error" >&2
+        return 1
+    fi
+}
+
+validate_final_dependencies() {
+    vfd_archive=$1
+    vfd_archive_source=$("$DPKG_DEB_TOOL" -f "$vfd_archive" Package)
+    vfd_archive_architecture=$("$DPKG_DEB_TOOL" -f "$vfd_archive" Architecture)
+    for vfd_archive_field in Depends Pre-Depends; do
+        vfd_archive_value=$("$DPKG_DEB_TOOL" -f "$vfd_archive" "$vfd_archive_field" 2>/dev/null || true)
+        validate_final_dependency_value "$vfd_archive_source" "$vfd_archive_architecture" "$vfd_archive_value"
+    done
+}
+
+validate_final_negative_relationship_value() {
+    vfn_source=$1
+    vfn_source_architecture=$2
+    vfn_field=$3
+    vfn_value=$4
+    [ -n "$vfn_value" ] || return 0
+
+    vfn_source_identity=$vfn_source:$vfn_source_architecture
+    vfn_error=""
+    vfn_clauses=$(mktemp)
+    printf '%s\n' "$vfn_value" | tr ',' '\n' > "$vfn_clauses"
+    while IFS= read -r vfn_clause || [ -n "$vfn_clause" ]; do
+        [ -n "$vfn_clause" ] || continue
+        vfn_alternatives=$(mktemp)
+        printf '%s\n' "$vfn_clause" | tr '|' '\n' > "$vfn_alternatives"
+        while IFS= read -r vfn_alternative || [ -n "$vfn_alternative" ]; do
+            if final_alternative_satisfied "$vfn_alternative" "$vfn_source_architecture" "$vfn_source_identity" "$final_versions" negative; then
+                vfn_error="package $vfn_source has final $vfn_field relationship '$vfn_clause' that matches the installed package inventory"
+                break
+            fi
+        done < "$vfn_alternatives"
+        rm -f "$vfn_alternatives"
+        [ -z "$vfn_error" ] || break
+    done < "$vfn_clauses"
+    rm -f "$vfn_clauses"
+    if [ -n "$vfn_error" ]; then
+        echo "$vfn_error" >&2
+        return 1
+    fi
+}
+
+validate_final_negative_relationships() {
+    vfn_archive=$1
+    vfn_archive_source=$("$DPKG_DEB_TOOL" -f "$vfn_archive" Package)
+    vfn_archive_architecture=$("$DPKG_DEB_TOOL" -f "$vfn_archive" Architecture)
+    for vfn_archive_field in Breaks Conflicts; do
+        vfn_archive_value=$("$DPKG_DEB_TOOL" -f "$vfn_archive" "$vfn_archive_field" 2>/dev/null || true)
+        validate_final_negative_relationship_value "$vfn_archive_source" "$vfn_archive_architecture" "$vfn_archive_field" "$vfn_archive_value"
+    done
 }
 
 record_package_version() {
@@ -266,12 +498,14 @@ filter_status_to_final_inventory() {
     done
     sort -u "$lifecycle_names" -o "$lifecycle_names"
 
-    awk -v identities_file="$keep_identities" -v lifecycle_file="$lifecycle_names" '
+    awk -v identities_file="$keep_identities" -v lifecycle_file="$lifecycle_names" -v retained_file="$retained_identities" '
         BEGIN {
             while ((getline identity < identities_file) > 0) keep[identity] = 1
             close(identities_file)
             while ((getline name < lifecycle_file) > 0) lifecycle[name] = 1
             close(lifecycle_file)
+            while ((getline identity < retained_file) > 0) retained[identity] = 1
+            close(retained_file)
             RS = ""; ORS = "\n\n"
         }
         {
@@ -284,8 +518,8 @@ filter_status_to_final_inventory() {
                     architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture)
                 }
             }
-            if (lifecycle[package_name]) next
             identity = package_name ":" (architecture == "" ? ENVIRON["TARGET_DPKG_ARCH"] : architecture)
+            if (lifecycle[package_name] && !retained[identity]) next
             if (keep[identity]) { print $0; kept++ }
         }
         END { if (kept == 0) exit 42 }
@@ -377,9 +611,11 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     retained_dir=$DOWNLOAD_DIR/retained
     retained_archives_file=$DOWNLOAD_DIR/retained-archives
     retained_identities=$DOWNLOAD_DIR/retained-identities
+    retained_replacement_identities=$DOWNLOAD_DIR/retained-replacement-identities
     retained_roots=$DOWNLOAD_DIR/retained-roots
     retained_paths=$DOWNLOAD_DIR/retained-paths
     final_versions=$DOWNLOAD_DIR/final-versions
+    original_versions=$DOWNLOAD_DIR/original-versions
     transient_roots=$DOWNLOAD_DIR/transient-roots
     transient_backup=$DOWNLOAD_DIR/transient-backup
     transient_remove=$DOWNLOAD_DIR/transient-remove
@@ -396,12 +632,16 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
         package=$("$DPKG_DEB_TOOL" -f "$deb" Package)
         architecture=$("$DPKG_DEB_TOOL" -f "$deb" Architecture)
         if { is_selected_package "$package:$architecture" || is_selected_package "$package"; } && is_lifecycle_package "$package"; then
-            echo "targeted updates of lifecycle tooling package $package are not supported for external full-status images" >&2
+            echo "external full-status images cannot safely update lifecycle package $package because the required dpkg lifecycle metadata is unavailable" >&2
             exit 1
         fi
         unpacked=$sanitize_root/$(basename "$deb" .deb)
         "$DPKG_DEB_TOOL" -R "$deb" "$unpacked"
         if is_lifecycle_package "$package"; then
+            # Dependency-closure lifecycle packages are temporary resolver
+            # helpers only. Their scripts are stripped, every payload path is
+            # restored or removed after dpkg runs, and the original status
+            # paragraph is reinstated instead of retaining this archive.
             printf '%s\n' "$unpacked" >> "$transient_roots"
         else
             cp "$deb" "$retained_dir/$(basename "$deb")"
@@ -414,6 +654,13 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
         "$DPKG_DEB_TOOL" -b "$unpacked" "$sanitized_dir/$(basename "$deb")" >/dev/null
     done
     sort -u "$retained_identities" -o "$retained_identities"
+    awk -F':' -v target_architecture="$TARGET_DPKG_ARCH" '
+        NF == 2 {
+            print $0
+            if ($2 == "all") print $1 ":" target_architecture
+            else if ($2 == target_architecture) print $1 ":all"
+        }
+    ' "$retained_identities" | sort -u > "$retained_replacement_identities"
     while IFS= read -r retained_root || [ -n "$retained_root" ]; do
         [ -n "$retained_root" ] || continue
         find "$retained_root" -mindepth 1 -path "$retained_root/DEBIAN" -prune -o -print | while IFS= read -r retained_path; do
@@ -422,27 +669,90 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     done < "$retained_roots"
     sort -u "$retained_paths" -o "$retained_paths"
 
-    awk -F'|' 'NF >= 2 { versions[$1] = $2 } END { for (identity in versions) print identity "|" versions[identity] }' \
-        "$VERSION_FLOORS_FILE" > "$final_versions"
+    original_multiarch=$DOWNLOAD_DIR/original-multiarch
+    awk '
+        BEGIN { RS = ""; OFS = "|" }
+        {
+            package_name = ""; architecture = ""; multiarch = ""
+            count = split($0, lines, "\n")
+            for (i = 1; i <= count; i++) {
+                if (lines[i] ~ /^Package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name)
+                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture)
+                } else if (lines[i] ~ /^Multi-Arch:[[:space:]]*/) {
+                    multiarch = lines[i]; sub(/^Multi-Arch:[[:space:]]*/, "", multiarch)
+                }
+            }
+            if (package_name != "") {
+                if (architecture == "") architecture = ENVIRON["TARGET_DPKG_ARCH"]
+                print package_name ":" architecture, multiarch
+            }
+        }
+    ' "$original_status" > "$original_multiarch"
+
+    awk -F'|' -v metadata_file="$original_multiarch" '
+        BEGIN {
+            while ((getline line < metadata_file) > 0) {
+                split(line, fields, "|")
+                multiarch[fields[1]] = fields[2]
+            }
+            close(metadata_file)
+            OFS = "|"
+        }
+        NF >= 2 && $1 != "" {
+            identity = $1
+            if (index(identity, ":") == 0) identity = identity ":" ENVIRON["TARGET_DPKG_ARCH"]
+            versions[identity] = $2
+        }
+        END {
+            for (identity in versions) print identity, versions[identity], multiarch[identity], identity, "package"
+        }
+    ' "$VERSION_FLOORS_FILE" > "$final_versions"
+    cp "$final_versions" "$original_versions"
+    awk -F'|' -v replacements_file="$retained_replacement_identities" '
+        BEGIN {
+            while ((getline identity < replacements_file) > 0) replacements[identity] = 1
+            close(replacements_file)
+        }
+        !($1 in replacements) { print }
+    ' "$final_versions" > "$final_versions.tmp"
+    mv "$final_versions.tmp" "$final_versions"
     while IFS= read -r retained_archive || [ -n "$retained_archive" ]; do
         [ -f "$retained_archive" ] || continue
         retained_package=$("$DPKG_DEB_TOOL" -f "$retained_archive" Package)
         retained_architecture=$("$DPKG_DEB_TOOL" -f "$retained_archive" Architecture)
         retained_version=$("$DPKG_DEB_TOOL" -f "$retained_archive" Version)
-        printf '%s:%s|%s\n' "$retained_package" "$retained_architecture" "$retained_version" >> "$final_versions"
+        retained_multiarch=$("$DPKG_DEB_TOOL" -f "$retained_archive" Multi-Arch 2>/dev/null || true)
+        retained_identity=$retained_package:$retained_architecture
+        printf '%s|%s|%s|%s|package\n' "$retained_identity" "$retained_version" "$retained_multiarch" "$retained_identity" >> "$final_versions"
         retained_provides=$("$DPKG_DEB_TOOL" -f "$retained_archive" Provides 2>/dev/null || true)
         retained_provides_file=$(mktemp)
         printf '%s\n' "$retained_provides" | tr ',' '\n' > "$retained_provides_file"
         while IFS= read -r retained_provide || [ -n "$retained_provide" ]; do
-            retained_capability=$(printf '%s\n' "$retained_provide" | sed -n 's/^[[:space:]]*\([a-z0-9][a-z0-9+.-]*\).*/\1/p')
-            [ -n "$retained_capability" ] || continue
+            retained_capability_record=$(provided_capability_record "$retained_provide" "$retained_architecture") || continue
+            retained_capability_identity=${retained_capability_record%%|*}
+            retained_capability_kind=${retained_capability_record#*|}
             retained_capability_version=$(printf '%s\n' "$retained_provide" | sed -n 's/.*([[:space:]]*=[[:space:]]*\([^)]*\)).*/\1/p')
-            printf '%s:%s|%s\n' "$retained_capability" "$retained_architecture" "$retained_capability_version" >> "$final_versions"
+            printf '%s|%s|%s|%s|%s\n' "$retained_capability_identity" "$retained_capability_version" "$retained_multiarch" "$retained_identity" "$retained_capability_kind" >> "$final_versions"
         done < "$retained_provides_file"
         rm -f "$retained_provides_file"
     done < "$retained_archives_file"
-    awk -F'|' '{ versions[$1] = $2 } END { for (identity in versions) print identity "|" versions[identity] }' \
-        "$final_versions" | sort > "$final_versions.tmp"
+    awk -F'|' '
+        NF >= 3 {
+            provider = $4 == "" ? $1 : $4
+            kind = $5 == "" ? "package" : $5
+            key = $1 SUBSEP provider SUBSEP kind
+            identities[key] = $1
+            versions[key] = $2
+            multiarch[key] = $3
+            providers[key] = provider
+            kinds[key] = kind
+        }
+        END {
+            for (key in versions) print identities[key] "|" versions[key] "|" multiarch[key] "|" providers[key] "|" kinds[key]
+        }
+    ' "$final_versions" | sort > "$final_versions.tmp"
     mv "$final_versions.tmp" "$final_versions"
 
     # Add virtual capabilities from unchanged installed providers. Providers
@@ -452,13 +762,17 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     awk '
         BEGIN { RS = ""; OFS = "|" }
         {
-            package_name = ""; architecture = ""; provides = ""; active = 0
+            package_name = ""; architecture = ""; multiarch = ""; status_value = ""; provides = ""; active = 0
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
                 if (lines[i] ~ /^Package:[[:space:]]*/) {
                     package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name); active = 0
                 } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
                     architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture); active = 0
+                } else if (lines[i] ~ /^Multi-Arch:[[:space:]]*/) {
+                    multiarch = lines[i]; sub(/^Multi-Arch:[[:space:]]*/, "", multiarch); active = 0
+                } else if (lines[i] ~ /^Status:[[:space:]]*/) {
+                    status_value = lines[i]; sub(/^Status:[[:space:]]*/, "", status_value); active = 0
                 } else if (lines[i] ~ /^Provides:[[:space:]]*/) {
                     line = lines[i]; sub(/^Provides:[[:space:]]*/, "", line); provides = line; active = 1
                 } else if (lines[i] ~ /^[[:space:]]/ && active) {
@@ -467,29 +781,119 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
                     active = 0
                 }
             }
-            if (package_name != "" && provides != "") print package_name ":" architecture, architecture, provides
+            installed = status_value == ""
+            if (status_value != "") {
+                split(status_value, status_fields, /[[:space:]]+/)
+                installed = status_fields[3] == "installed"
+            }
+            if (architecture == "") architecture = ENVIRON["TARGET_DPKG_ARCH"]
+            if (installed && package_name != "" && provides != "") print package_name ":" architecture, architecture, multiarch, provides
         }
     ' "$original_status" > "$original_provides"
-    while IFS='|' read -r provider_identity provider_architecture provider_values provider_extra || [ -n "${provider_identity}${provider_architecture}${provider_values}${provider_extra}" ]; do
+    while IFS='|' read -r provider_identity provider_architecture provider_multiarch provider_values provider_extra || [ -n "${provider_identity}${provider_architecture}${provider_multiarch}${provider_values}${provider_extra}" ]; do
         [ -n "$provider_identity" ] || continue
-        if grep -Fxq "$provider_identity" "$retained_identities"; then
-            continue
+        provider_replaced=false
+        if grep -Fxq "$provider_identity" "$retained_replacement_identities"; then
+            provider_replaced=true
         fi
         provider_items=$(mktemp)
         printf '%s\n' "$provider_values" | tr ',' '\n' > "$provider_items"
         while IFS= read -r provider_item || [ -n "$provider_item" ]; do
-            capability=$(printf '%s\n' "$provider_item" | sed -n 's/^[[:space:]]*\([a-z0-9][a-z0-9+.-]*\).*/\1/p')
-            [ -n "$capability" ] || continue
+            capability_record=$(provided_capability_record "$provider_item" "$provider_architecture") || continue
+            capability_identity=${capability_record%%|*}
+            capability_kind=${capability_record#*|}
             capability_version=$(printf '%s\n' "$provider_item" | sed -n 's/.*([[:space:]]*=[[:space:]]*\([^)]*\)).*/\1/p')
-            printf '%s:%s|%s\n' "$capability" "$provider_architecture" "$capability_version" >> "$final_versions"
+            capability_line=$(printf '%s|%s|%s|%s|%s' "$capability_identity" "$capability_version" "$provider_multiarch" "$provider_identity" "$capability_kind")
+            printf '%s\n' "$capability_line" >> "$original_versions"
+            if [ "$provider_replaced" != true ]; then
+                printf '%s\n' "$capability_line" >> "$final_versions"
+            fi
         done < "$provider_items"
         rm -f "$provider_items"
     done < "$original_provides"
+    sort -u "$original_versions" -o "$original_versions"
     sort -u "$final_versions" -o "$final_versions"
+
+    original_relationships=$DOWNLOAD_DIR/original-relationships
+    awk -v retained_file="$retained_replacement_identities" '
+        BEGIN {
+            while ((getline identity < retained_file) > 0) retained[identity] = 1
+            close(retained_file)
+            RS = ""; OFS = "\t"
+        }
+        {
+            package_name = ""; architecture = ""; status_value = ""
+            depends_value = ""; predepends_value = ""; breaks_value = ""; conflicts_value = ""; active = ""
+            count = split($0, lines, "\n")
+            for (i = 1; i <= count; i++) {
+                if (lines[i] ~ /^Package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name); active = ""
+                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture); active = ""
+                } else if (lines[i] ~ /^Status:[[:space:]]*/) {
+                    status_value = lines[i]; sub(/^Status:[[:space:]]*/, "", status_value); active = ""
+                } else if (lines[i] ~ /^Depends:[[:space:]]*/) {
+                    depends_value = lines[i]; sub(/^Depends:[[:space:]]*/, "", depends_value); active = "depends"
+                } else if (lines[i] ~ /^Pre-Depends:[[:space:]]*/) {
+                    predepends_value = lines[i]; sub(/^Pre-Depends:[[:space:]]*/, "", predepends_value); active = "predepends"
+                } else if (lines[i] ~ /^Breaks:[[:space:]]*/) {
+                    breaks_value = lines[i]; sub(/^Breaks:[[:space:]]*/, "", breaks_value); active = "breaks"
+                } else if (lines[i] ~ /^Conflicts:[[:space:]]*/) {
+                    conflicts_value = lines[i]; sub(/^Conflicts:[[:space:]]*/, "", conflicts_value); active = "conflicts"
+                } else if (lines[i] ~ /^[[:space:]]/ && active == "depends") {
+                    depends_value = depends_value " " lines[i]
+                } else if (lines[i] ~ /^[[:space:]]/ && active == "predepends") {
+                    predepends_value = predepends_value " " lines[i]
+                } else if (lines[i] ~ /^[[:space:]]/ && active == "breaks") {
+                    breaks_value = breaks_value " " lines[i]
+                } else if (lines[i] ~ /^[[:space:]]/ && active == "conflicts") {
+                    conflicts_value = conflicts_value " " lines[i]
+                } else if (lines[i] !~ /^[[:space:]]/) {
+                    active = ""
+                }
+            }
+            installed = status_value == ""
+            if (status_value != "") {
+                split(status_value, status_fields, /[[:space:]]+/)
+                installed = status_fields[3] == "installed"
+            }
+            if (architecture == "") architecture = ENVIRON["TARGET_DPKG_ARCH"]
+            identity = package_name ":" architecture
+            if (!installed || package_name == "" || retained[identity]) next
+            gsub(/[[:space:]]+/, " ", depends_value)
+            gsub(/[[:space:]]+/, " ", predepends_value)
+            gsub(/[[:space:]]+/, " ", breaks_value)
+            gsub(/[[:space:]]+/, " ", conflicts_value)
+            if (depends_value != "") print identity, "Depends", depends_value
+            if (predepends_value != "") print identity, "Pre-Depends", predepends_value
+            if (breaks_value != "") print identity, "Breaks", breaks_value
+            if (conflicts_value != "") print identity, "Conflicts", conflicts_value
+        }
+    ' "$original_status" > "$original_relationships"
+
+    relationship_tab=$(printf '\t')
+    while IFS="$relationship_tab" read -r relationship_identity relationship_field relationship_value || [ -n "${relationship_identity}${relationship_field}${relationship_value}" ]; do
+        [ -n "$relationship_identity" ] || continue
+        relationship_source=${relationship_identity%%:*}
+        relationship_architecture=${relationship_identity#*:}
+        case "$relationship_field" in
+            Depends|Pre-Depends)
+                validate_final_dependency_value "$relationship_source" "$relationship_architecture" "$relationship_value"
+                ;;
+            Breaks|Conflicts)
+                validate_final_negative_relationship_value "$relationship_source" "$relationship_architecture" "$relationship_field" "$relationship_value"
+                ;;
+            *)
+                echo "unsupported relationship field $relationship_field" >&2
+                exit 1
+                ;;
+        esac
+    done < "$original_relationships"
 
     while IFS= read -r retained_archive || [ -n "$retained_archive" ]; do
         [ -f "$retained_archive" ] || continue
         validate_final_dependencies "$retained_archive"
+        validate_final_negative_relationships "$retained_archive"
     done < "$retained_archives_file"
 
     while IFS= read -r transient_root || [ -n "$transient_root" ]; do

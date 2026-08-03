@@ -2,6 +2,7 @@ package frontend
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -83,7 +84,50 @@ func rejectTargetedNativeChiselState(ctx context.Context, client gwclient.Client
 	return nil
 }
 
-func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocispecs.Platform, annotations map[string]string) (map[string][]byte, error) {
+// frontendResultAnnotations combines annotations produced by a successful
+// package-manager run with Chisel provenance already recorded on the supplied
+// image config. The supplied values are fallback-only: preserving an existing
+// provenance assertion on an idempotent export does not claim that a skipped or
+// ignored update remediated anything new.
+func frontendResultAnnotations(configData []byte, managerAnnotations map[string]string) (map[string]string, error) {
+	chiselProvenanceAnnotationKeys := [...]string{
+		pkgmgr.ChiselReleaseAnnotation,
+		pkgmgr.ChiselVersionAnnotation,
+	}
+	annotations := make(map[string]string, len(managerAnnotations)+len(chiselProvenanceAnnotationKeys))
+	for key, value := range managerAnnotations {
+		annotations[key] = value
+	}
+
+	needsSuppliedProvenance := false
+	for _, key := range chiselProvenanceAnnotationKeys {
+		if annotations[key] == "" {
+			needsSuppliedProvenance = true
+			break
+		}
+	}
+	if needsSuppliedProvenance {
+		var image ocispecs.Image
+		if err := json.Unmarshal(configData, &image); err != nil {
+			return nil, fmt.Errorf("parse supplied image config for Chisel provenance: %w", err)
+		}
+		for _, key := range chiselProvenanceAnnotationKeys {
+			if annotations[key] != "" {
+				continue
+			}
+			if value := image.Config.Labels[key]; value != "" {
+				annotations[key] = value
+			}
+		}
+	}
+
+	if len(annotations) == 0 {
+		return nil, nil
+	}
+	return annotations, nil
+}
+
+func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocispecs.Platform, managerAnnotations map[string]string) (map[string][]byte, error) {
 	if patchedConfigData != nil {
 		merged, err := common.MergeImageRuntimeConfig(configData, patchedConfigData)
 		if err != nil {
@@ -91,7 +135,15 @@ func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocis
 		}
 		configData = merged
 	}
-	configData, err := common.AddImageConfigLabels(configData, annotations)
+
+	resultAnnotations, err := frontendResultAnnotations(configData, managerAnnotations)
+	if err != nil {
+		return nil, err
+	}
+	// Only manager-produced annotations are written into the config. Existing
+	// Chisel labels are already present and are merely mirrored back to the
+	// manifest metadata on no-op exports.
+	configData, err = common.AddImageConfigLabels(configData, managerAnnotations)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +155,7 @@ func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocis
 	metadata := map[string][]byte{
 		configKey: configData,
 	}
-	for key, value := range annotations {
+	for key, value := range resultAnnotations {
 		metadata[exptypes.AnnotationManifestKey(platform, key)] = []byte(value)
 	}
 	return metadata, nil

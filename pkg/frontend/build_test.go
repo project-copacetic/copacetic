@@ -31,6 +31,7 @@ import (
 const (
 	osLinux             = "linux"
 	frontendReleaseRoot = "release"
+	sourceLabel         = "source"
 )
 
 // Note: buildPatchedImage tests are covered by e2e tests in test/e2e/frontend/
@@ -347,7 +348,11 @@ func TestJSONFileFiltering(t *testing.T) {
 func TestFrontendResultMetadataIncludesChiselAnnotations(t *testing.T) {
 	configData, err := json.Marshal(ocispecs.Image{
 		Config: ocispecs.ImageConfig{
-			Labels: map[string]string{"existing": "preserved"},
+			Labels: map[string]string{
+				"existing":                     "preserved",
+				pkgmgr.ChiselReleaseAnnotation: "stale-release",
+				pkgmgr.ChiselVersionAnnotation: "stale-version",
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -370,6 +375,42 @@ func TestFrontendResultMetadataIncludesChiselAnnotations(t *testing.T) {
 	assert.Equal(t, []byte("v1.4.2"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselVersionAnnotation)])
 }
 
+func TestFrontendResultMetadataPreservesSuppliedChiselAnnotationsOnNoUpdate(t *testing.T) {
+	baseConfig, err := json.Marshal(ocispecs.Image{
+		Config: ocispecs.ImageConfig{
+			Labels: map[string]string{sourceLabel: "base-image"},
+		},
+	})
+	require.NoError(t, err)
+	patchedConfig, err := json.Marshal(ocispecs.Image{
+		Config: ocispecs.ImageConfig{
+			User: "1001:1001",
+			Labels: map[string]string{
+				sourceLabel:                    "supplied-image",
+				pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+				pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+			},
+		},
+	})
+	require.NoError(t, err)
+	platform := ocispecs.Platform{OS: osLinux, Architecture: "amd64"}
+
+	metadata, err := frontendResultMetadata(baseConfig, patchedConfig, &platform, nil)
+	require.NoError(t, err)
+
+	configKey := exptypes.ExporterImageConfigKey + "/linux/amd64"
+	var image ocispecs.Image
+	require.NoError(t, json.Unmarshal(metadata[configKey], &image))
+	assert.Equal(t, "1001:1001", image.Config.User)
+	assert.Equal(t, "supplied-image", image.Config.Labels[sourceLabel])
+	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
+	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+	assert.Equal(t, []byte("ubuntu-24.04"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselReleaseAnnotation)])
+	assert.Equal(t, []byte("v1.4.2"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselVersionAnnotation)])
+	_, sourcePromoted := metadata[exptypes.AnnotationManifestKey(&platform, sourceLabel)]
+	assert.False(t, sourcePromoted, "ordinary supplied labels must not be promoted to manifest annotations")
+}
+
 func TestFrontendResultMetadataUsesPatchedConfigWhenPresent(t *testing.T) {
 	baseConfig, err := json.Marshal(ocispecs.Image{
 		Config: ocispecs.ImageConfig{
@@ -378,7 +419,7 @@ func TestFrontendResultMetadataUsesPatchedConfigWhenPresent(t *testing.T) {
 			Cmd:        []string{"base-command"},
 			Env:        []string{"BASE_ONLY=true"},
 			WorkingDir: "/base",
-			Labels:     map[string]string{"source": "base"},
+			Labels:     map[string]string{sourceLabel: "base"},
 		},
 	})
 	require.NoError(t, err)
@@ -389,7 +430,10 @@ func TestFrontendResultMetadataUsesPatchedConfigWhenPresent(t *testing.T) {
 			Cmd:        []string{"serve", "--production"},
 			Env:        []string{"APP_ENV=production", "PORT=8080"},
 			WorkingDir: "/app",
-			Labels:     map[string]string{"source": "supplied-image"},
+			Labels: map[string]string{
+				sourceLabel:                    "supplied-image",
+				pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -410,8 +454,9 @@ func TestFrontendResultMetadataUsesPatchedConfigWhenPresent(t *testing.T) {
 	assert.Equal(t, []string{"serve", "--production"}, image.Config.Cmd)
 	assert.Equal(t, []string{"APP_ENV=production", "PORT=8080"}, image.Config.Env)
 	assert.Equal(t, "/app", image.Config.WorkingDir)
-	assert.Equal(t, "supplied-image", image.Config.Labels["source"])
+	assert.Equal(t, "supplied-image", image.Config.Labels[sourceLabel])
 	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
+	assert.Equal(t, []byte("v1.4.2"), metadata[exptypes.AnnotationManifestKey(&platform, pkgmgr.ChiselVersionAnnotation)])
 }
 
 type frontendMetadataTestClient struct {

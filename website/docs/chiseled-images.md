@@ -50,8 +50,13 @@ additional files from those packages even though package-manager and tooling
 executables are removed before export. Because these images do not retain the
 original dpkg lifecycle database, Copa applies archive payloads with maintainer
 scripts and dpkg triggers disabled rather than executing them against incomplete
-package state. Review the resulting filesystem and test the application before
-deployment, especially when a package normally generates files in `postinst`.
+package state. Direct updates to lifecycle packages such as `dpkg`, `dash`,
+`perl-base`, `apt`, or `bash` are rejected before Copa mutates the target because
+this layout does not retain the metadata needed to update them safely. Rebuild the
+source image or use an image that preserves the complete `/var/lib/dpkg` database
+when one of those packages requires remediation. Review the resulting filesystem
+and test the application before deployment, especially when a package normally
+generates files in `postinst`.
 
 :::
 

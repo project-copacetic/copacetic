@@ -226,10 +226,10 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 
 func TestPatchWithContextDerivesImplicitPlatformFromReport(t *testing.T) {
 	const (
-		amd64Arch       = "amd64"
-		alpineImageRef  = "docker.io/library/alpine:3.20"
-		patchedImageTag = "patched"
-		trivyScanner    = "trivy"
+		amd64Arch      = "amd64"
+		alpineImageRef = "docker.io/library/alpine:3.20"
+		patchedTag     = "patched"
+		trivyScanner   = "trivy"
 	)
 
 	hostArch := common.GetDefaultLinuxPlatform().Architecture
@@ -265,14 +265,14 @@ func TestPatchWithContextDerivesImplicitPlatformFromReport(t *testing.T) {
 	err = patchWithContext(context.Background(), &types.Options{
 		Image:             alpineImageRef,
 		Report:            reportPath,
-		PatchedTag:        patchedImageTag,
+		PatchedTag:        patchedTag,
 		Scanner:           trivyScanner,
 		PkgTypes:          "os",
 		LibraryPatchLevel: "patch",
 	})
 
 	assert.ErrorIs(t, err, buildkitErr)
-	assert.True(t, buildkitCalled, "implicit report architecture should be resolved before platform validation")
+	assert.True(t, buildkitCalled, "implicit report architecture should be resolved before BuildKit creation")
 }
 
 func TestResolveSingleReportPlatform(t *testing.T) {
