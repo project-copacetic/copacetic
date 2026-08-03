@@ -85,10 +85,9 @@ func TestValidateBuildkitPlatformSupport(t *testing.T) {
 			}},
 		},
 		{
-			name:      "amd64-only worker does not claim unadvertised 386 target",
-			target:    v1.Platform{OS: LINUX, Architecture: "386"},
-			workers:   []*buildkitclient.WorkerInfo{{ID: amd64Architecture, Platforms: []v1.Platform{{OS: LINUX, Architecture: amd64Architecture}}}},
-			wantError: "emulation is not enabled for platform linux/386 on any BuildKit worker",
+			name:    "amd64 worker supports compatible 386 target",
+			target:  v1.Platform{OS: LINUX, Architecture: "386"},
+			workers: []*buildkitclient.WorkerInfo{{ID: amd64Architecture, Platforms: []v1.Platform{{OS: LINUX, Architecture: amd64Architecture}}}},
 		},
 		{
 			name:   "explicitly advertised 386 target is supported",

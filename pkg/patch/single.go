@@ -350,7 +350,7 @@ func validateBuildkitPlatformSupport(ctx context.Context, client *client.Client,
 			continue
 		}
 		for _, workerPlatform := range worker.Platforms {
-			if platforms.OnlyStrict(platforms.Normalize(workerPlatform)).Match(target) {
+			if platforms.Only(platforms.Normalize(workerPlatform)).Match(target) {
 				log.Debugf("BuildKit worker %s supports target platform %s", worker.ID, platforms.Format(target))
 				return nil
 			}
