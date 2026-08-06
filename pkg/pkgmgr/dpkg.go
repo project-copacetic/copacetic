@@ -39,6 +39,7 @@ type dpkgManager struct {
 	config         *buildkit.Config
 	workingFolder  string
 	isDistroless   bool
+	hasAptGet      bool
 	statusdNames   string
 	packageInfo    map[string]string
 	statusdFileMap map[string]string // Maps package names to their status.d filenames
@@ -254,6 +255,13 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 	dpkgStatus := getDPKGStatusType(typeBytes)
 	switch dpkgStatus {
 	case DPKGStatusFile:
+		// Verify apt-get is actually available in the target image.
+		// Chiseled images (e.g., dotnet/aspnet:8.0-noble-chiseled-extra) have dpkg status
+		// but no apt-get binary, so we must use the tooling container path.
+		dm.hasAptGet = dm.probeAptGet(ctx, imageStateCurrent)
+		if !dm.hasAptGet {
+			dm.isDistroless = true
+		}
 		return nil
 	case DPKGStatusDirectory:
 		statusdNamesBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &resultsState, "status.d")
@@ -307,6 +315,18 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		log.Error(err)
 		return err
 	}
+}
+
+// probeAptGet checks whether the target image contains the apt-get binary.
+// Returns true if apt-get is found in the image's PATH, false otherwise.
+func (dm *dpkgManager) probeAptGet(ctx context.Context, imageState llb.State) bool {
+	const aptGetMarker = "/apt_get_found"
+	state := imageState.Run(
+		llb.Shlex(fmt.Sprintf(`sh -c 'command -v apt-get > /dev/null && touch %s'`, aptGetMarker)),
+		llb.WithCustomName("Probing for apt-get"),
+	).Root()
+	_, err := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &state, aptGetMarker)
+	return err == nil
 }
 
 func GetPackageInfo(file string) (string, string, error) {
