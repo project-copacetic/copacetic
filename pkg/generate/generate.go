@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -420,6 +421,7 @@ LABEL sh.copa.image.patched="%s"
 	// Extract and rewrite the patch layer tar with proper paths
 	tr := tar.NewReader(bytes.NewReader(patchLayer))
 	hardlinks := make(map[string]*tar.Header)
+	hardlinkTargets := make(map[string]struct{})
 
 	for {
 		hdr, err := tr.Next()
@@ -434,6 +436,7 @@ LABEL sh.copa.image.patched="%s"
 		if hdr.Typeflag == tar.TypeLink {
 			// Store hardlink info for later
 			hardlinks[hdr.Name] = hdr
+			hardlinkTargets[hdr.Linkname] = struct{}{}
 			continue
 		}
 
@@ -461,7 +464,7 @@ LABEL sh.copa.image.patched="%s"
 	if len(hardlinks) > 0 {
 		// Re-read the tar to find hardlink targets
 		tr = tar.NewReader(bytes.NewReader(patchLayer))
-		fileContents := make(map[string][]byte)
+		fileContents := make(map[string][]byte, len(hardlinkTargets))
 
 		for {
 			hdr, err := tr.Next()
@@ -472,8 +475,10 @@ LABEL sh.copa.image.patched="%s"
 				return errors.Wrap(err, "failed to read patch layer tar for hardlinks")
 			}
 
-			// Store file contents for hardlink targets
-			if hdr.Typeflag == tar.TypeReg && hdr.Size > 0 {
+			// Store only file contents that are actual hardlink targets. The first
+			// pass has already copied every regular file into the output context;
+			// this second pass only needs bytes for materializing hardlinks as files.
+			if _, needed := hardlinkTargets[hdr.Name]; needed && hdr.Typeflag == tar.TypeReg && hdr.Size > 0 {
 				// Limit file size to 1GB to prevent decompression bombs
 				if hdr.Size > maxFileSize {
 					return errors.Errorf("file %s exceeds maximum allowed size of 1GB", hdr.Name)
@@ -486,8 +491,15 @@ LABEL sh.copa.image.patched="%s"
 			}
 		}
 
-		// Write hardlinks as regular files
-		for name, hdr := range hardlinks {
+		// Write hardlinks as regular files. Sort names so identical inputs produce
+		// deterministic build contexts instead of inheriting map iteration order.
+		hardlinkNames := make([]string, 0, len(hardlinks))
+		for name := range hardlinks {
+			hardlinkNames = append(hardlinkNames, name)
+		}
+		sort.Strings(hardlinkNames)
+		for _, name := range hardlinkNames {
+			hdr := hardlinks[name]
 			if content, ok := fileContents[hdr.Linkname]; ok {
 				// Convert to regular file
 				newHdr := &tar.Header{
