@@ -132,8 +132,14 @@ func TestPatch(t *testing.T) {
 				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
-			if common.DockerDINDAddress.Addr() != "" {
-				waitForDockerImage(t, patchedRef)
+			expectsPatchFailure := strings.Contains(img.Image, "oracle") && reportFile && !img.IgnoreErrors
+			if common.DockerDINDAddress.Addr() != "" && !expectsPatchFailure {
+				// A concurrent local-name fixture can make a remote manifest list
+				// visible to the nested daemon as a single-platform image. Copa then
+				// correctly emits the unsuffixed single-platform tag instead of the
+				// anticipated architecture-suffixed tag.
+				unsuffixedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
+				patchedRef = waitForDockerImage(t, patchedRef, unsuffixedRef)
 			}
 
 			// Sanity-check that copa wrote an inspectable patched manifest with
@@ -261,29 +267,49 @@ func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 	return filteredPlatforms
 }
 
-func waitForDockerImage(t *testing.T, ref string) {
+func waitForDockerImage(t *testing.T, refs ...string) string {
 	t.Helper()
 
-	deadline := time.Now().Add(30 * time.Second)
-	var lastOutput []byte
-	for {
-		args := []string{}
-		if addr := common.DockerDINDAddress.Addr(); addr != "" {
-			args = append(args, "-H", addr)
+	candidates := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref]; ok {
+			continue
 		}
-		args = append(args, "image", "inspect", ref)
+		seen[ref] = struct{}{}
+		candidates = append(candidates, ref)
+	}
 
-		cmd := exec.Command("docker", args...)
-		output, err := cmd.CombinedOutput()
-		if err == nil {
-			return
+	deadline := time.Now().Add(30 * time.Second)
+	lastOutput := make(map[string]string, len(candidates))
+	for {
+		for _, ref := range candidates {
+			args := dockerArgs("image", "inspect", ref)
+			cmd := exec.Command("docker", args...) // #nosec G204 -- refs come from pinned integration fixtures.
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				if ref != candidates[0] {
+					t.Logf("using patched image tag %s after %s was not emitted", ref, candidates[0])
+				}
+				return ref
+			}
+			lastOutput[ref] = string(output)
 		}
-		lastOutput = output
+
 		if time.Now().After(deadline) {
-			require.NoError(t, err, "patched image %s did not become visible in the Docker daemon: %s", ref, string(lastOutput))
+			listCmd := exec.Command("docker", dockerArgs("images", "--format", "{{.Repository}}:{{.Tag}}")...) // #nosec G204 -- fixed diagnostic command.
+			images, _ := listCmd.CombinedOutput()
+			t.Fatalf("none of the patched image candidates %v became visible in the Docker daemon; inspect errors: %v; available images: %s", candidates, lastOutput, string(images))
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func dockerArgs(args ...string) []string {
+	if addr := common.DockerDINDAddress.Addr(); addr != "" {
+		return append([]string{"-H", addr}, args...)
+	}
+	return args
 }
 
 func dockerPull(t *testing.T, ref string) {
@@ -301,15 +327,7 @@ func dockerCmd(t *testing.T, args ...string) {
 	}
 	require.NoError(t, err, "no args provided")
 
-	a := []string{}
-
-	if addr := common.DockerDINDAddress.Addr(); addr != "" {
-		a = append(a, "-H", addr)
-	}
-
-	a = append(a, args...)
-
-	cmd := exec.Command(`docker`, a...)
+	cmd := exec.Command(`docker`, dockerArgs(args...)...) // #nosec G204 -- args are controlled by integration fixtures.
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }

@@ -104,7 +104,7 @@ jobs:
     needs: build
     name: Test patch with trivy ${{ matrix.buildkit_mode }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
-    timeout-minutes: 40
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -144,14 +144,7 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          test_args=()
-          if [[ "${{ matrix.buildkit_mode }}" == "docker/custom-unix" ]]; then
-            # The nested daemon can drop concurrent image-load registrations at
-            # the default 16-way package parallelism. Eight workers keeps the
-            # test concurrent without losing patched tags before validation.
-            test_args+=("-parallel=8")
-          fi
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file "${test_args[@]}"
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         with:
@@ -161,7 +154,7 @@ jobs:
     needs: build
     name: Test patch no report ${{ matrix.buildkit_mode }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
-    timeout-minutes: 40
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -202,13 +195,7 @@ jobs:
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
           echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
-          test_args=()
-          if [[ "${{ matrix.buildkit_mode }}" == "docker/custom-unix" ]]; then
-            # Match the report-driven job: cap concurrent image loads into the
-            # nested daemon so every patched tag is registered deterministically.
-            test_args+=("-parallel=8")
-          fi
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 "${test_args[@]}"
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         with:
