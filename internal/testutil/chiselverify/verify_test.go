@@ -30,6 +30,26 @@ func TestVerifyTar(t *testing.T) {
 	require.NoError(t, VerifyTar(manifest, bytes.NewReader(validRootFSTar(t, rootFSTarOptions{}))))
 }
 
+func TestVerifyTarAcceptsUnmeasuredRegularFile(t *testing.T) {
+	manifest := &copachisel.Manifest{OwnedPaths: map[string]copachisel.PathMetadata{
+		"/var/lib/chisel/manifest.wall": {
+			Path: "/var/lib/chisel/manifest.wall",
+			Mode: 0o644,
+		},
+	}}
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	contents := []byte("self-referential manifest contents")
+	require.NoError(t, writer.WriteHeader(&tar.Header{
+		Name: "var/lib/chisel/manifest.wall", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(contents)),
+	}))
+	_, err := writer.Write(contents)
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	require.NoError(t, VerifyTar(manifest, bytes.NewReader(archive.Bytes())))
+}
+
 func TestVerifyTarFailures(t *testing.T) {
 	tests := []struct {
 		name           string

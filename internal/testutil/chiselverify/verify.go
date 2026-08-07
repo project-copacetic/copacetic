@@ -214,16 +214,19 @@ func verifyManifest(manifest *copachisel.Manifest, view *rootFSView) error {
 			if entry.kind != entryRegular {
 				return pathTypeError(manifestPath, "regular file", entry.kind)
 			}
-			if entry.size < 0 {
-				return fmt.Errorf("manifest-owned regular file %q has invalid negative size %d", manifestPath, entry.size)
+			expectedDigest := metadata.Digest()
+			if metadata.Size != 0 || expectedDigest != "" {
+				if entry.size < 0 {
+					return fmt.Errorf("manifest-owned regular file %q has invalid negative size %d", manifestPath, entry.size)
+				}
+				if uint64(entry.size) != metadata.Size { // #nosec G115 -- negative sizes are rejected above.
+					return fmt.Errorf(
+						"manifest-owned regular file %q has size %d; expected %d",
+						manifestPath, entry.size, metadata.Size,
+					)
+				}
 			}
-			if uint64(entry.size) != metadata.Size { // #nosec G115 -- negative sizes are rejected above.
-				return fmt.Errorf(
-					"manifest-owned regular file %q has size %d; expected %d",
-					manifestPath, entry.size, metadata.Size,
-				)
-			}
-			if expectedDigest := metadata.Digest(); expectedDigest != "" {
+			if expectedDigest != "" {
 				digestField := "sha256"
 				if metadata.FinalSHA256 != "" {
 					digestField = "final_sha256"
