@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -219,6 +220,184 @@ func TestReconcilePreservesUnmanagedContentAndHardLinks(t *testing.T) {
 	assert.True(t, os.SameFile(one, two))
 }
 
+func TestReconcilePreservesUnmanagedContentInObsoleteManagedDirectory(t *testing.T) {
+	target := t.TempDir()
+	staged := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "managed", "obsolete"), 0o755))
+	sentinel := filepath.Join(target, "managed", "obsolete", "application-data")
+	writeFileWithMode(t, sentinel, []byte("preserve"), 0o600)
+	require.NoError(t, os.Mkdir(filepath.Join(staged, "managed"), 0o755))
+
+	oldManifest := expectedManifest{Paths: []expectedPath{
+		{Path: "/managed/", Mode: "0755"},
+		{Path: "/managed/obsolete/", Mode: "0755"},
+	}}
+	newManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0755"}}}
+
+	require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
+	got, err := os.ReadFile(sentinel)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("preserve"), got)
+	assert.DirExists(t, filepath.Join(target, "managed", "obsolete"))
+	require.NoError(t, validate(target, newManifest))
+}
+
+func TestReconcileRemovesNestedManagedBranchAndPreservesUnmanagedBranch(t *testing.T) {
+	target := t.TempDir()
+	staged := t.TempDir()
+	managedBranch := filepath.Join(target, "managed", "obsolete", "remove", "deep")
+	unmanagedBranch := filepath.Join(target, "managed", "obsolete", "keep")
+	require.NoError(t, os.MkdirAll(managedBranch, 0o755))
+	require.NoError(t, os.MkdirAll(unmanagedBranch, 0o755))
+	managedFile := filepath.Join(managedBranch, "payload")
+	writeFileWithMode(t, managedFile, []byte("remove"), 0o600)
+	unmanagedFile := filepath.Join(unmanagedBranch, "application-data")
+	writeFileWithMode(t, unmanagedFile, []byte("preserve"), 0o600)
+	require.NoError(t, os.Mkdir(filepath.Join(staged, "managed"), 0o755))
+
+	oldManifest := expectedManifest{Paths: []expectedPath{
+		{Path: "/managed/", Mode: "0755"},
+		{Path: "/managed/obsolete/", Mode: "0755"},
+		{Path: "/managed/obsolete/remove/", Mode: "0755"},
+		{Path: "/managed/obsolete/remove/deep/", Mode: "0755"},
+		{Path: "/managed/obsolete/remove/deep/payload", Mode: "0600", SHA256: hashString("remove"), Size: 6},
+		{Path: "/managed/obsolete/keep/", Mode: "0755"},
+	}}
+	newManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0755"}}}
+
+	require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
+	_, err := os.Lstat(filepath.Join(target, "managed", "obsolete", "remove"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+	got, err := os.ReadFile(unmanagedFile)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("preserve"), got)
+	assert.DirExists(t, filepath.Join(target, "managed", "obsolete", "keep"))
+	assert.DirExists(t, filepath.Join(target, "managed", "obsolete"))
+	require.NoError(t, validate(target, newManifest))
+}
+
+func TestIsDirectoryNotEmptyError(t *testing.T) {
+	assert.True(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: "obsolete", Err: syscall.ENOTEMPTY}))
+	assert.True(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: "obsolete", Err: syscall.EEXIST}))
+	assert.False(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: "obsolete", Err: syscall.EPERM}))
+}
+
+func TestRemoveManagedPathReturnsUnexpectedDirectoryRemovalError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-based removal failure requires an unprivileged user")
+	}
+
+	target := t.TempDir()
+	locked := filepath.Join(target, "locked")
+	obsolete := filepath.Join(locked, "obsolete")
+	require.NoError(t, os.MkdirAll(obsolete, 0o755))
+	root, err := os.OpenRoot(target)
+	require.NoError(t, err)
+	defer root.Close()
+
+	require.NoError(t, os.Chmod(locked, 0o555))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chmod(locked, 0o755))
+	})
+
+	err = removeManagedPath(root, "/locked/obsolete/", true, false)
+	require.ErrorContains(t, err, "remove managed path")
+	assert.ErrorIs(t, err, os.ErrPermission)
+	assert.DirExists(t, obsolete)
+}
+
+func TestReconcileHardLinkedSymlinks(t *testing.T) {
+	target := t.TempDir()
+	staged := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(staged, "links"), 0o755))
+	first := filepath.Join(staged, "links", "first")
+	require.NoError(t, os.Symlink("../target", first))
+	linkWithinRoot(t, staged, "links/first", "links/second")
+	linkMode := symlinkMode(t, first)
+
+	manifest := expectedManifest{Paths: []expectedPath{
+		{Path: "/links/", Mode: "0755"},
+		{Path: "/links/first", Mode: linkMode, Link: "../target", Inode: 7},
+		{Path: "/links/second", Mode: linkMode, Link: "../target", Inode: 7},
+	}}
+
+	require.NoError(t, reconcile(target, staged, expectedManifest{}, manifest))
+	require.NoError(t, validate(target, manifest))
+	firstTarget, err := os.Readlink(filepath.Join(target, "links", "first"))
+	require.NoError(t, err)
+	assert.Equal(t, "../target", firstTarget)
+	secondTarget, err := os.Readlink(filepath.Join(target, "links", "second"))
+	require.NoError(t, err)
+	assert.Equal(t, "../target", secondTarget)
+	firstInfo, err := os.Lstat(filepath.Join(target, "links", "first"))
+	require.NoError(t, err)
+	secondInfo, err := os.Lstat(filepath.Join(target, "links", "second"))
+	require.NoError(t, err)
+	assert.True(t, os.SameFile(firstInfo, secondInfo))
+}
+
+func TestReconcileRejectsInvalidHardLinkedSymlinksBeforeMutation(t *testing.T) {
+	testCases := []struct {
+		name      string
+		stage     func(*testing.T, string) expectedManifest
+		errorText string
+	}{
+		{
+			name: "mixed regular file and symlink",
+			stage: func(t *testing.T, staged string) expectedManifest {
+				t.Helper()
+				require.NoError(t, os.Mkdir(filepath.Join(staged, "links"), 0o755))
+				file := filepath.Join(staged, "links", "file")
+				writeFileWithMode(t, file, []byte("content"), 0o644)
+				link := filepath.Join(staged, "links", "link")
+				require.NoError(t, os.Symlink("target", link))
+				return expectedManifest{Paths: []expectedPath{
+					{Path: "/links/", Mode: "0755"},
+					{Path: "/links/file", Mode: "0644", SHA256: hashString("content"), Size: 7, Inode: 9},
+					{Path: "/links/link", Mode: symlinkMode(t, link), Link: "target", Inode: 9},
+				}}
+			},
+			errorText: "does not share one device and inode",
+		},
+		{
+			name: "changed symlink target",
+			stage: func(t *testing.T, staged string) expectedManifest {
+				t.Helper()
+				require.NoError(t, os.Mkdir(filepath.Join(staged, "links"), 0o755))
+				first := filepath.Join(staged, "links", "first")
+				require.NoError(t, os.Symlink("actual-target", first))
+				linkWithinRoot(t, staged, "links/first", "links/second")
+				linkMode := symlinkMode(t, first)
+				return expectedManifest{Paths: []expectedPath{
+					{Path: "/links/", Mode: "0755"},
+					{Path: "/links/first", Mode: linkMode, Link: "actual-target", Inode: 10},
+					{Path: "/links/second", Mode: linkMode, Link: "different-target", Inode: 10},
+				}}
+			},
+			errorText: "links to \"actual-target\", expected \"different-target\"",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			target := t.TempDir()
+			staged := t.TempDir()
+			sentinel := filepath.Join(target, "application-data")
+			writeFileWithMode(t, sentinel, []byte("preserve"), 0o600)
+			manifest := testCase.stage(t, staged)
+
+			err := reconcile(target, staged, expectedManifest{}, manifest)
+			require.ErrorContains(t, err, "staged root is invalid")
+			require.ErrorContains(t, err, testCase.errorText)
+			got, readErr := os.ReadFile(sentinel)
+			require.NoError(t, readErr)
+			assert.Equal(t, []byte("preserve"), got)
+			_, statErr := os.Lstat(filepath.Join(target, "links"))
+			assert.ErrorIs(t, statErr, os.ErrNotExist)
+		})
+	}
+}
+
 func TestReconcileManagedPathTypeTransitions(t *testing.T) {
 	t.Run("directory to file", func(t *testing.T) {
 		target := t.TempDir()
@@ -263,6 +442,34 @@ func TestReconcileManagedPathTypeTransitions(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, info.IsDir())
 	})
+
+	t.Run("file to directory with child", func(t *testing.T) {
+		target := t.TempDir()
+		staged := t.TempDir()
+		writeFileWithMode(t, filepath.Join(target, "a"), []byte("old"), 0o640)
+		require.NoError(t, os.Mkdir(filepath.Join(staged, "a"), 0o750))
+		content := []byte("new child")
+		writeFileWithMode(t, filepath.Join(staged, "a", "b"), content, 0o600)
+
+		oldManifest := expectedManifest{Paths: []expectedPath{{
+			Path:   "/a",
+			Mode:   "0640",
+			SHA256: hashString("old"),
+			Size:   3,
+		}}}
+		newManifest := expectedManifest{Paths: []expectedPath{
+			{Path: "/a/", Mode: "0750"},
+			{Path: "/a/b", Mode: "0600", SHA256: hashString(string(content)), Size: uint64(len(content))},
+		}}
+
+		require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
+		info, err := os.Lstat(filepath.Join(target, "a"))
+		require.NoError(t, err)
+		assert.True(t, info.IsDir())
+		got, err := os.ReadFile(filepath.Join(target, "a", "b"))
+		require.NoError(t, err)
+		assert.Equal(t, content, got)
+	})
 }
 
 func TestReconcileRejectsSymlinkAncestorWithoutDeletingTarget(t *testing.T) {
@@ -292,23 +499,59 @@ func TestReconcileRejectsUndeclaredStagedFile(t *testing.T) {
 }
 
 func TestReconcileRejectsUnmanagedCollision(t *testing.T) {
-	target := t.TempDir()
-	staged := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(target, "collision"), []byte("application"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(staged, "collision"), []byte("chisel"), 0o600))
-	manifest := expectedManifest{Paths: []expectedPath{{
-		Path: "/collision", Mode: "0600", SHA256: hashString("chisel"), Size: 6,
-	}}}
-	err := reconcile(target, staged, expectedManifest{}, manifest)
-	require.ErrorContains(t, err, "would overwrite an existing path not owned")
-	got, readErr := os.ReadFile(filepath.Join(target, "collision"))
-	require.NoError(t, readErr)
-	assert.Equal(t, []byte("application"), got)
+	t.Run("exact path", func(t *testing.T) {
+		target := t.TempDir()
+		staged := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(target, "collision"), []byte("application"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(staged, "collision"), []byte("chisel"), 0o600))
+		manifest := expectedManifest{Paths: []expectedPath{{
+			Path: "/collision", Mode: "0600", SHA256: hashString("chisel"), Size: 6,
+		}}}
+		err := reconcile(target, staged, expectedManifest{}, manifest)
+		require.ErrorContains(t, err, "would overwrite an existing path not owned")
+		got, readErr := os.ReadFile(filepath.Join(target, "collision"))
+		require.NoError(t, readErr)
+		assert.Equal(t, []byte("application"), got)
+	})
+
+	t.Run("non-directory ancestor", func(t *testing.T) {
+		target := t.TempDir()
+		staged := t.TempDir()
+		content := []byte("application")
+		writeFileWithMode(t, filepath.Join(target, "a"), content, 0o600)
+		require.NoError(t, os.Mkdir(filepath.Join(staged, "a"), 0o755))
+		writeFileWithMode(t, filepath.Join(staged, "a", "b"), []byte("chisel"), 0o600)
+		manifest := expectedManifest{Paths: []expectedPath{{
+			Path: "/a/b", Mode: "0600", SHA256: hashString("chisel"), Size: 6,
+		}}}
+
+		err := reconcile(target, staged, expectedManifest{}, manifest)
+		require.ErrorContains(t, err, `ancestor "/a" is not a directory`)
+		got, readErr := os.ReadFile(filepath.Join(target, "a"))
+		require.NoError(t, readErr)
+		assert.Equal(t, content, got)
+	})
 }
 
 func hashString(value string) string {
 	digest := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(digest[:])
+}
+
+func linkWithinRoot(t *testing.T, rootPath, oldName, newName string) {
+	t.Helper()
+	root, err := os.OpenRoot(rootPath)
+	require.NoError(t, err)
+	require.NoError(t, root.Link(oldName, newName))
+	require.NoError(t, root.Close())
+}
+
+func symlinkMode(t *testing.T, path string) string {
+	t.Helper()
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&fs.ModeSymlink)
+	return fmt.Sprintf("0%o", info.Mode().Perm())
 }
 
 func writeFileWithMode(t *testing.T, path string, data []byte, mode os.FileMode) {

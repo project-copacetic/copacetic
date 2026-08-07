@@ -9,7 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -287,6 +291,82 @@ func TestLocalChiselReleaseStateRejectsEscapingSymlink(t *testing.T) {
 	require.ErrorContains(t, err, "escapes the release directory")
 }
 
+func TestLocalChiselReleaseStateRejectsUnsafeSymlinks(t *testing.T) {
+	tests := []struct {
+		name        string
+		setup       func(*testing.T, string)
+		errContains string
+	}{
+		{
+			name: "absolute target",
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.Symlink("/etc/passwd", filepath.Join(root, "bad")))
+			},
+			errContains: "has an absolute target",
+		},
+		{
+			name: "dangling target",
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.Symlink("missing", filepath.Join(root, "bad")))
+			},
+			errContains: "does not resolve safely",
+		},
+		{
+			name: "cyclic target",
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.Symlink("two", filepath.Join(root, "one")))
+				require.NoError(t, os.Symlink("one", filepath.Join(root, "two")))
+			},
+			errContains: "does not resolve safely",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			releaseDir := t.TempDir()
+			test.setup(t, releaseDir)
+			_, _, err := localChiselReleaseState(releaseDir)
+			require.ErrorContains(t, err, test.errContains)
+		})
+	}
+}
+
+func TestLocalChiselReleaseStateRejectsSpecialFiles(t *testing.T) {
+	releaseDir := t.TempDir()
+	socketPath := filepath.Join(releaseDir, "unsupported-socket")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("Unix sockets are unavailable: %v", err)
+	}
+	t.Cleanup(func() { require.NoError(t, listener.Close()) })
+
+	_, _, err = localChiselReleaseState(releaseDir)
+	require.ErrorContains(t, err, `unsupported file type at "unsupported-socket"`)
+}
+
+func TestLocalChiselReleaseStateEntryLimitBoundary(t *testing.T) {
+	releaseDir := t.TempDir()
+	for index := range maxLocalReleaseFiles {
+		require.NoError(t, os.Mkdir(filepath.Join(releaseDir, fmt.Sprintf("entry-%05d", index)), 0o755))
+	}
+	_, _, err := localChiselReleaseState(releaseDir)
+	require.NoError(t, err)
+
+	require.NoError(t, os.Mkdir(filepath.Join(releaseDir, "one-too-many"), 0o755))
+	_, _, err = localChiselReleaseState(releaseDir)
+	require.ErrorContains(t, err, fmt.Sprintf("more than %d entries", maxLocalReleaseFiles))
+}
+
+func TestLocalChiselReleaseStateContentLimitBoundary(t *testing.T) {
+	releaseDir := t.TempDir()
+	path := filepath.Join(releaseDir, "exact-limit.yaml")
+	writePackageManagerTestFile(t, path, nil, 0o644)
+	require.NoError(t, os.Truncate(path, maxLocalReleaseBytes))
+
+	_, _, err := localChiselReleaseState(releaseDir)
+	require.NoError(t, err)
+}
+
 func TestLocalChiselReleaseStateRejectsEscapeThroughInTreeSymlink(t *testing.T) {
 	parent := t.TempDir()
 	releaseDir := filepath.Join(parent, "release")
@@ -297,6 +377,306 @@ func TestLocalChiselReleaseStateRejectsEscapeThroughInTreeSymlink(t *testing.T) 
 
 	_, _, err := localChiselReleaseState(releaseDir)
 	require.ErrorContains(t, err, "does not resolve safely within the release directory")
+}
+
+func TestGitChiselReleaseCloneScriptResolvesPinnedRevisions(t *testing.T) {
+	requireGitTestTools(t)
+	repository, commit := createGitReleaseRepository(t, map[string]string{"slices/base.yaml": "release-data"}, nil)
+	runGitTestCommand(t, repository, "tag", "lightweight")
+	runGitTestCommand(t, repository, "tag", "-a", "annotated", "-m", "annotated release")
+
+	tests := []struct {
+		name     string
+		revision string
+	}{
+		{name: "full commit", revision: commit},
+		{name: "unique short commit", revision: commit[:12]},
+		{name: "lightweight tag", revision: "lightweight"},
+		{name: "annotated tag", revision: "annotated"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			releaseDir, revision := executeGitReleaseCloneScript(t, repository, test.revision, 100, 1<<20)
+			assert.Equal(t, commit, revision)
+			assert.FileExists(t, filepath.Join(releaseDir, "slices", "base.yaml"))
+			assert.NoDirExists(t, filepath.Join(releaseDir, ".git"))
+			assert.NoFileExists(t, filepath.Join(filepath.Dir(releaseDir), "home", ".gitconfig"))
+		})
+	}
+}
+
+func TestGitChiselReleaseCloneScriptRejectsUnresolvedRevision(t *testing.T) {
+	requireGitTestTools(t)
+	repository, _ := createGitReleaseRepository(t, map[string]string{"release.yaml": "data"}, nil)
+	output, err := executeGitReleaseCloneScriptError(t, repository, "deadbee", 100, 1<<20)
+	require.Error(t, err)
+	assert.Contains(t, output, "does not uniquely resolve to an advertised commit")
+
+	output, err = executeGitReleaseCloneScriptError(t, repository, strings.Repeat("f", 40), 100, 1<<20)
+	require.Error(t, err)
+	assert.Contains(t, output, "fatal:")
+}
+
+func TestGitChiselReleaseCloneScriptBoundsMaterializedTree(t *testing.T) {
+	requireGitTestTools(t)
+	repository, commit := createGitReleaseRepository(t, map[string]string{
+		"one.yaml": "12345",
+		"two.yaml": "x",
+	}, nil)
+
+	_, resolved := executeGitReleaseCloneScript(t, repository, commit, 2, 6)
+	assert.Equal(t, commit, resolved)
+
+	output, err := executeGitReleaseCloneScriptError(t, repository, commit, 1, 1<<20)
+	require.Error(t, err)
+	assert.Contains(t, output, "contains more than 1 entries")
+
+	output, err = executeGitReleaseCloneScriptError(t, repository, commit, 100, 4)
+	require.Error(t, err)
+	assert.Contains(t, output, "exceeds the configured content size limit")
+}
+
+func TestGitChiselReleaseCloneScriptCountsNewlinePaths(t *testing.T) {
+	requireGitTestTools(t)
+	root := t.TempDir()
+	writePackageManagerTestFile(t, filepath.Join(root, "large"), []byte("x"), 0o600)
+	repository, commit := createGitReleaseRepository(t, map[string]string{
+		"small":        "x",
+		"small\nlarge": strings.Repeat("x", 1024),
+	}, nil)
+	releaseDir := filepath.Join(root, "release")
+	revisionFile := filepath.Join(root, "home", "revision")
+
+	output, err := runGitReleaseCloneScript(root, releaseDir, revisionFile, repository, commit, 100, 16)
+	require.Error(t, err)
+	assert.Contains(t, string(output), "exceeds the configured content size limit")
+}
+
+func TestGitChiselReleaseCloneScriptRejectsSymlinkIntoRemovedGitDirectory(t *testing.T) {
+	requireGitTestTools(t)
+	repository, commit := createGitReleaseRepository(t,
+		map[string]string{"release.yaml": "data"},
+		map[string]string{"git-config": ".git/config"},
+	)
+
+	output, err := executeGitReleaseCloneScriptError(t, repository, commit, 100, 1<<20)
+	require.Error(t, err)
+	assert.Contains(t, output, "does not resolve safely")
+}
+
+func TestGitChiselReleaseCloneScriptDoesNotOverwriteRevisionCollision(t *testing.T) {
+	requireGitTestTools(t)
+	repository, commit := createGitReleaseRepository(t,
+		map[string]string{"chisel.yaml": "original release contents"},
+		map[string]string{".copa-revision": "chisel.yaml"},
+	)
+
+	releaseDir, revision := executeGitReleaseCloneScript(t, repository, commit, 100, 1<<20)
+	assert.Equal(t, commit, revision)
+	contents, err := os.ReadFile(filepath.Join(releaseDir, "chisel.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "original release contents", string(contents))
+	collision := filepath.Join(releaseDir, ".copa-revision")
+	info, err := os.Lstat(collision)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSymlink)
+	target, err := os.Readlink(collision)
+	require.NoError(t, err)
+	assert.Equal(t, "chisel.yaml", target)
+}
+
+func TestGitChiselRevisionFileIsOutsideReleaseDirectory(t *testing.T) {
+	assert.NotEqual(t, chiselReleaseRoot, chiselGitRevisionFile)
+	assert.False(t, strings.HasPrefix(chiselGitRevisionFile, chiselReleaseRoot+"/"))
+}
+
+func TestGitChiselReleaseCloneScriptIgnoresGitConfiguration(t *testing.T) {
+	requireGitTestTools(t)
+	repository, commit := createGitReleaseRepository(t, map[string]string{"release.yaml": "data"}, nil)
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	require.NoError(t, os.MkdirAll(home, 0o700))
+	globalConfig := filepath.Join(home, ".gitconfig")
+	systemConfig := filepath.Join(root, "system.gitconfig")
+	for _, config := range []string{globalConfig, systemConfig} {
+		runGitConfigTestCommand(t, config, "protocol.file.allow", "never")
+		runGitConfigTestCommand(t, config, "credential.helper", "!false")
+	}
+
+	releaseDir := filepath.Join(root, "release")
+	revisionFile := filepath.Join(home, "revision")
+	output, err := runGitReleaseCloneScriptWithEnv(
+		root,
+		releaseDir,
+		revisionFile,
+		repository,
+		commit,
+		100,
+		1<<20,
+		"GIT_CONFIG_SYSTEM="+systemConfig,
+	)
+	require.NoError(t, err, "clone script output:\n%s", output)
+	assert.FileExists(t, filepath.Join(releaseDir, "release.yaml"))
+	revisionData, err := os.ReadFile(revisionFile)
+	require.NoError(t, err)
+	assert.Equal(t, commit, strings.TrimSpace(string(revisionData)))
+}
+
+func TestGitChiselReleaseCloneScriptDoesNotInvokeConfiguredCredentialHelpers(t *testing.T) {
+	requireGitTestTools(t)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("WWW-Authenticate", `Basic realm="copa-test"`)
+		response.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	require.NoError(t, os.MkdirAll(home, 0o700))
+	marker := filepath.Join(root, "credential-helper-invoked")
+	helper := filepath.Join(root, "credential-helper.sh")
+	require.NoError(t, os.WriteFile(helper, fmt.Appendf(nil, "#!/bin/sh\nprintf invoked > %q\n", marker), 0o600))
+	require.NoError(t, os.Chmod(helper, 0o700))
+	globalConfig := filepath.Join(home, ".gitconfig")
+	systemConfig := filepath.Join(root, "system.gitconfig")
+	for _, config := range []string{globalConfig, systemConfig} {
+		runGitConfigTestCommand(t, config, "credential.helper", "!"+helper)
+	}
+
+	releaseDir := filepath.Join(root, "release")
+	revisionFile := filepath.Join(home, "revision")
+	_, err := runGitReleaseCloneScriptWithEnv(
+		root,
+		releaseDir,
+		revisionFile,
+		server.URL+"/release.git",
+		"deadbee",
+		100,
+		1<<20,
+		"GIT_CONFIG_SYSTEM="+systemConfig,
+	)
+	require.Error(t, err)
+	assert.NoFileExists(t, marker)
+}
+
+func TestGitChiselReleaseCloneScriptRejectsUnsafeSymlinks(t *testing.T) {
+	requireGitTestTools(t)
+	tests := []struct {
+		name        string
+		target      string
+		errContains string
+	}{
+		{name: "absolute", target: "/etc/passwd", errContains: "has an absolute target"},
+		{name: "dangling", target: "missing", errContains: "does not resolve safely"},
+		{name: "escaping", target: "../outside", errContains: "escapes the release directory"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repository, commit := createGitReleaseRepository(t, map[string]string{"release.yaml": "data"}, map[string]string{"bad": test.target})
+			output, err := executeGitReleaseCloneScriptError(t, repository, commit, 100, 1<<20)
+			require.Error(t, err)
+			assert.Contains(t, output, test.errContains)
+		})
+	}
+	t.Run("cyclic", func(t *testing.T) {
+		repository, commit := createGitReleaseRepository(t, map[string]string{"release.yaml": "data"}, map[string]string{"one": "two", "two": "one"})
+		output, err := executeGitReleaseCloneScriptError(t, repository, commit, 100, 1<<20)
+		require.Error(t, err)
+		assert.Contains(t, output, "does not resolve safely")
+	})
+}
+
+func requireGitTestTools(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"awk", "find", "git", "grep", "readlink", "sed", "sh", "sort", "tr", "wc", "xargs"} {
+		if _, err := exec.LookPath(name); err != nil {
+			t.Skipf("%s is required for Git release materialization tests", name)
+		}
+	}
+}
+
+func createGitReleaseRepository(t *testing.T, files, symlinks map[string]string) (string, string) {
+	t.Helper()
+	repository := t.TempDir()
+	runGitTestCommand(t, repository, "init", "-q")
+	runGitTestCommand(t, repository, "config", "user.name", "Copa Test")
+	runGitTestCommand(t, repository, "config", "user.email", "copa@example.invalid")
+	for name, contents := range files {
+		path := filepath.Join(repository, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+	}
+	for name, target := range symlinks {
+		path := filepath.Join(repository, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.Symlink(target, path))
+	}
+	runGitTestCommand(t, repository, "add", ".")
+	runGitTestCommand(t, repository, "commit", "-q", "-m", "release")
+	return repository, strings.TrimSpace(runGitTestCommand(t, repository, "rev-parse", "HEAD"))
+}
+
+func executeGitReleaseCloneScript(t *testing.T, repository, revision string, maxFiles, maxBytes int) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	releaseDir := filepath.Join(root, "release")
+	revisionFile := filepath.Join(root, "home", "revision")
+	output, err := runGitReleaseCloneScript(root, releaseDir, revisionFile, repository, revision, maxFiles, maxBytes)
+	require.NoError(t, err, "clone script output:\n%s", output)
+	revisionData, err := os.ReadFile(revisionFile)
+	require.NoError(t, err)
+	return releaseDir, strings.TrimSpace(string(revisionData))
+}
+
+func executeGitReleaseCloneScriptError(t *testing.T, repository, revision string, maxFiles, maxBytes int) (string, error) {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "outside"), []byte("outside"), 0o600))
+	releaseDir := filepath.Join(root, "release")
+	revisionFile := filepath.Join(root, "home", "revision")
+	output, err := runGitReleaseCloneScript(root, releaseDir, revisionFile, repository, revision, maxFiles, maxBytes)
+	return string(output), err
+}
+
+func runGitReleaseCloneScript(root, releaseDir, revisionFile, repository, revision string, maxFiles, maxBytes int) ([]byte, error) {
+	return runGitReleaseCloneScriptWithEnv(root, releaseDir, revisionFile, repository, revision, maxFiles, maxBytes)
+}
+
+func runGitReleaseCloneScriptWithEnv(
+	root, releaseDir, revisionFile, repository, revision string,
+	maxFiles, maxBytes int,
+	extraEnv ...string,
+) ([]byte, error) {
+	command := exec.Command("sh", "-c", gitChiselReleaseCloneScript)
+	command.Dir = root
+	command.Env = append(os.Environ(),
+		"RELEASE_DIR="+releaseDir,
+		"REVISION_FILE="+revisionFile,
+		"RELEASE_URL="+repository,
+		"RELEASE_REV="+revision,
+		fmt.Sprintf("MAX_RELEASE_FILES=%d", maxFiles),
+		fmt.Sprintf("MAX_RELEASE_BYTES=%d", maxBytes),
+		"HOME="+filepath.Join(root, "home"),
+	)
+	command.Env = append(command.Env, extraEnv...)
+	return command.CombinedOutput()
+}
+
+func runGitConfigTestCommand(t *testing.T, configFile string, args ...string) {
+	t.Helper()
+	commandArgs := append([]string{"config", "--file", configFile}, args...)
+	command := exec.Command("git", commandArgs...)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "git config %v failed:\n%s", args, output)
+}
+
+func runGitTestCommand(t *testing.T, repository string, args ...string) string {
+	t.Helper()
+	commandArgs := append([]string{"-C", repository}, args...)
+	command := exec.Command("git", commandArgs...)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, "git %v failed:\n%s", args, output)
+	return string(output)
 }
 
 func TestMaterializeChiselRelease(t *testing.T) {

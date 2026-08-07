@@ -2,6 +2,7 @@ package chisel
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -26,6 +27,7 @@ type jsonWallOptions struct {
 	version       string
 	schema        string
 	count         int
+	headerFields  string
 	preserveOrder bool
 }
 
@@ -138,13 +140,186 @@ func TestParseManifestRejectsInconsistentSymlinkHardLinkGroups(t *testing.T) {
 func TestParseManifestAcceptsSchemaOneAdditiveFieldsAndJSONWallMinorVersion(t *testing.T) {
 	records := validManifestRecords()
 	replaceRecord(t, records, `"kind":"package","name":"base-files"`, func(record string) string {
-		return strings.TrimSuffix(record, "}") + `,"future":{"accepted":true}}`
+		return appendRecordFields(record, `,"future":{"accepted":true}`)
 	})
-	compressed := compressJSONWall(t, records, jsonWallOptions{version: "1.7"})
+	compressed := compressJSONWall(t, records, jsonWallOptions{
+		version:      "1.7",
+		headerFields: `,"future":{"accepted":true}`,
+	})
 
 	parsed, err := ParseManifest(bytes.NewReader(compressed))
 	require.NoError(t, err)
 	assert.Equal(t, "13ubuntu10.2", parsed.Packages["base-files"].Version)
+}
+
+func TestParseManifestRejectsDuplicateHeaderFields(t *testing.T) {
+	recordCount := len(validManifestRecords()) + 1
+	tests := []struct {
+		name         string
+		headerFields string
+		field        string
+		alias        string
+	}{
+		{name: "same count", headerFields: fmt.Sprintf(`,"count":%d`, recordCount), field: "count"},
+		{name: "conflicting count", headerFields: `,"count":999`, field: "count"},
+		{name: "case-folded count", headerFields: fmt.Sprintf(`,"Count":%d`, recordCount), field: "count", alias: "Count"},
+		{name: "same schema", headerFields: `,"schema":"1.0"`, field: "schema"},
+		{name: "conflicting schema", headerFields: `,"schema":"2.0"`, field: "schema"},
+		{name: "same JSONWall version", headerFields: `,"jsonwall":"1.0"`, field: "jsonwall"},
+		{name: "conflicting JSONWall version", headerFields: `,"jsonwall":"2.0"`, field: "jsonwall"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			compressed := compressJSONWall(t, validManifestRecords(), jsonWallOptions{headerFields: test.headerFields})
+
+			_, err := ParseManifest(bytes.NewReader(compressed))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), fmt.Sprintf(`duplicate JSON field %q`, test.field))
+			if test.alias != "" {
+				assert.Contains(t, err.Error(), fmt.Sprintf(`case-insensitive alias %q`, test.alias))
+			}
+		})
+	}
+}
+
+func TestParseManifestRejectsDuplicateRecordFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		record string
+		fields string
+		field  string
+		alias  string
+	}{
+		{name: "same kind", record: `"kind":"package","name":"base-files"`, fields: `,"kind":"package"`, field: "kind"},
+		{name: "conflicting kind", record: `"kind":"package","name":"base-files"`, fields: `,"kind":"slice"`, field: "kind"},
+		{name: "case-folded kind", record: `"kind":"package","name":"base-files"`, fields: `,"Kind":"slice"`, field: "kind", alias: "Kind"},
+		{name: "Unicode case-folded kind", record: `"kind":"package","name":"base-files"`, fields: `,"\u212Aind":"slice"`, field: "kind", alias: "Kind"},
+		{name: "same path", record: `"kind":"content","slice":"base-files_base","path":"/etc/os-release"`, fields: `,"path":"/etc/os-release"`, field: "path"},
+		{name: "conflicting path", record: `"kind":"content","slice":"base-files_base","path":"/etc/os-release"`, fields: `,"path":"/tmp/other"`, field: "path"},
+		{name: "case-folded path", record: `"kind":"content","slice":"base-files_base","path":"/etc/os-release"`, fields: `,"Path":"/tmp/other"`, field: "path", alias: "Path"},
+		{name: "same name", record: `"kind":"package","name":"base-files"`, fields: `,"name":"base-files"`, field: "name"},
+		{name: "conflicting name", record: `"kind":"package","name":"base-files"`, fields: `,"name":"libc6"`, field: "name"},
+		{name: "same sha256", record: `"kind":"package","name":"base-files"`, fields: fmt.Sprintf(`,"sha256":"%s"`, digestD), field: "sha256"},
+		{name: "conflicting sha256", record: `"kind":"package","name":"base-files"`, fields: fmt.Sprintf(`,"sha256":"%s"`, digestE), field: "sha256"},
+		{name: "same mode", record: `"kind":"path","path":"/etc/os-release"`, fields: `,"mode":"0644"`, field: "mode"},
+		{name: "conflicting mode", record: `"kind":"path","path":"/etc/os-release"`, fields: `,"mode":"0755"`, field: "mode"},
+		{name: "same slices", record: `"kind":"path","path":"/etc/os-release"`, fields: `,"slices":["base-files_base"]`, field: "slices"},
+		{name: "conflicting slices", record: `"kind":"path","path":"/etc/os-release"`, fields: `,"slices":["base-files_manifest"]`, field: "slices"},
+		{name: "case-folded slices", record: `"kind":"path","path":"/etc/os-release"`, fields: `,"Slices":["base-files_manifest"]`, field: "slices", alias: "Slices"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			records := validManifestRecords()
+			replaceRecord(t, records, test.record, func(record string) string {
+				return appendRecordFields(record, test.fields)
+			})
+
+			_, err := ParseManifest(bytes.NewReader(compressJSONWall(t, records, jsonWallOptions{})))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), fmt.Sprintf(`duplicate JSON field %q`, test.field))
+			if test.alias != "" {
+				assert.Contains(t, err.Error(), fmt.Sprintf(`case-insensitive alias %q`, test.alias))
+			}
+		})
+	}
+}
+
+func TestParseManifestBoundsPathRecordSlices(t *testing.T) {
+	const targetPath = "/usr/lib/libc.so.6"
+	allSlices := []string{"base-files_base", "base-files_manifest", "libc6_libs"}
+
+	manifestWithPathSlices := func(t *testing.T, fieldName string, pathSlices []string) []string {
+		t.Helper()
+
+		records := validManifestRecords()
+		records = append(records,
+			`{"kind":"content","slice":"base-files_base","path":"/usr/lib/libc.so.6"}`,
+			`{"kind":"content","slice":"base-files_manifest","path":"/usr/lib/libc.so.6"}`,
+		)
+
+		encodedSlices, err := json.Marshal(pathSlices)
+		require.NoError(t, err)
+		replaceRecord(t, records, `"kind":"path","path":"/usr/lib/libc.so.6"`, func(record string) string {
+			record = strings.Replace(record, `"slices":["libc6_libs"]`, fmt.Sprintf(`%q:%s`, fieldName, encodedSlices), 1)
+			return appendRecordFields(record, `,"future":{"accepted":true}`)
+		})
+		return records
+	}
+
+	t.Run("at maximum possible slice records", func(t *testing.T) {
+		records := manifestWithPathSlices(t, "slices", allSlices)
+
+		parsed, err := ParseManifest(bytes.NewReader(compressJSONWall(t, records, jsonWallOptions{})))
+		require.NoError(t, err)
+		assert.Equal(t, allSlices, parsed.OwnedPaths[targetPath].Slices)
+	})
+
+	for _, fieldName := range []string{"slices", "Slices"} {
+		t.Run("over maximum via "+fieldName, func(t *testing.T) {
+			records := manifestWithPathSlices(t, fieldName, append(allSlices, "future_more"))
+
+			_, err := ParseManifest(bytes.NewReader(compressJSONWall(t, records, jsonWallOptions{})))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), `path record "slices" array contains 4 entries`)
+			assert.Contains(t, err.Error(), `at most 3 slice records can follow this path record`)
+		})
+	}
+}
+
+func TestParseManifestBoundsTopLevelJSONObjects(t *testing.T) {
+	const (
+		packageRecordMembers  = 5
+		packageRecordKeyBytes = len("kind") + len("name") + len("version") + len("sha256") + len("arch")
+	)
+
+	parseWithPackageFields := func(t *testing.T, fields string) (*Manifest, error) {
+		t.Helper()
+		records := validManifestRecords()
+		replaceRecord(t, records, `"kind":"package","name":"base-files"`, func(record string) string {
+			return appendRecordFields(record, fields)
+		})
+		return ParseManifest(bytes.NewReader(compressJSONWall(t, records, jsonWallOptions{})))
+	}
+
+	t.Run("member count at limit", func(t *testing.T) {
+		fields := additiveBooleanFields(maxJSONObjectMembers - packageRecordMembers)
+
+		_, err := parseWithPackageFields(t, fields)
+		require.NoError(t, err)
+	})
+
+	t.Run("member count over limit", func(t *testing.T) {
+		fields := additiveBooleanFields(maxJSONObjectMembers - packageRecordMembers + 1)
+
+		_, err := parseWithPackageFields(t, fields)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf(
+			"top-level member count %d exceeds the structural limit of %d members",
+			maxJSONObjectMembers+1,
+			maxJSONObjectMembers,
+		))
+	})
+
+	t.Run("key bytes at limit", func(t *testing.T) {
+		field := strings.Repeat("x", maxJSONObjectKeyBytes-packageRecordKeyBytes)
+
+		_, err := parseWithPackageFields(t, fmt.Sprintf(`,%q:true`, field))
+		require.NoError(t, err)
+	})
+
+	t.Run("key bytes over limit", func(t *testing.T) {
+		field := strings.Repeat("x", maxJSONObjectKeyBytes-packageRecordKeyBytes+1)
+
+		_, err := parseWithPackageFields(t, fmt.Sprintf(`,%q:true`, field))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf(
+			"field names use %d bytes, exceeding the structural limit of %d bytes",
+			maxJSONObjectKeyBytes+1,
+			maxJSONObjectKeyBytes,
+		))
+	})
 }
 
 func TestParseManifestRejectsMalformedInput(t *testing.T) {
@@ -485,7 +660,7 @@ func compressJSONWall(tb testing.TB, records []string, options jsonWallOptions) 
 	}
 
 	var raw bytes.Buffer
-	fmt.Fprintf(&raw, `{"jsonwall":%q,"schema":%q,"count":%d}`+"\n", version, schema, count)
+	fmt.Fprintf(&raw, `{"jsonwall":%q,"schema":%q,"count":%d%s}`+"\n", version, schema, count, options.headerFields)
 	for _, record := range records {
 		raw.WriteString(record)
 		raw.WriteByte('\n')
@@ -504,6 +679,18 @@ func compressJSONWallBytes(tb testing.TB, raw []byte) []byte {
 	require.NoError(tb, err)
 	require.NoError(tb, writer.Close())
 	return compressed.Bytes()
+}
+
+func additiveBooleanFields(count int) string {
+	var fields strings.Builder
+	for index := range count {
+		fmt.Fprintf(&fields, `,"future%d":true`, index)
+	}
+	return fields.String()
+}
+
+func appendRecordFields(record, fields string) string {
+	return strings.TrimSuffix(record, "}") + fields + "}"
 }
 
 func findRecord(t *testing.T, records []string, substring string) string {

@@ -65,6 +65,10 @@ if ! platform_diff="$(diff -u "${expected_platforms_file}" "${actual_platforms_f
 	fail "manifest list platforms do not match the required Copa Chisel platform set"
 fi
 
+# Keep the immutable parent index reference in the local content store. The
+# Chisel e2e suite inspects this exact digest before BuildKit consumes it.
+docker pull --platform linux/amd64 "${image_ref}" >/dev/null
+
 {
 	echo "# Chisel tooling image verification"
 	echo
@@ -164,6 +168,26 @@ done
 	echo
 } >>"${report_path}"
 
+verify_tooling_image_isolation() {
+	local platform="$1"
+	local runtime_ref="$2"
+	local container_id
+	local rootfs_tar="${work_dir}/tooling-rootfs-${platform//\//-}.tar"
+	local listing_file="${rootfs_tar}.listing"
+
+	container_id="$(docker create --platform "${platform}" "${runtime_ref}")"
+	docker export "${container_id}" >"${rootfs_tar}"
+	docker rm "${container_id}" >/dev/null
+	tar -tf "${rootfs_tar}" >"${listing_file}"
+
+	if grep -Eq '^(\./)?(root/\.gitconfig|root/\.git-credentials|root/\.docker/config\.json|etc/apt/auth\.conf|etc/apt/auth\.conf\.d/|var/lib/chisel/|copa-chisel-release/)' "${listing_file}"; then
+		fail "${platform} tooling image contains credential material or mutable Chisel release state"
+	fi
+	if grep -Eq '\.(yaml|yml)$' "${listing_file}"; then
+		fail "${platform} tooling image contains bundled YAML release definitions"
+	fi
+}
+
 for platform in linux/amd64 linux/arm64; do
 	IFS=/ read -r platform_os platform_arch platform_variant <<<"${platform}"
 	runtime_digests=()
@@ -192,7 +216,8 @@ for platform in linux/amd64 linux/arm64; do
 		printf -v quoted_version_output '%q' "${version_output}"
 		fail "chisel version on ${platform} returned ${quoted_version_output}, expected ${expected_version}"
 	fi
-	echo "- \`${platform}\`: \`chisel version\` returned \`${version_output}\`." >>"${report_path}"
+	verify_tooling_image_isolation "${platform}" "${runtime_ref}"
+	echo "- \`${platform}\`: \`chisel version\` returned \`${version_output}\`; rootfs isolation checks passed." >>"${report_path}"
 done
 
 cat "${report_path}"

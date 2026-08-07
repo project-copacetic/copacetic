@@ -29,7 +29,12 @@ import (
 //go:embed fixtures/test-images.json
 var fixtureData []byte
 
-const chiselToolingImage = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
+const (
+	chiselToolingImage  = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
+	platformLinuxAMD64  = "linux/amd64"
+	platformLinuxARM64  = "linux/arm64"
+	defaultPatchTimeout = "40m"
+)
 
 type realImageFixture struct {
 	ID                      string   `json:"id"`
@@ -40,15 +45,19 @@ type realImageFixture struct {
 	ExpectedUpgradePackages []string `json:"expectedUpgradePackages"`
 	RuntimeContains         string   `json:"runtimeContains"`
 	PreserveTree            string   `json:"preserveTree"`
+	EncodedStatusPackage    string   `json:"encodedStatusPackage"`
+	EncodedStatusFilename   string   `json:"encodedStatusFilename"`
+	ManagedDriftPath        string   `json:"managedDriftPath"`
 }
 
 type imageSnapshot struct {
-	Config       imageConfig
-	Paths        map[string]pathMetadata
-	Manifest     *copachisel.Manifest
-	ManifestData []byte
-	DPKGStatus   []byte
-	RootFSTar    string
+	Config          imageConfig
+	Paths           map[string]pathMetadata
+	Manifest        *copachisel.Manifest
+	ManifestData    []byte
+	DPKGStatus      []byte
+	StatusDirectory map[string][]byte
+	RootFSTar       string
 }
 
 type imageConfig struct {
@@ -124,7 +133,8 @@ type ociImageManifest struct {
 		Digest string `json:"digest"`
 	} `json:"config"`
 	Layers []struct {
-		Digest string `json:"digest"`
+		MediaType string `json:"mediaType"`
+		Digest    string `json:"digest"`
 	} `json:"layers"`
 	Annotations map[string]string `json:"annotations"`
 }
@@ -132,41 +142,7 @@ type ociImageManifest struct {
 var tagCounter atomic.Uint64
 
 func TestNativeChiselRealImage(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping real-image Chisel e2e test in short mode")
-	}
-	requireTool(t, "docker")
-	requireLocalImage(t, chiselToolingImage)
-
-	fixture := loadFixture(t, "canonical-native-dotnet")
-	pullImage(t, fixture.Reference, fixture.Platform)
-	before := captureImage(t, fixture.Reference, fixture.Platform)
-	require.NotNil(t, before.Manifest)
-	require.Empty(t, before.DPKGStatus)
-	assertForbiddenToolingAbsent(t, &before)
-
-	beforeRuntime := runDocker(t, fixture.Platform, fixture.Reference, "--info")
-	require.Contains(t, beforeRuntime, fixture.RuntimeContains)
-
-	patched := uniqueImage("native")
-	t.Cleanup(func() { removeImage(patched) })
-	patchArgs := []string{"patch", "--image", fixture.Reference, "--tag", patched, "--platform", fixture.Platform}
-	patchImage(t, patchArgs...)
-
-	after := captureImage(t, patched, fixture.Platform)
-	require.NotNil(t, after.Manifest)
-	require.Empty(t, after.DPKGStatus)
-	assertImageConfigPreserved(t, &before.Config, &after.Config)
-	assertForbiddenToolingAbsent(t, &after)
-	assertManifestUpgrade(t, before.Manifest, after.Manifest, fixture.ExpectedUpgradePackages)
-	assert.Equal(t, "ubuntu-24.04", after.Config.Config.Labels["sh.copa.chisel.release"])
-	assert.Equal(t, "v1.4.2", after.Config.Config.Labels["sh.copa.chisel.version"])
-
-	afterRuntime := runDocker(t, fixture.Platform, patched, "--info")
-	require.Contains(t, afterRuntime, fixture.RuntimeContains)
-	require.NotEqual(t, beforeRuntime, afterRuntime, "expected the .NET runtime version to change")
-
-	assertNoUpdates(t, "patch", "--image", patched, "--tag", uniqueImage("native-repatch"), "--platform", fixture.Platform)
+	testNativeChiselRealImage(t, "canonical-native-dotnet")
 }
 
 func TestNativeChiselCommunityImagePreservesApplication(t *testing.T) {
@@ -202,6 +178,7 @@ func TestNativeChiselCommunityImagePreservesApplication(t *testing.T) {
 	assertImageConfigPreserved(t, &before.Config, &after.Config)
 	assertForbiddenToolingAbsent(t, &after)
 	assertManifestUpgrade(t, before.Manifest, after.Manifest, fixture.ExpectedUpgradePackages)
+	assertManifestMatchesRootFSTar(t, after.Manifest, after.RootFSTar)
 	assert.Equal(t, beforeTree, canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree))
 	afterRuntime := runSonarrHelp(t, fixture.Platform, patched)
 	require.Contains(t, afterRuntime, "Version 4.0.15.2941")
@@ -251,15 +228,15 @@ func TestNativeChiselPartialPlatformOCI(t *testing.T) {
 
 	outputDescriptors := descriptorsByPlatform(index)
 	sourceDescriptors := descriptorsByPlatform(sourceIndex)
-	expectedPlatforms := []string{"linux/amd64", "linux/arm64", "linux/ppc64le", "linux/s390x"}
+	expectedPlatforms := []string{platformLinuxAMD64, platformLinuxARM64, "linux/ppc64le", "linux/s390x"}
 	for _, key := range expectedPlatforms {
 		require.Contains(t, sourceDescriptors, key, "source index is missing expected platform")
 		require.Contains(t, outputDescriptors, key, "output index is missing expected platform")
 	}
-	require.NotEqual(t, sourceDescriptors["linux/amd64"].Digest, outputDescriptors["linux/amd64"].Digest)
+	require.NotEqual(t, sourceDescriptors[platformLinuxAMD64].Digest, outputDescriptors[platformLinuxAMD64].Digest)
 	sourceAttestations := attestationsBySubject(sourceIndex)
 	outputAttestations := attestationsBySubject(index)
-	for _, key := range []string{"linux/arm64", "linux/ppc64le", "linux/s390x"} {
+	for _, key := range []string{platformLinuxARM64, "linux/ppc64le", "linux/s390x"} {
 		sourceDescriptor := sourceDescriptors[key]
 		assert.Equal(t, sourceDescriptor, outputDescriptors[key], "unselected platform descriptor changed")
 		require.NotEmpty(t, sourceAttestations[sourceDescriptor.Digest], "source platform is missing expected attestations")
@@ -274,7 +251,7 @@ func TestNativeChiselPartialPlatformOCI(t *testing.T) {
 			platformManifests[key] = manifest
 		}
 	}
-	manifest := platformManifests["linux/amd64"]
+	manifest := platformManifests[platformLinuxAMD64]
 	assert.Equal(t, "ubuntu-24.04", manifest.Annotations["sh.copa.chisel.release"])
 	assert.Equal(t, "v1.4.2", manifest.Annotations["sh.copa.chisel.version"])
 	assertBlobExists(t, outputDir, manifest.Config.Digest)
@@ -354,29 +331,34 @@ func TestAptlessFullStatusRealImage(t *testing.T) {
 		requireVersionGreater(t, afterPackages[name].Version, beforePackages[name].Version, name)
 	}
 	vulnsAfter := scanOSImage(t, patched, filepath.Join(t.TempDir(), "after.json"), cacheDir, fixture.Platform, false)
-	for key, vulnerability := range vulnsBefore {
-		assert.NotContains(t, vulnsAfter, key,
-			"targeted vulnerability remained after patch: %s in %s", vulnerability.ID, vulnerability.Package)
+	for key, vulnerabilities := range vulnsBefore {
+		assert.NotContains(t, vulnsAfter, key, "targeted vulnerability remained after patch: %s", key)
+		for _, vulnerability := range vulnerabilities {
+			installed, ok := afterPackages[vulnerability.Package]
+			require.True(t, ok, "package %s from Trivy report disappeared from dpkg status", vulnerability.Package)
+			requireVersionAtLeastOneFixedVersion(t, installed.Version, vulnerability.FixedVersion, vulnerability.Package, vulnerability.ID)
+		}
 	}
 
 	beforeRuntime := runDocker(t, fixture.Platform, fixture.Reference, "--info")
 	afterRuntime := runDocker(t, fixture.Platform, patched, "--info")
 	assert.Equal(t, beforeRuntime, afterRuntime, "OS patching must not replace the separately copied .NET runtime")
 
-	patchImage(t,
+	if patchImageOrNoUpdates(t,
 		"patch",
 		"--image", patched,
 		"--tag", comprehensive,
 		"--platform", fixture.Platform,
-	)
-	comprehensiveSnapshot := captureImage(t, comprehensive, fixture.Platform)
-	assertFullStatusLayout(t, &comprehensiveSnapshot)
-	assertImageConfigPreserved(t, &before.Config, &comprehensiveSnapshot.Config)
-	comprehensivePackages := parseDPKGStatus(t, comprehensiveSnapshot.DPKGStatus)
-	assertNoDPKGDowngrades(t, afterPackages, comprehensivePackages)
-	comprehensiveRuntime := runDocker(t, fixture.Platform, comprehensive, "--info")
-	assert.Equal(t, beforeRuntime, comprehensiveRuntime, "comprehensive OS patching must not replace the separately copied .NET runtime")
-	assertNoUpdates(t, "patch", "--image", comprehensive, "--tag", uniqueImage("full-status-repatch"), "--platform", fixture.Platform)
+	) {
+		comprehensiveSnapshot := captureImage(t, comprehensive, fixture.Platform)
+		assertFullStatusLayout(t, &comprehensiveSnapshot)
+		assertImageConfigPreserved(t, &before.Config, &comprehensiveSnapshot.Config)
+		comprehensivePackages := parseDPKGStatus(t, comprehensiveSnapshot.DPKGStatus)
+		assertNoDPKGDowngrades(t, afterPackages, comprehensivePackages)
+		comprehensiveRuntime := runDocker(t, fixture.Platform, comprehensive, "--info")
+		assert.Equal(t, beforeRuntime, comprehensiveRuntime, "comprehensive OS patching must not replace the separately copied .NET runtime")
+		assertNoUpdates(t, "patch", "--image", comprehensive, "--tag", uniqueImage("full-status-repatch"), "--platform", fixture.Platform)
+	}
 }
 
 func loadFixture(t *testing.T, id string) realImageFixture {
@@ -396,17 +378,71 @@ func uniqueImage(prefix string) string {
 	return fmt.Sprintf("copa-e2e-chisel-%s:%d-%d", prefix, time.Now().UnixNano(), tagCounter.Add(1))
 }
 
+func cleanupImageTags(t *testing.T, image string, platforms ...string) {
+	t.Helper()
+	t.Cleanup(func() {
+		removeImage(image)
+		for _, platform := range platforms {
+			suffix := strings.TrimPrefix(platform, "linux/")
+			suffix = strings.ReplaceAll(suffix, "/", "-")
+			removeImage(image + "-" + suffix)
+		}
+	})
+}
+
 func patchImage(t *testing.T, args ...string) string {
 	t.Helper()
-	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", "20m")
-	if buildkitAddr != "" {
-		args = append(args, "--addr", buildkitAddr)
+	output, err := runPatchImage(args...)
+	require.NoError(t, err, "copa failed:\n%s", output)
+	return output
+}
+
+func patchImageOrNoUpdates(t *testing.T, args ...string) bool {
+	t.Helper()
+	output, err := runPatchImage(args...)
+	if isNoUpdatesOutput(output) {
+		if err != nil {
+			var exitError *exec.ExitError
+			require.ErrorAs(t, err, &exitError, "unexpected no-updates failure:\n%s", output)
+		}
+		assertPatchOutputsAbsent(t, args)
+		return false
 	}
-	cmd := exec.Command(copaPath, args...) //#nosec G204 -- test inputs are fixed fixture data.
-	cmd.Env = os.Environ()
-	output, err := cmd.CombinedOutput()
-	require.NoError(t, err, "copa failed:\n%s", string(output))
-	return string(output)
+	require.NoError(t, err, "copa failed:\n%s", output)
+	return true
+}
+
+func assertDockerImageAbsent(t *testing.T, image, operation string) {
+	t.Helper()
+	output, err := exec.Command("docker", "image", "inspect", image).CombinedOutput()
+	require.Error(t, err, "%s unexpectedly exported image %s:\n%s", operation, image, output)
+	lowerOutput := strings.ToLower(string(output))
+	require.True(t,
+		strings.Contains(lowerOutput, "no such image") || strings.Contains(lowerOutput, "no such object"),
+		"cannot prove image %s is absent after %s; docker inspect failed with:\n%s",
+		image, operation, output,
+	)
+}
+
+func assertPatchOutputsAbsent(t *testing.T, args []string) {
+	t.Helper()
+	if tag := argumentValue(args, "--tag"); tag != "" {
+		candidates := []string{tag}
+		if platforms := argumentValue(args, "--platform"); strings.Contains(platforms, ",") {
+			for _, platform := range strings.Split(platforms, ",") {
+				suffix := strings.TrimPrefix(strings.TrimSpace(platform), "linux/")
+				suffix = strings.ReplaceAll(suffix, "/", "-")
+				candidates = append(candidates, tag+"-"+suffix)
+			}
+		}
+		for _, candidate := range candidates {
+			assertDockerImageAbsent(t, candidate, "no-update patch")
+		}
+	}
+	if outputDir := argumentValue(args, "--oci-dir"); outputDir != "" {
+		_, err := os.Stat(outputDir)
+		require.ErrorIs(t, err, os.ErrNotExist, "no-update patch unexpectedly created OCI output at %s", outputDir)
+	}
 }
 
 func assertNoUpdates(t *testing.T, args ...string) {
@@ -414,22 +450,30 @@ func assertNoUpdates(t *testing.T, args ...string) {
 	if tag := argumentValue(args, "--tag"); tag != "" {
 		t.Cleanup(func() { removeImage(tag) })
 	}
-	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", "20m")
+	require.False(t, patchImageOrNoUpdates(t, args...), "expected no-updates result")
+}
+
+func chiselPatchTimeout() string {
+	if value := os.Getenv("COPA_CHISEL_PATCH_TIMEOUT"); value != "" {
+		return value
+	}
+	return defaultPatchTimeout
+}
+
+func runPatchImage(args ...string) (string, error) {
+	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", chiselPatchTimeout())
 	if buildkitAddr != "" {
 		args = append(args, "--addr", buildkitAddr)
 	}
-	cmd := exec.Command(copaPath, args...) //#nosec G204 -- test inputs are fixed fixture data.
+	cmd := exec.Command(copaPath, args...) // #nosec G204 -- test inputs are fixed fixture data.
 	cmd.Env = os.Environ()
 	output, err := cmd.CombinedOutput()
-	if err != nil {
-		var exitError *exec.ExitError
-		require.ErrorAs(t, err, &exitError, "unexpected failure while checking no-updates result:\n%s", string(output))
-	}
-	lowerOutput := strings.ToLower(string(output))
-	require.True(t,
-		strings.Contains(lowerOutput, "no package updates found for image") || strings.Contains(lowerOutput, "already up-to-date"),
-		"expected no-updates result, got:\n%s", string(output),
-	)
+	return string(output), err
+}
+
+func isNoUpdatesOutput(output string) bool {
+	lowerOutput := strings.ToLower(output)
+	return strings.Contains(lowerOutput, "no package updates found for image") || strings.Contains(lowerOutput, "already up-to-date")
 }
 
 func argumentValue(args []string, name string) string {
@@ -456,9 +500,10 @@ func captureImage(t *testing.T, image, platform string) imageSnapshot {
 	require.Len(t, configs, 1)
 
 	snapshot := imageSnapshot{
-		Config:    configs[0],
-		Paths:     make(map[string]pathMetadata),
-		RootFSTar: tarPath,
+		Config:          configs[0],
+		Paths:           make(map[string]pathMetadata),
+		StatusDirectory: make(map[string][]byte),
+		RootFSTar:       tarPath,
 	}
 	file, err := os.Open(tarPath)
 	require.NoError(t, err)
@@ -479,12 +524,16 @@ func captureImage(t *testing.T, image, platform string) imageSnapshot {
 			Size:     header.Size,
 			Linkname: header.Linkname,
 		}
-		switch name {
-		case "var/lib/chisel/manifest.wall":
+		switch {
+		case name == "var/lib/chisel/manifest.wall":
 			snapshot.ManifestData, err = io.ReadAll(reader)
 			require.NoError(t, err)
-		case "var/lib/dpkg/status":
+		case name == "var/lib/dpkg/status":
 			snapshot.DPKGStatus, err = io.ReadAll(reader)
+			require.NoError(t, err)
+		case strings.HasPrefix(name, "var/lib/dpkg/status.d/") && header.FileInfo().Mode().IsRegular():
+			statusName := strings.TrimPrefix(name, "var/lib/dpkg/status.d/")
+			snapshot.StatusDirectory[statusName], err = io.ReadAll(reader)
 			require.NoError(t, err)
 		}
 	}
@@ -685,7 +734,7 @@ func splitParagraphs(data []byte, atEOF bool) (int, []byte, error) {
 	return 0, nil, nil
 }
 
-func scanOSImage(t *testing.T, image, reportPath, cacheDir, platform string, remote bool) map[string]trivyVulnerability {
+func scanOSImage(t *testing.T, image, reportPath, cacheDir, platform string, remote bool) map[string][]trivyVulnerability {
 	t.Helper()
 	args := []string{
 		"image", "--quiet", "--format=json", "--output", reportPath,
@@ -707,19 +756,14 @@ func scanOSImage(t *testing.T, image, reportPath, cacheDir, platform string, rem
 	var report trivyReport
 	require.NoError(t, json.Unmarshal(data, &report))
 	require.Equal(t, "ubuntu", report.Metadata.OS.Family, "Trivy did not recognize the image as Ubuntu")
-	unique := make(map[string]trivyVulnerability)
+	unique := make(map[string][]trivyVulnerability)
 	for _, result := range report.Results {
 		for _, vulnerability := range result.Vulnerabilities {
 			if vulnerability.FixedVersion == "" {
 				continue
 			}
-			key := strings.Join([]string{
-				vulnerability.ID,
-				vulnerability.Package,
-				vulnerability.InstalledVersion,
-				vulnerability.FixedVersion,
-			}, "|")
-			unique[key] = vulnerability
+			key := vulnerability.ID + "|" + vulnerability.Package
+			unique[key] = append(unique[key], vulnerability)
 		}
 	}
 	return unique

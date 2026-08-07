@@ -317,8 +317,15 @@ func rejectNewPathCollisions(target *os.Root, oldByPath, newByPath map[string]ex
 		if err != nil {
 			return err
 		}
-		if err := ensureNoSymlinkAncestors(target, name, true); err != nil {
+		hiddenByTransition, err := validateNewPathAncestry(target, name, oldByPath, newByPath)
+		if err != nil {
 			return fmt.Errorf("new Chisel-managed path %q has unsafe target ancestry: %w", manifestPath, err)
+		}
+		if hiddenByTransition {
+			// The existing non-directory ancestor is removed before the staged
+			// directory and its children are copied. No target path can exist
+			// beneath that ancestor before the transition.
+			continue
 		}
 		if _, err := target.Lstat(name); err == nil {
 			return fmt.Errorf("new Chisel-managed path %q would overwrite an existing path not owned by the original manifest", manifestPath)
@@ -327,6 +334,47 @@ func rejectNewPathCollisions(target *os.Root, oldByPath, newByPath map[string]ex
 		}
 	}
 	return nil
+}
+
+func validateNewPathAncestry(
+	target *os.Root,
+	name string,
+	oldByPath, newByPath map[string]expectedPath,
+) (bool, error) {
+	parent := filepath.Dir(name)
+	if parent == "." {
+		return false, nil
+	}
+	parts := strings.Split(parent, string(filepath.Separator))
+	current := ""
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := target.Lstat(current)
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("inspect ancestor %q: %w", "/"+filepath.ToSlash(current), err)
+		}
+		if info.IsDir() {
+			continue
+		}
+
+		manifestPath := "/" + filepath.ToSlash(current)
+		oldRecord, wasManaged := oldByPath[manifestPath]
+		newRecord, becomesManagedDirectory := newByPath[manifestPath]
+		if wasManaged && !isExpectedDir(&oldRecord) && becomesManagedDirectory && isExpectedDir(&newRecord) {
+			return true, nil
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return false, fmt.Errorf("ancestor %q is a symlink", manifestPath)
+		}
+		return false, fmt.Errorf("ancestor %q is not a directory", manifestPath)
+	}
+	return false, nil
 }
 
 func removeOldPaths(target *os.Root, oldByPath, newByPath map[string]expectedPath) error {
@@ -384,7 +432,7 @@ func removeManagedPath(root *os.Root, manifestPath string, directory, required b
 		return fmt.Errorf("managed non-directory path %q unexpectedly became a directory", manifestPath)
 	}
 	if err := root.Remove(name); err != nil {
-		if directory && !required {
+		if directory && !required && isDirectoryNotEmptyError(err) {
 			// Obsolete managed directories are intentionally preserved when they
 			// contain unmanaged application content.
 			return nil
@@ -392,6 +440,13 @@ func removeManagedPath(root *os.Root, manifestPath string, directory, required b
 		return fmt.Errorf("remove managed path %q: %w", manifestPath, err)
 	}
 	return nil
+}
+
+func isDirectoryNotEmptyError(err error) bool {
+	// POSIX permits either ENOTEMPTY or EEXIST when removing a non-empty
+	// directory. Ignore only those errors; permission and I/O failures must
+	// still stop reconciliation.
+	return errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST)
 }
 
 func copyNewPaths(target, staged *os.Root, oldByPath, newByPath map[string]expectedPath) error {

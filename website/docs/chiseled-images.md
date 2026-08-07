@@ -97,15 +97,25 @@ copa patch --image "$IMAGE"
 ## Tested image layouts
 
 Copa's real-image end-to-end suite exercises both first-party and community
-images. The references used by the tests are pinned by digest in the
+images across the native-manifest and apt-less full-status layouts. It also
+keeps a Google distroless `status.d` regression case to ensure the Chiseled
+changes do not break the existing external status-directory flow. The source
+references are pinned by digest in the
 [Chiseled e2e fixtures](https://github.com/project-copacetic/copacetic/blob/main/test/e2e/chisel/fixtures/test-images.json).
 
-| Image family | Layout | Validation performed |
+| Image family | Layout and platforms | Validation performed |
 | --- | --- | --- |
-| Canonical `ubuntu/dotnet-runtime:8.0-24.04_stable_145` | Native Chisel manifest | Release inference, complete slice retention, package upgrades without downgrades, manifest package metadata, runtime behavior, and no-update repatching |
-| Community `ghcr.io/hadrienpatte/sonarr` | Native Chisel manifest | Explicit release override, preservation of the `/Sonarr` application tree and image configuration, isolated application startup, and no-update repatching |
-| Microsoft `mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled` | Apt-less full dpkg status | Trivy OS-only report patching, comprehensive follow-up, targeted finding removal, status preservation, runtime behavior, and no-update repatching |
-| Canonical multi-platform .NET index | Native Chisel manifest | Partial amd64 patching while preserving the complete arm64, ppc64le, and s390x descriptors and referenced OCI blobs |
+| Canonical `ubuntu/dotnet-runtime:8.0-24.04_stable_145` | Native Chisel manifest; amd64 and arm64 | Real single-platform re-cuts with release inference, complete slice retention, package upgrades without downgrades, independent manifest-to-rootfs checks, runtime and image-configuration preservation, and no-update repatching |
+| Canonical multi-platform .NET index | Native Chisel manifest; amd64, arm64, ppc64le, and s390x | Independent amd64 and arm64 updates in one OCI output; opt-in ppc64le and s390x re-cuts under emulation; and partial amd64 patching that preserves the unselected arm64, ppc64le, and s390x descriptors, attestations, and referenced OCI blobs |
+| Community `ghcr.io/hadrienpatte/sonarr` | Native Chisel manifest; amd64 | Explicit release override, preservation of the `/Sonarr` application tree and image configuration, isolated application startup, and no-update repatching |
+| Community `ghcr.io/hadrienpatte/qbittorrent` | Native Chisel manifest; arm64 | Repair of intentionally corrupted Chisel-managed content, removal of an obsolete manifest-owned path, and preservation of the unmanaged qBittorrent binary, nonroot image configuration, offline read-only runtime behavior, release provenance, and no-update repatching |
+| Microsoft `mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled` | Apt-less full dpkg status; amd64, arm64, and arm/v7 | Trivy OS-only report patching on amd64 plus comprehensive baseline patching on arm64 and opt-in arm/v7 under emulation; validates fixed package versions, no downgrades, full-status preservation, cleanup, runtime and image-configuration preservation, and no-update repatching |
+| Google `gcr.io/distroless/base-debian12` derivative | External dpkg `status.d`; amd64 | Regression coverage for encoded status filenames, package upgrades without downgrades, absence of a synthesized full status file, preservation of unmanaged content, tooling cleanup, and no-update repatching |
+
+The Chisel tooling image and Copa architecture mapping are also exercised for
+`linux/386` and `linux/riscv64`. The current real-image patch matrix does not
+include those two platforms because it has no suitable public, digest-pinned
+fixture for them yet.
 
 These images are regression fixtures, not an allowlist. Other images are
 supported when they match one of the documented metadata layouts and their
@@ -144,9 +154,12 @@ Use `--chisel-release` to override inference for a single-image CLI operation:
 | Pinned HTTPS Git URL | `--chisel-release https://example.com/releases.git#abc123` | A commit or tag fragment is mandatory. An unpinned URL is rejected. |
 
 CLI and bulk pinned Git release sources must use HTTPS and must not contain
-embedded credentials. Copa does not persist mutable release definitions in the
-target image. The Chisel tooling image is an internal implementation detail and
-has no user-facing override.
+embedded credentials. Local and Git release trees are rejected if they exceed
+10,000 entries or 64 MiB of file content. For Git sources, this validation occurs
+after Git fetches and checks out the pinned revision, so use a repository endpoint
+you trust not to serve an intentionally oversized object graph. Copa does not
+persist mutable release definitions in the target image. The Chisel tooling image
+is an internal implementation detail and has no user-facing override.
 
 ### BuildKit frontend
 

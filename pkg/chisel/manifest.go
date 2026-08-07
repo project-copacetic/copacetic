@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	chiselmanifest "github.com/canonical/chisel-manifest/public/manifest"
 	"github.com/klauspost/compress/zstd"
@@ -27,6 +28,12 @@ const (
 	// per record bounds retained indexes and decoded metadata for compact,
 	// adversarial manifests well below the byte-size limit.
 	maxManifestRecords = MaxManifestSize / (1 << 10)
+
+	// These limits bound the memory retained while checking top-level JSON
+	// object fields. Canonical schema 1.0 records use far fewer members and key
+	// bytes, leaving ample room for additive schema fields.
+	maxJSONObjectMembers  = 256
+	maxJSONObjectKeyBytes = 16 << 10
 )
 
 var (
@@ -163,6 +170,10 @@ func parseManifestData(data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("JSONWall header contains leading or trailing whitespace")
 	}
 
+	if err := validateUniqueJSONFields(headerLine, jsonObjectValidationOptions{}); err != nil {
+		return nil, fmt.Errorf("cannot decode JSONWall header: %w", err)
+	}
+
 	var header jsonWallHeader
 	if err := json.Unmarshal(headerLine, &header); err != nil {
 		return nil, fmt.Errorf("cannot decode JSONWall header: %w", err)
@@ -222,7 +233,12 @@ func parseManifestData(data []byte) (*Manifest, error) {
 		}
 		previousLine = line
 
-		if err := records.addRecord(line, actualCount); err != nil {
+		// JSONWall records are sorted, and path records sort before slice
+		// records. Every slice that can own this path must therefore occupy one
+		// of the record slots after the current path record. Use the smaller of
+		// the declared and physical counts while the final count check is pending.
+		maxPossibleSliceRecords := max(min(header.Count, physicalCount)-actualCount, 0)
+		if err := records.addRecord(line, actualCount, maxPossibleSliceRecords); err != nil {
 			return nil, err
 		}
 	}
@@ -261,9 +277,172 @@ func isJSONWallMajorOne(version string) bool {
 	return found && major == "1"
 }
 
-func (records *manifestRecords) addRecord(line []byte, recordNumber int) error {
+type jsonObjectValidationOptions struct {
+	validatePathSlices bool
+	maxPathSlices      int
+}
+
+// validateUniqueJSONFields rejects ambiguous top-level object members before
+// encoding/json can apply its case-insensitive, last-value-wins behavior. For
+// records, it also streams a path record's slices array so its relationship-
+// aware bound is enforced before typed unmarshalling allocates []string.
+func validateUniqueJSONFields(data []byte, options jsonObjectValidationOptions) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || delimiter != '{' {
+		return fmt.Errorf("expected JSON object")
+	}
+
+	fields := make(map[string]string)
+	memberCount := 0
+	keyBytes := 0
+	for decoder.More() {
+		token, err = decoder.Token()
+		if err != nil {
+			return err
+		}
+		field, ok := token.(string)
+		if !ok {
+			return fmt.Errorf("expected JSON field name")
+		}
+
+		memberCount++
+		if memberCount > maxJSONObjectMembers {
+			return fmt.Errorf(
+				"JSON object top-level member count %d exceeds the structural limit of %d members",
+				memberCount,
+				maxJSONObjectMembers,
+			)
+		}
+		keyBytes += len(field)
+		if keyBytes > maxJSONObjectKeyBytes {
+			return fmt.Errorf(
+				"JSON object field names use %d bytes, exceeding the structural limit of %d bytes",
+				keyBytes,
+				maxJSONObjectKeyBytes,
+			)
+		}
+
+		foldedField := foldJSONFieldName(field)
+		if previousField, exists := fields[foldedField]; exists {
+			if previousField == field {
+				return fmt.Errorf("duplicate JSON field %q", field)
+			}
+			return fmt.Errorf(
+				"duplicate JSON field %q via case-insensitive alias %q",
+				previousField,
+				field,
+			)
+		}
+		fields[foldedField] = field
+
+		switch {
+		case options.validatePathSlices && foldedField == "SLICES":
+			if err := validatePathSlicesArray(decoder, options.maxPathSlices); err != nil {
+				return err
+			}
+		default:
+			var value json.RawMessage
+			if err := decoder.Decode(&value); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err := decoder.Token(); err != nil {
+		return err
+	}
+	if token, err = decoder.Token(); err != io.EOF {
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("unexpected JSON token %v after object", token)
+	}
+	return nil
+}
+
+func validatePathSlicesArray(decoder *json.Decoder, maxSlices int) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf(`cannot decode path record "slices" field: %w`, err)
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || delimiter != '[' {
+		return fmt.Errorf(`path record "slices" field must be an array`)
+	}
+
+	count := 0
+	for decoder.More() {
+		count++
+		if count > maxSlices {
+			return fmt.Errorf(
+				`path record "slices" array contains %d entries; at most %d slice records can follow this path record`,
+				count,
+				maxSlices,
+			)
+		}
+
+		var sliceName string
+		if err := decoder.Decode(&sliceName); err != nil {
+			return fmt.Errorf(`cannot decode path record "slices" entry %d as a string: %w`, count, err)
+		}
+	}
+	closingToken, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf(`cannot decode path record "slices" field: %w`, err)
+	}
+	if closingDelimiter, ok := closingToken.(json.Delim); !ok || closingDelimiter != ']' {
+		return fmt.Errorf(`path record "slices" field has an invalid array terminator`)
+	}
+	return nil
+}
+
+// foldJSONFieldName mirrors encoding/json's case folding so fields that target
+// the same decoded struct member share one map key.
+func foldJSONFieldName(field string) string {
+	var buffer [32]byte
+	folded := buffer[:0]
+	for index := 0; index < len(field); {
+		character := field[index]
+		if character < utf8.RuneSelf {
+			if 'a' <= character && character <= 'z' {
+				character -= 'a' - 'A'
+			}
+			folded = append(folded, character)
+			index++
+			continue
+		}
+
+		characterRune, size := utf8.DecodeRuneInString(field[index:])
+		folded = utf8.AppendRune(folded, foldJSONFieldRune(characterRune))
+		index += size
+	}
+	return string(folded)
+}
+
+func foldJSONFieldRune(character rune) rune {
+	for {
+		next := unicode.SimpleFold(character)
+		if next <= character {
+			return next
+		}
+		character = next
+	}
+}
+
+func (records *manifestRecords) addRecord(line []byte, recordNumber, maxPathSlices int) error {
 	var envelope recordEnvelope
 	if err := json.Unmarshal(line, &envelope); err != nil {
+		return fmt.Errorf("cannot decode JSONWall record %d: %w", recordNumber, err)
+	}
+	if err := validateUniqueJSONFields(line, jsonObjectValidationOptions{
+		validatePathSlices: envelope.Kind == "path",
+		maxPathSlices:      maxPathSlices,
+	}); err != nil {
 		return fmt.Errorf("cannot decode JSONWall record %d: %w", recordNumber, err)
 	}
 

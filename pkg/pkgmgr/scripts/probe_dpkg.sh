@@ -65,7 +65,13 @@ fi
 if [ -d "$status_directory_path" ]; then
     has_status_directory=1
     bb mkdir -p "$RESULT_STATUSD_FILES_PATH"
-    bb ls -1A "$status_directory_path" > "$RESULT_STATUSD_LIST_PATH"
+    : > "$RESULT_STATUSD_LIST_PATH"
+    for entry in "$status_directory_path"/* "$status_directory_path"/.[!.]* "$status_directory_path"/..?*; do
+        if [ ! -e "$entry" ] && [ ! -L "$entry" ]; then
+            continue
+        fi
+        bb printf '%s\000' "${entry##*/}" >> "$RESULT_STATUSD_LIST_PATH"
+    done
     bb cp -a "$status_directory_path/." "$RESULT_STATUSD_FILES_PATH/"
 fi
 

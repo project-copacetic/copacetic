@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -112,6 +113,21 @@ func TestParseRelease(t *testing.T) {
 			assert.Equal(t, test.value, actual.String())
 		})
 	}
+}
+
+func TestParseReleaseNamedFormTakesPrecedenceOverSameNamedDirectory(t *testing.T) {
+	parent := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(parent, ubuntuRelease2404), 0o755))
+	t.Chdir(parent)
+
+	actual, err := ParseRelease(ubuntuRelease2404)
+	require.NoError(t, err)
+	assert.Equal(t, Release{Kind: ReleaseNamed, Location: ubuntuRelease2404}, actual)
+
+	local, err := ParseRelease("./" + ubuntuRelease2404)
+	require.NoError(t, err)
+	assert.Equal(t, ReleaseLocal, local.Kind)
+	assert.Equal(t, filepath.Join(parent, ubuntuRelease2404), local.Location)
 }
 
 func TestInferRelease(t *testing.T) {

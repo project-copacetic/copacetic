@@ -40,6 +40,7 @@ const (
 
 	chiselStageRoot                 = "/copa-chisel-root"
 	chiselReleaseRoot               = "/copa-chisel-release"
+	chiselGitRevisionFile           = "/tmp/copa-chisel-git-home/revision"
 	chiselExpectedFilePath          = "/copa-chisel-expected.json"
 	chiselValidationMark            = "/copa-chisel-validation-ok"
 	chiselOldExpectedPath           = "/copa-chisel-old.json"
@@ -60,6 +61,117 @@ const (
 )
 
 const nativeTargetedPatchError = NativeChiselTargetedPatchError
+
+const gitChiselReleaseCloneScript = `set -eu
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_TERMINAL_PROMPT=0
+export GIT_ASKPASS=/bin/false
+export SSH_ASKPASS=/bin/false
+rm -rf "$RELEASE_DIR"
+mkdir -p "$RELEASE_DIR" "$HOME"
+git init -q "$RELEASE_DIR"
+git -C "$RELEASE_DIR" remote add origin "$RELEASE_URL"
+
+fetch_ref=""
+if git ls-remote --exit-code --tags "$RELEASE_URL" "refs/tags/$RELEASE_REV" "refs/tags/$RELEASE_REV^{}" >/dev/null 2>&1; then
+    fetch_ref="refs/tags/$RELEASE_REV"
+elif printf '%s' "$RELEASE_REV" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
+    matches=$(git ls-remote "$RELEASE_URL" | awk -v prefix="$RELEASE_REV" 'index($1, prefix) == 1 {print $1}' | sort -u)
+    count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
+    if [ "$count" -eq 1 ]; then
+        fetch_ref=$matches
+    elif [ "${#RELEASE_REV}" -eq 40 ]; then
+        fetch_ref=$RELEASE_REV
+    else
+        echo "Git revision $RELEASE_REV does not uniquely resolve to an advertised commit" >&2
+        exit 1
+    fi
+else
+    echo "Git revision $RELEASE_REV is neither an exact tag nor a pinned commit" >&2
+    exit 1
+fi
+
+git -c credential.helper= -C "$RELEASE_DIR" fetch --depth=1 --no-tags origin "$fetch_ref"
+git -C "$RELEASE_DIR" checkout -q --detach FETCH_HEAD
+resolved=$(git -C "$RELEASE_DIR" rev-parse HEAD)
+rm -rf "$RELEASE_DIR/.git"
+
+release_real=$(readlink -f "$RELEASE_DIR")
+paths_file="$HOME/copa-chisel-release-paths"
+entries_file="$HOME/copa-chisel-release-entries"
+sizes_file="$HOME/copa-chisel-release-sizes"
+rm -f "$paths_file" "$entries_file" "$sizes_file"
+: > "$entries_file"
+: > "$sizes_file"
+cleanup_release_validation() {
+    rm -f "$paths_file" "$entries_file" "$sizes_file"
+}
+trap cleanup_release_validation EXIT HUP INT TERM
+
+find "$RELEASE_DIR" -mindepth 1 -print0 > "$paths_file"
+export RELEASE_DIR release_real entries_file sizes_file
+# The single-quoted program is intentionally expanded by the nested shell.
+# shellcheck disable=SC2016
+if ! xargs -0 sh -c '
+    for release_path do
+        relative=${release_path#"$RELEASE_DIR/"}
+        printf ".\n" >> "$entries_file"
+        if [ -L "$release_path" ]; then
+            link_target=$(readlink "$release_path") || {
+                printf "unable to read pinned Git Chisel release symlink %s\n" "$relative" >&2
+                exit 1
+            }
+            case "$link_target" in
+                /*)
+                    printf "pinned Git Chisel release symlink %s has an absolute target\n" "$relative" >&2
+                    exit 1
+                    ;;
+            esac
+            resolved_path=$(readlink -f "$release_path") || {
+                printf "pinned Git Chisel release symlink %s does not resolve safely within the release directory\n" "$relative" >&2
+                exit 1
+            }
+            case "$resolved_path" in
+                "$release_real"|"$release_real"/*) ;;
+                *)
+                    printf "pinned Git Chisel release symlink %s escapes the release directory\n" "$relative" >&2
+                    exit 1
+                    ;;
+            esac
+        elif [ -f "$release_path" ]; then
+            file_bytes=$(wc -c < "$release_path") || {
+                printf "unable to measure pinned Git Chisel release file %s\n" "$relative" >&2
+                exit 1
+            }
+            file_bytes=$(printf "%s" "$file_bytes" | tr -d "[:space:]")
+            printf "%s\n" "$file_bytes" >> "$sizes_file"
+        elif [ -d "$release_path" ]; then
+            :
+        else
+            printf "pinned Git Chisel release contains an unsupported file type at %s\n" "$relative" >&2
+            exit 1
+        fi
+    done
+' sh < "$paths_file"; then
+    exit 1
+fi
+
+entry_count=$(wc -l < "$entries_file" | tr -d '[:space:]')
+if [ "$entry_count" -gt "$MAX_RELEASE_FILES" ]; then
+    echo "pinned Git Chisel release contains more than $MAX_RELEASE_FILES entries" >&2
+    exit 1
+fi
+total_bytes=$(awk '{ total += $1 } END { print total + 0 }' "$sizes_file")
+if [ "$total_bytes" -gt "$MAX_RELEASE_BYTES" ]; then
+    echo "pinned Git Chisel release exceeds the configured content size limit" >&2
+    exit 1
+fi
+
+cleanup_release_validation
+trap - EXIT HUP INT TERM
+printf '%s\n' "$resolved" > "$REVISION_FILE"
+`
 
 type chiselExpectedManifest struct {
 	Paths []chiselExpectedPath `json:"paths"`
@@ -218,54 +330,20 @@ func materializeChiselRelease(ctx context.Context, client gwclient.Client, tooli
 	case copachisel.ReleaseNamed:
 		return tooling, release.Location, release.Location, nil
 	case copachisel.ReleaseGit:
-		const revisionFile = chiselReleaseRoot + "/.copa-revision"
-		const cloneScript = `set -eu
-export GIT_CONFIG_NOSYSTEM=1
-export GIT_TERMINAL_PROMPT=0
-export GIT_ASKPASS=/bin/false
-export SSH_ASKPASS=/bin/false
-rm -rf "$RELEASE_DIR"
-mkdir -p "$RELEASE_DIR" "$HOME"
-git init -q "$RELEASE_DIR"
-git -C "$RELEASE_DIR" remote add origin "$RELEASE_URL"
-
-fetch_ref=""
-if git ls-remote --exit-code --tags "$RELEASE_URL" "refs/tags/$RELEASE_REV" "refs/tags/$RELEASE_REV^{}" >/dev/null 2>&1; then
-    fetch_ref="refs/tags/$RELEASE_REV"
-elif printf '%s' "$RELEASE_REV" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
-    matches=$(git ls-remote "$RELEASE_URL" | awk -v prefix="$RELEASE_REV" 'index($1, prefix) == 1 {print $1}' | sort -u)
-    count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
-    if [ "$count" -eq 1 ]; then
-        fetch_ref=$matches
-    elif [ "${#RELEASE_REV}" -eq 40 ]; then
-        fetch_ref=$RELEASE_REV
-    else
-        echo "Git revision $RELEASE_REV does not uniquely resolve to an advertised commit" >&2
-        exit 1
-    fi
-else
-    echo "Git revision $RELEASE_REV is neither an exact tag nor a pinned commit" >&2
-    exit 1
-fi
-
-git -c credential.helper= -C "$RELEASE_DIR" fetch --depth=1 --no-tags origin "$fetch_ref"
-git -C "$RELEASE_DIR" checkout -q --detach FETCH_HEAD
-resolved=$(git -C "$RELEASE_DIR" rev-parse HEAD)
-printf '%s\n' "$resolved" > "$REVISION_FILE"
-rm -rf "$RELEASE_DIR/.git"
-`
 		gitTooling := tooling.Run(
-			llb.Args([]string{"/bin/sh", "-c", cloneScript}),
+			llb.Args([]string{"/bin/sh", "-c", gitChiselReleaseCloneScript}),
 			llb.AddEnv("RELEASE_DIR", chiselReleaseRoot),
-			llb.AddEnv("REVISION_FILE", revisionFile),
+			llb.AddEnv("REVISION_FILE", chiselGitRevisionFile),
 			llb.AddEnv("RELEASE_URL", release.Location),
 			llb.AddEnv("RELEASE_REV", release.Revision),
+			llb.AddEnv("MAX_RELEASE_FILES", fmt.Sprintf("%d", maxLocalReleaseFiles)),
+			llb.AddEnv("MAX_RELEASE_BYTES", fmt.Sprintf("%d", maxLocalReleaseBytes)),
 			llb.AddEnv("HOME", "/tmp/copa-chisel-git-home"),
 			llb.WithProxy(utils.GetProxy()),
 			llb.IgnoreCache,
 			llb.WithCustomName("Fetching pinned Chisel release definitions"),
 		).Root()
-		resolvedBytes, err := buildkit.ExtractFileFromState(ctx, client, &gitTooling, revisionFile)
+		resolvedBytes, err := buildkit.ExtractFileFromState(ctx, client, &gitTooling, chiselGitRevisionFile)
 		if err != nil {
 			return llb.State{}, "", "", fmt.Errorf("resolve pinned Chisel Git release %s: %w", release.String(), err)
 		}
@@ -273,7 +351,7 @@ rm -rf "$RELEASE_DIR/.git"
 		if len(resolved) != 40 {
 			return llb.State{}, "", "", fmt.Errorf("resolved Chisel Git release returned invalid commit %q", resolved)
 		}
-		gitTooling = gitTooling.File(llb.Rm(revisionFile))
+		gitTooling = gitTooling.File(llb.Rm(chiselGitRevisionFile))
 		return gitTooling, chiselReleaseRoot, release.Location + "#" + resolved, nil
 	case copachisel.ReleaseLocal:
 		releaseState, digest, err := localChiselReleaseState(release.Location)

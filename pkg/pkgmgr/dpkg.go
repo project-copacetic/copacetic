@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/hashicorp/go-multierror"
 	debVer "github.com/knqyf263/go-deb-version"
@@ -579,20 +581,16 @@ func (dm *dpkgManager) loadStatusDirectoryWithLimit(
 	}
 	remainingBytes -= int64(len(statusdNamesBytes))
 
-	dm.statusdNames = strings.Join(strings.Fields(string(statusdNamesBytes)), " ")
+	statusdFilenames, err := parseStatusDirectoryFilenames(statusdNamesBytes)
+	if err != nil {
+		return fmt.Errorf("parsing package list from %s: %w", dpkgStatusFolder, err)
+	}
+	statusdNames := strings.Join(statusdFilenames, " ")
 	packageInfo := make(map[string]string)
 	statusdFileMap := make(map[string]string)
 	var statusBuffer bytes.Buffer
 
-	scanner := bufio.NewScanner(bytes.NewReader(statusdNamesBytes))
-	for scanner.Scan() {
-		name := scanner.Text()
-		if name == "" {
-			continue
-		}
-		if name == "." || name == ".." || strings.ContainsAny(name, "/\t\r\n") {
-			return fmt.Errorf("invalid filename %q in %s", name, dpkgStatusFolder)
-		}
+	for _, name := range statusdFilenames {
 		fileBytes, err := buildkit.ExtractFileFromStateWithLimit(
 			ctx,
 			dm.config.Client,
@@ -614,9 +612,15 @@ func (dm *dpkgManager) loadStatusDirectoryWithLimit(
 		if strings.HasSuffix(name, ".md5sums") {
 			continue
 		}
-		pkgName, pkgVersion, err := GetPackageInfo(string(fileBytes))
+		pkgName, pkgVersion, err := parseStatusDirectoryPackage(fileBytes)
 		if err != nil {
 			return fmt.Errorf("parsing %s: %w", filepath.Join(dpkgStatusFolder, name), err)
+		}
+		if previousFilename, exists := statusdFileMap[pkgName]; exists {
+			return fmt.Errorf(
+				"duplicate package %q in %s files %q and %q",
+				pkgName, dpkgStatusFolder, previousFilename, name,
+			)
 		}
 
 		statusBuffer.Write(fileBytes)
@@ -624,16 +628,130 @@ func (dm *dpkgManager) loadStatusDirectoryWithLimit(
 		packageInfo[pkgName] = pkgVersion
 		statusdFileMap[pkgName] = name
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading package list from %s: %w", dpkgStatusFolder, err)
-	}
 
+	dm.statusdNames = statusdNames
 	dm.tempStatusFile = bytes.Clone(statusBuffer.Bytes())
 	dm.packageInfo = packageInfo
 	dm.statusdFileMap = statusdFileMap
 
-	log.Infof("Processed status.d: %s", dm.statusdNames)
+	log.Infof("Processed status.d: %s", statusdNames)
 	return nil
+}
+
+func parseStatusDirectoryFilenames(contents []byte) ([]string, error) {
+	if len(contents) == 0 {
+		return nil, nil
+	}
+	if contents[len(contents)-1] != 0 {
+		return nil, fmt.Errorf("filename list is not NUL-terminated")
+	}
+
+	entries := bytes.Split(contents[:len(contents)-1], []byte{0})
+	filenames := make([]string, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		name := string(entry)
+		if err := validateStatusDirectoryFilename(name); err != nil {
+			return nil, err
+		}
+		if _, exists := seen[name]; exists {
+			return nil, fmt.Errorf("duplicate filename %q", name)
+		}
+		seen[name] = struct{}{}
+		filenames = append(filenames, name)
+	}
+
+	sort.Strings(filenames)
+	return filenames, nil
+}
+
+func validateStatusDirectoryFilename(name string) error {
+	if !utf8.ValidString(name) {
+		return fmt.Errorf("invalid filename %q: UTF-8 encoding is required", name)
+	}
+	if name == "" || name == "." || name == ".." || strings.ContainsRune(name, '/') {
+		return fmt.Errorf("invalid filename %q", name)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("invalid filename %q: control characters are not allowed", name)
+		}
+	}
+	return nil
+}
+
+func parseStatusDirectoryPackage(contents []byte) (string, string, error) {
+	var packageName string
+	var packageVersion string
+	paragraphStarted := false
+	paragraphEnded := false
+	fieldSeen := false
+	packageFieldSeen := false
+	versionFieldSeen := false
+
+	for lineNumber, rawLine := range bytes.Split(contents, []byte{'\n'}) {
+		line := strings.TrimSuffix(string(rawLine), "\r")
+		if strings.TrimSpace(line) == "" {
+			if paragraphStarted {
+				paragraphEnded = true
+			}
+			continue
+		}
+		if paragraphEnded {
+			return "", "", fmt.Errorf("contains multiple paragraphs; expected exactly one package paragraph")
+		}
+
+		paragraphStarted = true
+		if line[0] == ' ' || line[0] == '\t' {
+			if !fieldSeen {
+				return "", "", fmt.Errorf("line %d contains a continuation before any field", lineNumber+1)
+			}
+			continue
+		}
+
+		field, value, ok := strings.Cut(line, ":")
+		if !ok || field == "" || strings.TrimSpace(field) != field {
+			return "", "", fmt.Errorf("line %d contains malformed field %q", lineNumber+1, line)
+		}
+		fieldSeen = true
+		switch {
+		case strings.EqualFold(field, dpkgPackageField):
+			if packageFieldSeen {
+				return "", "", fmt.Errorf("package paragraph contains duplicate %s fields", dpkgPackageField)
+			}
+			packageFieldSeen = true
+			packageName = strings.TrimSpace(value)
+		case strings.EqualFold(field, "Version"):
+			if versionFieldSeen {
+				return "", "", fmt.Errorf("package paragraph contains duplicate Version fields")
+			}
+			versionFieldSeen = true
+			packageVersion = strings.TrimSpace(value)
+		case strings.EqualFold(field, dpkgArchitectureField):
+			architecture := strings.TrimSpace(value)
+			if !isValidDebianArchitecture(architecture) {
+				return "", "", fmt.Errorf("package %q has invalid architecture %q", packageName, architecture)
+			}
+		}
+	}
+
+	if !paragraphStarted {
+		return "", "", fmt.Errorf("contains no package paragraph")
+	}
+	if !packageFieldSeen {
+		return "", "", fmt.Errorf("package paragraph has no %s field", dpkgPackageField)
+	}
+	if !isValidDebianPackageName(packageName) {
+		return "", "", fmt.Errorf("invalid package name %q", packageName)
+	}
+	if !versionFieldSeen {
+		return "", "", fmt.Errorf("package paragraph for %q has no Version field", packageName)
+	}
+	if !isValidDebianVersion(packageVersion) {
+		return "", "", fmt.Errorf("package %q has invalid version %q", packageName, packageVersion)
+	}
+
+	return packageName, packageVersion, nil
 }
 
 func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
@@ -2034,7 +2152,7 @@ func marshalStatusdFileMap(statusdFileMap map[string]string) ([]byte, error) {
 	var data strings.Builder
 	for _, packageName := range packageNames {
 		filename := statusdFileMap[packageName]
-		if filename == "" || filename == "." || filename == ".." || strings.ContainsAny(filename, "/\t\r\n") {
+		if err := validateStatusDirectoryFilename(filename); err != nil {
 			return nil, fmt.Errorf("invalid status.d filename %q for package %s", filename, packageName)
 		}
 		fmt.Fprintf(&data, "%s\t%s\n", packageName, filename)

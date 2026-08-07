@@ -503,10 +503,246 @@ func TestLoadStatusDirectoryRejectsOversizedPackageList(t *testing.T) {
 	ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
 }
 
+func TestParseStatusDirectoryFilenames(t *testing.T) {
+	t.Run("sorts names without losing spaces or dot prefixes", func(t *testing.T) {
+		got, err := parseStatusDirectoryFilenames(nulTerminatedStatusDirectoryNames("z-last", ".hidden", "space name"))
+		require.NoError(t, err)
+		assert.Equal(t, []string{".hidden", "space name", "z-last"}, got)
+	})
+
+	t.Run("accepts an empty directory", func(t *testing.T) {
+		got, err := parseStatusDirectoryFilenames(nil)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	tests := []struct {
+		name        string
+		contents    []byte
+		errContains string
+	}{
+		{name: "missing NUL terminator", contents: []byte("package"), errContains: "not NUL-terminated"},
+		{name: "empty filename", contents: []byte{0}, errContains: "invalid filename"},
+		{name: "duplicate filename", contents: nulTerminatedStatusDirectoryNames("package", "package"), errContains: "duplicate filename"},
+		{name: "dot filename", contents: nulTerminatedStatusDirectoryNames("."), errContains: "invalid filename"},
+		{name: "dot-dot filename", contents: nulTerminatedStatusDirectoryNames(".."), errContains: "invalid filename"},
+		{name: "slash", contents: nulTerminatedStatusDirectoryNames("nested/package"), errContains: "invalid filename"},
+		{name: "newline", contents: nulTerminatedStatusDirectoryNames("line\nbreak"), errContains: "control characters"},
+		{name: "tab", contents: nulTerminatedStatusDirectoryNames("tab\tname"), errContains: "control characters"},
+		{name: "escape", contents: nulTerminatedStatusDirectoryNames("escape\x1bname"), errContains: "control characters"},
+		{name: "delete", contents: nulTerminatedStatusDirectoryNames("delete\x7fname"), errContains: "control characters"},
+		{name: "invalid UTF-8", contents: []byte{'b', 'a', 'd', 0xff, 0}, errContains: "UTF-8"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseStatusDirectoryFilenames(tt.contents)
+			require.ErrorContains(t, err, tt.errContains)
+		})
+	}
+}
+
+func TestLoadStatusDirectoryRejectsControlCharactersInFilenamesAtomically(t *testing.T) {
+	const maxBytes int64 = 1 << 20
+	tests := []struct {
+		name     string
+		filename string
+	}{
+		{name: "newline", filename: "visible\nhidden"},
+		{name: "control character", filename: "visible\x01hidden"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := statusDirectoryTestConfig(
+				t,
+				nulTerminatedStatusDirectoryNames("valid", tt.filename),
+				nil,
+			)
+			dm := &dpkgManager{
+				config:         config,
+				statusdNames:   "existing-names",
+				packageInfo:    map[string]string{"existing": "0"},
+				statusdFileMap: map[string]string{"existing": "existing-file"},
+				tempStatusFile: []byte("existing status"),
+			}
+
+			state := llb.Scratch()
+			err := dm.loadStatusDirectoryWithLimit(t.Context(), &state, maxBytes)
+			require.ErrorContains(t, err, "control characters are not allowed")
+			assert.Equal(t, "existing-names", dm.statusdNames)
+			assert.Equal(t, map[string]string{"existing": "0"}, dm.packageInfo)
+			assert.Equal(t, map[string]string{"existing": "existing-file"}, dm.statusdFileMap)
+			assert.Equal(t, []byte("existing status"), dm.tempStatusFile)
+		})
+	}
+}
+
+func TestLoadStatusDirectoryRejectsInvalidPackageFilesAtomically(t *testing.T) {
+	const maxBytes int64 = 1 << 20
+	tests := []struct {
+		name        string
+		contents    []byte
+		errContains string
+	}{
+		{
+			name: "multiple paragraphs",
+			contents: []byte(strings.Join([]string{
+				"Package: visible",
+				"Version: 1",
+				"",
+				"Package: hidden",
+				"Version: 2",
+				"",
+			}, "\n")),
+			errContains: "contains multiple paragraphs",
+		},
+		{
+			name: "duplicate Package field",
+			contents: []byte(strings.Join([]string{
+				"Package: first",
+				"Package: second",
+				"Version: 1",
+				"",
+			}, "\n")),
+			errContains: "duplicate Package fields",
+		},
+		{
+			name: "duplicate Version field",
+			contents: []byte(strings.Join([]string{
+				"Package: duplicate-version",
+				"Version: 1",
+				"Version: 2",
+				"",
+			}, "\n")),
+			errContains: "duplicate Version fields",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			statusdNames := nulTerminatedStatusDirectoryNames("a-valid", "z-invalid")
+			validStatus := []byte("Package: valid\nVersion: 1\nArchitecture: amd64\n")
+			config := statusDirectoryTestConfig(t, statusdNames, map[string][]byte{
+				"a-valid":   validStatus,
+				"z-invalid": tt.contents,
+			})
+
+			dm := &dpkgManager{
+				config:         config,
+				statusdNames:   "existing-names",
+				packageInfo:    map[string]string{"existing": "0"},
+				statusdFileMap: map[string]string{"existing": "existing-file"},
+				tempStatusFile: []byte("existing status"),
+			}
+
+			state := llb.Scratch()
+			err := dm.loadStatusDirectoryWithLimit(t.Context(), &state, maxBytes)
+			require.ErrorContains(t, err, filepath.Join(dpkgStatusFolder, "z-invalid"))
+			assert.ErrorContains(t, err, tt.errContains)
+			assert.Equal(t, "existing-names", dm.statusdNames)
+			assert.Equal(t, map[string]string{"existing": "0"}, dm.packageInfo)
+			assert.Equal(t, map[string]string{"existing": "existing-file"}, dm.statusdFileMap)
+			assert.Equal(t, []byte("existing status"), dm.tempStatusFile)
+		})
+	}
+}
+
+func TestLoadStatusDirectoryRejectsDuplicatePackages(t *testing.T) {
+	const maxBytes int64 = 1 << 20
+	statusdNames := nulTerminatedStatusDirectoryNames("first", "second")
+	firstStatus := []byte("Package: duplicate\nVersion: 1\n")
+	secondStatus := []byte("Package: duplicate\nVersion: 2\n")
+	config := statusDirectoryTestConfig(t, statusdNames, map[string][]byte{
+		"first":  firstStatus,
+		"second": secondStatus,
+	})
+	dm := &dpkgManager{
+		config:         config,
+		statusdNames:   "existing-names",
+		packageInfo:    map[string]string{"existing": "0"},
+		statusdFileMap: map[string]string{"existing": "existing-file"},
+		tempStatusFile: []byte("existing status"),
+	}
+	state := llb.Scratch()
+	err := dm.loadStatusDirectoryWithLimit(t.Context(), &state, maxBytes)
+	require.ErrorContains(t, err, `duplicate package "duplicate"`)
+	assert.ErrorContains(t, err, `"first" and "second"`)
+	assert.Equal(t, "existing-names", dm.statusdNames)
+	assert.Equal(t, map[string]string{"existing": "0"}, dm.packageInfo)
+	assert.Equal(t, map[string]string{"existing": "existing-file"}, dm.statusdFileMap)
+	assert.Equal(t, []byte("existing status"), dm.tempStatusFile)
+}
+
+func TestLoadStatusDirectorySortsFilenamesDeterministically(t *testing.T) {
+	const maxBytes int64 = 1 << 20
+	aStatus := []byte("Package: a\nVersion: 1\n")
+	zStatus := []byte("Package: z\nVersion: 2\n")
+	config := statusDirectoryTestConfig(
+		t,
+		nulTerminatedStatusDirectoryNames("z-file", "a-file"),
+		map[string][]byte{
+			"a-file": aStatus,
+			"z-file": zStatus,
+		},
+	)
+	dm := &dpkgManager{config: config}
+	state := llb.Scratch()
+	require.NoError(t, dm.loadStatusDirectoryWithLimit(t.Context(), &state, maxBytes))
+
+	assert.Equal(t, "a-file z-file", dm.statusdNames)
+	assert.Equal(t, map[string]string{"a": "1", "z": "2"}, dm.packageInfo)
+	assert.Equal(t, map[string]string{"a": "a-file", "z": "z-file"}, dm.statusdFileMap)
+	wantStatus := append(bytes.Clone(aStatus), '\n')
+	wantStatus = append(wantStatus, zStatus...)
+	wantStatus = append(wantStatus, '\n')
+	assert.Equal(t, wantStatus, dm.tempStatusFile)
+}
+
+func nulTerminatedStatusDirectoryNames(names ...string) []byte {
+	var contents bytes.Buffer
+	for _, name := range names {
+		contents.WriteString(name)
+		contents.WriteByte(0)
+	}
+	return contents.Bytes()
+}
+
+func statusDirectoryTestConfig(t *testing.T, statusdNames []byte, files map[string][]byte) *buildkit.Config {
+	t.Helper()
+
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: dpkgStatusdListFilename}).
+		Return(&fstypes.Stat{Size: int64(len(statusdNames))}, nil).Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: dpkgStatusdListFilename,
+		Range:    &gwclient.FileRange{Offset: 0, Length: len(statusdNames)},
+	}).Return(statusdNames, nil).Once()
+	for name, contents := range files {
+		path := filepath.Join(dpkgStatusdFilesFolder, name)
+		ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).
+			Return(&fstypes.Stat{Size: int64(len(contents))}, nil).Once()
+		ref.On("ReadFile", mock.Anything, mock.MatchedBy(func(request gwclient.ReadRequest) bool {
+			return request.Filename == path && request.Range != nil && request.Range.Offset == 0 && request.Range.Length == len(contents)
+		})).Return(contents, nil).Once()
+	}
+
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := &mocks.MockGWClient{}
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Times(1 + len(files))
+	t.Cleanup(func() {
+		client.AssertExpectations(t)
+		ref.AssertExpectations(t)
+	})
+
+	return &buildkit.Config{Client: client}
+}
+
 func TestLoadStatusDirectoryEnforcesAggregateSizeLimit(t *testing.T) {
 	const maxBytes int64 = 64
 
-	statusdNames := []byte("first\nsecond\n")
+	statusdNames := nulTerminatedStatusDirectoryNames("first", "second")
 	firstStatus := []byte("Package: first\nVersion: 1\n")
 	remainingBytes := maxBytes - int64(len(statusdNames)) - int64(len(firstStatus))
 	require.Positive(t, remainingBytes)
@@ -2157,6 +2393,53 @@ func TestDPKGProbeScriptDoesNotExecuteTargetTools(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, fullDPKGStatus, copiedStatus)
 	assert.NoFileExists(t, markerPath, "the probe must not execute target apt/dpkg/shell utilities")
+}
+
+func TestDPKGProbeScriptEnumeratesStatusDirectoryNamesNULSafely(t *testing.T) {
+	targetRoot := t.TempDir()
+	resultsDir := t.TempDir()
+	statusDirectoryPath := filepath.Join(targetRoot, strings.TrimPrefix(dpkgStatusFolder, "/"))
+	require.NoError(t, os.MkdirAll(statusDirectoryPath, 0o755))
+
+	filenames := []string{"plain", ".hidden", "space name", "line\nbreak", "control\x01name"}
+	for index, filename := range filenames {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(statusDirectoryPath, filename),
+			[]byte(fmt.Sprintf("file-%d", index)),
+			0o600,
+		))
+	}
+
+	runEmbeddedShellScript(t, probeDPKGScript, map[string]string{
+		"TARGET_ROOT":               targetRoot,
+		"CHISEL_MANIFEST_PATH":      chiselManifestPath,
+		"DPKG_STATUS_PATH":          dpkgStatusPath,
+		"DPKG_STATUS_FOLDER":        dpkgStatusFolder,
+		"REQUIRED_DPKG_TOOLS":       strings.Join(requiredDPKGTools, " "),
+		"RESULTS_PATH":              resultsDir,
+		"RESULT_STATUS_PATH":        filepath.Join(resultsDir, dpkgStatusOutputFilename),
+		"RESULT_STATUSD_LIST_PATH":  filepath.Join(resultsDir, dpkgStatusdListFilename),
+		"RESULT_STATUSD_FILES_PATH": filepath.Join(resultsDir, dpkgStatusdFilesFolder),
+		"PROBE_OUTPUT_PATH":         filepath.Join(resultsDir, dpkgProbeOutputFilename),
+	})
+
+	listBytes, err := os.ReadFile(filepath.Join(resultsDir, dpkgStatusdListFilename))
+	require.NoError(t, err)
+	require.NotEmpty(t, listBytes)
+	require.Zero(t, listBytes[len(listBytes)-1])
+
+	entries := bytes.Split(listBytes[:len(listBytes)-1], []byte{0})
+	gotNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		gotNames = append(gotNames, string(entry))
+	}
+	assert.ElementsMatch(t, filenames, gotNames)
+
+	for index, filename := range filenames {
+		copiedContents, err := os.ReadFile(filepath.Join(resultsDir, dpkgStatusdFilesFolder, filename))
+		require.NoError(t, err)
+		assert.Equal(t, fmt.Sprintf("file-%d", index), string(copiedContents))
+	}
 }
 
 func TestDPKGProbeScriptDetectsAdministrativeState(t *testing.T) {

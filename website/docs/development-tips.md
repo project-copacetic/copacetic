@@ -40,13 +40,26 @@ COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
 go test ./test/e2e/chisel \
   --addr=docker:// \
   --copa="$COPA_BIN" \
-  -timeout 55m \
+  -timeout 115m \
   -v
 ```
 
-Use `-run` to select one case while iterating. These tests contact public image
-registries, the pinned Trivy database, and Ubuntu archives, so they are not part
-of the network-independent `make test` target. The complete fixture matrix and
+Use `-run` to select one case while iterating. The ppc64le, s390x, and arm/v7
+patch cases are opt-in because they are substantially slower under emulation:
+
+```bash
+COPA_CHISEL_SECONDARY_ARCHES=1 COPA_CHISEL_PATCH_TIMEOUT=75m \
+  go test ./test/e2e/chisel \
+  -run '^(TestNativeChiselSecondaryArchitecturesOCI|TestAptlessFullStatusComprehensiveFromBaselineARMv7)$' \
+  --addr=docker:// \
+  --copa="$COPA_BIN" \
+  -timeout 100m \
+  -v
+```
+
+These tests contact public image registries, the pinned Trivy database, and
+Ubuntu archives, so they are not part of the network-independent `make test`
+target. The complete fixture matrix and
 assertions are documented in
 [`test/e2e/chisel/README.md`](https://github.com/project-copacetic/copacetic/blob/main/test/e2e/chisel/README.md).
 
