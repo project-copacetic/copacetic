@@ -10,12 +10,23 @@ set -eu -o pipefail
 
 # GitHub's Ubuntu 24.04 runner can pair Podman 5.x with an outdated
 # /usr/bin/crun that rejects the OCI 1.2 runtime spec. Podman's built-in
-# runtime lookup bypasses PATH, so explicitly select the current crun shipped
-# in /usr/local/bin. This remains compatible with older runner images.
+# runtime lookup bypasses PATH, so override the crun path for this shell and
+# every inherited Podman client (including Trivy). This remains compatible
+# with older runner images.
 # https://github.com/actions/runner-images/issues/14473
 : "${PODMAN_OCI_RUNTIME:=$(command -v crun)}"
 echo "Using Podman OCI runtime: ${PODMAN_OCI_RUNTIME}" >&2
 "${PODMAN_OCI_RUNTIME}" --version >&2
+
+PODMAN_CONTAINERS_CONF="$(mktemp)"
+cat >"${PODMAN_CONTAINERS_CONF}" <<EOF
+[engine]
+runtime = "crun"
+
+[engine.runtimes]
+crun = ["${PODMAN_OCI_RUNTIME}"]
+EOF
+export CONTAINERS_CONF_OVERRIDE="${PODMAN_CONTAINERS_CONF}"
 
 # Start Podman buildkit container
 CONTAINER_NAME="copa-buildkitd-$(date +%s)"
@@ -52,6 +63,7 @@ _cleanup() {
     echo "Cleaning up Podman buildkit container: ${CONTAINER_NAME}" >&2
     podman kill "${CONTAINER_NAME}" >/dev/null 2>&1 || true
     podman rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    rm -f "${PODMAN_CONTAINERS_CONF}"
 }
 
 # Set trap to cleanup on exit
