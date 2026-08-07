@@ -648,8 +648,9 @@ func assertStatusDirectoryLayout(t *testing.T, snapshot *imageSnapshot) {
 	t.Helper()
 	require.Empty(t, snapshot.DPKGStatus, "/var/lib/dpkg/status must remain absent")
 	require.Nil(t, snapshot.Manifest)
+	// Docker exports every status file but may omit an explicit tar header for
+	// its parent directory. The populated status-directory view is authoritative.
 	require.NotEmpty(t, snapshot.StatusDirectory)
-	assert.Contains(t, snapshot.Paths, "var/lib/dpkg/status.d")
 	assertForbiddenToolingAbsent(t, snapshot)
 }
 
