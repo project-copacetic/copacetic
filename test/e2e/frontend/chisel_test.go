@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	debversion "github.com/knqyf263/go-deb-version"
 	"github.com/project-copacetic/copacetic/internal/testutil/chiselverify"
@@ -28,9 +29,11 @@ const (
 	frontendChiselReleaseAnnotation = "sh.copa.chisel.release"
 	frontendChiselVersionAnnotation = "sh.copa.chisel.version"
 
-	buildctlAddressFlag = "--addr"
-	buildctlFrontendOpt = "--frontend=gateway.v0"
-	buildxAddress       = "buildx://"
+	buildctlAddressFlag          = "--addr"
+	buildctlFrontendOpt          = "--frontend=gateway.v0"
+	buildxAddress                = "buildx://"
+	frontendChiselBuildAttempts  = 3
+	frontendChiselRetryBaseDelay = 5 * time.Second
 )
 
 type frontendChiselSnapshot struct {
@@ -134,10 +137,65 @@ func runFrontendChiselBuild(t *testing.T, buildkitAddress, input, output, releas
 		)
 	}
 
-	outputText := runFrontendChiselCommand(t, "buildctl", args...)
+	var outputText string
+	for attempt := 1; attempt <= frontendChiselBuildAttempts; attempt++ {
+		cmd := exec.Command("buildctl", args...) // #nosec G204 -- arguments use fixed fixtures and test-owned references.
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		commandOutput, err := cmd.CombinedOutput()
+		outputText = string(commandOutput)
+		if err == nil {
+			break
+		}
+		if attempt == frontendChiselBuildAttempts || !isTransientFrontendChiselBuildFailure(outputText) {
+			require.NoErrorf(t, err, "buildctl %s failed:\n%s", strings.Join(args, " "), outputText)
+		}
+
+		delay := time.Duration(attempt) * frontendChiselRetryBaseDelay
+		t.Logf("Transient Chisel archive failure on attempt %d/%d; retrying in %s:\n%s", attempt, frontendChiselBuildAttempts, delay, outputText)
+		time.Sleep(delay)
+	}
+
 	t.Logf("Frontend Chisel build %s -> %s completed:\n%s", input, output, outputText)
 	t.Cleanup(func() { removeLocalImage(t, output) })
 	return outputText
+}
+
+func isTransientFrontendChiselBuildFailure(output string) bool {
+	lowerOutput := strings.ToLower(output)
+	for _, marker := range []string{
+		"cannot talk to archive",
+		"client.timeout exceeded while awaiting headers",
+		"connection reset by peer",
+		"context deadline exceeded",
+		"i/o timeout",
+		"temporary failure in name resolution",
+		"tls handshake timeout",
+		"unexpected eof",
+	} {
+		if strings.Contains(lowerOutput, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestIsTransientFrontendChiselBuildFailure(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "archive timeout", output: `error: cannot talk to archive: context deadline exceeded`, want: true},
+		{name: "header timeout", output: `Client.Timeout exceeded while awaiting headers`, want: true},
+		{name: "connection reset", output: `read: connection reset by peer`, want: true},
+		{name: "deterministic slice error", output: `slice foo_bar does not exist`, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, isTransientFrontendChiselBuildFailure(tt.output))
+		})
+	}
 }
 
 func frontendBuildkitAddress(t *testing.T) string {
