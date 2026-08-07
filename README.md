@@ -13,6 +13,25 @@
 
 For more details and how to get started, please refer to [full documentation](https://project-copacetic.github.io/copacetic/).
 
+## Ubuntu Chiseled images
+
+Copa supports both apt-less Ubuntu images that retain a full
+`/var/lib/dpkg/status` file and native Chisel images that contain
+`/var/lib/chisel/manifest.wall`. Full-status images support report-driven and
+comprehensive updates. Native-manifest images support comprehensive updates
+only; omit `--report` so Copa can re-cut every installed slice.
+
+For native `manifest.wall` images, use `--chisel-release` to select a named
+release such as `ubuntu-24.04`, a local release directory, or a public HTTPS Git
+URL with a mandatory pinned commit or tag fragment. Without an override, Copa
+infers
+`ubuntu-<VERSION_ID>` from the target's `/etc/os-release`. Initial support uses
+public archives only. As verified on July 31, 2026 with Copa's pinned Trivy
+version (`v0.69.3`), Trivy does not extract OS package inventory from native
+`manifest.wall` files.
+See [Ubuntu Chiseled image
+patching](./website/docs/chiseled-images.md) for behavior and limitations.
+
 ## Demo
 
 ![intro](demo/copa-demo.gif)
@@ -37,8 +56,8 @@ In addition to filling the operational gap not met by left-shift security practi
 
 The `copa` tool is an extensible engine that:
 
-1. Parses the needed update packages from the container image’s vulnerability report produced by a scanner like Trivy. New adapters can be written to accommodate more report formats.
-2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt, apk, etc. New adapters can be written to support more package managers.
+1. Determines the update scope from a supported vulnerability report or, for a comprehensive update, from package metadata in the target image.
+2. Obtains and processes the updates using the appropriate package-manager tooling or Chisel release definitions. New adapters can be written to support more package managers and report formats.
 3. Applies the resulting update binaries to the container image using buildkit.
 
 ![report-driven vulnerability patching](./website/static/img/vulnerability-patch.png)

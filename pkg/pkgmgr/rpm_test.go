@@ -1088,15 +1088,14 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 			mockClient := new(mocks.MockGWClient)
 			mockRef := new(mocks.MockReference)
 
-			if tt.mockSetup != nil {
+			switch {
+			case tt.mockSetup != nil:
 				mockResult := &gwclient.Result{}
 				mockResult.SetRef(mockRef)
 				mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
 				tt.mockSetup(mockRef)
-			} else if tt.name != "dnf chroot - invalid package name is rejected" {
+			case tt.name != "dnf chroot - invalid package name is rejected":
 				mockClient.On("Solve", mock.Anything, mock.Anything).Return(nil, errors.New("solve failed"))
-			} else {
-				// Validation should fail before any Solve call.
 			}
 
 			cfg := &buildkit.Config{

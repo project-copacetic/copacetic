@@ -4,15 +4,20 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
+	buildkitclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/util/progress/progressui"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -22,6 +27,9 @@ import (
 // for testing.
 var (
 	bkNewClient = buildkit.NewClient
+	listWorkers = func(ctx context.Context, client *buildkitclient.Client) ([]*buildkitclient.WorkerInfo, error) {
+		return client.ListWorkers(ctx)
+	}
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report for a given set of options.
@@ -193,15 +201,24 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	}
 	// Handle file - single-platform patching
 	log.Debugf("Using report file: %s", reportPath)
-	defaultPlatform := common.GetDefaultLinuxPlatform()
-	patchPlatform := types.PatchPlatform{
-		Platform: defaultPlatform,
+	var parsedUpdates *unversioned.UpdateManifest
+	if len(targetPlatforms) == 0 {
+		parsedUpdates, err = report.TryParseScanReport(reportPath, opts.Scanner, pkgTypes, opts.LibraryPatchLevel)
+		if err != nil {
+			return err
+		}
 	}
-	if patchPlatform.OS != LINUX {
-		patchPlatform.OS = LINUX
+	var patchPlatform types.PatchPlatform
+	if parsedUpdates == nil {
+		patchPlatform, err = resolveSingleReportPlatform(targetPlatforms)
+	} else {
+		patchPlatform, err = resolveSingleReportPlatformWithUpdates(targetPlatforms, parsedUpdates)
+	}
+	if err != nil {
+		return err
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
-	result, err := patchSingleArchImage(ctx, opts, patchPlatform, false, nil)
+	result, err := patchSingleArchImageWithUpdates(ctx, opts, patchPlatform, false, nil, parsedUpdates)
 	if result != nil {
 		logPatchSummary(result.Summary)
 	}
@@ -209,6 +226,46 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
 	return err
+}
+
+func resolveSingleReportPlatform(targetPlatforms []string) (types.PatchPlatform, error) {
+	return resolveSingleReportPlatformWithUpdates(targetPlatforms, nil)
+}
+
+func resolveSingleReportPlatformWithUpdates(targetPlatforms []string, updates *unversioned.UpdateManifest) (types.PatchPlatform, error) {
+	if len(targetPlatforms) > 1 {
+		return types.PatchPlatform{}, fmt.Errorf("a single report file can target only one platform; got %d: %s", len(targetPlatforms), strings.Join(targetPlatforms, ", "))
+	}
+
+	platform := common.GetDefaultLinuxPlatform()
+	if len(targetPlatforms) == 1 {
+		target := targetPlatforms[0]
+		if !slices.Contains(validPlatforms, target) {
+			return types.PatchPlatform{}, fmt.Errorf("unsupported platform %q; valid platforms: %s", target, strings.Join(validPlatforms, ", "))
+		}
+		parsed, err := platforms.Parse(target)
+		if err != nil {
+			return types.PatchPlatform{}, fmt.Errorf("parse platform %q: %w", target, err)
+		}
+		platform = platforms.Normalize(parsed)
+	} else if updates != nil {
+		reportArch := strings.TrimSpace(updates.Metadata.Config.Arch)
+		if reportArch != "" {
+			platform = platforms.Normalize(ocispec.Platform{
+				OS:           LINUX,
+				Architecture: reportArch,
+				Variant:      strings.TrimSpace(updates.Metadata.Config.Variant),
+			})
+			if !isSupportedPatchPlatform(&platform) {
+				return types.PatchPlatform{}, fmt.Errorf("unsupported scan report platform %q; valid platforms: %s", platforms.Format(platform), strings.Join(validPlatforms, ", "))
+			}
+		}
+	}
+	if platform.OS != LINUX {
+		platform.OS = LINUX
+	}
+
+	return types.PatchPlatform{Platform: platform}, nil
 }
 
 // logPatchSummary prints the patch summary if available.

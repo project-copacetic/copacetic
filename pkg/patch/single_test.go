@@ -2,17 +2,22 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
+	buildkitclient "github.com/moby/buildkit/client"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -21,6 +26,22 @@ import (
 
 type trackingReadCloser struct {
 	closed bool
+}
+
+type testBuildkitBuildClient struct {
+	gateway gwclient.Client
+}
+
+//nolint:gocritic // The BuildKit client API requires SolveOpt by value.
+func (c *testBuildkitBuildClient) Build(
+	ctx context.Context,
+	_ buildkitclient.SolveOpt,
+	_ string,
+	buildFunc gwclient.BuildFunc,
+	_ chan *buildkitclient.SolveStatus,
+) (*buildkitclient.SolveResponse, error) {
+	_, err := buildFunc(ctx, c.gateway)
+	return &buildkitclient.SolveResponse{}, err
 }
 
 func (t *trackingReadCloser) Read(_ []byte) (int, error) {
@@ -42,18 +63,91 @@ func TestPatchSingleArchImageRejectsInvalidReference(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse reference")
 }
 
-func TestValidatePlatformEmulationAllowsHostPlatform(t *testing.T) {
-	t.Parallel()
+func TestValidateBuildkitPlatformSupport(t *testing.T) {
+	const amd64Architecture = "amd64"
+	originalListWorkers := listWorkers
+	t.Cleanup(func() { listWorkers = originalListWorkers })
 
-	// validatePlatformEmulation forces the host OS to "linux" before comparing
-	// against the target, so the cross-platform happy path is always
-	// linux/<host-arch>, regardless of the developer's actual OS.
-	host := platforms.Normalize(platforms.DefaultSpec())
-	target := types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: host.Architecture, Variant: host.Variant}}
+	listErr := errors.New("workers unavailable")
+	tests := []struct {
+		name      string
+		target    v1.Platform
+		workers   []*buildkitclient.WorkerInfo
+		listErr   error
+		wantError string
+	}{
+		{
+			name:   "remote native worker supports target",
+			target: v1.Platform{OS: LINUX, Architecture: ARM64},
+			workers: []*buildkitclient.WorkerInfo{{
+				ID:        "remote-arm64",
+				Platforms: []v1.Platform{{OS: LINUX, Architecture: ARM64, Variant: "v8"}},
+			}},
+		},
+		{
+			name:    "amd64 worker supports compatible 386 target",
+			target:  v1.Platform{OS: LINUX, Architecture: "386"},
+			workers: []*buildkitclient.WorkerInfo{{ID: amd64Architecture, Platforms: []v1.Platform{{OS: LINUX, Architecture: amd64Architecture}}}},
+		},
+		{
+			name:   "explicitly advertised 386 target is supported",
+			target: v1.Platform{OS: LINUX, Architecture: "386"},
+			workers: []*buildkitclient.WorkerInfo{{
+				ID: "amd64-with-386",
+				Platforms: []v1.Platform{
+					{OS: LINUX, Architecture: amd64Architecture},
+					{OS: LINUX, Architecture: "386"},
+				},
+			}},
+		},
+		{
+			name:      "386 worker does not satisfy amd64 target",
+			target:    v1.Platform{OS: LINUX, Architecture: amd64Architecture},
+			workers:   []*buildkitclient.WorkerInfo{{ID: "386", Platforms: []v1.Platform{{OS: LINUX, Architecture: "386"}}}},
+			wantError: "emulation is not enabled for platform linux/amd64 on any BuildKit worker",
+		},
+		{
+			name:   "worker advertised emulation supports target",
+			target: v1.Platform{OS: LINUX, Architecture: "s390x"},
+			workers: []*buildkitclient.WorkerInfo{{
+				ID: "remote-amd64-with-qemu",
+				Platforms: []v1.Platform{
+					{OS: LINUX, Architecture: amd64Architecture},
+					{OS: LINUX, Architecture: "s390x"},
+				},
+			}},
+		},
+		{
+			name:      "unsupported target is actionable",
+			target:    v1.Platform{OS: LINUX, Architecture: "riscv64"},
+			workers:   []*buildkitclient.WorkerInfo{{ID: amd64Architecture, Platforms: []v1.Platform{{OS: LINUX, Architecture: amd64Architecture}}}},
+			wantError: "emulation is not enabled for platform linux/riscv64 on any BuildKit worker",
+		},
+		{
+			name:      "worker listing failure is preserved",
+			target:    v1.Platform{OS: LINUX, Architecture: ARM64},
+			listErr:   listErr,
+			wantError: "list BuildKit workers for platform validation",
+		},
+	}
 
-	err := validatePlatformEmulation(target)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			listWorkers = func(context.Context, *buildkitclient.Client) ([]*buildkitclient.WorkerInfo, error) {
+				return tt.workers, tt.listErr
+			}
 
-	assert.NoError(t, err)
+			err := validateBuildkitPlatformSupport(t.Context(), nil, types.PatchPlatform{Platform: tt.target})
+			if tt.wantError != "" {
+				require.ErrorContains(t, err, tt.wantError)
+				if tt.listErr != nil {
+					require.ErrorIs(t, err, tt.listErr)
+				}
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func TestSetupWorkingFolderCreatesTemporaryDirectory(t *testing.T) {
@@ -371,6 +465,110 @@ func TestPatchSingleArchImageReturnsReportParseError(t *testing.T) {
 	assert.Contains(t, err.Error(), "is not a supported scan report format")
 }
 
+func TestValidateReportPlatform(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		updates       *unversioned.UpdateManifest
+		target        v1.Platform
+		expectedError string
+	}{
+		{
+			name:   "nil report manifest",
+			target: v1.Platform{OS: LINUX, Architecture: "amd64"},
+		},
+		{
+			name: "missing report architecture",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Variant: "v6"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
+		},
+		{
+			name: "normalizes architecture alias",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "x86_64"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "amd64"},
+		},
+		{
+			name: "normalizes arm64 v8",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "aarch64", Variant: "v8"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "arm64"},
+		},
+		{
+			name: "normalizes arm variant",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "arm", Variant: "7"},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
+		},
+		{
+			name: "rejects architecture mismatch",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "amd64"},
+			}},
+			target:        v1.Platform{OS: LINUX, Architecture: "arm64"},
+			expectedError: "scan report platform linux/amd64 does not match target platform linux/arm64",
+		},
+		{
+			name: "rejects variant mismatch",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "arm", Variant: "v6"},
+			}},
+			target:        v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
+			expectedError: "scan report platform linux/arm/v6 does not match target platform linux/arm/v7",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateReportPlatform(tt.updates, &types.PatchPlatform{Platform: tt.target})
+			if tt.expectedError != "" {
+				require.Error(t, err)
+				assert.ErrorContains(t, err, tt.expectedError)
+				assert.ErrorContains(t, err, "generate the report for the selected platform")
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestPatchSingleArchImageRejectsReportPlatformMismatchBeforeBuildKit(t *testing.T) {
+	originalBKNewClient := bkNewClient
+	buildkitCalled := false
+	bkNewClient = func(context.Context, buildkit.Opts) (*buildkitclient.Client, error) {
+		buildkitCalled = true
+		return nil, errors.New("buildkit must not be called for a report platform mismatch")
+	}
+	t.Cleanup(func() { bkNewClient = originalBKNewClient })
+
+	result, err := patchSingleArchImage(
+		context.Background(),
+		&types.Options{
+			Image:             "docker.io/library/alpine:3.20",
+			Report:            filepath.Join("..", "report", "testdata", "trivy_valid.json"),
+			Scanner:           "trivy",
+			PkgTypes:          utils.PkgTypeOS,
+			LibraryPatchLevel: utils.PatchTypePatch,
+		},
+		types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "arm64"}},
+		false,
+		nil,
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.ErrorContains(t, err, "scan report platform linux/amd64 does not match target platform linux/arm64")
+	assert.False(t, buildkitCalled, "report platform validation must happen before creating a BuildKit client")
+}
+
 func TestPatchSingleArchImageReturnsNoUpdatesFoundAfterFiltering(t *testing.T) {
 	t.Parallel()
 
@@ -392,4 +590,47 @@ func TestPatchSingleArchImageReturnsNoUpdatesFoundAfterFiltering(t *testing.T) {
 	require.NotNil(t, result)
 	assert.Equal(t, "localhost:65535/test-image:latest", result.OriginalRef.String())
 	assert.Equal(t, result.OriginalRef.String(), result.PatchedRef.String())
+}
+
+func TestEmptyReportPreflightUsesNativeSuppliedPatchedImage(t *testing.T) {
+	gateway := &recordedBaseNativePatchedGateway{}
+	bkClient := &testBuildkitBuildClient{gateway: gateway}
+	platform := &v1.Platform{OS: LINUX, Architecture: "amd64"}
+
+	err := rejectTargetedNativeChiselPatch(
+		t.Context(),
+		bkClient,
+		testNativeSuppliedImage,
+		platform,
+	)
+
+	require.ErrorIs(t, err, errNativeChiselTargetedPatch)
+	assert.Equal(t, testNativeSuppliedImage, gateway.inspectedImage)
+}
+
+func TestAugmentPatchedDescriptorIncludesManagerAnnotations(t *testing.T) {
+	originalDescriptor := &v1.Descriptor{
+		Annotations: map[string]string{
+			"runtime": "preserved",
+		},
+	}
+	originalAnnotations := map[string]string{
+		"org.opencontainers.image.source": "https://example.com/source",
+		pkgmgr.ChiselReleaseAnnotation:    "stale-release",
+	}
+	managerAnnotations := map[string]string{
+		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+	}
+
+	augmented := augmentPatchedDescriptor(originalDescriptor, originalAnnotations, managerAnnotations)
+	require.NotNil(t, augmented)
+	assert.Equal(t, "preserved", augmented.Annotations["runtime"])
+	assert.Equal(t, "https://example.com/source", augmented.Annotations["org.opencontainers.image.source"])
+	assert.Equal(t, "ubuntu-24.04", augmented.Annotations[pkgmgr.ChiselReleaseAnnotation])
+	assert.Equal(t, "v1.4.2", augmented.Annotations[pkgmgr.ChiselVersionAnnotation])
+	assert.NotEmpty(t, augmented.Annotations["org.opencontainers.image.created"])
+	assert.NotEmpty(t, augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"])
+
+	assert.Equal(t, map[string]string{"runtime": "preserved"}, originalDescriptor.Annotations, "the source descriptor must not be mutated")
 }

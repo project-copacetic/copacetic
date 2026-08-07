@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewPatchCmdValidation(t *testing.T) {
@@ -26,6 +27,12 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			args:                  []string{"--config", "config.yaml", "--image", "alpine"},
 			expectValidationError: true,
 			expectedErrorContains: "--config cannot be used with --image or --tag",
+		},
+		{
+			name:                  "FAIL: Conflicting flags (--config and --chisel-release)",
+			args:                  []string{"--config", "config.yaml", "--chisel-release", "ubuntu-24.04"},
+			expectValidationError: true,
+			expectedErrorContains: "--chisel-release cannot be used with --config",
 		},
 		{
 			name:                  "PASS: Single image mode validation",
@@ -69,4 +76,13 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewPatchCmdChiselReleaseFlag(t *testing.T) {
+	cmd := NewPatchCmd()
+	require.NoError(t, cmd.ParseFlags([]string{"--chisel-release", "ubuntu-24.04"}))
+
+	flag := cmd.Flags().Lookup("chisel-release")
+	require.NotNil(t, flag)
+	assert.Equal(t, "ubuntu-24.04", flag.Value.String())
 }

@@ -1,15 +1,485 @@
 package patch
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/client/llb/sourceresolver"
+	fsutiltypes "github.com/tonistiigi/fsutil/types"
+
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
+
+const (
+	testRecordedBaseImage   = "docker.io/example/non-native-base:latest"
+	testNativeSuppliedImage = "docker.io/example/native-patched:latest"
+	testImageSourcePrefix   = "docker-image://"
+)
+
+type recordedBaseNativePatchedGateway struct {
+	gwclient.Client
+	inspectedImage string
+}
+
+func (c *recordedBaseNativePatchedGateway) ResolveImageConfig(
+	_ context.Context,
+	ref string,
+	_ sourceresolver.Opt,
+) (string, digest.Digest, []byte, error) {
+	var config []byte
+	switch ref {
+	case testNativeSuppliedImage:
+		config = []byte(`{"config":{"labels":{"BaseImage":"` + testRecordedBaseImage + `"}}}`)
+	case testRecordedBaseImage:
+		config = []byte(`{"config":{"labels":{}}}`)
+	default:
+		return "", "", nil, errors.New("unexpected image config reference: " + ref)
+	}
+	return ref, digest.FromString(ref), config, nil
+}
+
+//nolint:gocritic // The gateway Client interface requires SolveRequest by value.
+func (c *recordedBaseNativePatchedGateway) Solve(
+	_ context.Context,
+	req gwclient.SolveRequest,
+) (*gwclient.Result, error) {
+	for _, encodedOp := range req.Definition.Def {
+		var op pb.Op
+		if err := op.Unmarshal(encodedOp); err != nil {
+			return nil, err
+		}
+		if source := op.GetSource(); source != nil {
+			c.inspectedImage = strings.TrimPrefix(source.Identifier, testImageSourcePrefix)
+		}
+	}
+	if c.inspectedImage == "" {
+		return nil, errors.New("preflight state did not contain an image source")
+	}
+
+	result := gwclient.NewResult()
+	result.SetRef(&nativeManifestTestReference{exists: c.inspectedImage == testNativeSuppliedImage})
+	return result, nil
+}
+
+type nativeManifestTestReference struct {
+	gwclient.Reference
+	exists bool
+}
+
+func (r *nativeManifestTestReference) StatFile(
+	_ context.Context,
+	req gwclient.StatRequest,
+) (*fsutiltypes.Stat, error) {
+	if r.exists {
+		return &fsutiltypes.Stat{Path: req.Path}, nil
+	}
+	return nil, &os.PathError{Op: "stat", Path: req.Path, Err: fs.ErrNotExist}
+}
+
+func solveRequestInspectsImageForPlatform(req *gwclient.SolveRequest, image string, platform *v1.Platform) bool {
+	for _, encodedOp := range req.Definition.Def {
+		var op pb.Op
+		if err := op.Unmarshal(encodedOp); err != nil {
+			return false
+		}
+		source := op.GetSource()
+		if source == nil || source.Identifier != testImageSourcePrefix+image {
+			continue
+		}
+		got := op.GetPlatform()
+		return got != nil &&
+			got.OS == platform.OS &&
+			got.Architecture == platform.Architecture &&
+			got.Variant == platform.Variant
+	}
+	return false
+}
+
+func TestImageConfigWithAnnotationsPreservesSuppliedImageConfig(t *testing.T) {
+	baseConfig, err := json.Marshal(v1.Image{
+		Config: v1.ImageConfig{
+			User:       "base-user",
+			Entrypoint: []string{"/base-entrypoint"},
+			Cmd:        []string{"base-command"},
+			Env:        []string{"BASE_ONLY=true"},
+			WorkingDir: "/base",
+			Labels:     map[string]string{"source": "base"},
+		},
+	})
+	require.NoError(t, err)
+	patchedConfig, err := json.Marshal(v1.Image{
+		Config: v1.ImageConfig{
+			User:       "1001:1001",
+			Entrypoint: []string{"/app/entrypoint"},
+			Cmd:        []string{"serve", "--production"},
+			Env:        []string{"APP_ENV=production", "PORT=8080"},
+			WorkingDir: "/app",
+			Labels:     map[string]string{"source": "supplied-image"},
+		},
+	})
+	require.NoError(t, err)
+
+	config := &buildkit.Config{
+		ConfigData:        baseConfig,
+		PatchedConfigData: patchedConfig,
+	}
+	annotations := map[string]string{pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04"}
+
+	resultConfig, err := imageConfigWithAnnotations(config, annotations)
+	require.NoError(t, err)
+
+	var image v1.Image
+	require.NoError(t, json.Unmarshal(resultConfig, &image))
+	assert.Equal(t, "1001:1001", image.Config.User)
+	assert.Equal(t, []string{"/app/entrypoint"}, image.Config.Entrypoint)
+	assert.Equal(t, []string{"serve", "--production"}, image.Config.Cmd)
+	assert.Equal(t, []string{"APP_ENV=production", "PORT=8080"}, image.Config.Env)
+	assert.Equal(t, "/app", image.Config.WorkingDir)
+	assert.Equal(t, "supplied-image", image.Config.Labels["source"])
+	assert.Equal(t, "ubuntu-24.04", image.Config.Labels[pkgmgr.ChiselReleaseAnnotation])
+}
+
+func TestImageConfigWithAnnotationsUsesBaseConfigForFirstPatch(t *testing.T) {
+	baseConfig := []byte(`{"config":{"User":"base-user","Labels":{"source":"base"}}}`)
+	resultConfig, err := imageConfigWithAnnotations(
+		&buildkit.Config{ConfigData: baseConfig},
+		map[string]string{pkgmgr.ChiselVersionAnnotation: "v1.4.2"},
+	)
+	require.NoError(t, err)
+
+	var image v1.Image
+	require.NoError(t, json.Unmarshal(resultConfig, &image))
+	assert.Equal(t, "base-user", image.Config.User)
+	assert.Equal(t, "base", image.Config.Labels["source"])
+	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+}
+
+func TestPreservedImageStateCarriesExecutionEnvironment(t *testing.T) {
+	config := []byte(`{
+		"architecture":"arm64",
+		"os":"linux",
+		"config":{
+			"Env":["TEST_VALUE=present"],
+			"WorkingDir":"/work",
+			"Entrypoint":["/usr/bin/example"],
+			"Cmd":["serve"]
+		}
+	}`)
+	state := llb.Scratch()
+	preserved, err := preservedImageState(&state, config)
+	require.NoError(t, err)
+
+	value, ok, err := preserved.GetEnv(t.Context(), "TEST_VALUE")
+	require.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "present", value)
+	dir, err := preserved.GetDir(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "/work", dir)
+	platform, err := preserved.GetPlatform(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, "linux", platform.OS)
+	assert.Equal(t, "arm64", platform.Architecture)
+}
+
+func TestSetupPackageManagerUsesExplicitNativeChiselReleaseWithoutOSRelease(t *testing.T) {
+	client := new(mocks.MockGWClient)
+	ref := new(mocks.MockReference)
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil)
+	ref.On("StatFile", mock.Anything, mock.MatchedBy(func(req gwclient.StatRequest) bool {
+		return req.Path == pkgmgr.NativeChiselManifestPath
+	})).Return(&fsutiltypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil)
+
+	config := &buildkit.Config{
+		Client:     client,
+		ImageState: llb.Scratch(),
+		Platform:   &v1.Platform{OS: "linux", Architecture: "amd64"},
+	}
+	manager, err := setupPackageManager(t.Context(), client, config, &Options{
+		WorkingFolder: t.TempDir(),
+		ChiselRelease: "ubuntu-24.04",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "deb", manager.GetPackageType())
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func TestSetupPackageManagerBoundsOSReleaseAndPreservesMissingError(t *testing.T) {
+	missingErr := &os.PathError{Op: "stat", Path: "/etc/os-release", Err: fs.ErrNotExist}
+	tests := []struct {
+		name      string
+		stat      *fsutiltypes.Stat
+		statErr   error
+		wantError string
+		wantCause error
+	}{
+		{
+			name:      "oversized",
+			stat:      &fsutiltypes.Stat{Size: 1<<20 + 1},
+			wantError: "maximum allowed size of 1048576 bytes",
+		},
+		{
+			name:      "missing",
+			statErr:   missingErr,
+			wantError: "unable to extract /etc/os-release file from state",
+			wantCause: fs.ErrNotExist,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mocks.MockGWClient)
+			ref := new(mocks.MockReference)
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+			ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/etc/os-release"}).
+				Return(test.stat, test.statErr).
+				Once()
+
+			config := &buildkit.Config{
+				Client:     client,
+				ImageState: llb.Scratch(),
+				Platform:   &v1.Platform{OS: "linux", Architecture: "amd64"},
+			}
+			_, err := setupPackageManager(t.Context(), client, config, &Options{
+				WorkingFolder: t.TempDir(),
+			})
+			require.ErrorContains(t, err, test.wantError)
+			if test.wantCause != nil {
+				require.ErrorIs(t, err, test.wantCause)
+			}
+			ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
+}
+
+func TestExplicitNativeChiselOSManifestInspection(t *testing.T) {
+	statErr := errors.New("manifest stat denied")
+	solveErr := errors.New("manifest solve failed")
+	tests := []struct {
+		name         string
+		stat         *fsutiltypes.Stat
+		statErr      error
+		solveErr     error
+		wantOSType   string
+		wantVersion  string
+		wantExplicit bool
+		wantErr      string
+		wantCause    error
+	}{
+		{
+			name:         "present",
+			stat:         &fsutiltypes.Stat{Path: pkgmgr.NativeChiselManifestPath},
+			wantOSType:   utils.OSTypeUbuntu,
+			wantVersion:  "24.04",
+			wantExplicit: true,
+		},
+		{
+			name: "missing",
+			statErr: &os.PathError{
+				Op:   "stat",
+				Path: pkgmgr.NativeChiselManifestPath,
+				Err:  fs.ErrNotExist,
+			},
+		},
+		{
+			name:    "directory is rejected",
+			stat:    &fsutiltypes.Stat{Path: pkgmgr.NativeChiselManifestPath, Mode: uint32(os.ModeDir | 0o755)},
+			wantErr: "not a regular file",
+		},
+		{
+			name:      "stat failure",
+			statErr:   statErr,
+			wantErr:   "inspect target image for native Chisel metadata",
+			wantCause: statErr,
+		},
+		{
+			name:      "solve failure",
+			solveErr:  solveErr,
+			wantErr:   "inspect target image for native Chisel metadata",
+			wantCause: solveErr,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			const suppliedImage = "docker.io/example/supplied:latest"
+			platform := v1.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
+			config := &buildkit.Config{
+				ImageState:        llb.Image("docker.io/example/base:latest"),
+				PatchedConfigData: []byte(`{}`),
+				PatchedImageState: llb.Image(suppliedImage),
+				Platform:          &platform,
+			}
+			client := new(mocks.MockGWClient)
+			result := gwclient.NewResult()
+			var ref *mocks.MockReference
+			if test.solveErr == nil {
+				ref = new(mocks.MockReference)
+				ref.On("StatFile", mock.Anything, mock.MatchedBy(func(req gwclient.StatRequest) bool {
+					return req.Path == pkgmgr.NativeChiselManifestPath
+				})).Return(test.stat, test.statErr).Once()
+				result.SetRef(ref)
+			}
+			client.On("Solve", mock.Anything, mock.MatchedBy(func(req gwclient.SolveRequest) bool {
+				return solveRequestInspectsImageForPlatform(&req, suppliedImage, &platform)
+			})).Return(result, test.solveErr).Once()
+
+			osType, version, explicit, err := explicitNativeChiselOS(
+				t.Context(),
+				client,
+				config,
+				"ubuntu-24.04",
+			)
+
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+				if test.wantCause != nil {
+					require.ErrorIs(t, err, test.wantCause)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, test.wantOSType, osType)
+			assert.Equal(t, test.wantVersion, version)
+			assert.Equal(t, test.wantExplicit, explicit)
+			client.AssertExpectations(t)
+			if ref != nil {
+				ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
+				ref.AssertExpectations(t)
+			}
+		})
+	}
+}
+
+func TestPreflightReportForNativeChiselRejectsEveryReportKind(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates *unversioned.UpdateManifest
+	}{
+		{
+			name: "OS update report",
+			updates: &unversioned.UpdateManifest{
+				Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: utils.OSTypeUbuntu, Version: "24.04"}},
+				OSUpdates: unversioned.UpdatePackages{{Name: "libc6", FixedVersion: "2.39-0ubuntu8.6"}},
+			},
+		},
+		{
+			name: "language-only report",
+			updates: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{{Name: "urllib3", FixedVersion: "2.5.0", Type: "python-pkg"}},
+			},
+		},
+		{
+			name: "non-DPKG report metadata",
+			updates: &unversioned.UpdateManifest{
+				Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: utils.OSTypeAlpine, Version: "3.22"}},
+				OSUpdates: unversioned.UpdatePackages{{Name: "musl", FixedVersion: "1.2.5-r10"}},
+			},
+		},
+		{
+			name:    "empty non-nil report",
+			updates: &unversioned.UpdateManifest{},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := new(mocks.MockGWClient)
+			ref := new(mocks.MockReference)
+			result := gwclient.NewResult()
+			result.SetRef(ref)
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+			ref.On("StatFile", mock.Anything, mock.MatchedBy(func(req gwclient.StatRequest) bool {
+				return req.Path == pkgmgr.NativeChiselManifestPath
+			})).Return(&fsutiltypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil).Once()
+
+			config := &buildkit.Config{ImageState: llb.Scratch()}
+			platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+
+			err := preflightReportForNativeChisel(t.Context(), client, config, platform, test.updates)
+			require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
+}
+
+func TestPreflightReportForNativeChiselUsesNativeSuppliedPatchedImage(t *testing.T) {
+	client := &recordedBaseNativePatchedGateway{}
+	platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+	config, err := buildkit.InitializeBuildkitConfig(
+		t.Context(),
+		client,
+		testNativeSuppliedImage,
+		&platform.Platform,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, config.PatchedConfigData)
+
+	err = preflightReportForNativeChisel(t.Context(), client, config, platform, &unversioned.UpdateManifest{
+		Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: utils.OSTypeAlpine, Version: "3.22"}},
+		OSUpdates: unversioned.UpdatePackages{{Name: "musl", FixedVersion: "1.2.5-r10"}},
+	})
+
+	require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
+	assert.Equal(t, testNativeSuppliedImage, client.inspectedImage)
+}
+
+func TestPreflightReportForNativeChiselFailsClosedOnInspectionError(t *testing.T) {
+	inspectionErr := errors.New("manifest inspection denied")
+	client := new(mocks.MockGWClient)
+	ref := new(mocks.MockReference)
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+	ref.On("StatFile", mock.Anything, mock.Anything).Return(&fsutiltypes.Stat{}, inspectionErr).Once()
+
+	config := &buildkit.Config{ImageState: llb.Scratch()}
+	platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+	err := preflightReportForNativeChisel(t.Context(), client, config, platform, &unversioned.UpdateManifest{})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "inspect target image for native Chisel metadata")
+	assert.ErrorIs(t, err, inspectionErr)
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func TestPreflightReportForNativeChiselPreservesNoReportBehavior(t *testing.T) {
+	client := new(mocks.MockGWClient)
+	config := &buildkit.Config{ImageState: llb.Scratch()}
+	platform := &types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64"}}
+
+	require.NoError(t, preflightReportForNativeChisel(t.Context(), client, config, platform, nil))
+	client.AssertNotCalled(t, "Solve", mock.Anything, mock.Anything)
+}
 
 func TestExitOnEOLFunctionality(t *testing.T) {
 	// Test the ExitOnEOL functionality with mock EOL API
@@ -257,4 +727,17 @@ func TestOptions_ValidationScenarios(t *testing.T) {
 			assert.Equal(t, tc.expected, tc.opts.ImageName)
 		})
 	}
+}
+
+func TestAddPackageManagerAnnotations(t *testing.T) {
+	result := gwclient.NewResult()
+	annotations := map[string]string{
+		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+	}
+
+	addPackageManagerAnnotations(result, annotations)
+
+	assert.Equal(t, []byte("ubuntu-24.04"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
+	assert.Equal(t, []byte("v1.4.2"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselVersionAnnotation)])
 }

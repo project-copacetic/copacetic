@@ -123,9 +123,70 @@ The Copa BuildKit frontend accepts the following options via `--build-arg` (or `
 
 ### Behavior Options
 
-| Option          | Description                              | Default | Example |
-| --------------- | ---------------------------------------- | ------- | ------- |
-| `ignore-errors` | Continue patching on non-critical errors | `false` | `true`  |
+| Option           | Description                                                               | Default          | Example          |
+| ---------------- | ------------------------------------------------------------------------- | ---------------- | ---------------- |
+| `ignore-errors`  | Continue patching on non-critical errors                                  | `false`          | `true`           |
+| `chisel-release` | Native Chisel release name or path in the dedicated `chisel-release` build context | Target inference | `ubuntu-24.04`   |
+
+### Ubuntu Chiseled images
+
+For a native image containing `/var/lib/chisel/manifest.wall`, omit the report
+option and run a comprehensive re-cut. Targeted native-manifest patching is not
+supported. Apt-less images with a full `/var/lib/dpkg/status` file can use
+either report mode or comprehensive mode, and ignore `chisel-release`. Native
+community images without a usable `/etc/os-release` must provide an explicit
+release override.
+
+```bash
+buildctl build \
+  --frontend=gateway.v0 \
+  --opt source=ghcr.io/project-copacetic/copacetic-frontend:latest \
+  --opt image=example.com/app:1.0 \
+  --opt chisel-release=ubuntu-24.04 \
+  --output type=image,name=example.com/app:1.0-patched
+```
+
+The BuildKit frontend rejects Git URL values for `chisel-release`. This
+prevents a frontend caller from making the BuildKit worker fetch an arbitrary
+network location. Use a named release or provide a release directory through
+the dedicated `chisel-release` build context. Pinned HTTPS Git release sources
+remain available through the Copa CLI and bulk configuration.
+
+For a local release directory, add a dedicated context and refer to a path
+within it:
+
+```bash
+buildctl build \
+  --frontend=gateway.v0 \
+  --opt source=ghcr.io/project-copacetic/copacetic-frontend:latest \
+  --opt image=example.com/app:1.0 \
+  --local chisel-release=./releases/ubuntu-24.04 \
+  --opt context:chisel-release=local:chisel-release \
+  --opt chisel-release=. \
+  --output type=image,name=example.com/app:1.0-patched
+```
+
+Docker Buildx users should select the frontend with a Dockerfile syntax
+directive:
+
+```dockerfile
+# syntax=ghcr.io/project-copacetic/copacetic-frontend:latest
+```
+
+Then provide the named context and a path relative to it:
+
+```bash
+docker buildx build \
+  --build-arg image=example.com/app:1.0 \
+  --build-arg chisel-release=. \
+  --build-context chisel-release=./releases/ubuntu-24.04 \
+  --output type=image,name=example.com/app:1.0-patched \
+  .
+```
+
+The `.` value is resolved inside the named `chisel-release` context. See
+[Ubuntu Chiseled Images](./chiseled-images.md) for the complete support matrix
+and archive limitations.
 
 ### Experimental Options
 

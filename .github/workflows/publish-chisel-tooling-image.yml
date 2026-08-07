@@ -1,0 +1,160 @@
+name: Publish Chisel tooling image
+
+# This workflow publishes a fixed immutable release tag. Update the pinned release
+# values below and dispatch it intentionally when publishing a new tooling image.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: publish-chisel-tooling-v1.4.2
+  cancel-in-progress: false
+
+env:
+  CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
+  CHISEL_VERSION: v1.4.2
+  IMAGE_NAME: ghcr.io/project-copacetic/copacetic/chisel
+  IMAGE_TAG: v1.4.2
+  PLATFORMS: linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/ppc64le,linux/s390x,linux/riscv64
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build, verify, and publish
+    if: github.repository == 'project-copacetic/copacetic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Require the default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          expected_ref="refs/heads/${DEFAULT_BRANCH}"
+          if [[ "${GITHUB_REF}" != "${expected_ref}" ]]; then
+            echo "::error title=Untrusted publish ref::This workflow only publishes from ${expected_ref}; received ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        with:
+          # QEMU 10.0.4 mishandles GNU tar's openat2(O_NOFOLLOW) extraction path; 10.2.3 contains the AArch64 fix.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: 386,arm64,arm,ppc64le,s390x,riscv64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Guard immutable release tag
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+        run: .github/workflows/scripts/chisel/ensure-tag-absent.sh "${IMAGE_REF}"
+
+      - name: Build and push by digest
+        id: build
+        env:
+          METADATA_FILE: ${{ runner.temp }}/chisel-build-metadata.json
+        run: |
+          docker buildx build \
+            --file images/chisel/Dockerfile \
+            --platform "${PLATFORMS}" \
+            --build-arg "CHISEL_VERSION=${CHISEL_VERSION}" \
+            --build-arg "CHISEL_COMMIT=${CHISEL_COMMIT}" \
+            --pull \
+            --provenance=mode=max \
+            --sbom=true \
+            --output "type=image,name=${IMAGE_NAME},push=true,push-by-digest=true,name-canonical=true" \
+            --metadata-file "${METADATA_FILE}" \
+            .
+
+          digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' "${METADATA_FILE}")"
+          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
+          echo "reference=${IMAGE_NAME}@${digest}" >>"${GITHUB_OUTPUT}"
+          printf '%s\n' "${digest}" >"${RUNNER_TEMP}/chisel-manifest-digest.txt"
+
+      - name: Verify platforms, attestations, labels, and runtime
+        env:
+          IMAGE_REF: ${{ steps.build.outputs.reference }}
+          REPORT_FILE: ${{ runner.temp }}/chisel-verification.md
+        run: |
+          .github/workflows/scripts/chisel/verify-image.sh \
+            "${IMAGE_REF}" \
+            "${CHISEL_VERSION}" \
+            "${CHISEL_COMMIT}" \
+            "${REPORT_FILE}"
+
+      - name: Recheck immutable release tag
+        env:
+          IMAGE_REF: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+        run: .github/workflows/scripts/chisel/ensure-tag-absent.sh "${IMAGE_REF}"
+
+      - name: Publish immutable release tag
+        id: publish
+        env:
+          BUILD_DIGEST: ${{ steps.build.outputs.digest }}
+          FINAL_REF: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          METADATA_FILE: ${{ runner.temp }}/chisel-publish-metadata.json
+        run: |
+          docker buildx imagetools create \
+            --tag "${FINAL_REF}" \
+            --metadata-file "${METADATA_FILE}" \
+            "${IMAGE_NAME}@${BUILD_DIGEST}"
+
+          published_digest="$(docker buildx imagetools inspect "${FINAL_REF}" --format '{{.Manifest.Digest}}')"
+          if [[ "${published_digest}" != "${BUILD_DIGEST}" ]]; then
+            echo "::error title=Published digest mismatch::${FINAL_REF} resolved to ${published_digest}; expected ${BUILD_DIGEST}." >&2
+            exit 1
+          fi
+          echo "digest=${published_digest}" >>"${GITHUB_OUTPUT}"
+          echo "reference=${FINAL_REF}@${published_digest}" >>"${GITHUB_OUTPUT}"
+
+      - name: Report published manifest-list digest
+        env:
+          FINAL_DIGEST: ${{ steps.publish.outputs.digest }}
+          FINAL_REFERENCE: ${{ steps.publish.outputs.reference }}
+          REPORT_FILE: ${{ runner.temp }}/chisel-verification.md
+        run: |
+          {
+            echo "# Published Chisel tooling image"
+            echo
+            echo "- Tag: \`${IMAGE_NAME}:${IMAGE_TAG}\`"
+            echo "- Manifest-list digest: \`${FINAL_DIGEST}\`"
+            echo "- Immutable reference: \`${FINAL_REFERENCE}\`"
+            echo
+            cat "${REPORT_FILE}"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload build and verification metadata
+        if: always() && steps.build.outputs.digest != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chisel-tooling-image-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            ${{ runner.temp }}/chisel-build-metadata.json
+            ${{ runner.temp }}/chisel-publish-metadata.json
+            ${{ runner.temp }}/chisel-manifest-digest.txt
+            ${{ runner.temp }}/chisel-verification.md
