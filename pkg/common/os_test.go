@@ -333,6 +333,20 @@ DOCUMENTATION_URL="https://documentation.suse.com/"`,
 			wantVersion: "15.7",
 		},
 		{
+			name: "SLES 16 and BCI",
+			osRelease: `NAME="SUSE Linux Enterprise Server"
+VERSION="16.0"
+VERSION_ID="16.0"
+PRETTY_NAME="SUSE Linux Enterprise Server 16.0"
+ID="sles"
+ID_LIKE="suse"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:suse:sles:16.0"
+DOCUMENTATION_URL="https://documentation.suse.com/"`,
+			wantType:    utils.OSTypeSLES,
+			wantVersion: "16.0",
+		},
+		{
 			name: "opensuse Leap",
 			osRelease: `NAME="openSUSE Leap"
 VERSION="15.6"
