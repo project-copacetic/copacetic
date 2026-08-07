@@ -15,6 +15,7 @@ import (
 
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,6 +103,7 @@ func TestPatch(t *testing.T) {
 			}
 
 			t.Log("scanning patched image for each platform")
+			imageRuntime := imageRuntimeForBuildkitAddress(buildkitAddr)
 			wg = sync.WaitGroup{}
 			for _, platformStr := range img.Platforms {
 				wg.Add(1)
@@ -121,16 +123,16 @@ func TestPatch(t *testing.T) {
 					// leaves the tag without its layer blobs; running "true" forces the daemon
 					// to pull/unpack the layers, then exits instantly. Without this, the
 					// subsequent Trivy scan can hit “snapshot … does not exist”.
-					cmd := exec.Command("docker", "run", "--rm", patchedArchRef, "true")
+					cmd := exec.Command(imageRuntime, "run", "--rm", patchedArchRef, "true") // #nosec G204 -- runtime is selected from fixed constants.
 					out, err := cmd.CombinedOutput()
 					require.NoError(t, err, string(out))
 
-					t.Logf("scanning patched image for platform %s", platformStr)
+					t.Logf("scanning patched image for platform %s with %s", platformStr, imageRuntime)
 					common.NewScanner().
 						WithIgnoreFile(ignoreFile).
 						WithSkipDBUpdate().
 						WithCacheDir(goroutineCacheDir).
-						WithImageSrc("docker").
+						WithImageSrc(imageRuntime).
 						WithPlatform(platformStr).
 						// here we want a non-zero exit code because we are expecting no vulnerabilities.
 						WithExitCode(1).
@@ -138,6 +140,32 @@ func TestPatch(t *testing.T) {
 				}()
 			}
 			wg.Wait()
+		})
+	}
+}
+
+func imageRuntimeForBuildkitAddress(addr string) string {
+	if strings.HasPrefix(addr, "podman-container://") {
+		return imageloader.Podman
+	}
+	return imageloader.Docker
+}
+
+func TestImageRuntimeForBuildkitAddress(t *testing.T) {
+	tests := []struct {
+		name string
+		addr string
+		want string
+	}{
+		{name: "podman container", addr: "podman-container://copa-buildkitd", want: imageloader.Podman},
+		{name: "docker daemon", addr: "docker://", want: imageloader.Docker},
+		{name: "direct tcp", addr: "tcp://127.0.0.1:1234", want: imageloader.Docker},
+		{name: "empty", want: imageloader.Docker},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, imageRuntimeForBuildkitAddress(tt.addr))
 		})
 	}
 }
