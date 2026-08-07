@@ -402,11 +402,15 @@ COPY --from=prepare /rootfs /
 	require.Equal(t, fixture.EncodedStatusFilename, beforeFilenames[fixture.EncodedStatusPackage])
 	beforeSentinelHash := canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree)
 
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	writeSyntheticOSPackageReport(t, reportPath, "debian", "12", "amd64", "libssl3", "3.0.11-1~deb12u2", "3.0.11-1~deb12u3")
+
 	patched := uniqueImage("status-directory-patched")
 	t.Cleanup(func() { removeImage(patched) })
 	patchImage(t,
 		"patch",
 		"--image", target,
+		"--report", reportPath,
 		"--tag", patched,
 		"--platform", fixture.Platform,
 	)
@@ -427,6 +431,7 @@ COPY --from=prepare /rootfs /
 	assertNoUpdates(t,
 		"patch",
 		"--image", patched,
+		"--report", reportPath,
 		"--tag", uniqueImage("status-directory-repatch"),
 		"--platform", fixture.Platform,
 	)
@@ -509,21 +514,26 @@ func readOCIIndex(t *testing.T, filename string) ociIndex {
 
 func writeSyntheticTrivyReport(t *testing.T, filename, architecture, packageName string) {
 	t.Helper()
+	writeSyntheticOSPackageReport(t, filename, "ubuntu", "24.04", architecture, packageName, "0", "9999")
+}
+
+func writeSyntheticOSPackageReport(t *testing.T, filename, osFamily, osVersion, architecture, packageName, installedVersion, fixedVersion string) {
+	t.Helper()
 	report := map[string]any{
 		"SchemaVersion": 2,
 		"Metadata": map[string]any{
-			"OS":          map[string]any{"Family": "ubuntu", "Name": "24.04"},
+			"OS":          map[string]any{"Family": osFamily, "Name": osVersion},
 			"ImageConfig": map[string]any{"architecture": architecture},
 		},
 		"Results": []any{map[string]any{
-			"Target": "Ubuntu 24.04",
+			"Target": osFamily + " " + osVersion,
 			"Class":  "os-pkgs",
-			"Type":   "ubuntu",
+			"Type":   osFamily,
 			"Vulnerabilities": []any{map[string]any{
 				"VulnerabilityID":  "CVE-2099-COPA-E2E",
 				"PkgName":          packageName,
-				"InstalledVersion": "0",
-				"FixedVersion":     "9999",
+				"InstalledVersion": installedVersion,
+				"FixedVersion":     fixedVersion,
 			}},
 		}},
 	}

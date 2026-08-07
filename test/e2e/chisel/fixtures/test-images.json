@@ -104,7 +104,6 @@
     "reference": "gcr.io/distroless/base-debian12@sha256:5eae9ef0b97acf7de819f936e12b24976b2d54333a2cf329615366e16ba598cd",
     "platform": "linux/amd64",
     "expectedUpgradePackages": [
-      "libc6",
       "libssl3"
     ],
     "preserveTree": "opt/copa-e2e/",
