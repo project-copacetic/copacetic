@@ -693,9 +693,17 @@ func TestLoadStatusDirectorySortsFilenamesDeterministically(t *testing.T) {
 	assert.Equal(t, "a-file z-file", dm.statusdNames)
 	assert.Equal(t, map[string]string{"a": "1", "z": "2"}, dm.packageInfo)
 	assert.Equal(t, map[string]string{"a": "a-file", "z": "z-file"}, dm.statusdFileMap)
-	wantStatus := append(bytes.Clone(aStatus), '\n')
-	wantStatus = append(wantStatus, zStatus...)
-	wantStatus = append(wantStatus, '\n')
+	wantStatus := []byte(strings.Join([]string{
+		"Package: a",
+		"Status: install ok installed",
+		"Version: 1",
+		"",
+		"Package: z",
+		"Status: install ok installed",
+		"Version: 2",
+		"",
+		"",
+	}, "\n"))
 	assert.Equal(t, wantStatus, dm.tempStatusFile)
 }
 

@@ -630,7 +630,10 @@ func (dm *dpkgManager) loadStatusDirectoryWithLimit(
 	}
 
 	dm.statusdNames = statusdNames
-	dm.tempStatusFile = bytes.Clone(statusBuffer.Bytes())
+	// status.d inventories commonly omit dpkg's Status field. The reconstructed
+	// temporary database must mark every inventoried package as installed or a
+	// targeted dpkg transaction can discard untouched package paragraphs.
+	dm.tempStatusFile = normalizeDPKGStatusForDatabase(statusBuffer.Bytes())
 	dm.packageInfo = packageInfo
 	dm.statusdFileMap = statusdFileMap
 
