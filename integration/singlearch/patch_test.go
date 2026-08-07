@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
@@ -131,6 +132,9 @@ func TestPatch(t *testing.T) {
 				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
+			if common.DockerDINDAddress.Addr() != "" {
+				waitForDockerImage(t, patchedRef)
+			}
 
 			// Sanity-check that copa wrote an inspectable patched manifest with
 			// a recognized media-type family (OCI or Docker). This is what's
@@ -255,6 +259,31 @@ func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 		}
 	}
 	return filteredPlatforms
+}
+
+func waitForDockerImage(t *testing.T, ref string) {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+	var lastOutput []byte
+	for {
+		args := []string{}
+		if addr := common.DockerDINDAddress.Addr(); addr != "" {
+			args = append(args, "-H", addr)
+		}
+		args = append(args, "image", "inspect", ref)
+
+		cmd := exec.Command("docker", args...)
+		output, err := cmd.CombinedOutput()
+		if err == nil {
+			return
+		}
+		lastOutput = output
+		if time.Now().After(deadline) {
+			require.NoError(t, err, "patched image %s did not become visible in the Docker daemon: %s", ref, string(lastOutput))
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
 }
 
 func dockerPull(t *testing.T, ref string) {
