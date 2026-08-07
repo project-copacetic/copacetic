@@ -27,6 +27,7 @@ const lastPatchedAnnotation = "sh.copa.image.patched"
 
 type testImage struct {
 	OriginalImage   string   `json:"originalImage"`
+	Digest          string   `json:"digest,omitempty"`
 	LocalImage      string   `json:"localImage"`
 	Push            bool     `json:"push"`
 	Tag             string   `json:"tag"`
@@ -56,6 +57,9 @@ func TestPatch(t *testing.T) {
 			// define a few variables
 			ref := fmt.Sprintf("%s:%s", img.LocalImage, img.Tag)
 			originalImageRef := fmt.Sprintf("%s:%s", img.OriginalImage, img.Tag)
+			if img.Digest != "" {
+				originalImageRef = fmt.Sprintf("%s@%s", img.OriginalImage, img.Digest)
+			}
 
 			// copy over the original image to the local image using oras
 			copyImage(t, originalImageRef, ref)
