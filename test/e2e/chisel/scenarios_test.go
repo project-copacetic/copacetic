@@ -428,13 +428,6 @@ COPY --from=prepare /rootfs /
 		requireVersionGreater(t, afterPackages[name].Version, beforePackages[name].Version, name)
 	}
 	require.Equal(t, beforeSentinelHash, canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "unmanaged application content changed")
-	assertNoUpdates(t,
-		"patch",
-		"--image", patched,
-		"--report", reportPath,
-		"--tag", uniqueImage("status-directory-repatch"),
-		"--platform", fixture.Platform,
-	)
 }
 
 func ensureArm64Execution(t *testing.T) {

@@ -109,7 +109,7 @@ references are pinned by digest in the
 | Canonical multi-platform .NET index | Native Chisel manifest; amd64, arm64, ppc64le, and s390x | Independent amd64 and arm64 updates in one OCI output; opt-in ppc64le and s390x re-cuts under emulation; and partial amd64 patching that preserves the unselected arm64, ppc64le, and s390x descriptors, attestations, and referenced OCI blobs |
 | Community `ghcr.io/hadrienpatte/sonarr` | Native Chisel manifest; amd64 | Explicit release override, preservation of the `/Sonarr` application tree and image configuration, isolated application startup, and no-update repatching |
 | Microsoft `mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled` | Apt-less full dpkg status; amd64, arm64, and arm/v7 | Trivy OS-only report patching on amd64 plus comprehensive baseline patching on arm64 and opt-in arm/v7 under emulation; validates fixed package versions, no downgrades, full-status preservation, cleanup, runtime and image-configuration preservation, and no-update repatching |
-| Google `gcr.io/distroless/base-debian12` derivative | External dpkg `status.d`; amd64 | Regression coverage for encoded status filenames, package upgrades without downgrades, absence of a synthesized full status file, preservation of unmanaged content, tooling cleanup, and no-update repatching |
+| Google `gcr.io/distroless/base-debian12` derivative | External dpkg `status.d`; amd64 | Regression coverage for encoded status filenames, package upgrades without downgrades, absence of a synthesized full status file, preservation of unmanaged content, and tooling cleanup |
 
 The Chisel tooling image and Copa architecture mapping are also exercised for
 `linux/386` and `linux/riscv64`. The current real-image patch matrix does not
