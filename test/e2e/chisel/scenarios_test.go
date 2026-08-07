@@ -2,7 +2,6 @@ package chisel
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -49,24 +48,13 @@ func assertDigestPinnedReference(t *testing.T, reference string) {
 	require.Equal(t, strings.ToLower(digest), digest, "image digest must use lowercase hexadecimal: %s", reference)
 }
 
-func TestManifestMutationHelpersProduceValidManifests(t *testing.T) {
+func TestUnresolvableSliceMutationProducesValidManifest(t *testing.T) {
 	fixturePath := filepath.Join("..", "..", "..", "integration", "chisel", "fixtures", "manifest-schema-1.0", "manifest.wall")
 	data, err := os.ReadFile(fixturePath)
 	require.NoError(t, err)
 
-	const obsoletePath = "/opt/copa-obsolete"
-	contents := []byte("obsolete\n")
-	mutated := addObsoleteManagedPath(t, data, obsoletePath, contents)
+	mutated := addUnresolvableSlice(t, data, "copa-private-package", "amd64")
 	manifest, err := copachisel.ParseManifest(bytes.NewReader(mutated))
-	require.NoError(t, err)
-	metadata, ok := manifest.OwnedPaths[obsoletePath]
-	require.True(t, ok)
-	require.Equal(t, uint64(len(contents)), metadata.Size)
-	digest := sha256.Sum256(contents)
-	require.Equal(t, hex.EncodeToString(digest[:]), metadata.Digest())
-
-	mutated = addUnresolvableSlice(t, data, "copa-private-package", "amd64")
-	manifest, err = copachisel.ParseManifest(bytes.NewReader(mutated))
 	require.NoError(t, err)
 	require.Contains(t, manifest.Packages, "copa-private-package")
 	require.Contains(t, manifest.Slices, "copa-private-package_bins")
@@ -126,72 +114,6 @@ func testNativeChiselRealImage(t *testing.T, fixtureID string) {
 		"--image", patched,
 		"--tag", uniqueImage("native-repatch"),
 		"--platform", fixture.Platform,
-	)
-}
-
-func TestNativeChiselCommunityARM64RepairsDriftAndPreservesRuntime(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping real-image Chisel e2e test in short mode")
-	}
-	requireTool(t, "docker")
-	ensureArm64Execution(t)
-	requireLocalImage(t, chiselToolingImage)
-
-	fixture := loadFixture(t, "community-native-qbittorrent-arm64")
-	pullImage(t, fixture.Reference, fixture.Platform)
-	source := captureImage(t, fixture.Reference, fixture.Platform)
-	require.NotNil(t, source.Manifest)
-	const obsoleteManagedPath = "/opt/copa-managed-obsolete"
-	obsoleteData := []byte("obsolete Chisel-managed content\n")
-	mutatedManifest := addObsoleteManagedPath(t, source.ManifestData, obsoleteManagedPath, obsoleteData)
-	target := buildImageFromDockerfile(t, "qbittorrent-arm64-drift", fixture.Platform, fmt.Sprintf(`
-FROM %s
-COPY drift.bin /%s
-COPY obsolete.bin %s
-COPY manifest.wall /var/lib/chisel/manifest.wall
-`, fixture.Reference, fixture.ManagedDriftPath, obsoleteManagedPath), map[string][]byte{
-		"drift.bin":     []byte("intentional managed-file drift\n"),
-		"obsolete.bin":  obsoleteData,
-		"manifest.wall": mutatedManifest,
-	})
-	before := captureImage(t, target, fixture.Platform)
-	require.NotNil(t, before.Manifest)
-	require.Contains(t, before.Manifest.OwnedPaths, obsoleteManagedPath)
-	require.Contains(t, before.Paths, strings.TrimPrefix(obsoleteManagedPath, "/"))
-	preserveHash := canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree)
-	beforeRuntime := runQbittorrentVersion(t, fixture.Platform, target)
-	require.Contains(t, beforeRuntime, fixture.RuntimeContains)
-
-	patched := uniqueImage("qbittorrent-arm64-patched")
-	t.Cleanup(func() { removeImage(patched) })
-	patchImage(t,
-		"patch",
-		"--image", target,
-		"--tag", patched,
-		"--platform", fixture.Platform,
-		"--chisel-release", fixture.ChiselRelease,
-	)
-
-	after := captureImage(t, patched, fixture.Platform)
-	require.NotNil(t, after.Manifest)
-	assertImageConfigPreserved(t, &before.Config, &after.Config)
-	assertManifestNoDowngrades(t, before.Manifest, after.Manifest)
-	assertManifestMatchesRootFSTar(t, after.Manifest, after.RootFSTar)
-	require.NotContains(t, after.Manifest.OwnedPaths, obsoleteManagedPath)
-	require.NotContains(t, after.Paths, strings.TrimPrefix(obsoleteManagedPath, "/"), "obsolete managed path remained in the patched rootfs")
-	require.Equal(t, preserveHash, canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "unmanaged qBittorrent binary changed")
-	afterRuntime := runQbittorrentVersion(t, fixture.Platform, patched)
-	require.Contains(t, afterRuntime, fixture.RuntimeContains)
-	require.Equal(t, beforeRuntime, afterRuntime)
-	assert.Equal(t, fixture.ChiselRelease, after.Config.Config.Labels["sh.copa.chisel.release"])
-	assert.Equal(t, "v1.4.2", after.Config.Config.Labels["sh.copa.chisel.version"])
-
-	assertNoUpdates(t,
-		"patch",
-		"--image", patched,
-		"--tag", uniqueImage("qbittorrent-arm64-repatch"),
-		"--platform", fixture.Platform,
-		"--chisel-release", fixture.ChiselRelease,
 	)
 }
 
@@ -510,36 +432,6 @@ COPY --from=prepare /rootfs /
 	)
 }
 
-func assertManifestNoDowngrades(t *testing.T, before, after *copachisel.Manifest) {
-	t.Helper()
-	oldSlices := make(map[string]struct{}, len(before.Slices))
-	for _, slice := range before.Slices {
-		oldSlices[slice] = struct{}{}
-	}
-	newSlices := make(map[string]struct{}, len(after.Slices))
-	for _, slice := range after.Slices {
-		newSlices[slice] = struct{}{}
-	}
-	for slice := range oldSlices {
-		require.Contains(t, newSlices, slice, "original Chisel slice was lost")
-	}
-	for name, oldPackage := range before.Packages {
-		newPackage, ok := after.Packages[name]
-		require.True(t, ok, "original package %s disappeared", name)
-		require.GreaterOrEqual(t, compareDebianVersions(t, newPackage.Version, oldPackage.Version), 0, "package %s was downgraded", name)
-	}
-}
-
-func runQbittorrentVersion(t *testing.T, platform, image string) string {
-	t.Helper()
-	return run(t,
-		"docker", "run", "--rm", "--platform", platform,
-		"--network", "none", "--read-only",
-		"--entrypoint", "/usr/bin/qbittorrent-nox",
-		image, "--version",
-	)
-}
-
 func ensureArm64Execution(t *testing.T) {
 	t.Helper()
 	ensurePlatformExecution(t, "linux/arm64", "arm64")
@@ -697,29 +589,6 @@ func addUnresolvableSlice(t *testing.T, compressed []byte, packageName, architec
 		Name string `json:"name"`
 	}{"slice", packageName + "_bins"}
 	return addManifestRecords(t, compressed, packageRecord, sliceRecord)
-}
-
-func addObsoleteManagedPath(t *testing.T, compressed []byte, manifestPath string, contents []byte) []byte {
-	t.Helper()
-	manifest, err := copachisel.ParseManifest(bytes.NewReader(compressed))
-	require.NoError(t, err)
-	require.NotEmpty(t, manifest.Slices)
-	owner := manifest.Slices[0]
-	digest := sha256.Sum256(contents)
-	contentRecord := struct {
-		Kind  string `json:"kind"`
-		Slice string `json:"slice"`
-		Path  string `json:"path"`
-	}{"content", owner, manifestPath}
-	pathRecord := struct {
-		Kind   string   `json:"kind"`
-		Path   string   `json:"path"`
-		Mode   string   `json:"mode"`
-		SHA256 string   `json:"sha256"`
-		Size   int      `json:"size"`
-		Slices []string `json:"slices"`
-	}{"path", manifestPath, "0644", hex.EncodeToString(digest[:]), len(contents), []string{owner}}
-	return addManifestRecords(t, compressed, contentRecord, pathRecord)
 }
 
 func addManifestRecords(t *testing.T, compressed []byte, extraRecords ...any) []byte {

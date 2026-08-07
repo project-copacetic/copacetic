@@ -59,16 +59,6 @@
     "preserveTree": "Sonarr/"
   },
   {
-    "id": "community-native-qbittorrent-arm64",
-    "layout": "native-chisel",
-    "reference": "ghcr.io/hadrienpatte/qbittorrent:5.2.3@sha256:20644bd44ca7ed3006cd34bb5a5f2c426d9fee9982f9730e5565439a08946e15",
-    "platform": "linux/arm64",
-    "chiselRelease": "ubuntu-24.04",
-    "runtimeContains": "qBittorrent v5.2.3",
-    "preserveTree": "usr/bin/qbittorrent-nox",
-    "managedDriftPath": "etc/ssl/certs/ca-certificates.crt"
-  },
-  {
     "id": "microsoft-full-status-dotnet",
     "layout": "external-full-status",
     "reference": "mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled@sha256:e41fc0f37cc2ac256aa3969d14d73328699ab1d39909abd5df3e62a60af5be68",

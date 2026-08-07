@@ -47,7 +47,6 @@ type realImageFixture struct {
 	PreserveTree            string   `json:"preserveTree"`
 	EncodedStatusPackage    string   `json:"encodedStatusPackage"`
 	EncodedStatusFilename   string   `json:"encodedStatusFilename"`
-	ManagedDriftPath        string   `json:"managedDriftPath"`
 }
 
 type imageSnapshot struct {

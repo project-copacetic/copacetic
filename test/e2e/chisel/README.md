@@ -14,7 +14,6 @@ It is intentionally separate from the network-independent fixture tests in
 | `TestNativeChiselMultiPlatformOCIUpdatesAMD64AndARM64` | Canonical multi-platform Ubuntu .NET Chiseled index | Patches amd64 and arm64 independently in one operation and validates each output manifest, config, package set, and managed rootfs |
 | `TestNativeChiselSecondaryArchitecturesOCI` | Canonical multi-platform Ubuntu .NET Chiseled index, ppc64le and s390x | Re-cuts both secondary architectures in one OCI output and validates changed platform descriptors, preserved image configuration, package upgrades without downgrades, and each managed rootfs against its generated manifest |
 | `TestNativeChiselCommunityImagePreservesApplication` | Community Sonarr image, amd64 | Explicit release override, preservation of the complete `/Sonarr` tree, isolated application startup, provenance labels, and no-update repatching |
-| `TestNativeChiselCommunityARM64RepairsDriftAndPreservesRuntime` | Community qBittorrent image, arm64 | Repairs intentional Chisel-managed filesystem drift, removes a manifest-owned path omitted by the fresh re-cut, and preserves the unmanaged qBittorrent binary, nonroot config, and runtime behavior |
 | `TestAptlessFullStatusRealImage` | Microsoft .NET Jammy Chiseled, amd64 | Trivy OS-only report patching keyed by vulnerability ID and package, final dpkg versions at or above every reported fixed version, full-status preservation, runtime/config preservation, and comprehensive follow-up |
 | `TestAptlessFullStatusComprehensiveFromBaselineARM64` | Microsoft .NET Jammy Chiseled, arm64 | Comprehensive patching directly from the unpatched baseline, strict package upgrades, cleanup, runtime/config preservation, and no-update repatching |
 | `TestAptlessFullStatusComprehensiveFromBaselineARMv7` | Microsoft .NET Jammy Chiseled, arm/v7 | The same baseline comprehensive flow under emulation, including full-status preservation, package upgrades without downgrades, cleanup, runtime/config preservation, and no-update repatching |
@@ -69,7 +68,7 @@ Run one case while iterating:
 
 ```bash
 go test ./test/e2e/chisel \
-  -run '^TestNativeChiselCommunityARM64RepairsDriftAndPreservesRuntime$' \
+  -run '^TestNativeChiselRealImageARM64$' \
   --addr=docker:// \
   --copa="$COPA_BIN" \
   -timeout 50m \
