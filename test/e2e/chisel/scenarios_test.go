@@ -21,7 +21,7 @@ import (
 
 const (
 	nativeTargetedPatchError = "targeted patching of native Chisel manifests is not supported; omit --report to run a comprehensive Chisel update"
-	binfmtImage              = "docker.io/tonistiigi/binfmt:qemu-v10.0.4@sha256:8f58e6214f4cc9dc83ce8f5acad1ece508eb6b20e696a8c1e9f274481982c541"
+	binfmtImage              = "docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0"
 )
 
 func TestRealImageFixturesAreDigestPinned(t *testing.T) {

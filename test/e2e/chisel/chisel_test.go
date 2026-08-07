@@ -488,7 +488,10 @@ func captureImage(t *testing.T, image, platform string) imageSnapshot {
 	t.Helper()
 	dir := t.TempDir()
 	tarPath := filepath.Join(dir, "rootfs.tar")
-	containerID := strings.TrimSpace(run(t, "docker", "create", "--platform", platform, image))
+	// docker export only needs a created container; it never starts the configured
+	// process. Always provide an inert command override so scratch/configless
+	// fixtures can be captured without Docker rejecting them as having no command.
+	containerID := strings.TrimSpace(run(t, "docker", "create", "--platform", platform, image, "/__copa_capture_image__"))
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", containerID).Run() })
 	run(t, "docker", "export", "--output", tarPath, containerID)
 	run(t, "docker", "rm", containerID)

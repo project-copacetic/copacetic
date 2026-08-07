@@ -53,7 +53,8 @@ jobs:
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
         with:
-          image: docker.io/tonistiigi/binfmt:qemu-v10.0.4@sha256:8f58e6214f4cc9dc83ce8f5acad1ece508eb6b20e696a8c1e9f274481982c541
+          # QEMU 10.0.4 mishandles GNU tar's openat2(O_NOFOLLOW) extraction path; 10.2.3 contains the AArch64 fix.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
           platforms: 386,arm64,arm,ppc64le,s390x,riscv64
 
       - name: Set up Docker Buildx
