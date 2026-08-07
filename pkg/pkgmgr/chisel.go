@@ -132,6 +132,10 @@ if ! xargs -0 sh -c '
                 printf "pinned Git Chisel release symlink %s does not resolve safely within the release directory\n" "$relative" >&2
                 exit 1
             }
+            if [ ! -e "$resolved_path" ]; then
+                printf "pinned Git Chisel release symlink %s does not resolve safely within the release directory\n" "$relative" >&2
+                exit 1
+            fi
             case "$resolved_path" in
                 "$release_real"|"$release_real"/*) ;;
                 *)
