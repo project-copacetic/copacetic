@@ -26,6 +26,24 @@ func (o *OpenVex) CreateVEXDocument(
 	patchedImageName string,
 	pkgType string,
 ) (string, error) {
+	doc, err := o.createVEXDocument(updates, patchedImageName, pkgType)
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	if err := doc.ToJSON(&buf); err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
+}
+
+func (o *OpenVex) createVEXDocument(
+	updates *unversioned.UpdateManifest,
+	patchedImageName string,
+	pkgType string,
+) (*vex.VEX, error) {
 	t := now()
 	// construct a fresh VEX document per invocation (thread-safe, no shared state)
 	doc := &vex.VEX{Metadata: vex.Metadata{
@@ -44,7 +62,7 @@ func (o *OpenVex) CreateVEXDocument(
 
 	id, err := generateID(doc)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	doc.ID = id
 
@@ -53,6 +71,14 @@ func (o *OpenVex) CreateVEXDocument(
 			ID: "pkg:oci/" + patchedImageName,
 		},
 	}
+	pt := utils.CanonicalPkgManagerType(pkgType) // base OS package manager type (apk, deb, rpm)
+	osPackagePrefix := "pkg:" + pt + "/" + updates.Metadata.OS.Type + "/"
+	osPackageQualifierSuffix := osPackageQualifiers(updates)
+	totalUpdates := len(updates.OSUpdates) + len(updates.LangUpdates)
+	initialStatementCapacity := min(totalUpdates, 512)
+	doc.Statements = make([]vex.Statement, 0, initialStatementCapacity)
+	statementByVulnerability := make(map[string]int, initialStatementCapacity)
+	seenSubcomponents := make(map[vexSubcomponentKey]struct{}, totalUpdates)
 
 	// helper closure to add a single update (OS or language) to the VEX doc
 	addUpdate := func(u unversioned.UpdatePackage) {
@@ -71,9 +97,6 @@ func (o *OpenVex) CreateVEXDocument(
 			log.Debugf("skipping update %s: fixed version equals installed version (%s)", u.Name, u.FixedVersion)
 			return
 		}
-		// Derive canonical package manager type (apk, deb, rpm) from the OS-level pkgType.
-		// For language packages (e.g. python-pkg), u.Type triggers a separate PURL scheme below.
-		pt := utils.CanonicalPkgManagerType(pkgType) // base OS package manager type (apk, deb, rpm)
 		langType := u.Type
 
 		// Use InstalledVersion (vulnerable) for BOM-VEX correlation: the subcomponent
@@ -89,36 +112,31 @@ func (o *OpenVex) CreateVEXDocument(
 			// Standard PyPI purl form: pkg:pypi/<name>@<version>
 			componentID = "pkg:pypi/" + u.Name + "@" + purlVersion
 		} else {
-			// Build PURL qualifiers: arch is always present, distro added when OS version is known.
-			qualifiers := url.Values{}
-			qualifiers.Set("arch", updates.Metadata.Config.Arch)
-			if updates.Metadata.OS.Version != "" {
-				qualifiers.Set("distro", updates.Metadata.OS.Type+"-"+updates.Metadata.OS.Version)
-			}
-			componentID = "pkg:" + pt + "/" + updates.Metadata.OS.Type + "/" + u.Name + "@" + purlVersion + "?" + qualifiers.Encode()
+			componentID = osPackagePrefix + u.Name + "@" + purlVersion + osPackageQualifierSuffix
 		}
 		subComponent := vex.Subcomponent{Component: vex.Component{ID: componentID}}
 		// if vulnerability id already exists, append subcomponent
-		for i := range doc.Statements {
-			if doc.Statements[i].Vulnerability.ID == u.VulnerabilityID {
-				// deduplicate identical subcomponent IDs
-				for _, existing := range doc.Statements[i].Products[0].Subcomponents {
-					if existing.ID == subComponent.ID {
-						log.Debugf("duplicate subcomponent %s ignored", subComponent.ID)
-						return
-					}
-				}
-				doc.Statements[i].Products[0].Subcomponents = append(doc.Statements[i].Products[0].Subcomponents, subComponent)
+		if statementIndex, ok := statementByVulnerability[u.VulnerabilityID]; ok {
+			// deduplicate identical subcomponent IDs
+			key := vexSubcomponentKey{vulnerabilityID: u.VulnerabilityID, componentID: subComponent.ID}
+			if _, ok := seenSubcomponents[key]; ok {
+				log.Debugf("duplicate subcomponent %s ignored", subComponent.ID)
 				return
 			}
+			seenSubcomponents[key] = struct{}{}
+			doc.Statements[statementIndex].Products[0].Subcomponents = append(doc.Statements[statementIndex].Products[0].Subcomponents, subComponent)
+			return
 		}
 		// otherwise create new statement
-		imageProduct.Subcomponents = []vex.Subcomponent{subComponent}
+		product := imageProduct
+		product.Subcomponents = []vex.Subcomponent{subComponent}
 		doc.Statements = append(doc.Statements, vex.Statement{
 			Vulnerability: vex.Vulnerability{ID: u.VulnerabilityID},
-			Products:      []vex.Product{imageProduct},
+			Products:      []vex.Product{product},
 			Status:        "fixed",
 		})
+		statementByVulnerability[u.VulnerabilityID] = len(doc.Statements) - 1
+		seenSubcomponents[vexSubcomponentKey{vulnerabilityID: u.VulnerabilityID, componentID: subComponent.ID}] = struct{}{}
 	}
 
 	for _, u := range updates.OSUpdates {
@@ -128,11 +146,19 @@ func (o *OpenVex) CreateVEXDocument(
 		addUpdate(u)
 	}
 
-	var buf bytes.Buffer
-	err = doc.ToJSON(&buf)
-	if err != nil {
-		return "", err
-	}
+	return doc, nil
+}
 
-	return buf.String(), nil
+type vexSubcomponentKey struct {
+	vulnerabilityID string
+	componentID     string
+}
+
+func osPackageQualifiers(updates *unversioned.UpdateManifest) string {
+	// Build PURL qualifiers: arch is always present, distro added when OS version is known.
+	qualifiers := "?arch=" + url.QueryEscape(updates.Metadata.Config.Arch)
+	if updates.Metadata.OS.Version != "" {
+		qualifiers += "&distro=" + url.QueryEscape(updates.Metadata.OS.Type+"-"+updates.Metadata.OS.Version)
+	}
+	return qualifiers
 }

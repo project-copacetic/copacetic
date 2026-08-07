@@ -56,6 +56,10 @@ var knownIntroducedCVEs = map[string]string{
 	// TODO: file tracking issue and reference it here; remove this
 	// entry once the nodejs langmgr patches transitive deps.
 	"CVE-2026-45149": "brace-expansion DoS; fix exists in 5.0.6; copa nodejs langmgr does not patch transitives yet",
+	// tmp package pulled in transitively when Ghost's dependencies get
+	// updated during patching. Copa nodejs langmgr doesn't re-resolve
+	// transitive deps to their fixed versions yet.
+	"CVE-2026-49982": "tmp package introduced transitively; copa nodejs langmgr does not patch transitives yet",
 }
 
 // assertNoNewVulnerabilities verifies that every CVE present after
@@ -107,10 +111,14 @@ func TestNodeJSPatching(t *testing.T) {
 				return
 			}
 
-			// 2. Patch the image and capture its output.
+			// 2. Patch the image and capture its output. Keep this Node.js e2e
+			// scoped to node-pkg findings: Trivy can also report vulnerabilities
+			// for Go helper binaries in the same images, which exercises Copa's Go
+			// binary rebuilder instead of the Node.js language manager under test.
 			t.Log("patching image")
+			nodeReportFile := filterTrivyReportByType(t, scanResultsFile, "node-pkg")
 			tagPatched := img.Tag + "-patched"
-			copaOutput := patchImage(t, ref, tagPatched, scanResultsFile)
+			copaOutput := patchImage(t, ref, tagPatched, nodeReportFile)
 
 			// 3. Scan the newly patched image.
 			t.Log("scanning patched image for verification")
@@ -199,6 +207,44 @@ func scanAndParse(t *testing.T, image string, outputFile string, cacheDir string
 		}
 	}
 	return vulns
+}
+
+func filterTrivyReportByType(t *testing.T, reportFile string, allowedTypes ...string) string {
+	t.Helper()
+
+	allowed := make(map[string]struct{}, len(allowedTypes))
+	for _, typ := range allowedTypes {
+		allowed[typ] = struct{}{}
+	}
+
+	reportBytes, err := os.ReadFile(reportFile)
+	require.NoError(t, err, "failed to read trivy report file")
+
+	var report map[string]interface{}
+	require.NoError(t, json.Unmarshal(reportBytes, &report), "failed to unmarshal trivy report")
+
+	results, ok := report["Results"].([]interface{})
+	require.True(t, ok, "trivy report Results should be an array")
+
+	filteredResults := make([]interface{}, 0, len(results))
+	for _, result := range results {
+		resultMap, ok := result.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		resultType, _ := resultMap["Type"].(string)
+		if _, keep := allowed[resultType]; keep {
+			filteredResults = append(filteredResults, result)
+		}
+	}
+	report["Results"] = filteredResults
+
+	filteredBytes, err := json.Marshal(report)
+	require.NoError(t, err, "failed to marshal filtered trivy report")
+
+	filteredFile := filepath.Join(t.TempDir(), "scan-filtered.json")
+	require.NoError(t, os.WriteFile(filteredFile, filteredBytes, 0o600), "failed to write filtered trivy report")
+	return filteredFile
 }
 
 // patchImage now returns the command output as a string.
