@@ -34,6 +34,10 @@ func DisplayProgress(ctx context.Context, eg *errgroup.Group, buildChannel chan 
 // ForwardProgressWithPrefix forwards progress from src to dst, prefixing vertex names with the given prefix.
 // This allows multiplexing multiple build progress streams into a single display.
 func ForwardProgressWithPrefix(ctx context.Context, src <-chan *client.SolveStatus, dst chan<- *client.SolveStatus, prefix string) {
+	namePrefix := "[" + prefix + "] "
+	digestPrefix := prefix + ":"
+	remappedDigests := make(map[digest.Digest]digest.Digest)
+
 	for {
 		select {
 		case status, ok := <-src:
@@ -44,35 +48,33 @@ func ForwardProgressWithPrefix(ctx context.Context, src <-chan *client.SolveStat
 				continue
 			}
 
-			// Clone and prefix vertex names
+			// Clone and prefix vertex names.
 			prefixed := &client.SolveStatus{
 				Vertexes: make([]*client.Vertex, len(status.Vertexes)),
-				Statuses: status.Statuses, // Statuses reference vertices by digest, no need to modify
-				Logs:     status.Logs,     // Logs reference vertices by digest, no need to modify
 				Warnings: status.Warnings,
 			}
 
 			for i, v := range status.Vertexes {
-				// Clone the vertex and prefix its name
+				// Clone the vertex and prefix its name.
 				cloned := *v
-				cloned.Name = "[" + prefix + "] " + v.Name
-				// Create a new digest that includes the prefix to avoid collisions
-				cloned.Digest = digest.FromString(prefix + ":" + v.Digest.String())
+				cloned.Name = namePrefix + v.Name
+				// Create a new digest that includes the prefix to avoid collisions.
+				cloned.Digest = prefixedDigest(remappedDigests, digestPrefix, v.Digest)
 				prefixed.Vertexes[i] = &cloned
 			}
 
-			// Also update status and log references to use new digests
+			// Also update status and log references to use new digests.
 			prefixed.Statuses = make([]*client.VertexStatus, len(status.Statuses))
 			for i, s := range status.Statuses {
 				cloned := *s
-				cloned.Vertex = digest.FromString(prefix + ":" + s.Vertex.String())
+				cloned.Vertex = prefixedDigest(remappedDigests, digestPrefix, s.Vertex)
 				prefixed.Statuses[i] = &cloned
 			}
 
 			prefixed.Logs = make([]*client.VertexLog, len(status.Logs))
 			for i, l := range status.Logs {
 				cloned := *l
-				cloned.Vertex = digest.FromString(prefix + ":" + l.Vertex.String())
+				cloned.Vertex = prefixedDigest(remappedDigests, digestPrefix, l.Vertex)
 				prefixed.Logs[i] = &cloned
 			}
 
@@ -86,4 +88,14 @@ func ForwardProgressWithPrefix(ctx context.Context, src <-chan *client.SolveStat
 			return
 		}
 	}
+}
+
+func prefixedDigest(remappedDigests map[digest.Digest]digest.Digest, digestPrefix string, original digest.Digest) digest.Digest {
+	if remapped, ok := remappedDigests[original]; ok {
+		return remapped
+	}
+
+	remapped := digest.FromString(digestPrefix + original.String())
+	remappedDigests[original] = remapped
+	return remapped
 }

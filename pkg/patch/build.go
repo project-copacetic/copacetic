@@ -18,6 +18,10 @@ import (
 
 const (
 	attrValueTrue = "true"
+
+	// DefaultLocalExportCompression is the BuildKit compression used for newly
+	// created patch layers when loading patched images locally.
+	DefaultLocalExportCompression = "uncompressed"
 )
 
 // BuildConfig holds configuration for building and exporting images.
@@ -51,6 +55,8 @@ func createBuildConfig(
 	pipeW io.WriteCloser,
 	originalAnnotations map[string]string,
 	patchedTag string,
+	compression string,
+	forceCompression bool,
 ) (*BuildConfig, error) {
 	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
 	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
@@ -95,10 +101,20 @@ func createBuildConfig(
 			},
 		}
 	} else {
-		// Use uncompressed layers for local export to ensure diff_id == blob digest
-		// This fixes Trivy scanning issues where compressed layers have mismatched hashes
-		attrs["compression"] = "uncompressed"
-		attrs["force-compression"] = attrValueTrue
+		// Local export compresses newly created patch layers with the selected
+		// compression (default: uncompressed). Uncompressed keeps
+		// diff_id == blob digest for the patch layer, which is what local
+		// scanners such as Trivy expect. Without force-compression, BuildKit
+		// applies the selected compression only to Copa's new patch layer and
+		// passes existing base layers through in their original compression;
+		// force-compression re-encodes every layer to the selected compression.
+		if compression == "" {
+			compression = DefaultLocalExportCompression
+		}
+		attrs["compression"] = compression
+		if forceCompression {
+			attrs["force-compression"] = attrValueTrue
+		}
 
 		solveOpt.Exports = []client.ExportEntry{
 			{
