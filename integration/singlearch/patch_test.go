@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -106,10 +107,6 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-
-			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
-
 			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
@@ -133,12 +130,22 @@ func TestPatch(t *testing.T) {
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
 			expectsPatchFailure := strings.Contains(img.Image, "oracle") && reportFile && !img.IgnoreErrors
+			unsuffixedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
+			if common.DockerDINDAddress.Addr() != "" && !expectsPatchFailure {
+				// The custom-unix fixture persists /var/lib/docker in a named volume.
+				// Remove both possible outputs so this run cannot accept a tag left by
+				// an earlier job.
+				removeDockerImages(t, patchedRef, unsuffixedRef)
+			}
+
+			t.Log("patching image")
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+
 			if common.DockerDINDAddress.Addr() != "" && !expectsPatchFailure {
 				// A concurrent local-name fixture can make a remote manifest list
 				// visible to the nested daemon as a single-platform image. Copa then
 				// correctly emits the unsuffixed single-platform tag instead of the
 				// anticipated architecture-suffixed tag.
-				unsuffixedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
 				patchedRef = waitForDockerImage(t, patchedRef, unsuffixedRef)
 			}
 
@@ -270,6 +277,37 @@ func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 func waitForDockerImage(t *testing.T, refs ...string) string {
 	t.Helper()
 
+	candidates := uniqueImageRefs(refs...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	lastOutput := make(map[string]string, len(candidates))
+	for {
+		for _, ref := range candidates {
+			args := dockerArgs("image", "inspect", ref)
+			cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- refs come from pinned integration fixtures.
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				if ref != candidates[0] {
+					t.Logf("using patched image tag %s after %s was not emitted", ref, candidates[0])
+				}
+				return ref
+			}
+			lastOutput[ref] = string(output)
+			if ctx.Err() != nil {
+				failDockerImageWait(t, ctx.Err(), candidates, lastOutput)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			failDockerImageWait(t, ctx.Err(), candidates, lastOutput)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func uniqueImageRefs(refs ...string) []string {
 	candidates := make([]string, 0, len(refs))
 	seen := make(map[string]struct{}, len(refs))
 	for _, ref := range refs {
@@ -279,29 +317,38 @@ func waitForDockerImage(t *testing.T, refs ...string) string {
 		seen[ref] = struct{}{}
 		candidates = append(candidates, ref)
 	}
+	return candidates
+}
 
-	deadline := time.Now().Add(30 * time.Second)
-	lastOutput := make(map[string]string, len(candidates))
-	for {
-		for _, ref := range candidates {
-			args := dockerArgs("image", "inspect", ref)
-			cmd := exec.Command("docker", args...) // #nosec G204 -- refs come from pinned integration fixtures.
-			output, err := cmd.CombinedOutput()
-			if err == nil {
-				if ref != candidates[0] {
-					t.Logf("using patched image tag %s after %s was not emitted", ref, candidates[0])
-				}
-				return ref
-			}
-			lastOutput[ref] = string(output)
-		}
+func failDockerImageWait(t *testing.T, waitErr error, candidates []string, lastOutput map[string]string) {
+	t.Helper()
 
-		if time.Now().After(deadline) {
-			listCmd := exec.Command("docker", dockerArgs("images", "--format", "{{.Repository}}:{{.Tag}}")...) // #nosec G204 -- fixed diagnostic command.
-			images, _ := listCmd.CombinedOutput()
-			t.Fatalf("none of the patched image candidates %v became visible in the Docker daemon; inspect errors: %v; available images: %s", candidates, lastOutput, string(images))
+	diagnosticCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	listCmd := exec.CommandContext(diagnosticCtx, "docker", dockerArgs("images", "--format", "{{.Repository}}:{{.Tag}}")...) // #nosec G204 -- fixed diagnostic command.
+	images, diagnosticErr := listCmd.CombinedOutput()
+	t.Fatalf(
+		"none of the patched image candidates %v became visible in the Docker daemon: %v; "+
+			"inspect errors: %v; available images: %s; diagnostic error: %v",
+		candidates, waitErr, lastOutput, string(images), diagnosticErr,
+	)
+}
+
+func removeDockerImages(t *testing.T, refs ...string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, ref := range uniqueImageRefs(refs...) {
+		cmd := exec.CommandContext(ctx, "docker", dockerArgs("image", "rm", "--force", ref)...) // #nosec G204 -- refs come from pinned integration fixtures.
+		output, err := cmd.CombinedOutput()
+		if err == nil || strings.Contains(string(output), "No such image") {
+			continue
 		}
-		time.Sleep(250 * time.Millisecond)
+		if ctx.Err() != nil {
+			require.NoError(t, ctx.Err(), "timed out removing stale image %s: %s", ref, string(output))
+		}
+		require.NoError(t, err, "failed to remove stale image %s: %s", ref, string(output))
 	}
 }
 

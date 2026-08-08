@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,13 @@ VERSION_ID="3.18.0"`,
 VERSION_ID="11"`,
 			wantType:    utils.OSTypeDebian,
 			wantVersion: "11",
+		},
+		{
+			name: "Debian ID fallback",
+			osRelease: `ID=debian
+VERSION_ID=13`,
+			wantType:    utils.OSTypeDebian,
+			wantVersion: "13",
 		},
 		{
 			name: "Amazon Linux",
@@ -460,6 +468,30 @@ ID=debian`,
 	}
 }
 
+func TestGetOSInfoHonorsContext(t *testing.T) {
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	t.Cleanup(deadlineCancel)
+
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		wantErr error
+	}{
+		{name: "canceled", ctx: canceledCtx, wantErr: context.Canceled},
+		{name: "deadline exceeded", ctx: deadlineCtx, wantErr: context.DeadlineExceeded},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			osInfo, err := GetOSInfo(tt.ctx, []byte("NAME=Debian\nVERSION_ID=13"))
+			assert.Nil(t, osInfo)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
 func TestValidOSReleaseKey(t *testing.T) {
 	tests := []struct {
 		name string
@@ -487,16 +519,22 @@ func TestValidOSReleaseKey(t *testing.T) {
 }
 
 func TestParseOSReleaseAcceptsLowercaseExtensionKey(t *testing.T) {
-	values, err := parseOSRelease([]byte("NAME=Ubuntu\nVERSION_ID=24.04\nx_vendor_feature=enabled\n"))
+	values, err := parseOSRelease(context.Background(), []byte("NAME=Ubuntu\nVERSION_ID=24.04\nx_vendor_feature=enabled\n"))
 	assert.NoError(t, err)
 	assert.Equal(t, "enabled", values["x_vendor_feature"])
 }
 
 func TestParseOSReleaseShellEscapes(t *testing.T) {
-	values, err := parseOSRelease([]byte("NAME=Amazon\\ Linux\nVERSION_ID=2023\\ \n"))
+	values, err := parseOSRelease(context.Background(), []byte("NAME=Amazon\\ Linux\nVERSION_ID=2023\\ \n"))
 	assert.NoError(t, err)
 	assert.Equal(t, "Amazon Linux", values["NAME"])
 	assert.Equal(t, "2023 ", values["VERSION_ID"])
+}
+
+func TestParseOSReleaseRejectsOversizedInput(t *testing.T) {
+	values, err := parseOSRelease(context.Background(), make([]byte, maxOSReleaseSize+1))
+	assert.Nil(t, values)
+	assert.ErrorContains(t, err, "exceeds")
 }
 
 func TestParseOSReleaseValue(t *testing.T) {
@@ -619,6 +657,41 @@ func TestParseOSReleaseValue(t *testing.T) {
 		{
 			name:    "unescaped expansion in double quotes",
 			value:   `"Amazon $Linux"`,
+			wantErr: true,
+		},
+		{
+			name:    "double-quoted invalid UTF-8",
+			value:   string([]byte{'"', 'U', 0xff, '"'}),
+			wantErr: true,
+		},
+		{
+			name:    "unquoted invalid UTF-8",
+			value:   string([]byte{'U', 0xff}),
+			wantErr: true,
+		},
+		{
+			name:    "escaped invalid UTF-8",
+			value:   string([]byte{'U', '\\', 0xff}),
+			wantErr: true,
+		},
+		{
+			name:    "double-quoted control character",
+			value:   "\"Ubuntu\x00\"",
+			wantErr: true,
+		},
+		{
+			name:    "single-quoted control character",
+			value:   "'Ubuntu\x00'",
+			wantErr: true,
+		},
+		{
+			name:    "unquoted control character",
+			value:   "Ubuntu\x1b",
+			wantErr: true,
+		},
+		{
+			name:    "escaped control character",
+			value:   "Ubuntu\\\x00",
 			wantErr: true,
 		},
 	}
