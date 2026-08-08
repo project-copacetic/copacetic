@@ -24,7 +24,12 @@ import (
 //go:embed fixtures/test-images.json
 var testImages []byte
 
-const lastPatchedAnnotation = "sh.copa.image.patched"
+const (
+	lastPatchedAnnotation = "sh.copa.image.patched"
+	containerRunCommand   = "run"
+	removeContainerFlag   = "--rm"
+	noOpCommand           = "true"
+)
 
 type testImage struct {
 	OriginalImage   string   `json:"originalImage"`
@@ -123,7 +128,7 @@ func TestPatch(t *testing.T) {
 					// leaves the tag without its layer blobs; running "true" forces the daemon
 					// to pull/unpack the layers, then exits instantly. Without this, the
 					// subsequent Trivy scan can hit “snapshot … does not exist”.
-					cmd := exec.Command(imageRuntime, "run", "--rm", patchedArchRef, "true") // #nosec G204 -- runtime is selected from fixed constants.
+					cmd := exec.Command(imageRuntime, imageRunArgs(imageRuntime, patchedArchRef)...) // #nosec G204 -- runtime is selected from fixed constants.
 					out, err := cmd.CombinedOutput()
 					require.NoError(t, err, string(out))
 
@@ -151,6 +156,14 @@ func imageRuntimeForBuildkitAddress(addr string) string {
 	return imageloader.Docker
 }
 
+func imageRunArgs(runtime, ref string) []string {
+	args := []string{containerRunCommand}
+	if runtime == imageloader.Podman && strings.HasPrefix(ref, "localhost:5000/") {
+		args = append(args, "--tls-verify=false")
+	}
+	return append(args, removeContainerFlag, ref, noOpCommand)
+}
+
 func TestImageRuntimeForBuildkitAddress(t *testing.T) {
 	tests := []struct {
 		name string
@@ -166,6 +179,42 @@ func TestImageRuntimeForBuildkitAddress(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, imageRuntimeForBuildkitAddress(tt.addr))
+		})
+	}
+}
+
+func TestImageRunArgs(t *testing.T) {
+	const localPatchedRef = "localhost:5000/example:patched-amd64"
+
+	tests := []struct {
+		name    string
+		runtime string
+		ref     string
+		want    []string
+	}{
+		{
+			name:    "podman local HTTP registry",
+			runtime: imageloader.Podman,
+			ref:     localPatchedRef,
+			want:    []string{containerRunCommand, "--tls-verify=false", removeContainerFlag, localPatchedRef, noOpCommand},
+		},
+		{
+			name:    "podman external registry",
+			runtime: imageloader.Podman,
+			ref:     "example.com/example:patched-amd64",
+			want:    []string{containerRunCommand, removeContainerFlag, "example.com/example:patched-amd64", noOpCommand},
+		},
+		{
+			name:    "docker local registry",
+			runtime: imageloader.Docker,
+			ref:     localPatchedRef,
+			want:    []string{containerRunCommand, removeContainerFlag, localPatchedRef, noOpCommand},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, imageRunArgs(tt.runtime, tt.ref))
 		})
 	}
 }
