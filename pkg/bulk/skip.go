@@ -1,6 +1,7 @@
 package bulk
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -278,17 +279,25 @@ func extractTopLevelStringField(data []byte, field string) (string, error) {
 		i = skipJSONSpace(data, i)
 
 		if key == field || strings.EqualFold(key, field) {
-			if i >= len(data) || data[i] != '"' {
-				return "", fmt.Errorf("field %q is not a string", field)
-			}
-			valueStart := i
-			i, err = skipJSONString(data, i)
-			if err != nil {
-				return "", err
-			}
-			foundValue, err = decodeJSONStringToken(data[valueStart:i])
-			if err != nil {
-				return "", err
+			if i < len(data) && data[i] == '"' {
+				valueStart := i
+				i, err = skipJSONString(data, i)
+				if err != nil {
+					return "", err
+				}
+				foundValue, err = decodeJSONStringToken(data[valueStart:i])
+				if err != nil {
+					return "", err
+				}
+			} else {
+				valueStart := i
+				i, err = skipJSONValue(data, i)
+				if err != nil {
+					return "", err
+				}
+				if !bytes.Equal(data[valueStart:i], []byte("null")) {
+					return "", fmt.Errorf("field %q is not a string", field)
+				}
 			}
 		} else {
 			i, err = skipJSONValue(data, i)

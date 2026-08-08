@@ -22,6 +22,10 @@ func TestSplitManifestLines(t *testing.T) {
 		{name: "LF", input: "one\ntwo\n", want: []string{"one", "two"}},
 		{name: "CRLF", input: "one\r\ntwo\r\n", want: []string{"one", "two"}},
 		{name: "final CR", input: "one\r", want: []string{"one"}},
+		{name: "CR only", input: "\r", want: []string{""}},
+		{name: "empty CRLF line", input: "\r\n", want: []string{""}},
+		{name: "double CR before LF", input: "\r\r\n", want: []string{"\r"}},
+		{name: "embedded CR", input: "a\rb\r\n", want: []string{"a\rb"}},
 		{name: "blank line", input: "one\r\n\r\ntwo", want: []string{"one", "", "two"}},
 	}
 

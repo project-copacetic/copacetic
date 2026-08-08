@@ -375,6 +375,39 @@ func TestBuildReportIndex(t *testing.T) {
 	assert.Equal(t, 5, len(idx.refs), "Should only have 5 entries (invalid files skipped)")
 }
 
+func TestExtractTopLevelStringFieldCompatibility(t *testing.T) {
+	tests := []struct {
+		name    string
+		report  string
+		want    string
+		wantErr bool
+	}{
+		{name: "exact key", report: `{"ArtifactName":"a"}`, want: "a"},
+		{name: "folded key", report: `{"artifactName":"a"}`, want: "a"},
+		{name: "uppercase key", report: `{"ARTIFACTNAME":"a"}`, want: "a"},
+		{name: "escaped folded key", report: `{"artifact\u004Eame":"a"}`, want: "a"},
+		{name: "later folded key wins", report: `{"ArtifactName":"first","artifactname":"last"}`, want: "last"},
+		{name: "later exact key wins", report: `{"artifactname":"first","ArtifactName":"last"}`, want: "last"},
+		{name: "later null is ignored", report: `{"ArtifactName":"first","artifactname":null}`, want: "first"},
+		{name: "earlier null is ignored", report: `{"artifactname":null,"ArtifactName":"last"}`, want: "last"},
+		{name: "null only", report: `{"ArtifactName":null}`, want: ""},
+		{name: "nested key is ignored", report: `{"value":{"ArtifactName":"nested"}}`, want: ""},
+		{name: "number is rejected", report: `{"ArtifactName":1}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractTopLevelStringField([]byte(tt.report), "ArtifactName")
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestReportIndexLookup(t *testing.T) {
 	tests := []struct {
 		name        string
