@@ -1259,11 +1259,15 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 
 		// Found a match, trim prefix and drop the arch suffix to get version string
 		archIndex := strings.LastIndexByte(line, '\t')
-		version := line[nameLen+1:]
-		if archIndex > nameLen {
-			version = line[nameLen+1 : archIndex]
-		}
 		lineIndex++
+		if archIndex <= nameLen {
+			err := fmt.Errorf("unexpected result manifest entry %q for package %s: missing architecture", line, update.Name)
+			log.Error(err)
+			errorPkgs = append(errorPkgs, update.Name)
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+		version := line[nameLen+1 : archIndex]
 
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)
