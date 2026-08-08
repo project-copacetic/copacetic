@@ -1,8 +1,6 @@
 package pkgmgr
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -35,13 +33,7 @@ func pacmanReadResultsManifest(b []byte) ([]string, error) {
 	if b == nil {
 		return nil, fmt.Errorf("nil buffer provided")
 	}
-	buf := bytes.NewBuffer(b)
-	var lines []string
-	fs := bufio.NewScanner(buf)
-	for fs.Scan() {
-		lines = append(lines, fs.Text())
-	}
-	return lines, nil
+	return splitManifestLines(b), nil
 }
 
 func validatePacmanPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultBytes []byte, ignoreErrors bool) ([]string, error) {
@@ -56,14 +48,12 @@ func validatePacmanPackageVersions(updates unversioned.UpdatePackages, cmp Versi
 		return nil, err
 	}
 
-	sort.SliceStable(updates, func(i, j int) bool {
+	sort.Slice(updates, func(i, j int) bool {
 		return updates[i].Name < updates[j].Name
 	})
 	log.Debugf("Required updates: %s", updates)
 
-	sort.SliceStable(lines, func(i, j int) bool {
-		return lines[i] < lines[j]
-	})
+	sort.Strings(lines)
 	log.Debugf("Resulting updates: %s", lines)
 
 	lineIndex := 0
@@ -71,13 +61,18 @@ func validatePacmanPackageVersions(updates unversioned.UpdatePackages, cmp Versi
 	var allErrors []error
 
 	for _, update := range updates {
-		expectedPrefix := update.Name + " "
-		if lineIndex >= len(lines) || !strings.HasPrefix(lines[lineIndex], expectedPrefix) {
+		if lineIndex >= len(lines) {
+			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			continue
+		}
+		line := lines[lineIndex]
+		nameLen := len(update.Name)
+		if len(line) <= nameLen || line[:nameLen] != update.Name || line[nameLen] != ' ' {
 			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
 			continue
 		}
 
-		version := strings.TrimPrefix(lines[lineIndex], expectedPrefix)
+		version := line[nameLen+1:]
 		lineIndex++
 
 		if !cmp.IsValid(version) {

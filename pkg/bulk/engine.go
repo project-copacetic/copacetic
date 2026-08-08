@@ -30,6 +30,8 @@ type patchJobStatus struct {
 	Details string
 }
 
+var targetTagTemplateCache sync.Map // map[string]*template.Template
+
 // mergeTarget merges top-level target configuration with image-level target.
 // Image-level settings take precedence over top-level defaults.
 func mergeTarget(globalTarget, imageTarget TargetSpec) TargetSpec {
@@ -70,11 +72,13 @@ func buildTargetRepository(sourceImage, targetRegistry string) (string, error) {
 
 	// Extract the image name (last segment of the repository path)
 	repoStr := ref.Context().RepositoryStr()
-	repoParts := strings.Split(repoStr, "/")
-	imageName := repoParts[len(repoParts)-1]
+	imageName := repoStr
+	if idx := strings.LastIndexByte(repoStr, '/'); idx >= 0 {
+		imageName = repoStr[idx+1:]
+	}
 
 	// Combine target registry with image name
-	return fmt.Sprintf("%s/%s", strings.TrimSuffix(targetRegistry, "/"), imageName), nil
+	return strings.TrimSuffix(targetRegistry, "/") + "/" + imageName, nil
 }
 
 // PatchFromConfig orchestrates the bulk patching process based on a configuration file.
@@ -287,25 +291,42 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 
 // resolveTargetTag resolves the target tag for a patched image based on the provided TargetSpec and the source tag.
 func resolveTargetTag(target TargetSpec, sourceTag string) (string, error) {
-	tagTemplate := "{{ .SourceTag }}-patched"
-	// Use custom target tag if provided in the config.
-	if target.Tag != "" {
-		tagTemplate = target.Tag
+	if target.Tag == "" {
+		return sourceTag + "-patched", nil
 	}
 
-	tmpl, err := template.New("tag").Parse(tagTemplate)
+	tmpl, err := cachedTargetTagTemplate(target.Tag)
 	if err != nil {
-		return "", fmt.Errorf("invalid target tag template: %w", err)
+		return "", err
 	}
 
 	// Execute the template to generate the target tag.
 	data := struct{ SourceTag string }{SourceTag: sourceTag}
 	var builder strings.Builder
+	builder.Grow(len(sourceTag) + len(target.Tag))
 	if err := tmpl.Execute(&builder, data); err != nil {
 		return "", fmt.Errorf("failed to execute tag template: %w", err)
 	}
 
 	return builder.String(), nil
+}
+
+func cachedTargetTagTemplate(tagTemplate string) (*template.Template, error) {
+	if cached, ok := targetTagTemplateCache.Load(tagTemplate); ok {
+		if tmpl, ok := cached.(*template.Template); ok {
+			return tmpl, nil
+		}
+	}
+
+	tmpl, err := template.New("tag").Parse(tagTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid target tag template: %w", err)
+	}
+	cached, _ := targetTagTemplateCache.LoadOrStore(tagTemplate, tmpl)
+	if tmpl, ok := cached.(*template.Template); ok {
+		return tmpl, nil
+	}
+	return nil, fmt.Errorf("invalid cached target tag template for %q", tagTemplate)
 }
 
 // printSummary prints a formatted summary table of all patch jobs.
@@ -328,8 +349,7 @@ func printSummary(results []patchJobStatus) {
 		} else if res.Details != "" {
 			details = res.Details
 		}
-		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", res.Name, res.Status, res.Source, res.Target, details)
-		fmt.Fprintln(writer, row)
+		fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", res.Name, res.Status, res.Source, res.Target, details)
 	}
 
 	// Flush the writer to ensure all content is written to the buffer.

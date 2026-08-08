@@ -12,7 +12,6 @@ import (
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -40,10 +39,12 @@ var validPlatforms = []string{
 	"linux/riscv64",
 }
 
-// ArchTagSuffixes returns the set of architecture suffixes that Copa appends to base
-// tags when pushing per-architecture images (e.g. "386", "amd64", "arm-v7").
-// The list is derived from validPlatforms so it stays in sync automatically.
-func ArchTagSuffixes() []string {
+var (
+	validArchTagSuffixes = buildArchTagSuffixes()
+	validPlatformSpecs   = buildValidPlatformSpecs()
+)
+
+func buildArchTagSuffixes() []string {
 	suffixes := make([]string, 0, len(validPlatforms))
 	for _, p := range validPlatforms {
 		spec, err := platforms.Parse(p)
@@ -59,12 +60,33 @@ func ArchTagSuffixes() []string {
 	return suffixes
 }
 
+func buildValidPlatformSpecs() map[string]ispec.Platform {
+	platformSpecs := make(map[string]ispec.Platform, len(validPlatforms))
+	for _, p := range validPlatforms {
+		spec, err := platforms.Parse(p)
+		if err != nil {
+			continue
+		}
+		platformSpecs[p] = platforms.Normalize(spec)
+	}
+	return platformSpecs
+}
+
+// ArchTagSuffixes returns the set of architecture suffixes that Copa appends to base
+// tags when pushing per-architecture images (e.g. "386", "amd64", "arm-v7").
+// The list is derived from validPlatforms so it stays in sync automatically.
+func ArchTagSuffixes() []string {
+	suffixes := make([]string, len(validArchTagSuffixes))
+	copy(suffixes, validArchTagSuffixes)
+	return suffixes
+}
+
 // archTag returns "patched-arm64" or "patched-arm-v7" etc.
 func archTag(base, arch, variant string) string {
 	if variant != "" {
-		return fmt.Sprintf("%s-%s-%s", base, arch, variant)
+		return base + "-" + arch + "-" + variant
 	}
-	return fmt.Sprintf("%s-%s", base, arch)
+	return base + "-" + arch
 }
 
 // normalizeConfigForPlatform adjusts the image configuration for a specific platform.
@@ -91,35 +113,35 @@ func normalizeConfigForPlatform(j []byte, p *types.PatchPlatform) ([]byte, error
 
 // filterPlatforms filters discovered platforms based on user-specified target platforms.
 func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms []string) []types.PatchPlatform {
-	var filtered []types.PatchPlatform
+	filtered := make([]types.PatchPlatform, 0, len(targetPlatforms))
+	discoveredByPlatform := make(map[string]types.PatchPlatform, len(discoveredPlatforms))
+	for _, discovered := range discoveredPlatforms {
+		key := platformMatchKey(discovered.OS, discovered.Architecture, discovered.Variant)
+		if _, ok := discoveredByPlatform[key]; !ok {
+			discoveredByPlatform[key] = discovered
+		}
+	}
 
 	for _, target := range targetPlatforms {
 		// Validate platform against allowed list
-		if !slices.Contains(validPlatforms, target) {
+		targetPlatform, ok := validPlatformSpecs[target]
+		if !ok {
 			log.Warnf("Platform %s is not in the list of valid platforms: %v", target, validPlatforms)
 			continue
 		}
 
-		targetPlatform, err := platforms.Parse(target)
-		if err != nil {
-			log.Warnf("Invalid platform format %s: %v", target, err)
-			continue
-		}
-		targetPlatform = platforms.Normalize(targetPlatform)
-
-		for _, discovered := range discoveredPlatforms {
-			// Use exact matching instead of platforms.Match to avoid cross-architecture matching
-			// This will prevent matching amd64 with 386 even though they're both x86 family
-			if targetPlatform.OS == discovered.OS &&
-				targetPlatform.Architecture == discovered.Architecture &&
-				targetPlatform.Variant == discovered.Variant {
-				filtered = append(filtered, discovered)
-				break
-			}
+		// Use exact matching instead of platforms.Match to avoid cross-architecture matching.
+		// This prevents matching amd64 with 386 even though they're both x86 family.
+		if discovered, ok := discoveredByPlatform[platformMatchKey(targetPlatform.OS, targetPlatform.Architecture, targetPlatform.Variant)]; ok {
+			filtered = append(filtered, discovered)
 		}
 	}
 
 	return filtered
+}
+
+func platformMatchKey(os, architecture, variant string) string {
+	return os + "\x00" + architecture + "\x00" + variant
 }
 
 // getPlatformDescriptorFromManifest gets the descriptor for a specific platform from a multi-arch manifest.

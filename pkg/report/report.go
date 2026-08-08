@@ -30,6 +30,13 @@ type ScanReportParser interface {
 	ParseWithLibraryPatchLevel(string, string) (*unversioned.UpdateManifest, error)
 }
 
+// packageTypeScanReportParser lets parsers skip work for update classes that
+// defaultParseScanReport will filter out by pkg-types. Parsers that do not
+// implement it keep the ScanReportParser behavior above.
+type packageTypeScanReportParser interface {
+	ParseWithPackageTypes(string, string, string) (*unversioned.UpdateManifest, error)
+}
+
 func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
 		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
@@ -83,7 +90,13 @@ func defaultParseScanReport(file, pkgTypes, libraryPatchLevel string) (*unversio
 		&TrivyParser{},
 	}
 	for _, parser := range allParsers {
-		manifest, err := parser.ParseWithLibraryPatchLevel(file, libraryPatchLevel)
+		var manifest *unversioned.UpdateManifest
+		var err error
+		if pkgTypeParser, ok := parser.(packageTypeScanReportParser); ok {
+			manifest, err = pkgTypeParser.ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel)
+		} else {
+			manifest, err = parser.ParseWithLibraryPatchLevel(file, libraryPatchLevel)
+		}
 		if err == nil {
 			// Filter updates based on pkg-types early
 			if manifest != nil {

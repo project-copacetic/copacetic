@@ -368,6 +368,16 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 			resultsBytes:  rpmValidManifest,
 			expectedError: `expected 1 updates, installed 2`,
 		},
+		{
+			name: "result missing architecture",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
+			},
+			cmp:             rpmComparer,
+			resultsBytes:    []byte("openssl\t2.1.1k-21.cm2\n"),
+			expectedError:   `unexpected result manifest entry "openssl\t2.1.1k-21.cm2" for package openssl: missing architecture`,
+			expectedErrPkgs: []string{"openssl"},
+		},
 	}
 
 	for _, tc := range testCases {
