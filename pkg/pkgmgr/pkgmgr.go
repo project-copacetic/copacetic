@@ -121,7 +121,11 @@ func splitManifestLines(b []byte) []string {
 	}
 	s := string(b)
 	s = strings.TrimSuffix(s, "\n")
-	return strings.Split(s, "\n")
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSuffix(lines[i], "\r")
+	}
+	return lines
 }
 
 type VersionComparer struct {

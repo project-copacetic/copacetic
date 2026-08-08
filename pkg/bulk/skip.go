@@ -277,7 +277,7 @@ func extractTopLevelStringField(data []byte, field string) (string, error) {
 		i++
 		i = skipJSONSpace(data, i)
 
-		if key == field {
+		if key == field || strings.EqualFold(key, field) {
 			if i >= len(data) || data[i] != '"' {
 				return "", fmt.Errorf("field %q is not a string", field)
 			}

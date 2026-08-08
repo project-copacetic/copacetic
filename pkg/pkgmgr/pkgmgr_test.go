@@ -12,6 +12,26 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestSplitManifestLines(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{name: "empty", input: "", want: nil},
+		{name: "LF", input: "one\ntwo\n", want: []string{"one", "two"}},
+		{name: "CRLF", input: "one\r\ntwo\r\n", want: []string{"one", "two"}},
+		{name: "final CR", input: "one\r", want: []string{"one"}},
+		{name: "blank line", input: "one\r\n\r\ntwo", want: []string{"one", "", "two"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, splitManifestLines([]byte(tt.input)))
+		})
+	}
+}
+
 // TestGetPackageManager tests the GetPackageManager function.
 func TestGetPackageManager(t *testing.T) {
 	// Create a mock config and workingFolder
