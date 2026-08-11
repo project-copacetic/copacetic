@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.889373a3.css">
-<script src="/copacetic/website/assets/js/runtime~main.943e8689.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.c830aabb.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.5718b696.js" defer="defer"></script>
 </head>
 <body>
@@ -28,14 +28,15 @@
 </ul>
 <p>For more information, please see <a class="" href="/copacetic/website/next/app-level-patching">application-level patching</a>.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="what-kind-of-vulnerabilities-can-copa-not-patch">What kind of vulnerabilities can Copa not patch?<a href="#what-kind-of-vulnerabilities-can-copa-not-patch" class="hash-link" aria-label="Direct link to What kind of vulnerabilities can Copa not patch?" title="Direct link to What kind of vulnerabilities can Copa not patch?" translate="no">​</a></h2>
-<p>Copa has limited support for compiled binaries built from source. While Copa can update Go module dependencies in <code>go.mod</code> files, it <strong>does not automatically rebuild compiled Go binaries</strong>. If your application is a compiled Go binary that embeds a vulnerable module like <code>golang.org/x/net</code>, Copa will update the <code>go.mod</code> file but the running binary will still contain the vulnerable code until it is rebuilt.</p>
+<p>Copa has limited support for compiled binaries built from source. By default, Copa updates Go module dependencies in <code>go.mod</code> and <code>go.sum</code> files but <strong>does not automatically rebuild compiled Go binaries</strong>. If your application is a compiled Go binary that embeds a vulnerable module like <code>golang.org/x/net</code>, Copa updates the module files, but the running binary will still contain the vulnerable code until it is rebuilt.</p>
+<div class="theme-admonition theme-admonition-note admonition_xJq3 alert alert--secondary"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 14 16"><path fill-rule="evenodd" d="M6.3 5.69a.942.942 0 0 1-.28-.7c0-.28.09-.52.28-.7.19-.18.42-.28.7-.28.28 0 .52.09.7.28.18.19.28.42.28.7 0 .28-.09.52-.28.7a1 1 0 0 1-.7.3c-.28 0-.52-.11-.7-.3zM8 7.99c-.02-.25-.11-.48-.31-.69-.2-.19-.42-.3-.69-.31H6c-.27.02-.48.13-.69.31-.2.2-.3.44-.31.69h1v3c.02.27.11.5.31.69.2.2.42.31.69.31h1c.27 0 .48-.11.69-.31.2-.19.3-.42.31-.69H8V7.98v.01zM7 2.3c-3.14 0-5.7 2.54-5.7 5.68 0 3.14 2.56 5.7 5.7 5.7s5.7-2.55 5.7-5.7c0-3.15-2.56-5.69-5.7-5.69v.01zM7 .98c3.86 0 7 3.14 7 7s-3.14 7-7 7-7-3.12-7-7 3.14-7 7-7z"></path></svg></span>Experimental: Go binary rebuilding</div><div class="admonitionContent_BuS1"><p>Copa also has experimental support for rebuilding compiled Go binaries with patched dependencies (and Go stdlib via <code>--toolchain-patch-level</code>). Enable it with <code>COPA_EXPERIMENTAL=1</code> together with <code>--pkg-types library</code>. See <a class="" href="/copacetic/website/next/app-level-patching#experimental-go-binary-rebuilding">application-level patching — Go binary rebuilding</a> for the requirements and limitations.</p></div></div>
 <p>For applications that are compiled binaries:</p>
 <ul>
 <li class="">Copa updates <code>go.mod</code> and <code>go.sum</code> files with fixed dependency versions</li>
 <li class="">The updated module files can be used for subsequent builds</li>
-<li class="">The compiled binary itself is not automatically patched</li>
+<li class="">The compiled binary itself is not patched unless the experimental binary rebuild is enabled</li>
 </ul>
-<p>To fully patch compiled binary vulnerabilities:</p>
+<p>To fully patch compiled binary vulnerabilities without the experimental rebuild:</p>
 <ol>
 <li class="">Use Copa to update the module dependencies</li>
 <li class="">Rebuild the application with the updated dependencies</li>
@@ -92,7 +93,7 @@
 </ul>
 </li>
 </ol>
-<p><strong>Note</strong>: Copa updates <code>go.mod</code> and <code>go.sum</code> files but does not automatically rebuild compiled Go binaries. See <a href="#what-kind-of-vulnerabilities-can-copa-not-patch" class="">What kind of vulnerabilities can Copa not patch?</a> for more information.</p>
+<p><strong>Note</strong>: By default, Copa updates <code>go.mod</code> and <code>go.sum</code> files but does not automatically rebuild compiled Go binaries. An experimental binary rebuild feature is available — see <a class="" href="/copacetic/website/next/app-level-patching#experimental-go-binary-rebuilding">application-level patching — Go binary rebuilding</a> or <a href="#what-kind-of-vulnerabilities-can-copa-not-patch" class="">What kind of vulnerabilities can Copa not patch?</a> for more information.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="after-copa-patched-the-image-why-does-the-scanner-still-show-patched-os-package-vulnerabilities">After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?<a href="#after-copa-patched-the-image-why-does-the-scanner-still-show-patched-os-package-vulnerabilities" class="hash-link" aria-label="Direct link to After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?" title="Direct link to After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?" translate="no">​</a></h2>
 <p>After scanning the patched image, if you’re still seeing vulnerabilities that have already been addressed in the patch layer, it could be due to the scanner reporting issues on each individual layer. Please reach out to your scanner vendor for assistance in resolving this.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="can-i-replace-the-package-repositories-in-the-image-with-my-own">Can I replace the package repositories in the image with my own?<a href="#can-i-replace-the-package-repositories-in-the-image-with-my-own" class="hash-link" aria-label="Direct link to Can I replace the package repositories in the image with my own?" title="Direct link to Can I replace the package repositories in the image with my own?" translate="no">​</a></h2>
