@@ -15,14 +15,18 @@ For more information, please see [application-level patching](app-level-patching
 
 ## What kind of vulnerabilities can Copa not patch?
 
-Copa has limited support for compiled binaries built from source. While Copa can update Go module dependencies in `go.mod` files, it **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa will update the `go.mod` file but the running binary will still contain the vulnerable code until it is rebuilt.
+Copa has limited support for compiled binaries built from source. By default, Copa updates Go module dependencies in `go.mod` and `go.sum` files but **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa updates the module files, but the running binary will still contain the vulnerable code until it is rebuilt.
+
+:::note Experimental: Go binary rebuilding
+Copa also has experimental support for rebuilding compiled Go binaries with patched dependencies (and Go stdlib via `--toolchain-patch-level`). Enable it with `COPA_EXPERIMENTAL=1` together with `--pkg-types library`. See [application-level patching — Go binary rebuilding](app-level-patching.md#experimental-go-binary-rebuilding) for the requirements and limitations.
+:::
 
 For applications that are compiled binaries:
 - Copa updates `go.mod` and `go.sum` files with fixed dependency versions
 - The updated module files can be used for subsequent builds
-- The compiled binary itself is not automatically patched
+- The compiled binary itself is not patched unless the experimental binary rebuild is enabled
 
-To fully patch compiled binary vulnerabilities:
+To fully patch compiled binary vulnerabilities without the experimental rebuild:
 1. Use Copa to update the module dependencies
 2. Rebuild the application with the updated dependencies
 3. Replace the old binary with the newly built one
@@ -95,7 +99,7 @@ When updating Go modules:
     - Perform module updates in the tooling container
     - Copy updated files back to the target image
 
-**Note**: Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. See [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
+**Note**: By default, Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. An experimental binary rebuild feature is available — see [application-level patching — Go binary rebuilding](app-level-patching.md#experimental-go-binary-rebuilding) or [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
 
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 
