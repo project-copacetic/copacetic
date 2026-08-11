@@ -1,10 +1,11 @@
 [
   {
-    "originalImage": "docker.io/library/nginx",
-    "localImage": "localhost:5000/nginx",
-    "tag": "1.27.0",
+    "originalImage": "docker.io/library/debian",
+    "digest": "sha256:c85a2732e97694ea77237c61304b3bb410e0e961dd6ee945997a06c788c545bb",
+    "localImage": "localhost:5000/debian",
+    "tag": "13.0-slim",
     "distro": "debian",
-    "description": "Multi-platform nginx 1.27.0, with push",
+    "description": "Multi-platform Debian 13.0 slim, with push",
     "ignoreErrors": false,
     "push": true,
     "platforms": [
@@ -114,6 +115,33 @@
     "tag": "15.7-5.8.29",
     "distro": "sles",
     "description": "Multi-platform bci/bci-base:15.7-5.8.29, no push",
+    "ignoreErrors": false,
+    "push": false,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "registry.suse.com/bci/bci-base",
+    "localImage": "localhost:5000/bci-bci-base",
+    "tag": "16.0-19.4",
+    "distro": "sles",
+    "description": "Multi-platform bci/bci-base:16.0-19.4, with push",
+    "ignoreErrors": false,
+    "push": true,
+    "skipAnnotations": true,
+    "platforms": [
+      "linux/amd64",
+      "linux/arm64"
+    ]
+  },
+  {
+    "originalImage": "registry.suse.com/bci/bci-base",
+    "localImage": "localhost:5000/bci-bci-base",
+    "tag": "16.0-19.4",
+    "distro": "sles",
+    "description": "Multi-platform bci/bci-base:16.0-19.4, no push",
     "ignoreErrors": false,
     "push": false,
     "platforms": [

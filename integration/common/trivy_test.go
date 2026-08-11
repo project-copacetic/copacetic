@@ -35,3 +35,29 @@ func TestTrivyDBRepositoriesArePinnedByDigest(t *testing.T) {
 			"composed --db-repository value must contain exactly two pinned digests")
 	})
 }
+
+func TestIsTransientScanError(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{name: "unexpected EOF", output: "unexpected EOF", want: true},
+		{name: "connection reset", output: "read: connection reset by peer", want: true},
+		{name: "deadline exceeded", output: "context deadline exceeded", want: true},
+		{name: "cache lock", output: "cache may be in use by another process", want: true},
+		{
+			name:   "HTTP2 stream canceled by registry",
+			output: `remote error: Get "https://mcr.microsoft.com/v2/": stream error: stream ID 1; CANCEL; received from peer`,
+			want:   true,
+		},
+		{name: "non-transient registry error", output: "MANIFEST_UNKNOWN: manifest unknown", want: false},
+		{name: "unrelated cancellation", output: "operation CANCEL; received from peer", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isTransientScanError(tt.output))
+		})
+	}
+}
