@@ -770,6 +770,10 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 	packageVersion := ""
 	packageArchitecture := ""
 	packageStatus := ""
+	packageFieldSeen := false
+	versionFieldSeen := false
+	architectureFieldSeen := false
+	statusFieldSeen := false
 
 	flushParagraph := func() error {
 		if !paragraphHasData {
@@ -823,6 +827,10 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 		packageVersion = ""
 		packageArchitecture = ""
 		packageStatus = ""
+		packageFieldSeen = false
+		versionFieldSeen = false
+		architectureFieldSeen = false
+		statusFieldSeen = false
 		return nil
 	}
 
@@ -843,14 +851,30 @@ func parseDPKGStatus(contents []byte) (parsedDPKGStatus, error) {
 		if !ok {
 			return parsedDPKGStatus{}, fmt.Errorf("paragraph %d contains malformed field %q", paragraphNumber+1, line)
 		}
-		switch field {
-		case dpkgPackageField:
+		switch {
+		case strings.EqualFold(field, dpkgPackageField):
+			if packageFieldSeen {
+				return parsedDPKGStatus{}, fmt.Errorf("paragraph %d contains duplicate %s fields", paragraphNumber+1, dpkgPackageField)
+			}
+			packageFieldSeen = true
 			packageName = strings.TrimSpace(value)
-		case "Version":
+		case strings.EqualFold(field, "Version"):
+			if versionFieldSeen {
+				return parsedDPKGStatus{}, fmt.Errorf("paragraph %d contains duplicate Version fields", paragraphNumber+1)
+			}
+			versionFieldSeen = true
 			packageVersion = strings.TrimSpace(value)
-		case dpkgArchitectureField:
+		case strings.EqualFold(field, dpkgArchitectureField):
+			if architectureFieldSeen {
+				return parsedDPKGStatus{}, fmt.Errorf("paragraph %d contains duplicate %s fields", paragraphNumber+1, dpkgArchitectureField)
+			}
+			architectureFieldSeen = true
 			packageArchitecture = strings.TrimSpace(value)
-		case "Status":
+		case strings.EqualFold(field, "Status"):
+			if statusFieldSeen {
+				return parsedDPKGStatus{}, fmt.Errorf("paragraph %d contains duplicate Status fields", paragraphNumber+1)
+			}
+			statusFieldSeen = true
 			packageStatus = strings.TrimSpace(value)
 		}
 	}

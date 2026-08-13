@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-if (( $# != 4 )); then
-	echo "usage: $0 <image@sha256:digest> <expected-version> <expected-commit> <report-path>" >&2
+if (( $# < 4 || $# > 5 )); then
+	echo "usage: $0 <image@sha256:digest> <expected-version> <expected-commit> <report-path> [expected-validator-source-sha256]" >&2
 	exit 2
 fi
 
@@ -11,6 +11,7 @@ readonly image_ref="$1"
 readonly expected_version="$2"
 readonly expected_commit="$3"
 readonly report_path="$4"
+readonly expected_validator_source_sha256="${5:-}"
 readonly image_name="${image_ref%@*}"
 readonly image_digest="${image_ref##*@}"
 work_dir="$(mktemp -d)"
@@ -37,6 +38,9 @@ fail() {
 
 if [[ "${image_name}" == "${image_ref}" || ! "${image_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
 	fail "image reference must be pinned by sha256 digest: ${image_ref}"
+fi
+if [[ -n "${expected_validator_source_sha256}" && ! "${expected_validator_source_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+	fail "expected validator source checksum must be a lowercase SHA-256 digest"
 fi
 
 mkdir -p "$(dirname -- "${report_path}")"
@@ -75,9 +79,12 @@ docker pull --platform linux/amd64 "${image_ref}" >/dev/null
 	echo "- Reference: \`${image_ref}\`"
 	echo "- Expected Chisel version: \`${expected_version}\`"
 	echo "- Expected Chisel commit: \`${expected_commit}\`"
+	if [[ -n "${expected_validator_source_sha256}" ]]; then
+		echo "- Expected validator source SHA-256: \`${expected_validator_source_sha256}\`"
+	fi
 	echo
-	echo "| Platform | Image manifest | Provenance | SBOM | Commit label |"
-	echo "| --- | --- | --- | --- | --- |"
+	echo "| Platform | Image manifest | Provenance | SBOM | Chisel commit | Validator source |"
+	echo "| --- | --- | --- | --- | --- | --- |"
 } >"${report_path}"
 
 for platform in "${expected_platforms[@]}"; do
@@ -113,6 +120,16 @@ for platform in "${expected_platforms[@]}"; do
 		--format '{{ index .Image.Config.Labels "org.opencontainers.image.version" }}')"
 	if [[ "${actual_version}" != "${expected_version}" ]]; then
 		fail "${platform} has org.opencontainers.image.version=${actual_version:-<missing>}, expected ${expected_version}"
+	fi
+
+	validator_source_report="not checked"
+	if [[ -n "${expected_validator_source_sha256}" ]]; then
+		actual_validator_source_sha256="$(docker buildx imagetools inspect "${image_name}@${platform_digest}" \
+			--format '{{ index .Image.Config.Labels "sh.copa.validator.source-sha256" }}')"
+		if [[ "${actual_validator_source_sha256}" != "${expected_validator_source_sha256}" ]]; then
+			fail "${platform} has sh.copa.validator.source-sha256=${actual_validator_source_sha256:-<missing>}, expected ${expected_validator_source_sha256}"
+		fi
+		validator_source_report="${actual_validator_source_sha256}"
 	fi
 
 	attestation_digests=()
@@ -158,8 +175,8 @@ for platform in "${expected_platforms[@]}"; do
 		fail "${platform} is missing an SPDX SBOM attestation"
 	fi
 
-	printf "| \`%s\` | \`%s\` | yes | yes | \`%s\` |\n" \
-		"${platform}" "${platform_digest}" "${actual_commit}" >>"${report_path}"
+	printf "| \`%s\` | \`%s\` | yes | yes | \`%s\` | \`%s\` |\n" \
+		"${platform}" "${platform_digest}" "${actual_commit}" "${validator_source_report}" >>"${report_path}"
 done
 
 {

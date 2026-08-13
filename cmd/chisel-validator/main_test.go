@@ -17,7 +17,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const baseFilesSlice = "base_files"
+const (
+	baseFilesSlice            = "base_files"
+	linksDirectory            = "/links/"
+	managedDirectory          = "/managed/"
+	managedObsoleteDirectory  = "/managed/obsolete/"
+	obsoletePathComponentName = "obsolete"
+)
 
 func TestValidate(t *testing.T) {
 	root := t.TempDir()
@@ -181,9 +187,9 @@ func TestValidateRejectsSplitHardLinkGroup(t *testing.T) {
 func TestReconcilePreservesUnmanagedContentAndHardLinks(t *testing.T) {
 	target := t.TempDir()
 	staged := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(target, "managed", "obsolete"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "managed", obsoletePathComponentName), 0o755))
 	writeFileWithMode(t, filepath.Join(target, "managed", "file"), []byte("old"), 0o644)
-	require.NoError(t, os.WriteFile(filepath.Join(target, "managed", "obsolete", "old"), []byte("remove"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(target, "managed", obsoletePathComponentName, "old"), []byte("remove"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(target, "sentinel"), []byte("preserve"), 0o600))
 
 	require.NoError(t, os.MkdirAll(filepath.Join(staged, "managed"), 0o755))
@@ -193,13 +199,13 @@ func TestReconcilePreservesUnmanagedContentAndHardLinks(t *testing.T) {
 	digest := sha256.Sum256(content)
 
 	oldManifest := expectedManifest{Paths: []expectedPath{
-		{Path: "/managed/", Mode: "0755"},
+		{Path: managedDirectory, Mode: "0755"},
 		{Path: "/managed/file", Mode: "0644", SHA256: hashString("old"), Size: 3},
-		{Path: "/managed/obsolete/", Mode: "0755"},
+		{Path: managedObsoleteDirectory, Mode: "0755"},
 		{Path: "/managed/obsolete/old", Mode: "0600", SHA256: hashString("remove"), Size: 6},
 	}}
 	newManifest := expectedManifest{Paths: []expectedPath{
-		{Path: "/managed/", Mode: "0755"},
+		{Path: managedDirectory, Mode: "0755"},
 		{Path: "/managed/file", Mode: "0640", SHA256: hex.EncodeToString(digest[:]), Size: uint64(len(content)), Inode: 1},
 		{Path: "/managed/file-link", Mode: "0640", SHA256: hex.EncodeToString(digest[:]), Size: uint64(len(content)), Inode: 1},
 	}}
@@ -211,7 +217,7 @@ func TestReconcilePreservesUnmanagedContentAndHardLinks(t *testing.T) {
 	got, err = os.ReadFile(filepath.Join(target, "sentinel"))
 	require.NoError(t, err)
 	assert.Equal(t, []byte("preserve"), got)
-	_, err = os.Stat(filepath.Join(target, "managed", "obsolete"))
+	_, err = os.Stat(filepath.Join(target, "managed", obsoletePathComponentName))
 	assert.ErrorIs(t, err, os.ErrNotExist)
 	one, err := os.Stat(filepath.Join(target, "managed", "file"))
 	require.NoError(t, err)
@@ -223,30 +229,30 @@ func TestReconcilePreservesUnmanagedContentAndHardLinks(t *testing.T) {
 func TestReconcilePreservesUnmanagedContentInObsoleteManagedDirectory(t *testing.T) {
 	target := t.TempDir()
 	staged := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(target, "managed", "obsolete"), 0o755))
-	sentinel := filepath.Join(target, "managed", "obsolete", "application-data")
+	require.NoError(t, os.MkdirAll(filepath.Join(target, "managed", obsoletePathComponentName), 0o755))
+	sentinel := filepath.Join(target, "managed", obsoletePathComponentName, "application-data")
 	writeFileWithMode(t, sentinel, []byte("preserve"), 0o600)
 	require.NoError(t, os.Mkdir(filepath.Join(staged, "managed"), 0o755))
 
 	oldManifest := expectedManifest{Paths: []expectedPath{
-		{Path: "/managed/", Mode: "0755"},
-		{Path: "/managed/obsolete/", Mode: "0755"},
+		{Path: managedDirectory, Mode: "0755"},
+		{Path: managedObsoleteDirectory, Mode: "0755"},
 	}}
-	newManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0755"}}}
+	newManifest := expectedManifest{Paths: []expectedPath{{Path: managedDirectory, Mode: "0755"}}}
 
 	require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
 	got, err := os.ReadFile(sentinel)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("preserve"), got)
-	assert.DirExists(t, filepath.Join(target, "managed", "obsolete"))
+	assert.DirExists(t, filepath.Join(target, "managed", obsoletePathComponentName))
 	require.NoError(t, validate(target, newManifest))
 }
 
 func TestReconcileRemovesNestedManagedBranchAndPreservesUnmanagedBranch(t *testing.T) {
 	target := t.TempDir()
 	staged := t.TempDir()
-	managedBranch := filepath.Join(target, "managed", "obsolete", "remove", "deep")
-	unmanagedBranch := filepath.Join(target, "managed", "obsolete", "keep")
+	managedBranch := filepath.Join(target, "managed", obsoletePathComponentName, "remove", "deep")
+	unmanagedBranch := filepath.Join(target, "managed", obsoletePathComponentName, "keep")
 	require.NoError(t, os.MkdirAll(managedBranch, 0o755))
 	require.NoError(t, os.MkdirAll(unmanagedBranch, 0o755))
 	managedFile := filepath.Join(managedBranch, "payload")
@@ -256,30 +262,30 @@ func TestReconcileRemovesNestedManagedBranchAndPreservesUnmanagedBranch(t *testi
 	require.NoError(t, os.Mkdir(filepath.Join(staged, "managed"), 0o755))
 
 	oldManifest := expectedManifest{Paths: []expectedPath{
-		{Path: "/managed/", Mode: "0755"},
-		{Path: "/managed/obsolete/", Mode: "0755"},
+		{Path: managedDirectory, Mode: "0755"},
+		{Path: managedObsoleteDirectory, Mode: "0755"},
 		{Path: "/managed/obsolete/remove/", Mode: "0755"},
 		{Path: "/managed/obsolete/remove/deep/", Mode: "0755"},
 		{Path: "/managed/obsolete/remove/deep/payload", Mode: "0600", SHA256: hashString("remove"), Size: 6},
 		{Path: "/managed/obsolete/keep/", Mode: "0755"},
 	}}
-	newManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0755"}}}
+	newManifest := expectedManifest{Paths: []expectedPath{{Path: managedDirectory, Mode: "0755"}}}
 
 	require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
-	_, err := os.Lstat(filepath.Join(target, "managed", "obsolete", "remove"))
+	_, err := os.Lstat(filepath.Join(target, "managed", obsoletePathComponentName, "remove"))
 	assert.ErrorIs(t, err, os.ErrNotExist)
 	got, err := os.ReadFile(unmanagedFile)
 	require.NoError(t, err)
 	assert.Equal(t, []byte("preserve"), got)
-	assert.DirExists(t, filepath.Join(target, "managed", "obsolete", "keep"))
-	assert.DirExists(t, filepath.Join(target, "managed", "obsolete"))
+	assert.DirExists(t, filepath.Join(target, "managed", obsoletePathComponentName, "keep"))
+	assert.DirExists(t, filepath.Join(target, "managed", obsoletePathComponentName))
 	require.NoError(t, validate(target, newManifest))
 }
 
 func TestIsDirectoryNotEmptyError(t *testing.T) {
-	assert.True(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: "obsolete", Err: syscall.ENOTEMPTY}))
-	assert.True(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: "obsolete", Err: syscall.EEXIST}))
-	assert.False(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: "obsolete", Err: syscall.EPERM}))
+	assert.True(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: obsoletePathComponentName, Err: syscall.ENOTEMPTY}))
+	assert.True(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: obsoletePathComponentName, Err: syscall.EEXIST}))
+	assert.False(t, isDirectoryNotEmptyError(&os.PathError{Op: "remove", Path: obsoletePathComponentName, Err: syscall.EPERM}))
 }
 
 func TestRemoveManagedPathReturnsUnexpectedDirectoryRemovalError(t *testing.T) {
@@ -289,7 +295,7 @@ func TestRemoveManagedPathReturnsUnexpectedDirectoryRemovalError(t *testing.T) {
 
 	target := t.TempDir()
 	locked := filepath.Join(target, "locked")
-	obsolete := filepath.Join(locked, "obsolete")
+	obsolete := filepath.Join(locked, obsoletePathComponentName)
 	require.NoError(t, os.MkdirAll(obsolete, 0o755))
 	root, err := os.OpenRoot(target)
 	require.NoError(t, err)
@@ -316,7 +322,7 @@ func TestReconcileHardLinkedSymlinks(t *testing.T) {
 	linkMode := symlinkMode(t, first)
 
 	manifest := expectedManifest{Paths: []expectedPath{
-		{Path: "/links/", Mode: "0755"},
+		{Path: linksDirectory, Mode: "0755"},
 		{Path: "/links/first", Mode: linkMode, Link: "../target", Inode: 7},
 		{Path: "/links/second", Mode: linkMode, Link: "../target", Inode: 7},
 	}}
@@ -352,7 +358,7 @@ func TestReconcileRejectsInvalidHardLinkedSymlinksBeforeMutation(t *testing.T) {
 				link := filepath.Join(staged, "links", "link")
 				require.NoError(t, os.Symlink("target", link))
 				return expectedManifest{Paths: []expectedPath{
-					{Path: "/links/", Mode: "0755"},
+					{Path: linksDirectory, Mode: "0755"},
 					{Path: "/links/file", Mode: "0644", SHA256: hashString("content"), Size: 7, Inode: 9},
 					{Path: "/links/link", Mode: symlinkMode(t, link), Link: "target", Inode: 9},
 				}}
@@ -369,7 +375,7 @@ func TestReconcileRejectsInvalidHardLinkedSymlinksBeforeMutation(t *testing.T) {
 				linkWithinRoot(t, staged, "links/first", "links/second")
 				linkMode := symlinkMode(t, first)
 				return expectedManifest{Paths: []expectedPath{
-					{Path: "/links/", Mode: "0755"},
+					{Path: linksDirectory, Mode: "0755"},
 					{Path: "/links/first", Mode: linkMode, Link: "actual-target", Inode: 10},
 					{Path: "/links/second", Mode: linkMode, Link: "different-target", Inode: 10},
 				}}
@@ -406,7 +412,7 @@ func TestReconcileManagedPathTypeTransitions(t *testing.T) {
 		content := []byte("replacement")
 		writeFileWithMode(t, filepath.Join(staged, "managed"), content, 0o640)
 
-		oldManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0755"}}}
+		oldManifest := expectedManifest{Paths: []expectedPath{{Path: managedDirectory, Mode: "0755"}}}
 		newManifest := expectedManifest{Paths: []expectedPath{{
 			Path:   "/managed",
 			Mode:   "0640",
@@ -435,7 +441,7 @@ func TestReconcileManagedPathTypeTransitions(t *testing.T) {
 			SHA256: hashString("old"),
 			Size:   3,
 		}}}
-		newManifest := expectedManifest{Paths: []expectedPath{{Path: "/managed/", Mode: "0750"}}}
+		newManifest := expectedManifest{Paths: []expectedPath{{Path: managedDirectory, Mode: "0750"}}}
 
 		require.NoError(t, reconcile(target, staged, oldManifest, newManifest))
 		info, err := os.Lstat(filepath.Join(target, "managed"))

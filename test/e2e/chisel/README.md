@@ -111,4 +111,5 @@ currently limited to tooling-image execution plus Copa's architecture-mapping
 unit tests because no suitable digest-pinned real-image patch fixtures are in
 the suite. The publication workflow separately verifies every supported
 tooling-image platform, SBOM and provenance attestations,
-commit labels, and amd64/arm64 tooling runtime behavior.
+Chisel commit labels, the validator source checksum, and amd64/arm64 tooling
+runtime behavior.

@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: publish-chisel-tooling-v1.4.2
+  group: publish-chisel-tooling-v1.4.2-copa.1
   cancel-in-progress: false
 
 env:
   CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
   CHISEL_VERSION: v1.4.2
   IMAGE_NAME: ghcr.io/project-copacetic/copacetic/chisel
-  IMAGE_TAG: v1.4.2
+  IMAGE_TAG: v1.4.2-copa.1
   PLATFORMS: linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/ppc64le,linux/s390x,linux/riscv64
 
 permissions:
@@ -77,11 +77,13 @@ jobs:
         env:
           METADATA_FILE: ${{ runner.temp }}/chisel-build-metadata.json
         run: |
+          validator_source_sha256="$(sha256sum cmd/chisel-validator/main.go | awk '{print $1}')"
           docker buildx build \
             --file images/chisel/Dockerfile \
             --platform "${PLATFORMS}" \
             --build-arg "CHISEL_VERSION=${CHISEL_VERSION}" \
             --build-arg "CHISEL_COMMIT=${CHISEL_COMMIT}" \
+            --build-arg "COPA_VALIDATOR_SOURCE_SHA256=${validator_source_sha256}" \
             --pull \
             --provenance=mode=max \
             --sbom=true \
@@ -90,20 +92,25 @@ jobs:
             .
 
           digest="$(jq -er '."containerimage.digest" | select(test("^sha256:[0-9a-f]{64}$"))' "${METADATA_FILE}")"
-          echo "digest=${digest}" >>"${GITHUB_OUTPUT}"
-          echo "reference=${IMAGE_NAME}@${digest}" >>"${GITHUB_OUTPUT}"
+          {
+            echo "digest=${digest}"
+            echo "reference=${IMAGE_NAME}@${digest}"
+            echo "validator_source_sha256=${validator_source_sha256}"
+          } >>"${GITHUB_OUTPUT}"
           printf '%s\n' "${digest}" >"${RUNNER_TEMP}/chisel-manifest-digest.txt"
 
       - name: Verify platforms, attestations, labels, and runtime
         env:
           IMAGE_REF: ${{ steps.build.outputs.reference }}
           REPORT_FILE: ${{ runner.temp }}/chisel-verification.md
+          VALIDATOR_SOURCE_SHA256: ${{ steps.build.outputs.validator_source_sha256 }}
         run: |
           .github/workflows/scripts/chisel/verify-image.sh \
             "${IMAGE_REF}" \
             "${CHISEL_VERSION}" \
             "${CHISEL_COMMIT}" \
-            "${REPORT_FILE}"
+            "${REPORT_FILE}" \
+            "${VALIDATOR_SOURCE_SHA256}"
 
       - name: Recheck immutable release tag
         env:

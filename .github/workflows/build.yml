@@ -1041,7 +1041,7 @@ jobs:
         shell: bash
         run: |
           set -eu -o pipefail
-          go test ./integration/chisel ./images/chisel/validator ./internal/testutil/chiselverify -count=1
+          go test ./integration/chisel ./cmd/chisel-validator ./internal/testutil/chiselverify -count=1
       - name: Run Ubuntu Chiseled e2e tests
         shell: bash
         run: |

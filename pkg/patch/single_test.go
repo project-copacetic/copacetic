@@ -3,6 +3,7 @@ package patch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -377,6 +378,16 @@ func TestLoadImageToRuntimeReturnsLoaderCreationErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "unknown loader \"definitely-not-a-runtime\"")
 		assert.True(t, tracker.closed)
 	})
+}
+
+func TestSelectPatchWaitErrorPreservesNoUpdatesSentinel(t *testing.T) {
+	t.Parallel()
+
+	loaderErr := errors.New("failed to load empty image stream")
+	wrappedNoUpdates := fmt.Errorf("native Chisel image is current: %w", types.ErrNoUpdatesFound)
+
+	assert.ErrorIs(t, selectPatchWaitError(loaderErr, wrappedNoUpdates), types.ErrNoUpdatesFound)
+	assert.Equal(t, loaderErr, selectPatchWaitError(loaderErr, context.Canceled))
 }
 
 func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T) {

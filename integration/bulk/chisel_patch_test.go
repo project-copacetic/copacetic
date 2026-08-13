@@ -50,7 +50,9 @@ type bulkChiselImageState struct {
 // named release override. The distinct provenance values prove that neither the
 // top-level default nor the per-image override was replaced by release inference.
 // Both source fixtures are immutable native-Chisel images that are old enough
-// to require a comprehensive re-cut.
+// to require a comprehensive re-cut. This test intentionally lives with the
+// bulk integration suite because its subject is bulk configuration precedence
+// and propagation; the Chisel e2e suite separately covers image patch behavior.
 func TestBulkChiselReleaseDefaultAndPerImageOverride(t *testing.T) {
 	t.Setenv("GODEBUG", "netdns=go+netgo")
 	ctx := context.Background()

@@ -240,6 +240,7 @@ func patchMultiPlatformImage(
 			if err != nil {
 				if errors.Is(err, types.ErrNoUpdatesFound) {
 					patchResults = append(patchResults, *res)
+					markPlatformPreserved(platforms, platformKey)
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Up-to-date",
@@ -440,6 +441,15 @@ func patchMultiPlatformImage(
 	}
 
 	return nil
+}
+
+func markPlatformPreserved(platforms []types.PatchPlatform, targetKey string) {
+	for i := range platforms {
+		if buildkit.PlatformKey(platforms[i].Platform) == targetKey {
+			platforms[i].ShouldPreserve = true
+			return
+		}
+	}
 }
 
 // buildPatchingPlan creates a PatchingPlan from the options and platforms.

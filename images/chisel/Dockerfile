@@ -12,6 +12,7 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG CHISEL_VERSION=v1.4.2
 ARG CHISEL_COMMIT=1262471cb663f57f3e201f100019f9bf5b4a7d4f
+ARG COPA_VALIDATOR_SOURCE_SHA256
 RUN apk add --no-cache ca-certificates git
 WORKDIR /src
 RUN git clone https://github.com/canonical/chisel.git chisel \
@@ -28,8 +29,10 @@ RUN case "${TARGETARCH}/${TARGETVARIANT}" in \
     && CGO_ENABLED=0 GOOS="${TARGETOS}" go build -trimpath -ldflags='-s -w' -o /out/chisel ./cmd/chisel
 
 WORKDIR /src/validator
-COPY images/chisel/validator/main.go ./main.go
-RUN case "${TARGETARCH}/${TARGETVARIANT}" in \
+COPY cmd/chisel-validator/main.go ./main.go
+RUN test -n "${COPA_VALIDATOR_SOURCE_SHA256}" \
+    && test "$(sha256sum main.go | cut -d ' ' -f 1)" = "${COPA_VALIDATOR_SOURCE_SHA256}" \
+    && case "${TARGETARCH}/${TARGETVARIANT}" in \
       arm/v7) export GOARCH=arm GOARM=7 ;; \
       arm/*) echo "unsupported target ${TARGETARCH}/${TARGETVARIANT}" >&2; exit 1 ;; \
       *) export GOARCH="${TARGETARCH}" ;; \
@@ -39,6 +42,7 @@ RUN case "${TARGETARCH}/${TARGETVARIANT}" in \
 FROM ${ALPINE_IMAGE}
 ARG CHISEL_VERSION=v1.4.2
 ARG CHISEL_COMMIT=1262471cb663f57f3e201f100019f9bf5b4a7d4f
+ARG COPA_VALIDATOR_SOURCE_SHA256
 RUN apk add --no-cache busybox ca-certificates git zstd \
     && rm -rf /var/cache/apk/* /root/.cache /root/.gitconfig
 COPY --from=builder /out/chisel /usr/local/bin/chisel
@@ -46,5 +50,6 @@ COPY --from=builder /out/copa-chisel-validate /usr/local/bin/copa-chisel-validat
 LABEL org.opencontainers.image.title="Copacetic Chisel tooling" \
       org.opencontainers.image.source="https://github.com/project-copacetic/copacetic" \
       org.opencontainers.image.version="${CHISEL_VERSION}" \
-      sh.copa.chisel.commit="${CHISEL_COMMIT}"
+      sh.copa.chisel.commit="${CHISEL_COMMIT}" \
+      sh.copa.validator.source-sha256="${COPA_VALIDATOR_SOURCE_SHA256}"
 ENTRYPOINT ["/usr/local/bin/chisel"]

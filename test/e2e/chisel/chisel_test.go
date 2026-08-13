@@ -30,10 +30,12 @@ import (
 var fixtureData []byte
 
 const (
-	chiselToolingImage  = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
-	platformLinuxAMD64  = "linux/amd64"
-	platformLinuxARM64  = "linux/arm64"
-	defaultPatchTimeout = "40m"
+	chiselToolingImage   = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
+	platformLinuxAMD64   = "linux/amd64"
+	platformLinuxARM64   = "linux/arm64"
+	platformLinuxPPC64LE = "linux/ppc64le"
+	platformLinuxS390X   = "linux/s390x"
+	defaultPatchTimeout  = "40m"
 )
 
 type realImageFixture struct {
@@ -227,7 +229,7 @@ func TestNativeChiselPartialPlatformOCI(t *testing.T) {
 
 	outputDescriptors := descriptorsByPlatform(index)
 	sourceDescriptors := descriptorsByPlatform(sourceIndex)
-	expectedPlatforms := []string{platformLinuxAMD64, platformLinuxARM64, "linux/ppc64le", "linux/s390x"}
+	expectedPlatforms := []string{platformLinuxAMD64, platformLinuxARM64, platformLinuxPPC64LE, platformLinuxS390X}
 	for _, key := range expectedPlatforms {
 		require.Contains(t, sourceDescriptors, key, "source index is missing expected platform")
 		require.Contains(t, outputDescriptors, key, "output index is missing expected platform")
@@ -235,7 +237,7 @@ func TestNativeChiselPartialPlatformOCI(t *testing.T) {
 	require.NotEqual(t, sourceDescriptors[platformLinuxAMD64].Digest, outputDescriptors[platformLinuxAMD64].Digest)
 	sourceAttestations := attestationsBySubject(sourceIndex)
 	outputAttestations := attestationsBySubject(index)
-	for _, key := range []string{platformLinuxARM64, "linux/ppc64le", "linux/s390x"} {
+	for _, key := range []string{platformLinuxARM64, platformLinuxPPC64LE, platformLinuxS390X} {
 		sourceDescriptor := sourceDescriptors[key]
 		assert.Equal(t, sourceDescriptor, outputDescriptors[key], "unselected platform descriptor changed")
 		require.NotEmpty(t, sourceAttestations[sourceDescriptor.Digest], "source platform is missing expected attestations")
@@ -400,10 +402,7 @@ func patchImageOrNoUpdates(t *testing.T, args ...string) bool {
 	t.Helper()
 	output, err := runPatchImage(args...)
 	if isNoUpdatesOutput(output) {
-		if err != nil {
-			var exitError *exec.ExitError
-			require.ErrorAs(t, err, &exitError, "unexpected no-updates failure:\n%s", output)
-		}
+		require.NoError(t, err, "no-updates result was masked by a patch or orchestration failure:\n%s", output)
 		assertPatchOutputsAbsent(t, args)
 		return false
 	}

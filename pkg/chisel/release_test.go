@@ -153,6 +153,21 @@ func TestInferRelease(t *testing.T) {
 			expected:  "ubuntu-20.04",
 		},
 		{
+			name:      "shell-escaped VERSION_ID",
+			osRelease: `VERSION_ID=24\.04` + "\n",
+			expected:  "ubuntu-24.04",
+		},
+		{
+			name:        "Go-only double-quoted escape remains literal",
+			osRelease:   `VERSION_ID="24\x2e04"` + "\n",
+			errContains: "does not identify a supported Ubuntu release",
+		},
+		{
+			name:        "shell expansion is rejected",
+			osRelease:   "VERSION_ID=$VERSION\n",
+			errContains: "unescaped shell expansion",
+		},
+		{
 			name:        "missing VERSION_ID",
 			osRelease:   "ID=ubuntu\n",
 			errContains: "does not contain VERSION_ID",

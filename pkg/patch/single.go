@@ -274,10 +274,12 @@ func patchSingleArchImageWithUpdates(
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
+	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
+		patchBuildErr = err
 		if err != nil {
 			return err
 		}
@@ -313,7 +315,8 @@ func patchSingleArchImageWithUpdates(
 	}
 
 	// Wait for completion
-	if err := eg.Wait(); err != nil {
+	waitErr := eg.Wait()
+	if err := selectPatchWaitError(waitErr, patchBuildErr); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
 			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
 			if updates != nil {
@@ -333,6 +336,17 @@ func patchSingleArchImageWithUpdates(
 		result.Summary = updates.CombinedSummary()
 	}
 	return result, nil
+}
+
+// selectPatchWaitError preserves the package-manager no-update sentinel when
+// the concurrently running image loader reports an error after receiving an
+// empty export stream. Other loader errors remain authoritative because they
+// can cancel the build and surface there only as context cancellation.
+func selectPatchWaitError(waitErr, patchBuildErr error) error {
+	if errors.Is(patchBuildErr, types.ErrNoUpdatesFound) {
+		return patchBuildErr
+	}
+	return waitErr
 }
 
 // validateBuildkitPlatformSupport checks whether any selected BuildKit worker

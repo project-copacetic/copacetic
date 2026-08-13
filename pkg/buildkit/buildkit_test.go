@@ -1114,3 +1114,37 @@ func TestOCIExporterAttrs(t *testing.T) {
 		})
 	}
 }
+
+func TestHasOCILayoutInputs(t *testing.T) {
+	t.Parallel()
+
+	state := llb.Scratch()
+	tests := []struct {
+		name      string
+		results   []types.PatchResult
+		platforms []types.PatchPlatform
+		want      bool
+	}{
+		{name: "none"},
+		{
+			name:    "patched state",
+			results: []types.PatchResult{{PatchedState: &state}},
+			want:    true,
+		},
+		{
+			name: "preserved platform",
+			platforms: []types.PatchPlatform{{
+				Platform:       ispec.Platform{OS: "linux", Architecture: "amd64"},
+				ShouldPreserve: true,
+			}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, hasOCILayoutInputs(tt.results, tt.platforms))
+		})
+	}
+}

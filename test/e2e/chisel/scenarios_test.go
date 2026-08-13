@@ -199,12 +199,12 @@ func TestNativeChiselSecondaryArchitecturesOCI(t *testing.T) {
 
 	outputDir := filepath.Join(t.TempDir(), "oci")
 	outputTag := uniqueImage("native-secondary-platforms")
-	cleanupImageTags(t, outputTag, "linux/ppc64le", "linux/s390x")
+	cleanupImageTags(t, outputTag, platformLinuxPPC64LE, platformLinuxS390X)
 	patchImage(t,
 		"patch",
 		"--image", indexFixture.Reference,
 		"--tag", outputTag,
-		"--platform", "linux/ppc64le,linux/s390x",
+		"--platform", platformLinuxPPC64LE+","+platformLinuxS390X,
 		"--chisel-release", indexFixture.ChiselRelease,
 		"--oci-dir", outputDir,
 	)
@@ -460,9 +460,9 @@ func requireSecondaryArchitectureTests(t *testing.T) {
 
 func configuredBinfmtArchitecture(platform string) string {
 	switch platform {
-	case "linux/ppc64le":
+	case platformLinuxPPC64LE:
 		return "ppc64le"
-	case "linux/s390x":
+	case platformLinuxS390X:
 		return "s390x"
 	case "linux/arm/v7":
 		return "arm"

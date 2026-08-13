@@ -1007,6 +1007,10 @@ func TestParseDPKGStatusErrors(t *testing.T) {
 		{name: "invalid architecture any", status: "Package: base-files\nVersion: 1.0\nArchitecture: any\n", wantErr: "invalid architecture"},
 		{name: "invalid architecture native", status: "Package: base-files\nVersion: 1.0\nArchitecture: native\n", wantErr: "invalid architecture"},
 		{name: "malformed field", status: "Package: base-files\nStatus: install ok installed\nnot-a-field\nVersion: 1.0\n", wantErr: "malformed field"},
+		{name: "duplicate package", status: "Package: base-files\npackage: libc6\nVersion: 1.0\n", wantErr: "duplicate Package fields"},
+		{name: "duplicate version", status: "Package: base-files\nVersion: 1.0\nVersion: 2.0\n", wantErr: "duplicate Version fields"},
+		{name: "duplicate architecture", status: "Package: base-files\nVersion: 1.0\nArchitecture: amd64\nArchitecture: i386\n", wantErr: "duplicate Architecture fields"},
+		{name: "duplicate status", status: "Package: base-files\nStatus: install ok installed\nStatus: hold ok installed\nVersion: 1.0\n", wantErr: "duplicate Status fields"},
 	}
 
 	for _, tt := range tests {

@@ -1030,22 +1030,26 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Check if we have BuildKit states available
-	hasStates := false
-
-	for _, result := range results {
-		if result.PatchedState != nil {
-			hasStates = true
-			break
-		}
-	}
-
-	if hasStates {
-		log.Info("Using BuildKit states directly for OCI export")
+	if hasOCILayoutInputs(results, platforms) {
+		log.Info("Using patched states and/or preserved platforms for OCI export")
 		return createOCILayoutFromStates(outputDir, results, platforms, exportOpts)
 	}
 
-	return fmt.Errorf("no BuildKit states available for OCI export, cannot proceed")
+	return fmt.Errorf("no BuildKit states or preserved platforms available for OCI export, cannot proceed")
+}
+
+func hasOCILayoutInputs(results []types.PatchResult, platforms []types.PatchPlatform) bool {
+	for _, result := range results {
+		if result.PatchedState != nil {
+			return true
+		}
+	}
+	for _, platform := range platforms {
+		if platform.ShouldPreserve {
+			return true
+		}
+	}
+	return false
 }
 
 // createOCILayoutFromStates creates OCI layout directly from BuildKit states.

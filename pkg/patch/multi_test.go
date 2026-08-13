@@ -162,6 +162,20 @@ func TestPatchMultiPlatformImagePropagatesReportDiscoveryErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a valid reference")
 }
 
+func TestMarkPlatformPreserved(t *testing.T) {
+	t.Parallel()
+
+	platforms := []types.PatchPlatform{
+		{Platform: platformSpec("linux", "amd64", "")},
+		{Platform: platformSpec("linux", "arm64", "v8")},
+	}
+
+	markPlatformPreserved(platforms, "linux/arm64/v8")
+
+	assert.False(t, platforms[0].ShouldPreserve)
+	assert.True(t, platforms[1].ShouldPreserve)
+}
+
 func platformSpec(os, arch, variant string) v1.Platform {
 	return v1.Platform{OS: os, Architecture: arch, Variant: variant}
 }

@@ -173,9 +173,12 @@ The native fixture requires a Chisel v1.4.2 tooling image that contains Git,
 CA certificates, and zstd. With the project tooling image built locally:
 
 ```bash
+VALIDATOR_SOURCE_SHA256="$(shasum -a 256 cmd/chisel-validator/main.go | awk '{print $1}')"
+
 docker buildx build \
   --platform linux/amd64 \
   --load \
+  --build-arg "COPA_VALIDATOR_SOURCE_SHA256=${VALIDATOR_SOURCE_SHA256}" \
   --tag copa-chisel:local \
   --file images/chisel/Dockerfile \
   .
@@ -205,7 +208,7 @@ The `test/e2e/chisel` suite now validates:
 - no-update repatching; and
 - partial-platform OCI output with untouched platform descriptors and blobs.
 
-CI pulls the published tooling image by immutable manifest-list digest (`ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80`). The publication workflow verifies all supported platforms, SBOM and provenance attestations, commit labels, and amd64/arm64 runtime behavior before assigning the versioned tag.
+CI pulls the published tooling image by immutable manifest-list digest (`ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80`). The publication workflow verifies all supported platforms, SBOM and provenance attestations, Chisel commit labels, the validator source checksum, and amd64/arm64 runtime behavior before assigning the versioned tag.
 
 Trivy remains applicable to the full-status layout only. Native
 `manifest.wall` coverage is comprehensive-update-only until a scanner can

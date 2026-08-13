@@ -8,9 +8,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/project-copacetic/copacetic/internal/osrelease"
 )
 
 const maxOSReleaseSize = 1 << 20
@@ -171,7 +172,7 @@ func osReleaseVersionID(data []byte) (string, error) {
 	var versionID string
 	seenVersionID := false
 	for lineNumber, rawLine := range bytes.Split(data, []byte{'\n'}) {
-		line := strings.TrimSpace(string(rawLine))
+		line := strings.TrimLeftFunc(strings.TrimSuffix(string(rawLine), "\r"), unicode.IsSpace)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
@@ -183,7 +184,7 @@ func osReleaseVersionID(data []byte) (string, error) {
 			return "", fmt.Errorf("os-release contains VERSION_ID more than once")
 		}
 		seenVersionID = true
-		value, err := parseOSReleaseValue(strings.TrimSpace(rawValue))
+		value, err := osrelease.ParseValue(rawValue)
 		if err != nil {
 			return "", fmt.Errorf("invalid VERSION_ID on line %d: %w", lineNumber+1, err)
 		}
@@ -193,28 +194,4 @@ func osReleaseVersionID(data []byte) (string, error) {
 		return "", fmt.Errorf("os-release does not contain VERSION_ID")
 	}
 	return versionID, nil
-}
-
-func parseOSReleaseValue(value string) (string, error) {
-	if value == "" {
-		return "", fmt.Errorf("value is empty")
-	}
-	switch value[0] {
-	case '"':
-		parsed, err := strconv.Unquote(value)
-		if err != nil {
-			return "", err
-		}
-		return parsed, nil
-	case '\'':
-		if len(value) < 2 || value[len(value)-1] != '\'' {
-			return "", fmt.Errorf("unterminated single-quoted value")
-		}
-		return value[1 : len(value)-1], nil
-	default:
-		if strings.ContainsFunc(value, unicode.IsSpace) {
-			return "", fmt.Errorf("unquoted value contains whitespace")
-		}
-		return value, nil
-	}
 }
