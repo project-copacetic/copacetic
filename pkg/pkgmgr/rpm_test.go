@@ -192,6 +192,13 @@ func TestGetRPMImageName(t *testing.T) {
 			image:     "ghcr.io/project-copacetic/copacetic/bci/bci-base:15.7",
 		},
 		{
+			name:      "SUSE SLES 16 (BCI)",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    "sles",
+			osVersion: "16.0",
+			image:     "ghcr.io/project-copacetic/copacetic/bci/bci-base:16.0",
+		},
+		{
 			name:      "openSUSE Leap",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "opensuse-leap",
