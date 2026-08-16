@@ -74,7 +74,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
   "statements": [
     {
       "vulnerability": {
-        "@id": "CVE-2020-1234"
+        "@id": "CVE-2020-1234",
+                  "name": "CVE-2020-1234"
       },
       "products": [
         {
@@ -140,7 +141,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
   "statements": [
     {
       "vulnerability": {
-        "@id": "CVE-2020-1234"
+        "@id": "CVE-2020-1234",
+                  "name": "CVE-2020-1234"
       },
       "products": [
         {
@@ -159,7 +161,8 @@ func TestOpenVex_CreateVEXDocument(t *testing.T) {
     },
     {
       "vulnerability": {
-        "@id": "CVE-2020-1235"
+        "@id": "CVE-2020-1235",
+                  "name": "CVE-2020-1235"
       },
       "products": [
         {
