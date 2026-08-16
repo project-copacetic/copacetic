@@ -41,6 +41,7 @@ jobs:
           - "registry.opensuse.org/opensuse/tumbleweed:latest"
           - "registry.suse.com/bci/bci-base:15.6"
           - "registry.suse.com/bci/bci-base:15.7"
+          - "registry.suse.com/bci/bci-base:16.0"
           - "registry.suse.com/bci/bci-base:latest"
 
     steps:
