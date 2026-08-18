@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,7 +52,7 @@ spec:
 	// Override RenderChart to return combined templates directly (no Helm SDK rendering needed).
 	origRender := RenderChart
 	t.Cleanup(func() { RenderChart = origRender })
-	RenderChart = func(ch *helmchart.Chart) (string, error) {
+	RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		var parts []string
 		for _, tmpl := range ch.Templates {
 			parts = append(parts, string(tmpl.Data))
@@ -59,7 +60,7 @@ spec:
 		return join(parts, "\n---\n"), nil
 	}
 
-	images, err := DiscoverChartImages(mockChart, nil)
+	images, err := DiscoverChartImages(context.Background(), mockChart, nil)
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []ChartImage{
 		{Repository: "docker.io/library/nginx", Tag: "1.25.0"},
@@ -85,7 +86,7 @@ spec:
 
 	origRender := RenderChart
 	t.Cleanup(func() { RenderChart = origRender })
-	RenderChart = func(ch *helmchart.Chart) (string, error) {
+	RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return string(ch.Templates[0].Data), nil
 	}
 
@@ -93,7 +94,7 @@ spec:
 		"timberio/vector": {From: "distroless-libc", To: "debian"},
 	}
 
-	images, err := DiscoverChartImages(mockChart, overrides)
+	images, err := DiscoverChartImages(context.Background(), mockChart, overrides)
 	require.NoError(t, err)
 	require.Len(t, images, 1)
 	assert.Equal(t, "0.53.0-debian", images[0].Tag)
@@ -107,11 +108,11 @@ func TestDiscoverChartImages_EmptyChart(t *testing.T) {
 
 	origRender := RenderChart
 	t.Cleanup(func() { RenderChart = origRender })
-	RenderChart = func(ch *helmchart.Chart) (string, error) {
+	RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return "", nil
 	}
 
-	images, err := DiscoverChartImages(mockChart, nil)
+	images, err := DiscoverChartImages(context.Background(), mockChart, nil)
 	require.NoError(t, err)
 	assert.Empty(t, images)
 }
@@ -136,4 +137,28 @@ func join(parts []string, sep string) string {
 		result += p
 	}
 	return result
+}
+
+func TestRenderChartIncludesHookManifests(t *testing.T) {
+	ch := &helmchart.Chart{
+		Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "hooks", Version: "1.0.0"},
+		Templates: []*helmchart.File{{Name: "templates/hook.yaml", Data: []byte(`
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: hook
+  annotations:
+    helm.sh/hook: pre-install
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: hook
+          image: busybox:1.36
+`)}},
+	}
+	rendered, err := RenderChart(context.Background(), ch)
+	require.NoError(t, err)
+	assert.Contains(t, rendered, "busybox:1.36")
 }

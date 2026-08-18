@@ -32,7 +32,7 @@ func TestValidateChartOpts(t *testing.T) {
 	}{
 		{
 			name:    "all fields valid",
-			opts:    &types.Options{ChartName: "vector", ChartVersion: "0.53.0", ChartRepo: "oci://ghcr.io/vectordotdev/helm", ChartRegistry: "oci://ghcr.io/myorg/charts"},
+			opts:    &types.Options{ChartName: "vector", ChartVersion: "0.53.0", ChartRepo: "oci://ghcr.io/vectordotdev/helm", ChartRegistry: "oci://ghcr.io/myorg/charts", Push: true},
 			wantErr: "",
 		},
 		{
@@ -59,6 +59,11 @@ func TestValidateChartOpts(t *testing.T) {
 			name:    "non-oci chart registry",
 			opts:    &types.Options{ChartName: "v", ChartVersion: "1.0", ChartRepo: "oci://x", ChartRegistry: "https://bad"},
 			wantErr: "oci://",
+		},
+		{
+			name:    "push is required",
+			opts:    &types.Options{ChartName: "v", ChartVersion: "1.0", ChartRepo: "oci://x", ChartRegistry: "oci://x"},
+			wantErr: "requires --push",
 		},
 	}
 
@@ -90,7 +95,7 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 		patchImage = origPatchImage
 	})
 
-	helm.DownloadChart = func(name, version, repository string) (*helmchart.Chart, error) {
+	helm.DownloadChart = func(_ context.Context, name, version, repository string) (*helmchart.Chart, error) {
 		return &helmchart.Chart{
 			Metadata: &helmchart.Metadata{Name: name, Version: version},
 			Values: map[string]interface{}{
@@ -101,7 +106,7 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 			},
 		}, nil
 	}
-	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
+	helm.RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return testRedisManifest, nil
 	}
 
@@ -117,7 +122,7 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 		_ = os.WriteFile(fakePath, []byte("fake-chart"), 0o600)
 		return fakePath, nil
 	}
-	helm.PushChart = func(data []byte, ref string) (*helmregistry.PushResult, error) {
+	helm.PushChart = func(_ context.Context, data []byte, ref string) (*helmregistry.PushResult, error) {
 		pushedRef = ref
 		return &helmregistry.PushResult{Ref: ref}, nil
 	}
@@ -127,6 +132,7 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 		ChartVersion:  "1.0.0",
 		ChartRepo:     "oci://ghcr.io/charts",
 		ChartRegistry: "oci://ghcr.io/myorg/charts",
+		Push:          true,
 		Scanner:       "trivy",
 		PkgTypes:      "os",
 	}
@@ -137,7 +143,7 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 	// Verify image was patched
 	require.Len(t, patchedImages, 1)
 	assert.Contains(t, patchedImages[0], "redis:7.0")
-	assert.Contains(t, patchedImages[0], "ghcr.io/myorg/charts/redis:7.0-patched")
+	assert.Contains(t, patchedImages[0], "redis:7.0-patched")
 
 	// Verify chart was pushed
 	assert.Equal(t, "oci://ghcr.io/myorg/charts/mychart-patched:1.0.0-patched.1", pushedRef)
@@ -157,7 +163,7 @@ func TestPatchChart_MultipleImages(t *testing.T) {
 		patchImage = origPatchImage
 	})
 
-	helm.DownloadChart = func(name, version, repository string) (*helmchart.Chart, error) {
+	helm.DownloadChart = func(_ context.Context, name, version, repository string) (*helmchart.Chart, error) {
 		return &helmchart.Chart{
 			Metadata: &helmchart.Metadata{Name: name, Version: version},
 			Values: map[string]interface{}{
@@ -176,7 +182,7 @@ func TestPatchChart_MultipleImages(t *testing.T) {
 			},
 		}, nil
 	}
-	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
+	helm.RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return `
 apiVersion: apps/v1
 kind: Deployment
@@ -212,7 +218,7 @@ spec:
 		_ = os.WriteFile(fakePath, []byte("fake"), 0o600)
 		return fakePath, nil
 	}
-	helm.PushChart = func(data []byte, ref string) (*helmregistry.PushResult, error) {
+	helm.PushChart = func(_ context.Context, data []byte, ref string) (*helmregistry.PushResult, error) {
 		pushedRef = ref
 		return &helmregistry.PushResult{Ref: ref}, nil
 	}
@@ -222,6 +228,7 @@ spec:
 		ChartVersion:  "2.0.0",
 		ChartRepo:     "oci://ghcr.io/charts",
 		ChartRegistry: "oci://ghcr.io/myorg/charts",
+		Push:          true,
 		Scanner:       "trivy",
 		PkgTypes:      "os",
 	}
@@ -241,12 +248,12 @@ func TestPatchChart_NoImagesFound(t *testing.T) {
 		helm.RenderChart = origRender
 	})
 
-	helm.DownloadChart = func(name, version, repository string) (*helmchart.Chart, error) {
+	helm.DownloadChart = func(_ context.Context, name, version, repository string) (*helmchart.Chart, error) {
 		return &helmchart.Chart{
 			Metadata: &helmchart.Metadata{Name: name, Version: version},
 		}, nil
 	}
-	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
+	helm.RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return `
 apiVersion: v1
 kind: ConfigMap
@@ -260,6 +267,7 @@ metadata:
 		ChartVersion:  "1.0.0",
 		ChartRepo:     "oci://ghcr.io/test",
 		ChartRegistry: "oci://ghcr.io/myorg/charts",
+		Push:          true,
 	}
 
 	err := PatchChart(context.Background(), opts)
@@ -276,12 +284,12 @@ func TestPatchChart_PatchFailure_StopsWithoutIgnoreErrors(t *testing.T) {
 		patchImage = origPatchImage
 	})
 
-	helm.DownloadChart = func(name, version, repository string) (*helmchart.Chart, error) {
+	helm.DownloadChart = func(_ context.Context, name, version, repository string) (*helmchart.Chart, error) {
 		return &helmchart.Chart{
 			Metadata: &helmchart.Metadata{Name: name, Version: version},
 		}, nil
 	}
-	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
+	helm.RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return testRedisManifest, nil
 	}
 
@@ -294,6 +302,7 @@ func TestPatchChart_PatchFailure_StopsWithoutIgnoreErrors(t *testing.T) {
 		ChartVersion:  "1.0.0",
 		ChartRepo:     "oci://ghcr.io/test",
 		ChartRegistry: "oci://ghcr.io/myorg/charts",
+		Push:          true,
 		IgnoreError:   false,
 	}
 
@@ -312,12 +321,12 @@ func TestPatchChart_PatchFailure_ContinuesWithIgnoreErrors(t *testing.T) {
 		patchImage = origPatchImage
 	})
 
-	helm.DownloadChart = func(name, version, repository string) (*helmchart.Chart, error) {
+	helm.DownloadChart = func(_ context.Context, name, version, repository string) (*helmchart.Chart, error) {
 		return &helmchart.Chart{
 			Metadata: &helmchart.Metadata{Name: name, Version: version},
 		}, nil
 	}
-	helm.RenderChart = func(ch *helmchart.Chart) (string, error) {
+	helm.RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
 		return testRedisManifest, nil
 	}
 
@@ -330,6 +339,7 @@ func TestPatchChart_PatchFailure_ContinuesWithIgnoreErrors(t *testing.T) {
 		ChartVersion:  "1.0.0",
 		ChartRepo:     "oci://ghcr.io/test",
 		ChartRegistry: "oci://ghcr.io/myorg/charts",
+		Push:          true,
 		IgnoreError:   true, // Continue despite patch failure
 	}
 

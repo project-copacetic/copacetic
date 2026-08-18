@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"context"
 	"fmt"
 	"os"
 
@@ -13,10 +14,12 @@ import (
 // It is a function variable to allow test injection.
 var SaveChart = chartutil.Save
 
-// PushChart pushes a packaged chart (.tgz bytes) to an OCI registry.
-// The ref must be a full OCI reference (e.g., "oci://ghcr.io/myorg/charts/myapp:1.0.0").
+// PushChart pushes a packaged chart to an OCI registry.
 // It is a function variable to allow test injection.
-var PushChart = func(data []byte, ref string) (*helmregistry.PushResult, error) {
+var PushChart = func(ctx context.Context, data []byte, ref string) (*helmregistry.PushResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	client, err := helmregistry.NewClient(
 		helmregistry.ClientOptEnableCache(true),
 	)
@@ -27,8 +30,10 @@ var PushChart = func(data []byte, ref string) (*helmregistry.PushResult, error) 
 }
 
 // PackageAndPush packages a chart and pushes it to the given OCI reference.
-// Returns the push result or an error.
-func PackageAndPush(ch *helmchart.Chart, ociRef string) (*helmregistry.PushResult, error) {
+func PackageAndPush(ctx context.Context, ch *helmchart.Chart, ociRef string) (*helmregistry.PushResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	tmpDir, err := os.MkdirTemp("", "copa-chart-push-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create temp dir for chart packaging: %w", err)
@@ -45,7 +50,7 @@ func PackageAndPush(ch *helmchart.Chart, ociRef string) (*helmregistry.PushResul
 		return nil, fmt.Errorf("failed to read packaged chart: %w", err)
 	}
 
-	result, err := PushChart(data, ociRef)
+	result, err := PushChart(ctx, data, ociRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to push chart to %s: %w", ociRef, err)
 	}

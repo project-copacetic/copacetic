@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	helmchart "helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +22,8 @@ func TestResolveImageValuePaths_SimpleImage(t *testing.T) {
 	}
 	images := []ChartImage{{Repository: "nginx", Tag: "1.25.0"}}
 
-	paths := ResolveImageValuePaths(values, images, nil)
+	paths, err := ResolveImageValuePaths(values, images, nil)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 1)
 	assert.Equal(t, "nginx", paths[0].ImageRepo)
@@ -38,7 +41,8 @@ func TestResolveImageValuePaths_RegistryPrefix(t *testing.T) {
 	}
 	images := []ChartImage{{Repository: "docker.io/library/nginx", Tag: "1.25.0"}}
 
-	paths := ResolveImageValuePaths(values, images, nil)
+	paths, err := ResolveImageValuePaths(values, images, nil)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 1)
 	assert.Equal(t, "docker.io/library/nginx", paths[0].ImageRepo)
@@ -65,7 +69,8 @@ func TestResolveImageValuePaths_MultiComponent(t *testing.T) {
 		{Repository: "defaultbackend-amd64", Tag: "1.5"},
 	}
 
-	paths := ResolveImageValuePaths(values, images, nil)
+	paths, err := ResolveImageValuePaths(values, images, nil)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 2)
 
@@ -92,7 +97,8 @@ func TestResolveImageValuePaths_ExplicitOverride(t *testing.T) {
 		"myimage": "customKey.repo-parent", // User provides the path
 	}
 
-	paths := ResolveImageValuePaths(values, images, explicit)
+	paths, err := ResolveImageValuePaths(values, images, explicit)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 1)
 	assert.Equal(t, "customKey.repo-parent.repository", paths[0].RepositoryPath)
@@ -111,7 +117,8 @@ func TestResolveImageValuePaths_ExplicitTakesPriority(t *testing.T) {
 		"nginx": "custom.path",
 	}
 
-	paths := ResolveImageValuePaths(values, images, explicit)
+	paths, err := ResolveImageValuePaths(values, images, explicit)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 1)
 	// Should use explicit path, not auto-detected
@@ -126,9 +133,9 @@ func TestResolveImageValuePaths_NoMatch(t *testing.T) {
 	}
 	images := []ChartImage{{Repository: "unknown-image", Tag: "1.0.0"}}
 
-	paths := ResolveImageValuePaths(values, images, nil)
-
-	assert.Empty(t, paths)
+	paths, err := ResolveImageValuePaths(values, images, nil)
+	require.Error(t, err)
+	assert.Nil(t, paths)
 }
 
 func TestResolveImageValuePaths_RepositoryWithoutTag(t *testing.T) {
@@ -140,7 +147,8 @@ func TestResolveImageValuePaths_RepositoryWithoutTag(t *testing.T) {
 	}
 	images := []ChartImage{{Repository: "nginx", Tag: "latest"}}
 
-	paths := ResolveImageValuePaths(values, images, nil)
+	paths, err := ResolveImageValuePaths(values, images, nil)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 1)
 	assert.Equal(t, "image.repository", paths[0].RepositoryPath)
@@ -157,7 +165,8 @@ func TestResolveImageValuePaths_ReversePrefix(t *testing.T) {
 	}
 	images := []ChartImage{{Repository: "timberio/vector", Tag: "0.53.0"}}
 
-	paths := ResolveImageValuePaths(values, images, nil)
+	paths, err := ResolveImageValuePaths(values, images, nil)
+	require.NoError(t, err)
 
 	require.Len(t, paths, 1)
 	assert.Equal(t, "timberio/vector", paths[0].ImageRepo)
@@ -190,6 +199,7 @@ func TestBuildPatchedChart_Basic(t *testing.T) {
 	valuePaths := []ValuePathMapping{
 		{
 			ImageRepo:      "docker.io/timberio/vector",
+			ImageTag:       "0.53.0-distroless-libc",
 			RepositoryPath: "image.repository",
 			TagPath:        "image.tag",
 		},
@@ -245,8 +255,8 @@ func TestBuildPatchedChart_MultipleImages(t *testing.T) {
 		{OriginalRepo: "redis", OriginalTag: "7.2.0", PatchedRepo: "ghcr.io/org/redis", PatchedTag: "7.2.0-patched"},
 	}
 	valuePaths := []ValuePathMapping{
-		{ImageRepo: "nginx", RepositoryPath: "web.image.repository", TagPath: "web.image.tag"},
-		{ImageRepo: "redis", RepositoryPath: "cache.image.repository", TagPath: "cache.image.tag"},
+		{ImageRepo: "nginx", ImageTag: "1.25.0", RepositoryPath: "web.image.repository", TagPath: "web.image.tag"},
+		{ImageRepo: "redis", ImageTag: "7.2.0", RepositoryPath: "cache.image.repository", TagPath: "cache.image.tag"},
 	}
 
 	ch, err := BuildPatchedChart(original, spec, mappings, valuePaths)
@@ -301,10 +311,9 @@ func TestBuildPatchedChart_NoMatchingMappings(t *testing.T) {
 		{ImageRepo: "orphan-image", RepositoryPath: "image.repository", TagPath: "image.tag"},
 	}
 
-	ch, err := BuildPatchedChart(original, spec, nil, valuePaths)
-	require.NoError(t, err)
-	// Values should be empty (no overrides to apply)
-	assert.Empty(t, ch.Values)
+	_, err := BuildPatchedChart(original, spec, nil, valuePaths)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no patched mapping")
 }
 
 // --- Helper function tests ---
@@ -371,4 +380,88 @@ func TestFindRepositoryPaths_DeepNesting(t *testing.T) {
 	assert.Equal(t, "app.deployment.image.repository", candidates[0].path)
 	assert.Equal(t, "app.deployment.image.tag", candidates[0].tagPath)
 	assert.Equal(t, "myapp", candidates[0].value)
+}
+
+func TestResolveImageValuePaths_NameSchema(t *testing.T) {
+	values := map[string]interface{}{
+		"reloader": map[string]interface{}{"image": map[string]interface{}{
+			"name": "ghcr.io/stakater/reloader", "tag": "v1.2.1",
+		}},
+	}
+	paths, err := ResolveImageValuePaths(values, []ChartImage{{Repository: "ghcr.io/stakater/reloader", Tag: "v1.2.1"}}, nil)
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+	assert.Equal(t, "reloader.image.name", paths[0].RepositoryPath)
+}
+
+func TestBuildPatchedChart_RegistryRepositorySchema(t *testing.T) {
+	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "nginx", Version: "1.0.0"}}
+	images := []ChartImage{{Repository: "docker.io/bitnami/nginx", Tag: "1.0.0"}}
+	paths, err := ResolveImageValuePaths(map[string]interface{}{"image": map[string]interface{}{
+		"registry": "docker.io", "repository": "bitnami/nginx", "tag": "1.0.0",
+	}}, images, nil)
+	require.NoError(t, err)
+
+	patched, err := BuildPatchedChart(original, ChartSourceSpec{Repository: "oci://example.com/charts"}, []ImageMapping{{
+		OriginalRepo: "docker.io/bitnami/nginx", OriginalTag: "1.0.0",
+		PatchedRepo: "ghcr.io/acme/nginx", PatchedTag: "1.0.0-patched",
+	}}, paths)
+	require.NoError(t, err)
+	nginxValues, ok := patched.Values["nginx"].(map[string]interface{})
+	require.True(t, ok)
+	image, ok := nginxValues["image"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "ghcr.io", image["registry"])
+	assert.Equal(t, "acme/nginx", image["repository"])
+	assert.Equal(t, "1.0.0-patched", image["tag"])
+	require.Len(t, patched.Dependencies(), 1)
+	assert.Same(t, original, patched.Dependencies()[0])
+}
+
+func TestResolveImageValuePaths_UsesTagToDisambiguate(t *testing.T) {
+	values := map[string]interface{}{
+		"first":  map[string]interface{}{"image": map[string]interface{}{"repository": "example/app", "tag": "v1"}},
+		"second": map[string]interface{}{"image": map[string]interface{}{"repository": "example/app", "tag": "v2"}},
+	}
+	paths, err := ResolveImageValuePaths(values, []ChartImage{{Repository: "example/app", Tag: "v2"}}, nil)
+	require.NoError(t, err)
+	require.Len(t, paths, 1)
+	assert.Equal(t, "second.image.repository", paths[0].RepositoryPath)
+}
+
+func TestResolveImageValuePaths_RejectsAmbiguousPaths(t *testing.T) {
+	values := map[string]interface{}{
+		"first":  map[string]interface{}{"image": map[string]interface{}{"repository": "example/app", "tag": "v1"}},
+		"second": map[string]interface{}{"image": map[string]interface{}{"repository": "example/app", "tag": "v1"}},
+	}
+	_, err := ResolveImageValuePaths(values, []ChartImage{{Repository: "example/app", Tag: "v1"}}, nil)
+	require.ErrorContains(t, err, "ambiguous values paths")
+}
+
+func TestBuildPatchedChart_ScalarImageSchema(t *testing.T) {
+	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	images := []ChartImage{{Repository: "ghcr.io/acme/app", Tag: "v1"}}
+	paths, err := ResolveImageValuePaths(map[string]interface{}{"workload": map[string]interface{}{"image": "ghcr.io/acme/app:v1"}}, images, nil)
+	require.NoError(t, err)
+	patched, err := BuildPatchedChart(original, ChartSourceSpec{Repository: "oci://example.com/charts"}, []ImageMapping{{
+		OriginalRepo: "ghcr.io/acme/app", OriginalTag: "v1", PatchedRepo: "ghcr.io/acme/app", PatchedTag: "v1-patched",
+	}}, paths)
+	require.NoError(t, err)
+	appValues, ok := patched.Values["app"].(map[string]interface{})
+	require.True(t, ok)
+	workload, ok := appValues["workload"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "ghcr.io/acme/app:v1-patched", workload["image"])
+}
+
+func TestBuildPatchedChart_PackagesOriginalDependency(t *testing.T) {
+	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	patched, err := BuildPatchedChart(original, ChartSourceSpec{Repository: "oci://example.com/charts"}, nil, nil)
+	require.NoError(t, err)
+	archive, err := chartutil.Save(patched, t.TempDir())
+	require.NoError(t, err)
+	loaded, err := loader.Load(archive)
+	require.NoError(t, err)
+	require.Len(t, loaded.Dependencies(), 1)
+	assert.Equal(t, "app", loaded.Dependencies()[0].Name())
 }

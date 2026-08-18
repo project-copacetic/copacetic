@@ -115,14 +115,14 @@ func resolveChartImagesWithCharts(ctx context.Context, charts []ChartSpec, overr
 		}
 
 		log.Infof("Downloading Helm chart '%s' v%s from %s...", chartSpec.Name, chartSpec.Version, chartSpec.Repository)
-		ch, err := helm.DownloadChart(chartSpec.Name, chartSpec.Version, chartSpec.Repository)
+		ch, err := helm.DownloadChart(ctx, chartSpec.Name, chartSpec.Version, chartSpec.Repository)
 		if err != nil {
 			errs = multierror.Append(errs, fmt.Errorf("chart '%s': %w", chartSpec.Name, err))
 			continue
 		}
 
 		helmOverrides := toHelmOverrides(overrides)
-		images, err := helm.DiscoverChartImages(ch, helmOverrides)
+		images, err := helm.DiscoverChartImages(ctx, ch, helmOverrides)
 		if err != nil {
 			errs = multierror.Append(errs, fmt.Errorf("chart '%s': %w", chartSpec.Name, err))
 			continue
@@ -149,8 +149,10 @@ func toHelmOverrides(overrides map[string]OverrideSpec) map[string]helm.Override
 		return nil
 	}
 	result := make(map[string]helm.OverrideSpec, len(overrides))
-	for k, v := range overrides {
-		result[k] = helm.OverrideSpec{From: v.From, To: v.To}
+	for key, override := range overrides {
+		if override.From != "" {
+			result[key] = helm.OverrideSpec{From: override.From, To: override.To}
+		}
 	}
 	return result
 }
@@ -171,34 +173,39 @@ func chartImagesToSpecs(images []helm.ChartImage) []ImageSpec {
 }
 
 func mergeImageSpecs(config *PatchConfig, chartImages []ImageSpec) PatchConfig {
-	explicitRefs := make(map[string]struct{}, len(config.Images))
-	for i := range config.Images {
-		img := config.Images[i]
-		explicitRefs[img.Image] = struct{}{}
+	merged := append([]ImageSpec(nil), config.Images...)
+	byRepository := make(map[string]int, len(merged))
+	for i := range merged {
+		byRepository[merged[i].Image] = i
 	}
-
-	merged := make([]ImageSpec, len(config.Images))
-	copy(merged, config.Images)
 
 	for i := range chartImages {
-		chartImg := chartImages[i]
-		if _, exists := explicitRefs[chartImg.Image]; exists {
-			log.Debugf("Skipping chart-discovered image '%s': overridden by explicit image spec", chartImg.Image)
+		chartImage := &chartImages[i]
+		index, exists := byRepository[chartImage.Image]
+		if !exists {
+			merged = append(merged, *chartImage)
+			byRepository[chartImage.Image] = len(merged) - 1
 			continue
 		}
-		merged = append(merged, chartImg)
-		explicitRefs[chartImg.Image] = struct{}{}
+		if merged[index].Tags.Strategy != StrategyList {
+			log.Debugf("Chart-discovered image %q uses explicit %s tag strategy", chartImage.Image, merged[index].Tags.Strategy)
+			continue
+		}
+		seen := make(map[string]struct{}, len(merged[index].Tags.List))
+		for _, tag := range merged[index].Tags.List {
+			seen[tag] = struct{}{}
+		}
+		for _, tag := range chartImage.Tags.List {
+			if _, found := seen[tag]; !found {
+				merged[index].Tags.List = append(merged[index].Tags.List, tag)
+				seen[tag] = struct{}{}
+			}
+		}
 	}
 
-	return PatchConfig{
-		APIVersion:  config.APIVersion,
-		Kind:        config.Kind,
-		Target:      config.Target,
-		ChartTarget: config.ChartTarget,
-		Charts:      config.Charts,
-		Overrides:   config.Overrides,
-		Images:      merged,
-	}
+	result := *config
+	result.Images = merged
+	return result
 }
 
 func filterMappingsForChart(res *chartResolution, mappings []ChartImageMapping) []ChartImageMapping {
@@ -238,7 +245,7 @@ func toHelmImageMappings(mappings []ChartImageMapping) []helm.ImageMapping {
 	return result
 }
 
-func generateAndPushPatchedCharts(resolutions []chartResolution, mappings []ChartImageMapping, config *PatchConfig) error {
+func generateAndPushPatchedCharts(ctx context.Context, resolutions []chartResolution, mappings []ChartImageMapping, config *PatchConfig) error {
 	if config.ChartTarget == nil || config.ChartTarget.Registry == "" {
 		return nil
 	}
@@ -260,9 +267,13 @@ func generateAndPushPatchedCharts(resolutions []chartResolution, mappings []Char
 			continue
 		}
 
-		valuePaths := helm.ResolveImageValuePaths(res.Chart.Values, res.Images, explicitPaths)
-		if len(valuePaths) == 0 {
-			log.Warnf("No value paths detected for chart '%s' — auto-detection failed for all images. Skipping chart generation. Use overrides.valuePath to specify paths manually.", res.Spec.Name)
+		mappedImages := make([]helm.ChartImage, len(chartMappings))
+		for i := range chartMappings {
+			mappedImages[i] = helm.ChartImage{Repository: chartMappings[i].OriginalRepo, Tag: chartMappings[i].OriginalTag}
+		}
+		valuePaths, err := helm.ResolveImageValuePaths(res.Chart.Values, mappedImages, explicitPaths)
+		if err != nil {
+			errs = multierror.Append(errs, fmt.Errorf("chart '%s': %w", res.Spec.Name, err))
 			continue
 		}
 
@@ -278,14 +289,15 @@ func generateAndPushPatchedCharts(resolutions []chartResolution, mappings []Char
 			continue
 		}
 
-		ociRef := fmt.Sprintf("%s/%s:%s",
+		ociRef := fmt.Sprintf(
+			"%s/%s:%s",
 			strings.TrimSuffix(config.ChartTarget.Registry, "/"),
 			patchedChart.Name(),
 			patchedChart.Metadata.Version,
 		)
 
 		log.Infof("Packaging and pushing patched chart '%s' to %s...", patchedChart.Name(), ociRef)
-		result, err := helm.PackageAndPush(patchedChart, ociRef)
+		result, err := helm.PackageAndPush(ctx, patchedChart, ociRef)
 		if err != nil {
 			errs = multierror.Append(errs, fmt.Errorf("chart '%s': failed to push: %w", res.Spec.Name, err))
 			continue
@@ -307,6 +319,12 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	var config PatchConfig
 	if err := yaml.Unmarshal(yamlFile, &config); err != nil {
 		return fmt.Errorf("failed to parse YAML from %s: %w", configPath, err)
+	}
+	if len(config.Charts) > 0 && os.Getenv("COPA_EXPERIMENTAL") != "1" {
+		return fmt.Errorf("chart patching is experimental; set COPA_EXPERIMENTAL=1")
+	}
+	if len(config.Charts) > 0 && config.ChartTarget != nil && !opts.Push {
+		return fmt.Errorf("chartTarget requires --push so wrapper charts only reference published images")
 	}
 
 	if config.APIVersion != ExpectedAPIVersion {
@@ -450,14 +468,21 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 				// Use targetRepo for skip detection (queries the registry where patched images are pushed)
 				action := evaluatePatchAction(targetRepo, targetTag, opts.Scanner, reports, opts.PkgTypes, opts.LibraryPatchLevel)
 				if action.ShouldSkip {
-					// Record as skipped
+					resolvedTag := action.ResolvedTag
+					if resolvedTag == "" {
+						resolvedTag = targetTag
+					}
 					mu.Lock()
 					results = append(results, patchJobStatus{
 						Name:    spec.Name,
 						Source:  imageWithTag,
-						Target:  fmt.Sprintf("%s:%s", targetRepo, action.ResolvedTag),
+						Target:  fmt.Sprintf("%s:%s", targetRepo, resolvedTag),
 						Status:  "Skipped",
 						Details: action.Reason,
+					})
+					imageMappings = append(imageMappings, ChartImageMapping{
+						ChartName: spec.Name, OriginalRepo: spec.Image, OriginalTag: tag,
+						PatchedRepo: targetRepo, PatchedTag: resolvedTag,
 					})
 					mu.Unlock()
 					log.Debugf("[Worker %d] --> Skipping patch for %s: %s", workerID, imageWithTag, action.Reason)
@@ -539,7 +564,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	printSummary(results)
 
 	if config.ChartTarget != nil && len(chartResolutions) > 0 {
-		if err := generateAndPushPatchedCharts(chartResolutions, imageMappings, &config); err != nil {
+		if err := generateAndPushPatchedCharts(ctx, chartResolutions, imageMappings, &config); err != nil {
 			log.Errorf("Failed to generate/push patched charts: %v", err)
 			multiErr = multierror.Append(multiErr, err)
 		}

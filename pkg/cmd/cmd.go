@@ -67,7 +67,7 @@ func NewPatchCmd() *cobra.Command {
 		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
 		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
 copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)
-copa patch --chart vector --chart-version 0.53.0 --chart-repo oci://ghcr.io/vectordotdev/helm --chart-registry oci://ghcr.io/myorg/charts (Single Chart Patching)`,
+copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/stakater/charts --chart-registry oci://ghcr.io/myorg/charts --push (Single Chart Patching)`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {

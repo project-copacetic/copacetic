@@ -1,6 +1,7 @@
 package helm
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestPackageAndPush(t *testing.T) {
 		return fakePath, err
 	}
 
-	PushChart = func(data []byte, ref string) (*helmregistry.PushResult, error) {
+	PushChart = func(_ context.Context, data []byte, ref string) (*helmregistry.PushResult, error) {
 		pushedData = data
 		pushedRef = ref
 		return &helmregistry.PushResult{Ref: ref}, nil
@@ -49,7 +50,7 @@ func TestPackageAndPush(t *testing.T) {
 		},
 	}
 
-	result, err := PackageAndPush(ch, "oci://ghcr.io/myorg/charts/test-chart:1.0.0")
+	result, err := PackageAndPush(context.Background(), ch, "oci://ghcr.io/myorg/charts/test-chart:1.0.0")
 	require.NoError(t, err)
 
 	assert.Equal(t, "test-chart", savedChart.Name())
@@ -75,7 +76,7 @@ func TestPackageAndPush_SaveError(t *testing.T) {
 		},
 	}
 
-	_, err := PackageAndPush(ch, "oci://example.com/charts/fail:1.0.0")
+	_, err := PackageAndPush(context.Background(), ch, "oci://example.com/charts/fail:1.0.0")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to package chart")
 }
@@ -93,7 +94,7 @@ func TestPackageAndPush_PushError(t *testing.T) {
 		_ = os.WriteFile(fakePath, []byte("data"), 0o600)
 		return fakePath, nil
 	}
-	PushChart = func(_ []byte, _ string) (*helmregistry.PushResult, error) {
+	PushChart = func(_ context.Context, _ []byte, _ string) (*helmregistry.PushResult, error) {
 		return nil, assert.AnError
 	}
 
@@ -105,7 +106,7 @@ func TestPackageAndPush_PushError(t *testing.T) {
 		},
 	}
 
-	_, err := PackageAndPush(ch, "oci://example.com/charts/chart:1.0.0")
+	_, err := PackageAndPush(context.Background(), ch, "oci://example.com/charts/chart:1.0.0")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to push chart")
 }

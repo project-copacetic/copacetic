@@ -59,13 +59,9 @@ func PatchChart(ctx context.Context, opts *types.Options) error {
 	res := resolutions[0]
 	log.Infof("Discovered %d image(s) in chart '%s'", len(res.Images), chartSpec.Name)
 
-	// Step 2: Compute target image refs for each discovered image.
-	// Strip the oci:// prefix from the chart registry to get a valid container image registry.
-	// ChartRegistry keeps oci:// for Helm push operations; image refs must not have it.
-	imageRegistry := strings.TrimPrefix(opts.ChartRegistry, "oci://")
-	target := TargetSpec{
-		Registry: imageRegistry,
-	}
+	// Patched images remain in their original repositories. ChartRegistry is only
+	// the destination for the wrapper chart artifact.
+	target := TargetSpec{}
 
 	var refs []imageRef
 	for _, img := range res.Images {
@@ -123,7 +119,7 @@ func PatchChart(ctx context.Context, opts *types.Options) error {
 	config := PatchConfig{
 		ChartTarget: &ChartTargetSpec{Registry: opts.ChartRegistry},
 	}
-	if err := generateAndPushPatchedCharts(resolutions, mappings, &config); err != nil {
+	if err := generateAndPushPatchedCharts(ctx, resolutions, mappings, &config); err != nil {
 		return fmt.Errorf("failed to generate/push patched chart: %w", err)
 	}
 
@@ -146,6 +142,9 @@ func validateChartOpts(opts *types.Options) error {
 	}
 	if !strings.HasPrefix(opts.ChartRegistry, "oci://") {
 		return fmt.Errorf("chart registry must start with 'oci://' (got %q)", opts.ChartRegistry)
+	}
+	if !opts.Push {
+		return fmt.Errorf("chart patching requires --push so wrapper charts only reference published images")
 	}
 	return nil
 }

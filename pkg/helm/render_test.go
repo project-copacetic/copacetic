@@ -228,48 +228,25 @@ func TestParseImageRef(t *testing.T) {
 		imageRef string
 		wantRepo string
 		wantTag  string
+		wantErr  string
 	}{
-		{
-			name:     "image with tag",
-			imageRef: "nginx:1.25.0",
-			wantRepo: "nginx",
-			wantTag:  "1.25.0",
-		},
-		{
-			name:     "image without tag defaults to latest",
-			imageRef: "nginx",
-			wantRepo: "nginx",
-			wantTag:  "latest",
-		},
-		{
-			name:     "full reference with registry",
-			imageRef: "docker.io/library/nginx:1.25.0",
-			wantRepo: "docker.io/library/nginx",
-			wantTag:  "1.25.0",
-		},
-		{
-			name:     "quay.io reference",
-			imageRef: "quay.io/prometheus/node-exporter:v1.7.0",
-			wantRepo: "quay.io/prometheus/node-exporter",
-			wantTag:  "v1.7.0",
-		},
-		{
-			name:     "digest pinned image",
-			imageRef: "nginx@sha256:abc123",
-			wantRepo: "nginx",
-			wantTag:  "latest",
-		},
-		{
-			name:     "empty string returns empty",
-			imageRef: "",
-			wantRepo: "",
-			wantTag:  "",
-		},
+		{name: "image with tag", imageRef: "nginx:1.25.0", wantRepo: "nginx", wantTag: "1.25.0"},
+		{name: "image without tag defaults to latest", imageRef: "nginx", wantRepo: "nginx", wantTag: "latest"},
+		{name: "full reference with registry", imageRef: "docker.io/library/nginx:1.25.0", wantRepo: "docker.io/library/nginx", wantTag: "1.25.0"},
+		{name: "quay.io reference", imageRef: "quay.io/prometheus/node-exporter:v1.7.0", wantRepo: "quay.io/prometheus/node-exporter", wantTag: "v1.7.0"},
+		{name: "digest pinned image rejected", imageRef: "nginx@sha256:abc123", wantErr: "digest-pinned"},
+		{name: "tag and digest image rejected", imageRef: "nginx:1.25@sha256:abc123", wantErr: "digest-pinned"},
+		{name: "empty string returns empty", imageRef: "", wantRepo: "", wantTag: ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo, tag := parseImageRef(tt.imageRef)
+			repo, tag, err := parseImageRef(tt.imageRef)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.wantRepo, repo)
 			assert.Equal(t, tt.wantTag, tag)
 		})

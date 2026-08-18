@@ -2,8 +2,11 @@ package bulk
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -195,4 +198,32 @@ func TestResolveChartImagesWithCharts_RespectsCanceledContext(t *testing.T) {
 	cancel()
 	_, _, err := resolveChartImagesWithCharts(ctx, []ChartSpec{{Name: "chart", Version: "1.0.0", Repository: "oci://example.com/charts"}}, nil)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestMergeImageSpecsPreservesDiscoveredTags(t *testing.T) {
+	config := PatchConfig{Images: []ImageSpec{{
+		Name: "redis", Image: "redis", Tags: TagStrategy{Strategy: StrategyList, List: []string{"7.0"}},
+	}}}
+	merged := mergeImageSpecs(&config, []ImageSpec{
+		{Name: "redis", Image: "redis", Tags: TagStrategy{Strategy: StrategyList, List: []string{"7.2"}}},
+		{Name: "redis", Image: "redis", Tags: TagStrategy{Strategy: StrategyList, List: []string{"7.0"}}},
+	})
+	require.Len(t, merged.Images, 1)
+	assert.Equal(t, []string{"7.0", "7.2"}, merged.Images[0].Tags.List)
+}
+
+func TestPatchFromConfigRequiresExperimentalModeForCharts(t *testing.T) {
+	t.Setenv("COPA_EXPERIMENTAL", "")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+apiVersion: copa.sh/v1alpha1
+kind: PatchConfig
+charts:
+  - name: app
+    version: "1.0.0"
+    repository: oci://example.com/charts
+`), 0o600)
+	require.NoError(t, err)
+	err = PatchFromConfig(context.Background(), path, &types.Options{})
+	require.ErrorContains(t, err, "COPA_EXPERIMENTAL=1")
 }

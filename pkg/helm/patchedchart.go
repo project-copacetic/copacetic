@@ -2,10 +2,10 @@ package helm
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
-	log "github.com/sirupsen/logrus"
 	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
@@ -17,135 +17,170 @@ type ImageMapping struct {
 	PatchedTag   string
 }
 
-// ValuePathMapping links a discovered chart image to its values.yaml path.
+// ValuePathMapping links one discovered chart image to its values path.
 type ValuePathMapping struct {
-	ImageRepo      string // The matched image repository (e.g. "docker.io/timberio/vector")
-	RepositoryPath string // Dot-delimited path to the repository value (e.g. "image.repository")
-	TagPath        string // Dot-delimited path to the tag value (e.g. "image.tag")
+	ImageRepo      string
+	ImageTag       string
+	RepositoryPath string
+	TagPath        string
+	RegistryPath   string
+	FullReference  bool
 }
 
-// ResolveImageValuePaths auto-detects where each ChartImage's repository and tag
-// are defined in the chart's values.yaml. It walks the values tree looking for
-// the common pattern of `*.repository` / `*.tag` pairs, matching discovered images
-// by suffix comparison.
-//
-// explicitPaths allows users to override auto-detection for specific images.
-// Keys are image repository patterns (same matching as OverrideSpec), values are
-// the dot-delimited parent path (e.g. "controller.image").
-func ResolveImageValuePaths(
-	chartValues map[string]interface{},
-	images []ChartImage,
-	explicitPaths map[string]string,
-) []ValuePathMapping {
-	var result []ValuePathMapping
-	matched := make(map[string]bool) // track which images have been matched
-
-	// First, apply explicit paths — these take priority
-	for _, img := range images {
-		path, found := matchExplicitPath(img.Repository, explicitPaths)
-		if found {
-			result = append(result, ValuePathMapping{
-				ImageRepo:      img.Repository,
-				RepositoryPath: path + ".repository",
-				TagPath:        path + ".tag",
-			})
-			matched[img.Repository] = true
-		}
-	}
-
-	// Then auto-detect remaining images
+// ResolveImageValuePaths locates an unambiguous values path for each image.
+// Explicit paths take priority. Auto-detection supports repository/tag,
+// registry/repository/tag, name/tag, and scalar image fields.
+func ResolveImageValuePaths(chartValues map[string]interface{}, images []ChartImage, explicitPaths map[string]string) ([]ValuePathMapping, error) {
 	candidates := findRepositoryPaths(chartValues, "")
-	for _, img := range images {
-		if matched[img.Repository] {
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].path < candidates[j].path })
+
+	result := make([]ValuePathMapping, 0, len(images))
+	for _, image := range images {
+		if explicitPath, found := matchExplicitPath(image.Repository, explicitPaths); found {
+			candidate, ok := candidateAtPath(candidates, explicitPath)
+			if !ok {
+				candidate = repositoryCandidate{path: explicitPath + ".repository", tagPath: explicitPath + ".tag"}
+			}
+			result = append(result, candidate.mapping(image))
 			continue
 		}
+
+		bestScore := 0
+		var best []repositoryCandidate
 		for _, candidate := range candidates {
-			if imageMatchesValue(img.Repository, candidate.value) {
-				result = append(result, ValuePathMapping{
-					ImageRepo:      img.Repository,
-					RepositoryPath: candidate.path,
-					TagPath:        candidate.tagPath,
-				})
-				matched[img.Repository] = true
-				break
+			score := candidate.matchScore(image)
+			if score > bestScore {
+				bestScore = score
+				best = []repositoryCandidate{candidate}
+			} else if score > 0 && score == bestScore {
+				best = append(best, candidate)
 			}
 		}
-		if !matched[img.Repository] {
-			log.Warnf("helm: could not auto-detect values.yaml path for image %q — use overrides.valuePath to specify manually", img.Repository)
+		if len(best) == 0 {
+			return nil, fmt.Errorf("could not detect values path for image %q; set overrides.valuePath", image.Repository+":"+image.Tag)
 		}
+		if len(best) > 1 {
+			paths := make([]string, len(best))
+			for i := range best {
+				paths[i] = best[i].path
+			}
+			return nil, fmt.Errorf("ambiguous values paths for image %q: %s; set overrides.valuePath", image.Repository+":"+image.Tag, strings.Join(paths, ", "))
+		}
+		result = append(result, best[0].mapping(image))
 	}
-
-	return result
+	return result, nil
 }
 
-// repositoryCandidate represents a discovered repository/tag pair in values.yaml.
 type repositoryCandidate struct {
-	path    string // dot-delimited path to the "repository" key (e.g. "image.repository")
-	tagPath string // dot-delimited path to the sibling "tag" key (e.g. "image.tag")
-	value   string // the string value of the repository key
+	path          string
+	tagPath       string
+	registryPath  string
+	value         string
+	tag           string
+	fullReference bool
 }
 
-// findRepositoryPaths recursively walks a values map looking for keys named "repository"
-// that have string values, and checks for a sibling "tag" key.
-func findRepositoryPaths(values map[string]interface{}, prefix string) []repositoryCandidate {
-	var results []repositoryCandidate
+func (candidate *repositoryCandidate) mapping(image ChartImage) ValuePathMapping {
+	return ValuePathMapping{
+		ImageRepo:      image.Repository,
+		ImageTag:       image.Tag,
+		RepositoryPath: candidate.path,
+		TagPath:        candidate.tagPath,
+		RegistryPath:   candidate.registryPath,
+		FullReference:  candidate.fullReference,
+	}
+}
 
-	for key, val := range values {
+func (candidate *repositoryCandidate) matchScore(image ChartImage) int {
+	if !imageMatchesValue(image.Repository, candidate.value) {
+		return 0
+	}
+	score := 1
+	if image.Repository == candidate.value {
+		score = 3
+	}
+	if candidate.tag != "" && candidate.tag == image.Tag {
+		score += 4
+	}
+	return score
+}
+
+func findRepositoryPaths(values map[string]interface{}, prefix string) []repositoryCandidate {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var results []repositoryCandidate
+	for _, key := range keys {
+		value := values[key]
 		currentPath := key
 		if prefix != "" {
 			currentPath = prefix + "." + key
 		}
 
-		v, ok := val.(map[string]interface{})
-		if ok {
-			// Check if this map has a "repository" string key
-			if repoVal, ok := v["repository"]; ok {
-				if repoStr, ok := repoVal.(string); ok && repoStr != "" {
-					candidate := repositoryCandidate{
-						path:  currentPath + ".repository",
-						value: repoStr,
-					}
-					// Look for sibling "tag" key
-					if _, hasTag := v["tag"]; hasTag {
-						candidate.tagPath = currentPath + ".tag"
-					}
-					results = append(results, candidate)
+		if key == "image" {
+			if imageRef, ok := value.(string); ok && imageRef != "" {
+				repo, tag, err := parseImageRef(imageRef)
+				if err == nil {
+					results = append(results, repositoryCandidate{path: currentPath, value: repo, tag: tag, fullReference: true})
 				}
 			}
-			// Recurse into nested maps
-			results = append(results, findRepositoryPaths(v, currentPath)...)
 		}
-	}
 
+		child, ok := value.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		for _, imageKey := range []string{"repository", "name"} {
+			imageRepo, ok := child[imageKey].(string)
+			if !ok || imageRepo == "" {
+				continue
+			}
+			candidate := repositoryCandidate{path: currentPath + "." + imageKey, value: imageRepo}
+			if tag, ok := child["tag"].(string); ok {
+				candidate.tag = tag
+				candidate.tagPath = currentPath + ".tag"
+			}
+			if registry, ok := child["registry"].(string); ok && registry != "" {
+				candidate.value = strings.TrimSuffix(registry, "/") + "/" + imageRepo
+				candidate.registryPath = currentPath + ".registry"
+			}
+			results = append(results, candidate)
+			break
+		}
+		results = append(results, findRepositoryPaths(child, currentPath)...)
+	}
 	return results
 }
 
-// imageMatchesValue checks if a discovered image repository matches a value from values.yaml.
-// Uses suffix matching to handle registry prefixes (e.g., "docker.io/library/nginx" matches "nginx").
-func imageMatchesValue(imageRepo, valueRepo string) bool {
-	if imageRepo == valueRepo {
-		return true
+func candidateAtPath(candidates []repositoryCandidate, path string) (repositoryCandidate, bool) {
+	for _, candidate := range candidates {
+		base := strings.TrimSuffix(strings.TrimSuffix(candidate.path, ".repository"), ".name")
+		if candidate.path == path || base == path {
+			return candidate, true
+		}
 	}
-	// Suffix match: imageRepo "docker.io/timberio/vector" matches valueRepo "timberio/vector"
-	if strings.HasSuffix(imageRepo, "/"+valueRepo) {
-		return true
-	}
-	// Reverse suffix: valueRepo "docker.io/timberio/vector" matches imageRepo "timberio/vector"
-	if strings.HasSuffix(valueRepo, "/"+imageRepo) {
-		return true
-	}
-	return false
+	return repositoryCandidate{}, false
 }
 
-// matchExplicitPath finds the explicit value path for an image repository,
-// using the shared MatchRepositoryPattern logic (exact or suffix match).
+func imageMatchesValue(imageRepo, valueRepo string) bool {
+	return imageRepo == valueRepo || strings.HasSuffix(imageRepo, "/"+valueRepo) || strings.HasSuffix(valueRepo, "/"+imageRepo)
+}
+
 func matchExplicitPath(imageRepo string, explicitPaths map[string]string) (string, bool) {
 	if path, ok := explicitPaths[imageRepo]; ok {
 		return path, true
 	}
-	for key, path := range explicitPaths {
+	keys := make([]string, 0, len(explicitPaths))
+	for key := range explicitPaths {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
 		if MatchRepositoryPattern(imageRepo, key) {
-			return path, true
+			return explicitPaths[key], true
 		}
 	}
 	return "", false
@@ -172,8 +207,10 @@ func BuildPatchedChart(
 	origName := originalChart.Metadata.Name
 	origVersion := originalChart.Metadata.Version
 
-	// Build the subchart-scoped values overrides
-	overrideValues := buildOverrideValues(origName, mappings, valuePaths)
+	overrideValues, err := buildOverrideValues(origName, mappings, valuePaths)
+	if err != nil {
+		return nil, err
+	}
 
 	patchedChart := &helmchart.Chart{
 		Metadata: &helmchart.Metadata{
@@ -198,7 +235,7 @@ func BuildPatchedChart(
 		},
 		Values: overrideValues,
 	}
-
+	patchedChart.SetDependencies(originalChart)
 	return patchedChart, nil
 }
 
@@ -214,55 +251,63 @@ type ChartSourceSpec struct {
 //
 // For example, if the original chart is "vector" and the image path is "image.repository",
 // the override key becomes "vector.image.repository".
-func buildOverrideValues(
-	subchartName string,
-	mappings []ImageMapping,
-	valuePaths []ValuePathMapping,
-) map[string]interface{} {
-	// Build a lookup from original repo → patched info
-	patchedLookup := make(map[string]ImageMapping)
-	for _, m := range mappings {
-		patchedLookup[m.OriginalRepo] = m
+type imageMappingKey struct {
+	repository string
+	tag        string
+}
+
+func buildOverrideValues(subchartName string, mappings []ImageMapping, valuePaths []ValuePathMapping) (map[string]interface{}, error) {
+	lookup := make(map[imageMappingKey]ImageMapping, len(mappings))
+	for _, mapping := range mappings {
+		lookup[imageMappingKey{repository: mapping.OriginalRepo, tag: mapping.OriginalTag}] = mapping
 	}
 
-	// Build the subchart override map
 	subchartValues := make(map[string]interface{})
-
-	for _, vp := range valuePaths {
-		patched, found := findPatchedMapping(vp.ImageRepo, patchedLookup)
+	for _, valuePath := range valuePaths {
+		patched, found := findPatchedMapping(valuePath.ImageRepo, valuePath.ImageTag, lookup)
 		if !found {
-			log.Debugf("helm: no patched mapping found for image %q, skipping value override", vp.ImageRepo)
+			return nil, fmt.Errorf("no patched mapping found for image %q", valuePath.ImageRepo+":"+valuePath.ImageTag)
+		}
+		if valuePath.FullReference {
+			setNestedValue(subchartValues, valuePath.RepositoryPath, patched.PatchedRepo+":"+patched.PatchedTag)
 			continue
 		}
 
-		// Strip the first component if it matches the key we'll nest under
-		// e.g., "image.repository" → set at path ["image"]["repository"]
-		setNestedValue(subchartValues, vp.RepositoryPath, patched.PatchedRepo)
-		if vp.TagPath != "" {
-			setNestedValue(subchartValues, vp.TagPath, patched.PatchedTag)
+		repository := patched.PatchedRepo
+		if valuePath.RegistryPath != "" {
+			registry, remainder := splitRegistry(patched.PatchedRepo)
+			setNestedValue(subchartValues, valuePath.RegistryPath, registry)
+			repository = remainder
+		}
+		setNestedValue(subchartValues, valuePath.RepositoryPath, repository)
+		if valuePath.TagPath != "" {
+			setNestedValue(subchartValues, valuePath.TagPath, patched.PatchedTag)
 		}
 	}
-
 	if len(subchartValues) == 0 {
-		return map[string]interface{}{}
+		return map[string]interface{}{}, nil
 	}
-
-	return map[string]interface{}{
-		subchartName: subchartValues,
-	}
+	return map[string]interface{}{subchartName: subchartValues}, nil
 }
 
-// findPatchedMapping looks up a patched mapping for an image, supporting suffix matching.
-func findPatchedMapping(imageRepo string, lookup map[string]ImageMapping) (ImageMapping, bool) {
-	if m, ok := lookup[imageRepo]; ok {
-		return m, true
+func findPatchedMapping(imageRepo, imageTag string, lookup map[imageMappingKey]ImageMapping) (ImageMapping, bool) {
+	if mapping, ok := lookup[imageMappingKey{repository: imageRepo, tag: imageTag}]; ok {
+		return mapping, true
 	}
-	for repo, m := range lookup {
-		if strings.HasSuffix(repo, "/"+imageRepo) || strings.HasSuffix(imageRepo, "/"+repo) {
-			return m, true
+	for key, mapping := range lookup {
+		if key.tag == imageTag && imageMatchesValue(imageRepo, key.repository) {
+			return mapping, true
 		}
 	}
 	return ImageMapping{}, false
+}
+
+func splitRegistry(repository string) (string, string) {
+	first, remainder, found := strings.Cut(repository, "/")
+	if found && (strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost") {
+		return first, remainder
+	}
+	return "", repository
 }
 
 // setNestedValue sets a value in a nested map using a dot-delimited path.

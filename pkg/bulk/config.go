@@ -94,14 +94,15 @@ func isValidChartRepository(repo string) bool {
 	return strings.HasPrefix(repo, "oci://") || strings.HasPrefix(repo, "https://")
 }
 
-// validateOverrides validates all OverrideSpec entries in the config.
+// validateOverrides accepts a tag rewrite, a values path hint, or both.
 func validateOverrides(overrides map[string]OverrideSpec) error {
-	for key, o := range overrides {
-		if o.From == "" {
-			return fmt.Errorf("overrides[%q]: from is required", key)
+	for key, override := range overrides {
+		hasRewrite := override.From != "" || override.To != ""
+		if hasRewrite && (override.From == "" || override.To == "") {
+			return fmt.Errorf("overrides[%q]: from and to must be specified together", key)
 		}
-		if o.To == "" {
-			return fmt.Errorf("overrides[%q]: to is required", key)
+		if !hasRewrite && override.ValuePath == "" {
+			return fmt.Errorf("overrides[%q]: tag rewrite or valuePath is required", key)
 		}
 	}
 	return nil

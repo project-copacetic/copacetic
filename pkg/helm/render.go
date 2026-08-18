@@ -1,8 +1,10 @@
 package helm
 
 import (
+	"fmt"
 	"strings"
 
+	"github.com/distribution/reference"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 )
@@ -37,7 +39,10 @@ func ExtractImages(renderedManifests string) ([]ChartImage, error) {
 			continue
 		}
 
-		images := extractImagesFromObject(obj)
+		images, err := extractImagesFromObject(obj)
+		if err != nil {
+			return nil, err
+		}
 		for _, img := range images {
 			key := img.Repository + ":" + img.Tag
 			if _, exists := seen[key]; !exists {
@@ -53,29 +58,41 @@ func ExtractImages(renderedManifests string) ([]ChartImage, error) {
 	return result, nil
 }
 
-// extractImagesFromObject extracts container images from a Kubernetes object
-// represented as an unstructured map.
-func extractImagesFromObject(obj map[string]interface{}) []ChartImage {
-	spec, _ := obj["spec"].(map[string]interface{})
-	if spec == nil {
-		return nil
+// extractImagesFromObject extracts container images from a Kubernetes object.
+func extractImagesFromObject(obj map[string]interface{}) ([]ChartImage, error) {
+	if items, ok := obj["items"].([]interface{}); ok {
+		var images []ChartImage
+		for _, item := range items {
+			child, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			childImages, err := extractImagesFromObject(child)
+			if err != nil {
+				return nil, err
+			}
+			images = append(images, childImages...)
+		}
+		return images, nil
 	}
 
-	// Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs: spec.template.spec
+	spec, _ := obj["spec"].(map[string]interface{})
+	if spec == nil {
+		return nil, nil
+	}
+
 	if tmpl, ok := spec["template"].(map[string]interface{}); ok {
 		if tmplSpec, ok := tmpl["spec"].(map[string]interface{}); ok {
 			return extractImagesFromPodSpec(tmplSpec)
 		}
 	}
 
-	// Bare Pods: spec.containers
-	if _, hasCont := spec["containers"]; hasCont {
+	if _, hasContainers := spec["containers"]; hasContainers {
 		return extractImagesFromPodSpec(spec)
 	}
 
-	// CronJobs: spec.jobTemplate.spec.template.spec
-	if jobTmpl, ok := spec["jobTemplate"].(map[string]interface{}); ok {
-		if jobSpec, ok := jobTmpl["spec"].(map[string]interface{}); ok {
+	if jobTemplate, ok := spec["jobTemplate"].(map[string]interface{}); ok {
+		if jobSpec, ok := jobTemplate["spec"].(map[string]interface{}); ok {
 			if tmpl, ok := jobSpec["template"].(map[string]interface{}); ok {
 				if tmplSpec, ok := tmpl["spec"].(map[string]interface{}); ok {
 					return extractImagesFromPodSpec(tmplSpec)
@@ -84,58 +101,50 @@ func extractImagesFromObject(obj map[string]interface{}) []ChartImage {
 		}
 	}
 
-	return nil
+	return nil, nil
 }
 
-// extractImagesFromPodSpec extracts images from containers and initContainers
-// in a Kubernetes pod spec map.
-func extractImagesFromPodSpec(podSpec map[string]interface{}) []ChartImage {
+// extractImagesFromPodSpec extracts images from every Kubernetes container class.
+func extractImagesFromPodSpec(podSpec map[string]interface{}) ([]ChartImage, error) {
 	var images []ChartImage
-	for _, key := range []string{"initContainers", "containers"} {
+	for _, key := range []string{"initContainers", "containers", "ephemeralContainers"} {
 		containers, _ := podSpec[key].([]interface{})
-		for _, c := range containers {
-			container, ok := c.(map[string]interface{})
+		for _, value := range containers {
+			container, ok := value.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			ref, _ := container["image"].(string)
-			if ref == "" {
+			imageRef, _ := container["image"].(string)
+			if imageRef == "" {
 				continue
 			}
-			repo, tag := parseImageRef(ref)
-			if repo != "" {
-				images = append(images, ChartImage{Repository: repo, Tag: tag})
+			repo, tag, err := parseImageRef(imageRef)
+			if err != nil {
+				return nil, err
 			}
+			images = append(images, ChartImage{Repository: repo, Tag: tag})
 		}
 	}
-	return images
+	return images, nil
 }
 
-// parseImageRef splits an image reference string into repository and tag components.
-// If no tag is present, "latest" is returned as the tag.
-// Returns empty strings for an empty input.
-func parseImageRef(imageRef string) (repo, tag string) {
+// parseImageRef returns the repository and tag of a tag-addressed image.
+// Digest-addressed images are rejected because replacing their digest with a tag
+// would change the selected image identity.
+func parseImageRef(imageRef string) (string, string, error) {
 	if imageRef == "" {
-		return "", ""
+		return "", "", nil
 	}
-
-	if digestIndex := strings.Index(imageRef, "@sha256:"); digestIndex != -1 {
-		imageRef = imageRef[:digestIndex]
+	if strings.Contains(imageRef, "@") {
+		return "", "", fmt.Errorf("digest-pinned image %q is unsupported in chart patching", imageRef)
 	}
-
-	// Find the last colon to split repo from tag.
-	// Handle registry ports: "registry:5000/image" vs "image:tag".
-	// Strategy: the last colon that is NOT followed by a slash is the tag separator.
-	lastColon := strings.LastIndex(imageRef, ":")
-	if lastColon == -1 {
-		return imageRef, "latest"
+	named, err := reference.ParseNormalizedNamed(imageRef)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid image reference %q: %w", imageRef, err)
 	}
-
-	// If there's a slash after the last colon, it's a port (e.g., "registry:5000/image")
-	// and there's no explicit tag.
-	if strings.Contains(imageRef[lastColon:], "/") {
-		return imageRef, "latest"
+	if tagged, ok := named.(reference.Tagged); ok {
+		tag := tagged.Tag()
+		return strings.TrimSuffix(imageRef, ":"+tag), tag, nil
 	}
-
-	return imageRef[:lastColon], imageRef[lastColon+1:]
+	return imageRef, "latest", nil
 }
