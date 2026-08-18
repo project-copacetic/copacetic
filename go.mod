@@ -1,6 +1,6 @@
 module github.com/project-copacetic/copacetic
 
-go 1.25.12
+go 1.25.13
 
 require (
 	github.com/Masterminds/semver v1.5.0
