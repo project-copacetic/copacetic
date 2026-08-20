@@ -4,6 +4,15 @@ name: Publish Chisel tooling image
 # values below and dispatch it intentionally when publishing a new tooling image.
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - chisel-tooling-publish-1667
+    paths:
+      - cmd/chisel-validator/main.go
+      - go.mod
+      - images/chisel/**
+      - .github/workflows/publish-chisel-tooling-image.yml
+      - .github/workflows/scripts/chisel/**
 
 concurrency:
   group: publish-chisel-tooling-v1.4.2-copa.2
@@ -35,13 +44,11 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Require the default branch
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      - name: Require the temporary trusted publish branch
         run: |
-          expected_ref="refs/heads/${DEFAULT_BRANCH}"
+          expected_ref="refs/heads/chisel-tooling-publish-1667"
           if [[ "${GITHUB_REF}" != "${expected_ref}" ]]; then
-            echo "::error title=Untrusted publish ref::This workflow only publishes from ${expected_ref}; received ${GITHUB_REF}." >&2
+            echo "::error title=Untrusted publish ref::This temporary workflow only publishes from ${expected_ref}; received ${GITHUB_REF}." >&2
             exit 1
           fi
 
