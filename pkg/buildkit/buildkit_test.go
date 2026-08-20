@@ -1148,3 +1148,26 @@ func TestHasOCILayoutInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestPlatformsFromIndexManifest(t *testing.T) {
+	linux := func(arch, variant string) *remotev1.Platform {
+		return &remotev1.Platform{OS: "linux", Architecture: arch, Variant: variant}
+	}
+
+	manifest := &remotev1.IndexManifest{
+		Manifests: []remotev1.Descriptor{
+			{Platform: linux("amd64", "")},
+			{Platform: nil}, // e.g. attestation or provenance entry
+			{Platform: linux("arm64", "v8")},
+			{Platform: &remotev1.Platform{OS: "unknown", Architecture: "unknown"}},
+		},
+	}
+
+	got := platformsFromIndexManifest(manifest)
+
+	want := []types.PatchPlatform{
+		{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}},
+		{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}, // v8 variant stripped
+	}
+	assert.Equal(t, want, got)
+}
