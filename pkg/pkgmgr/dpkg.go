@@ -1509,20 +1509,37 @@ func marshalDPKGPackageVersions(packageInfo map[string]string, heldPackages map[
 	return []byte(data.String()), nil
 }
 
-func marshalDPKGUpdatePackageNames(updates unversioned.UpdatePackages, installedVersions map[string]string) ([]byte, error) {
+func marshalDPKGUpdatePackageNames(
+	updates unversioned.UpdatePackages,
+	installedVersions map[string]string,
+	heldPackages map[string]struct{},
+) ([]byte, error) {
 	if err := ValidateOSPackageNames(updates); err != nil {
 		return nil, err
 	}
 
 	packageSet := make(map[string]struct{}, len(updates))
+	heldSet := make(map[string]struct{})
 	for _, update := range updates {
 		identities := matchingDPKGPackageIdentities(installedVersions, update.Name)
 		if len(identities) == 0 {
 			return nil, fmt.Errorf("requested package %s is not installed in the target dpkg inventory", update.Name)
 		}
 		for _, identity := range identities {
+			if _, held := heldPackages[identity]; held {
+				heldSet[identity] = struct{}{}
+				continue
+			}
 			packageSet[identity] = struct{}{}
 		}
+	}
+	if len(heldSet) > 0 {
+		heldIdentities := make([]string, 0, len(heldSet))
+		for identity := range heldSet {
+			heldIdentities = append(heldIdentities, identity)
+		}
+		sort.Strings(heldIdentities)
+		return nil, fmt.Errorf("requested package identities are held and cannot be patched: %s", strings.Join(heldIdentities, ", "))
 	}
 	packageNames := make([]string, 0, len(packageSet))
 	for packageName := range packageSet {
@@ -1776,7 +1793,7 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 			return nil, nil, fmt.Errorf("package name validation failed: %w", err)
 		}
 		var err error
-		selectedPackageData, err = marshalDPKGUpdatePackageNames(updates, dm.packageInfo)
+		selectedPackageData, err = marshalDPKGUpdatePackageNames(updates, dm.packageInfo, dm.heldPackages)
 		if err != nil {
 			return nil, nil, fmt.Errorf("serializing requested package names: %w", err)
 		}

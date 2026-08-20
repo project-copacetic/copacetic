@@ -120,6 +120,10 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 
 // buildMultiarch handles multiarch builds by processing each platform separately.
 func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gwclient.Result, error) {
+	if err := validateFrontendReportPlatforms(opts.Report, opts.Platforms); err != nil {
+		return nil, err
+	}
+
 	var targetPlatforms []ocispecs.Platform
 
 	// If report is a directory, discover platforms from report files

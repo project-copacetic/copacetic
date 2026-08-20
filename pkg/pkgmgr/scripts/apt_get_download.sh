@@ -192,12 +192,13 @@ original_dependency_clause_present() {
             package_name = ""; architecture = ""
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^Package:[[:space:]]*/) {
+                folded = tolower(lines[i])
+                if (folded ~ /^package:[[:space:]]*/) {
                     package_name = lines[i]
-                    sub(/^Package:[[:space:]]*/, "", package_name)
-                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
+                    sub(/^[^:]+:[[:space:]]*/, "", package_name)
+                } else if (folded ~ /^architecture:[[:space:]]*/) {
                     architecture = lines[i]
-                    sub(/^Architecture:[[:space:]]*/, "", architecture)
+                    sub(/^[^:]+:[[:space:]]*/, "", architecture)
                 }
             }
             if (architecture == "") architecture = target_architecture
@@ -205,9 +206,10 @@ original_dependency_clause_present() {
 
             active = 0
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^(Depends|Pre-Depends):[[:space:]]*/) {
+                folded = tolower(lines[i])
+                if (folded ~ /^(depends|pre-depends):[[:space:]]*/) {
                     relation = lines[i]
-                    sub(/^(Depends|Pre-Depends):[[:space:]]*/, "", relation)
+                    sub(/^[^:]+:[[:space:]]*/, "", relation)
                     print relation
                     active = 1
                 } else if (lines[i] ~ /^[[:space:]]/ && active) {
@@ -512,10 +514,11 @@ filter_status_to_final_inventory() {
             package_name = ""; architecture = ""
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^Package:[[:space:]]*/) {
-                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name)
-                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
-                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture)
+                folded = tolower(lines[i])
+                if (folded ~ /^package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", package_name)
+                } else if (folded ~ /^architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", architecture)
                 }
             }
             identity = package_name ":" (architecture == "" ? ENVIRON["TARGET_DPKG_ARCH"] : architecture)
@@ -539,12 +542,13 @@ filter_status_to_final_inventory() {
             package_name = ""; architecture = ""; status_value = ""
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^Package:[[:space:]]*/) {
-                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name)
-                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
-                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture)
-                } else if (lines[i] ~ /^Status:[[:space:]]*/) {
-                    status_value = lines[i]; sub(/^Status:[[:space:]]*/, "", status_value)
+                folded = tolower(lines[i])
+                if (folded ~ /^package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", package_name)
+                } else if (folded ~ /^architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", architecture)
+                } else if (folded ~ /^status:[[:space:]]*/) {
+                    status_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", status_value)
                 }
             }
             identity = package_name ":" (architecture == "" ? ENVIRON["TARGET_DPKG_ARCH"] : architecture)
@@ -676,12 +680,13 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
             package_name = ""; architecture = ""; multiarch = ""
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^Package:[[:space:]]*/) {
-                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name)
-                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
-                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture)
-                } else if (lines[i] ~ /^Multi-Arch:[[:space:]]*/) {
-                    multiarch = lines[i]; sub(/^Multi-Arch:[[:space:]]*/, "", multiarch)
+                folded = tolower(lines[i])
+                if (folded ~ /^package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", package_name)
+                } else if (folded ~ /^architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", architecture)
+                } else if (folded ~ /^multi-arch:[[:space:]]*/) {
+                    multiarch = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", multiarch)
                 }
             }
             if (package_name != "") {
@@ -765,16 +770,17 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
             package_name = ""; architecture = ""; multiarch = ""; status_value = ""; provides = ""; active = 0
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^Package:[[:space:]]*/) {
-                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name); active = 0
-                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
-                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture); active = 0
-                } else if (lines[i] ~ /^Multi-Arch:[[:space:]]*/) {
-                    multiarch = lines[i]; sub(/^Multi-Arch:[[:space:]]*/, "", multiarch); active = 0
-                } else if (lines[i] ~ /^Status:[[:space:]]*/) {
-                    status_value = lines[i]; sub(/^Status:[[:space:]]*/, "", status_value); active = 0
-                } else if (lines[i] ~ /^Provides:[[:space:]]*/) {
-                    line = lines[i]; sub(/^Provides:[[:space:]]*/, "", line); provides = line; active = 1
+                folded = tolower(lines[i])
+                if (folded ~ /^package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", package_name); active = 0
+                } else if (folded ~ /^architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", architecture); active = 0
+                } else if (folded ~ /^multi-arch:[[:space:]]*/) {
+                    multiarch = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", multiarch); active = 0
+                } else if (folded ~ /^status:[[:space:]]*/) {
+                    status_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", status_value); active = 0
+                } else if (folded ~ /^provides:[[:space:]]*/) {
+                    line = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", line); provides = line; active = 1
                 } else if (lines[i] ~ /^[[:space:]]/ && active) {
                     provides = provides " " lines[i]
                 } else if (lines[i] !~ /^[[:space:]]/) {
@@ -826,20 +832,21 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
             depends_value = ""; predepends_value = ""; breaks_value = ""; conflicts_value = ""; active = ""
             count = split($0, lines, "\n")
             for (i = 1; i <= count; i++) {
-                if (lines[i] ~ /^Package:[[:space:]]*/) {
-                    package_name = lines[i]; sub(/^Package:[[:space:]]*/, "", package_name); active = ""
-                } else if (lines[i] ~ /^Architecture:[[:space:]]*/) {
-                    architecture = lines[i]; sub(/^Architecture:[[:space:]]*/, "", architecture); active = ""
-                } else if (lines[i] ~ /^Status:[[:space:]]*/) {
-                    status_value = lines[i]; sub(/^Status:[[:space:]]*/, "", status_value); active = ""
-                } else if (lines[i] ~ /^Depends:[[:space:]]*/) {
-                    depends_value = lines[i]; sub(/^Depends:[[:space:]]*/, "", depends_value); active = "depends"
-                } else if (lines[i] ~ /^Pre-Depends:[[:space:]]*/) {
-                    predepends_value = lines[i]; sub(/^Pre-Depends:[[:space:]]*/, "", predepends_value); active = "predepends"
-                } else if (lines[i] ~ /^Breaks:[[:space:]]*/) {
-                    breaks_value = lines[i]; sub(/^Breaks:[[:space:]]*/, "", breaks_value); active = "breaks"
-                } else if (lines[i] ~ /^Conflicts:[[:space:]]*/) {
-                    conflicts_value = lines[i]; sub(/^Conflicts:[[:space:]]*/, "", conflicts_value); active = "conflicts"
+                folded = tolower(lines[i])
+                if (folded ~ /^package:[[:space:]]*/) {
+                    package_name = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", package_name); active = ""
+                } else if (folded ~ /^architecture:[[:space:]]*/) {
+                    architecture = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", architecture); active = ""
+                } else if (folded ~ /^status:[[:space:]]*/) {
+                    status_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", status_value); active = ""
+                } else if (folded ~ /^depends:[[:space:]]*/) {
+                    depends_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", depends_value); active = "depends"
+                } else if (folded ~ /^pre-depends:[[:space:]]*/) {
+                    predepends_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", predepends_value); active = "predepends"
+                } else if (folded ~ /^breaks:[[:space:]]*/) {
+                    breaks_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", breaks_value); active = "breaks"
+                } else if (folded ~ /^conflicts:[[:space:]]*/) {
+                    conflicts_value = lines[i]; sub(/^[^:]+:[[:space:]]*/, "", conflicts_value); active = "conflicts"
                 } else if (lines[i] ~ /^[[:space:]]/ && active == "depends") {
                     depends_value = depends_value " " lines[i]
                 } else if (lines[i] ~ /^[[:space:]]/ && active == "predepends") {

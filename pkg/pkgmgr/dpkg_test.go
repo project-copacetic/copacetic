@@ -312,6 +312,7 @@ func TestMarshalDPKGVersionFloorsProtectsDependencyClosure(t *testing.T) {
 	packages, err := marshalDPKGUpdatePackageNames(
 		unversioned.UpdatePackages{{Name: "app"}},
 		map[string]string{"app:amd64": "1.0", "app:i386": "0.9"},
+		nil,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "app:amd64\napp:i386\n", string(packages))
@@ -319,8 +320,16 @@ func TestMarshalDPKGVersionFloorsProtectsDependencyClosure(t *testing.T) {
 	_, err = marshalDPKGUpdatePackageNames(
 		unversioned.UpdatePackages{{Name: "missing"}},
 		map[string]string{"app:amd64": "1.0"},
+		nil,
 	)
 	require.ErrorContains(t, err, "is not installed in the target dpkg inventory")
+
+	_, err = marshalDPKGUpdatePackageNames(
+		unversioned.UpdatePackages{{Name: "app"}},
+		map[string]string{"app:amd64": "1.0"},
+		map[string]struct{}{"app:amd64": {}},
+	)
+	require.ErrorContains(t, err, "requested package identities are held and cannot be patched: app:amd64")
 }
 
 func TestRejectExternalFullStatusLifecyclePackages(t *testing.T) {
@@ -1848,6 +1857,17 @@ func TestAptGetDownloadScriptValidatesDependencyArchitectures(t *testing.T) {
 	}
 }
 
+func TestAptGetDownloadScriptAcceptsCaseInsensitiveStatusFields(t *testing.T) {
+	output, err := runAptGetDownloadRelationshipTest(t, &aptGetDownloadRelationshipTestOptions{
+		sourceArchitecture:        "amd64",
+		dependencyClause:          "dependency",
+		installedArchitecture:     "amd64",
+		installedProvides:         "virtual-dependency",
+		lowercaseStatusFieldNames: true,
+	})
+	require.NoError(t, err, "script output: %s", output)
+}
+
 func TestAptGetDownloadScriptValidatesNegativeRelationships(t *testing.T) {
 	const virtualApp = "virtual-app"
 	tests := []struct {
@@ -1961,6 +1981,7 @@ type aptGetDownloadRelationshipTestOptions struct {
 	installedDepends           string
 	installedBreaks            string
 	installedConflicts         string
+	lowercaseStatusFieldNames  bool
 }
 
 func runAptGetDownloadRelationshipTest(t *testing.T, options *aptGetDownloadRelationshipTestOptions) ([]byte, error) {
@@ -2017,6 +2038,14 @@ func runAptGetDownloadRelationshipTest(t *testing.T, options *aptGetDownloadRela
 		statusFields = append(statusFields, "Conflicts: "+options.installedConflicts)
 	}
 	statusFields = append(statusFields, "")
+	if options.lowercaseStatusFieldNames {
+		for index, field := range statusFields {
+			name, value, ok := strings.Cut(field, ":")
+			if ok {
+				statusFields[index] = strings.ToLower(name) + ":" + value
+			}
+		}
+	}
 	status := []byte(strings.Join(statusFields, "\n"))
 
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))

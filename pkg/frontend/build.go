@@ -284,6 +284,17 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		if err != nil {
 			return llb.State{}, errors.Wrapf(err, "failed to parse vulnerability report from path: %s", reportPath)
 		}
+		targetPlatform := platform
+		if targetPlatform == nil && strings.TrimSpace(um.Metadata.Config.Arch) != "" {
+			resolvedPlatform, err := currentFrontendImageState(config).GetPlatform(ctx)
+			if err != nil {
+				return llb.State{}, errors.Wrap(err, "failed to resolve target platform for report validation")
+			}
+			targetPlatform = resolvedPlatform
+		}
+		if err := validateFrontendReportPlatform(um, targetPlatform); err != nil {
+			return llb.State{}, err
+		}
 	}
 
 	patchedState, updatesInstalled, err := installFrontendUpdates(ctx, config, pm, um, opts.IgnoreError)
@@ -313,6 +324,55 @@ func currentFrontendImageState(config *copabuildkit.Config) llb.State {
 		return config.PatchedImageState
 	}
 	return config.ImageState
+}
+
+func validateFrontendReportPlatforms(reportPath string, targetPlatforms []string) error {
+	if reportPath == "" || len(targetPlatforms) <= 1 {
+		return nil
+	}
+	reportInfo, err := os.Stat(reportPath)
+	if err != nil {
+		return fmt.Errorf("stat vulnerability report %q: %w", reportPath, err)
+	}
+	if reportInfo.IsDir() {
+		return nil
+	}
+	return fmt.Errorf(
+		"a single report file can target only one platform; got %d: %s",
+		len(targetPlatforms),
+		strings.Join(targetPlatforms, ", "),
+	)
+}
+
+func validateFrontendReportPlatform(updates *unversioned.UpdateManifest, targetPlatform *ocispecs.Platform) error {
+	if updates == nil {
+		return nil
+	}
+	reportArchitecture := strings.TrimSpace(updates.Metadata.Config.Arch)
+	if reportArchitecture == "" {
+		return nil
+	}
+	if targetPlatform == nil {
+		return errors.New("cannot validate scan report platform without a target platform")
+	}
+
+	target := platforms.Normalize(*targetPlatform)
+	if target.OS == "" {
+		target.OS = "linux"
+	}
+	reportPlatform := platforms.Normalize(ocispecs.Platform{
+		OS:           target.OS,
+		Architecture: reportArchitecture,
+		Variant:      strings.TrimSpace(updates.Metadata.Config.Variant),
+	})
+	if reportPlatform.Architecture != target.Architecture || reportPlatform.Variant != target.Variant {
+		return fmt.Errorf(
+			"scan report platform %s does not match target platform %s; generate the report for the selected platform or choose a matching platform option",
+			platforms.Format(reportPlatform),
+			platforms.Format(target),
+		)
+	}
+	return nil
 }
 
 // installFrontendUpdates applies OS updates and reports whether a new state was

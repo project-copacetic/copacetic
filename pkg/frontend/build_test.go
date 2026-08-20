@@ -223,6 +223,70 @@ func TestReportFileValidation(t *testing.T) {
 	})
 }
 
+func TestValidateFrontendReportPlatforms(t *testing.T) {
+	reportDir := t.TempDir()
+	reportFile := filepath.Join(reportDir, "report.json")
+	require.NoError(t, os.WriteFile(reportFile, []byte(`{}`), 0o600))
+
+	assert.NoError(t, validateFrontendReportPlatforms(reportFile, []string{"linux/amd64"}))
+	assert.NoError(t, validateFrontendReportPlatforms(reportDir, []string{"linux/amd64", "linux/arm64"}))
+	err := validateFrontendReportPlatforms(reportFile, []string{"linux/amd64", "linux/arm64"})
+	require.ErrorContains(t, err, "a single report file can target only one platform")
+}
+
+func TestValidateFrontendReportPlatform(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates *unversioned.UpdateManifest
+		target  *ocispecs.Platform
+		wantErr string
+	}{
+		{name: "nil report", target: &ocispecs.Platform{OS: osLinux, Architecture: "amd64"}},
+		{name: "report without architecture", updates: &unversioned.UpdateManifest{}},
+		{
+			name: "matching normalized architecture",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "aarch64", Variant: "v8"},
+			}},
+			target: &ocispecs.Platform{OS: osLinux, Architecture: "arm64"},
+		},
+		{
+			name: "mismatched architecture",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "amd64"},
+			}},
+			target:  &ocispecs.Platform{OS: osLinux, Architecture: "arm64"},
+			wantErr: "scan report platform linux/amd64 does not match target platform linux/arm64",
+		},
+		{
+			name: "mismatched variant",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "arm", Variant: "v6"},
+			}},
+			target:  &ocispecs.Platform{OS: osLinux, Architecture: "arm", Variant: "v7"},
+			wantErr: "scan report platform linux/arm/v6 does not match target platform linux/arm/v7",
+		},
+		{
+			name: "missing target",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "amd64"},
+			}},
+			wantErr: "without a target platform",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateFrontendReportPlatform(test.updates, test.target)
+			if test.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, test.wantErr)
+		})
+	}
+}
+
 func TestTempDirPatterns(t *testing.T) {
 	t.Run("Single file temp dir pattern", func(t *testing.T) {
 		// This tests the temp directory pattern used in extractReportFromContext
