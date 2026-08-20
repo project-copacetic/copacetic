@@ -874,6 +874,28 @@ func TestParseDPKGStatusAcceptsInventoryWithoutStatusFields(t *testing.T) {
 	assert.Equal(t, expectedDatabase, string(parsed.databaseContents))
 }
 
+func TestParseDPKGStatusNormalizesCaseInsensitiveFieldsForDatabase(t *testing.T) {
+	status := []byte("package: lower\nversion: 1.0\n\nPackage: existing\nstatus: install ok installed\nVersion: 2.0\n")
+	parsed, err := parseDPKGStatus(status)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"existing": "2.0",
+		"lower":    "1.0",
+	}, parsed.packages)
+	expectedDatabase := strings.Join([]string{
+		"package: lower",
+		"Status: install ok installed",
+		"version: 1.0",
+		"",
+		"Package: existing",
+		"status: install ok installed",
+		"Version: 2.0",
+		"",
+		"",
+	}, "\n")
+	assert.Equal(t, expectedDatabase, string(parsed.databaseContents))
+}
+
 func TestFilterDPKGStatusDependenciesPreservesInstalledRelationships(t *testing.T) {
 	status := []byte(strings.Join([]string{
 		"Package: app",

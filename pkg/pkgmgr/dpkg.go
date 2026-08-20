@@ -925,16 +925,26 @@ func normalizeDPKGStatusForDatabase(contents []byte) []byte {
 			return
 		}
 		hasStatus := false
-		for _, line := range paragraph {
-			if strings.HasPrefix(line, "Status:") {
+		packageLine := -1
+		for index, line := range paragraph {
+			if line[0] == ' ' || line[0] == '\t' {
+				continue
+			}
+			field, _, ok := strings.Cut(line, ":")
+			if !ok {
+				continue
+			}
+			switch {
+			case strings.EqualFold(field, "Status"):
 				hasStatus = true
-				break
+			case strings.EqualFold(field, dpkgPackageField):
+				packageLine = index
 			}
 		}
-		for _, line := range paragraph {
+		for index, line := range paragraph {
 			output.WriteString(line)
 			output.WriteByte('\n')
-			if !hasStatus && strings.HasPrefix(line, "Package:") {
+			if !hasStatus && index == packageLine {
 				output.WriteString("Status: install ok installed\n")
 			}
 		}

@@ -448,7 +448,6 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		}
 		log.Debugf("Locally cached child masks the matching remote index for %s; using remote platform list", manifestRef)
 		desc = remoteDesc
-		platforms = nil
 	} else {
 		if localErr != nil {
 			log.Debugf("Local platform discovery failed for %s: %v", manifestRef, localErr)
