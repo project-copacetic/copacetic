@@ -86,3 +86,10 @@ func TestNewPatchCmdChiselReleaseFlag(t *testing.T) {
 	require.NotNil(t, flag)
 	assert.Equal(t, "ubuntu-24.04", flag.Value.String())
 }
+
+func TestNewPatchCmdConfigHelp(t *testing.T) {
+	flag := NewPatchCmd().Flags().Lookup("config")
+	require.NotNil(t, flag)
+	assert.NotContains(t, flag.Usage, "Comprehensive update only")
+	assert.Contains(t, flag.Usage, "bulk patch YAML config file")
+}

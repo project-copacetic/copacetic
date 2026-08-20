@@ -143,7 +143,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		},
 	}
 	flags := patchCmd.Flags()
-	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). Cannot be used with --image, --tag, or --chisel-release.")
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file. Cannot be used with --image, --tag, or --chisel-release.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory of reports")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
