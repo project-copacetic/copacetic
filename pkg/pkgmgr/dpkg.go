@@ -70,6 +70,11 @@ const (
 	// list and every copied metadata file combined.
 	maxDPKGStatusBytes          = 64 << 20
 	maxDPKGStatusDirectoryBytes = 64 << 20
+	// External full-status mode embeds both the normalized status and its
+	// resolver view in one LLB definition. Keep their aggregate below half of
+	// the common 16 MiB gateway request ceiling so the remaining operations and
+	// metadata retain sufficient protobuf headroom.
+	maxExternalDPKGInlineStatusBytes = 8 << 20
 
 	// Full-status images do not retain the dpkg lifecycle database needed to
 	// safely update these packages directly. Keep this list in sync with the
@@ -514,6 +519,9 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		if err != nil {
 			return fmt.Errorf("filtering dpkg dependency relationships for APT resolution: %w", err)
 		}
+		if err := validateExternalDPKGInlineStatusSize(status.databaseContents, resolverContents); err != nil {
+			return err
+		}
 		dm.tempStatusFile = status.databaseContents
 		dm.resolverStatusFile = resolverContents
 		dm.statusdFileMap = nil
@@ -529,6 +537,19 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 	default:
 		return fmt.Errorf("unsupported Debian installation mode %s", mode)
 	}
+}
+
+func validateExternalDPKGInlineStatusSize(statusContents, resolverContents []byte) error {
+	inlineBytes := int64(len(statusContents)) + int64(len(resolverContents))
+	if inlineBytes > maxExternalDPKGInlineStatusBytes {
+		return fmt.Errorf(
+			"%s requires %d inline bytes after normalization and dependency filtering, exceeding the external-tooling BuildKit definition limit of %d bytes",
+			dpkgStatusPath,
+			inlineBytes,
+			maxExternalDPKGInlineStatusBytes,
+		)
+	}
+	return nil
 }
 
 func (dm *dpkgManager) loadFullStatus(ctx context.Context, resultsState *llb.State) (parsedDPKGStatus, error) {
@@ -1244,12 +1265,27 @@ func parseDPKGControlFields(paragraph []string) ([]dpkgControlField, error) {
 			return nil, fmt.Errorf("malformed control field %q", line)
 		}
 		fields = append(fields, dpkgControlField{
-			name:  name,
+			name:  canonicalDPKGControlFieldName(name),
 			value: strings.TrimSpace(value),
 			lines: []string{line},
 		})
 	}
 	return fields, nil
+}
+
+func canonicalDPKGControlFieldName(name string) string {
+	for _, canonicalName := range []string{
+		dpkgPackageField,
+		dpkgArchitectureField,
+		"Provides",
+		"Depends",
+		"Pre-Depends",
+	} {
+		if strings.EqualFold(name, canonicalName) {
+			return canonicalName
+		}
+	}
+	return name
 }
 
 func splitDPKGRelationship(value string, separator byte) ([]string, error) {

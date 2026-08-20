@@ -486,6 +486,22 @@ func TestLoadFullStatusRejectsOversizedMetadata(t *testing.T) {
 	ref.AssertNotCalled(t, "ReadFile", mock.Anything, mock.Anything)
 }
 
+func TestValidateExternalDPKGInlineStatusSize(t *testing.T) {
+	require.NoError(t, validateExternalDPKGInlineStatusSize(
+		make([]byte, maxExternalDPKGInlineStatusBytes/2),
+		make([]byte, maxExternalDPKGInlineStatusBytes/2),
+	))
+
+	err := validateExternalDPKGInlineStatusSize(
+		make([]byte, maxExternalDPKGInlineStatusBytes),
+		[]byte{0},
+	)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, dpkgStatusPath)
+	assert.ErrorContains(t, err, "BuildKit definition limit")
+	assert.ErrorContains(t, err, fmt.Sprintf("%d bytes", maxExternalDPKGInlineStatusBytes))
+}
+
 func TestLoadStatusDirectoryRejectsOversizedPackageList(t *testing.T) {
 	const maxBytes int64 = 8
 
@@ -945,6 +961,30 @@ func TestFilterDPKGStatusDependenciesPreservesInstalledRelationships(t *testing.
 	assert.NotContains(t, text, "missing-c")
 }
 
+func TestFilterDPKGStatusDependenciesCanonicalizesFieldNames(t *testing.T) {
+	status := []byte(strings.Join([]string{
+		"package: app",
+		"version: 1.0",
+		"architecture: amd64",
+		"depends: virtual-feature, missing",
+		"",
+		"PACKAGE: provider",
+		"VERSION: 1.0",
+		"ARCHITECTURE: amd64",
+		"PROVIDES: virtual-feature",
+		"",
+	}, "\n"))
+	installed := map[string]string{
+		"app:amd64":      "1.0",
+		"provider:amd64": "1.0",
+	}
+
+	filtered, err := filterDPKGStatusDependencies(status, installed, "amd64")
+	require.NoError(t, err)
+	assert.Contains(t, string(filtered), "Depends: virtual-feature\n")
+	assert.NotContains(t, string(filtered), "missing")
+}
+
 func TestFilterDPKGStatusDependenciesDropsUnsatisfiedVersion(t *testing.T) {
 	status := []byte(strings.Join([]string{
 		"Package: app", "Version: 1.0", "Architecture: amd64", "Depends: libfoo (>= 2.0)", "",
@@ -1243,11 +1283,20 @@ case "$command" in
         case " $* " in *" --download-only "*) ;; *) echo 'missing --download-only' >&2; exit 93 ;; esac
         case " $* " in *" --fix-broken "*) echo 'must not repair unrelated installed dependencies' >&2; exit 94 ;; esac
         case " $* " in *" --no-install-recommends "*) ;; *) echo 'missing --no-install-recommends' >&2; exit 95 ;; esac
-        case " $* " in *" install -- safe downgrade below-fixed "*) ;; *) echo "unexpected selected packages: $*" >&2; exit 96 ;; esac
+        case " $* " in
+            *" install -- safe downgrade below-fixed "*)
+                : > "$DOWNLOAD_DIR/new-dependency.deb"
+                : > "$DOWNLOAD_DIR/tightened-dependency.deb"
+                : > "$DOWNLOAD_DIR/rejected-only-dependency.deb"
+                ;;
+            *" install -- safe "*)
+                : > "$DOWNLOAD_DIR/new-dependency.deb"
+                : > "$DOWNLOAD_DIR/tightened-dependency.deb"
+                ;;
+            *) echo "unexpected selected packages: $*" >&2; exit 96 ;;
+        esac
         grep -q '^Status: hold ok installed$' "$DPKG_ROOT/var/lib/dpkg/status"
         ! grep -q '^Depends:' "$DOWNLOAD_DIR/resolver-status"
-        : > "$DOWNLOAD_DIR/new-dependency.deb"
-        : > "$DOWNLOAD_DIR/tightened-dependency.deb"
         ;;
     *) echo "unexpected apt-get command: $*" >&2; exit 94 ;;
 esac
@@ -1274,6 +1323,7 @@ case "$1" in
                     downgrade) printf '2.5\n' ;;
                     below-fixed) printf '2.0\n' ;;
                     new-dependency) printf '1.0\n' ;;
+                    rejected-only-dependency) printf '1.0\n' ;;
                     tightened-dependency) printf '2.0\n' ;;
                     *) exit 2 ;;
                 esac
@@ -1320,6 +1370,7 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 	aptCalls, err := os.ReadFile(aptLog)
 	require.NoError(t, err)
 	assert.Contains(t, string(aptCalls), "install -- safe downgrade below-fixed")
+	assert.Contains(t, string(aptCalls), "install -- safe")
 	assert.NotContains(t, string(aptCalls), " download ")
 
 	installArgs, err := os.ReadFile(installLog)
@@ -1327,11 +1378,13 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 	assert.Contains(t, string(installArgs), "safe.deb")
 	assert.Contains(t, string(installArgs), "new-dependency.deb")
 	assert.Contains(t, string(installArgs), "tightened-dependency.deb")
+	assert.NotContains(t, string(installArgs), "rejected-only-dependency.deb")
 	assert.NotContains(t, string(installArgs), "downgrade.deb")
 	assert.NotContains(t, string(installArgs), "below-fixed.deb")
 	assert.FileExists(t, filepath.Join(downloadDir, "safe.deb"))
 	assert.FileExists(t, filepath.Join(downloadDir, "new-dependency.deb"))
 	assert.FileExists(t, filepath.Join(downloadDir, "tightened-dependency.deb"))
+	assert.NoFileExists(t, filepath.Join(downloadDir, "rejected-only-dependency.deb"))
 	assert.NoFileExists(t, filepath.Join(downloadDir, "downgrade.deb"))
 	assert.NoFileExists(t, filepath.Join(downloadDir, "below-fixed.deb"))
 

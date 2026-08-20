@@ -59,15 +59,20 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     done
 fi
 
-: > "$RESULT_MANIFEST"
-
-apt-get -o Acquire::Retries=3 update
-mkdir -p "$DOWNLOAD_DIR/partial"
+SELECTED_PACKAGES_FILE=$PACKAGES_FILE
 if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
-    if [ ! -s "$RESOLVER_STATUS_FILE" ]; then
-        echo "resolver status is missing or empty: $RESOLVER_STATUS_FILE" >&2
-        exit 1
-    fi
+    SELECTED_PACKAGES_FILE=$DOWNLOAD_DIR/selected-packages
+    cp "$PACKAGES_FILE" "$SELECTED_PACKAGES_FILE"
+fi
+
+download_external_full_status_closure() {
+    set --
+    while IFS= read -r package || [ -n "$package" ]; do
+        [ -n "$package" ] || continue
+        set -- "$@" "$package"
+    done < "$SELECTED_PACKAGES_FILE"
+    [ "$#" -gt 0 ] || return 0
+
     if ! apt-get \
         -o Acquire::Retries=3 \
         -o "Dir::State::status=$RESOLVER_STATUS_FILE" \
@@ -78,8 +83,20 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
         --no-install-recommends \
         -y install -- "$@"; then
         echo "failed to resolve and download the selected package dependency closure" >&2
+        return 1
+    fi
+}
+
+: > "$RESULT_MANIFEST"
+
+apt-get -o Acquire::Retries=3 update
+mkdir -p "$DOWNLOAD_DIR/partial"
+if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
+    if [ ! -s "$RESOLVER_STATUS_FILE" ]; then
+        echo "resolver status is missing or empty: $RESOLVER_STATUS_FILE" >&2
         exit 1
     fi
+    download_external_full_status_closure
 else
     apt-get -o Acquire::Retries=3 download --no-install-recommends -- "$@"
 fi
@@ -142,8 +159,28 @@ is_selected_package() {
         if package_identity_matches "$selected_package" "$wanted_package"; then
             return 0
         fi
-    done < "$PACKAGES_FILE"
+    done < "$SELECTED_PACKAGES_FILE"
     return 1
+}
+
+discard_rejected_selected_packages() {
+    drsp_rejected_file=$1
+    drsp_remaining_file=$(mktemp)
+    while IFS= read -r drsp_selected || [ -n "$drsp_selected" ]; do
+        [ -n "$drsp_selected" ] || continue
+        drsp_rejected=false
+        while IFS= read -r drsp_identity || [ -n "$drsp_identity" ]; do
+            [ -n "$drsp_identity" ] || continue
+            if package_identity_matches "$drsp_selected" "$drsp_identity"; then
+                drsp_rejected=true
+                break
+            fi
+        done < "$drsp_rejected_file"
+        if [ "$drsp_rejected" != true ]; then
+            printf '%s\n' "$drsp_selected" >> "$drsp_remaining_file"
+        fi
+    done < "$SELECTED_PACKAGES_FILE"
+    mv "$drsp_remaining_file" "$SELECTED_PACKAGES_FILE"
 }
 
 normalize_dependency_text() {
@@ -565,46 +602,63 @@ filter_status_to_final_inventory() {
 }
 
 unsafe_downloads=false
-for deb in ./*.deb; do
-    [ -f "$deb" ] || continue
-    package=$("$DPKG_DEB_TOOL" -f "$deb" Package)
-    architecture=$("$DPKG_DEB_TOOL" -f "$deb" Architecture 2>/dev/null || true)
-    if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ] && [ -z "$architecture" ]; then
-        echo "downloaded package $package has no Architecture field" >&2
-        exit 1
-    fi
-    identity=$package
-    if [ -n "$architecture" ]; then identity=$package:$architecture; fi
-    version=$("$DPKG_DEB_TOOL" -f "$deb" Version)
-    unsafe_reason=""
-
-    if ! lookup_version_floor "$identity" && ! lookup_version_floor "$package"; then
-        FLOOR_INSTALLED=""; FLOOR_FIXED=""
-    elif [ "$UPDATE_ALL" = "true" ]; then
-        if [ -z "$FLOOR_INSTALLED" ]; then
-            unsafe_reason="downloaded package $identity has no installed-version baseline"
-        elif ! version_satisfies "$version" gt "$FLOOR_INSTALLED"; then
-            unsafe_reason="downloaded package $identity version $version is not newer than installed version $FLOOR_INSTALLED"
-        fi
-    else
-        if [ -n "$FLOOR_INSTALLED" ] && ! version_satisfies "$version" ge "$FLOOR_INSTALLED"; then
-            unsafe_reason="downloaded package $identity version $version is lower than installed version $FLOOR_INSTALLED"
-        elif [ -n "$FLOOR_FIXED" ] && ! version_satisfies "$version" ge "$FLOOR_FIXED"; then
-            unsafe_reason="downloaded package $identity version $version is lower than requested fixed version $FLOOR_FIXED"
-        fi
-    fi
-
-    if [ -n "$unsafe_reason" ]; then
-        echo "$unsafe_reason; refusing to install it" >&2
-        record_package_version "$package" "$architecture" "$version"
-        rm -f "$deb"
-        unsafe_downloads=true
-        if ! is_selected_package "$identity" && ! is_selected_package "$package"; then
-            echo "unsafe package $identity is part of the resolved dependency closure; refusing to install an incomplete closure" >&2
+while :; do
+    rejected_selected_packages=$DOWNLOAD_DIR/rejected-selected-packages
+    : > "$rejected_selected_packages"
+    for deb in ./*.deb; do
+        [ -f "$deb" ] || continue
+        package=$("$DPKG_DEB_TOOL" -f "$deb" Package)
+        architecture=$("$DPKG_DEB_TOOL" -f "$deb" Architecture 2>/dev/null || true)
+        if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ] && [ -z "$architecture" ]; then
+            echo "downloaded package $package has no Architecture field" >&2
             exit 1
         fi
-        if [ "$IGNORE_ERRORS" != "true" ]; then exit 1; fi
+        identity=$package
+        if [ -n "$architecture" ]; then identity=$package:$architecture; fi
+        version=$("$DPKG_DEB_TOOL" -f "$deb" Version)
+        unsafe_reason=""
+
+        if ! lookup_version_floor "$identity" && ! lookup_version_floor "$package"; then
+            FLOOR_INSTALLED=""; FLOOR_FIXED=""
+        elif [ "$UPDATE_ALL" = "true" ]; then
+            if [ -z "$FLOOR_INSTALLED" ]; then
+                unsafe_reason="downloaded package $identity has no installed-version baseline"
+            elif ! version_satisfies "$version" gt "$FLOOR_INSTALLED"; then
+                unsafe_reason="downloaded package $identity version $version is not newer than installed version $FLOOR_INSTALLED"
+            fi
+        else
+            if [ -n "$FLOOR_INSTALLED" ] && ! version_satisfies "$version" ge "$FLOOR_INSTALLED"; then
+                unsafe_reason="downloaded package $identity version $version is lower than installed version $FLOOR_INSTALLED"
+            elif [ -n "$FLOOR_FIXED" ] && ! version_satisfies "$version" ge "$FLOOR_FIXED"; then
+                unsafe_reason="downloaded package $identity version $version is lower than requested fixed version $FLOOR_FIXED"
+            fi
+        fi
+
+        if [ -n "$unsafe_reason" ]; then
+            echo "$unsafe_reason; refusing to install it" >&2
+            record_package_version "$package" "$architecture" "$version"
+            rm -f "$deb"
+            unsafe_downloads=true
+            if ! is_selected_package "$identity" && ! is_selected_package "$package"; then
+                echo "unsafe package $identity is part of the resolved dependency closure; refusing to install an incomplete closure" >&2
+                exit 1
+            fi
+            if [ "$IGNORE_ERRORS" != "true" ]; then exit 1; fi
+            printf '%s\n' "$identity" >> "$rejected_selected_packages"
+        fi
+    done
+
+    if [ "$DPKG_INSTALLATION_MODE" != "external-full-status" ] || [ ! -s "$rejected_selected_packages" ]; then
+        break
     fi
+
+    sort -u "$rejected_selected_packages" -o "$rejected_selected_packages"
+    discard_rejected_selected_packages "$rejected_selected_packages"
+    rm -f ./*.deb
+    if [ ! -s "$SELECTED_PACKAGES_FILE" ]; then
+        break
+    fi
+    download_external_full_status_closure
 done
 
 if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
