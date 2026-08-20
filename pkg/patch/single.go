@@ -340,11 +340,19 @@ func patchSingleArchImageWithUpdates(
 
 // selectPatchWaitError preserves the package-manager no-update sentinel when
 // the concurrently running image loader reports an error after receiving an
-// empty export stream. Other loader errors remain authoritative because they
-// can cancel the build and surface there only as context cancellation.
+// empty export stream. BuildKit's file-sync session can serialize that sentinel
+// through Docker's HTTP request-body error before the gateway build returns,
+// leaving patchBuildErr as context cancellation instead of the typed error.
+// Other loader errors remain authoritative.
 func selectPatchWaitError(waitErr, patchBuildErr error) error {
 	if errors.Is(patchBuildErr, types.ErrNoUpdatesFound) {
 		return patchBuildErr
+	}
+	if errors.Is(waitErr, types.ErrNoUpdatesFound) {
+		return waitErr
+	}
+	if waitErr != nil && strings.Contains(waitErr.Error(), types.ErrNoUpdatesFound.Error()) {
+		return types.ErrNoUpdatesFound
 	}
 	return waitErr
 }
