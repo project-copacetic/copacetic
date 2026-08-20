@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -240,14 +239,14 @@ func resolveSingleReportPlatformWithUpdates(targetPlatforms []string, updates *u
 	platform := common.GetDefaultLinuxPlatform()
 	if len(targetPlatforms) == 1 {
 		target := targetPlatforms[0]
-		if !slices.Contains(validPlatforms, target) {
-			return types.PatchPlatform{}, fmt.Errorf("unsupported platform %q; valid platforms: %s", target, strings.Join(validPlatforms, ", "))
-		}
 		parsed, err := platforms.Parse(target)
 		if err != nil {
 			return types.PatchPlatform{}, fmt.Errorf("parse platform %q: %w", target, err)
 		}
 		platform = platforms.Normalize(parsed)
+		if !isSupportedPatchPlatform(&platform) {
+			return types.PatchPlatform{}, fmt.Errorf("unsupported platform %q; valid platforms: %s", target, strings.Join(validPlatforms, ", "))
+		}
 	} else if updates != nil {
 		reportArch := strings.TrimSpace(updates.Metadata.Config.Arch)
 		if reportArch != "" {
