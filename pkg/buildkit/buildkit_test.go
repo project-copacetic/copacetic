@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,7 +18,12 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/registry"
 	remotev1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
+	"github.com/google/go-containerregistry/pkg/v1/layout"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client/llb"
@@ -241,6 +248,64 @@ func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.
 			}
 		})
 	}
+}
+
+func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
+	registryServer := httptest.NewServer(registry.New())
+	t.Cleanup(registryServer.Close)
+
+	registryRef, err := name.NewTag(registryServer.Listener.Addr().String()+"/test/image:latest", name.Insecure)
+	require.NoError(t, err)
+	image, err := random.Image(1024, 1)
+	require.NoError(t, err)
+	index := mutate.AppendManifests(empty.Index, mutate.IndexAddendum{
+		Add: image,
+		Descriptor: remotev1.Descriptor{
+			Platform: &remotev1.Platform{OS: "linux", Architecture: "amd64"},
+		},
+	})
+	require.NoError(t, remote.WriteIndex(registryRef, index))
+
+	originalLocal := tryGetManifestFromLocal
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		tryGetManifestFromLocal = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, error) {
+		return nil, errors.New("image is not available locally")
+	}
+	getRemoteImageDescriptor = remote.Get
+
+	originalRef, err := reference.ParseNormalizedNamed(registryRef.String())
+	require.NoError(t, err)
+	outputDir := filepath.Join(t.TempDir(), "layout")
+	err = createPreservedOnlyOCILayout(
+		outputDir,
+		[]types.PatchResult{{OriginalRef: originalRef}},
+		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}},
+	)
+	require.NoError(t, err)
+
+	layoutPath, err := layout.FromPath(outputDir)
+	require.NoError(t, err)
+	preservedIndex, err := layoutPath.ImageIndex()
+	require.NoError(t, err)
+	manifest, err := preservedIndex.IndexManifest()
+	require.NoError(t, err)
+	require.Len(t, manifest.Manifests, 1)
+	preservedImage, err := preservedIndex.Image(manifest.Manifests[0].Digest)
+	require.NoError(t, err)
+	_, err = preservedImage.RawConfigFile()
+	require.NoError(t, err)
+	layers, err := preservedImage.Layers()
+	require.NoError(t, err)
+	require.Len(t, layers, 1)
+	compressed, err := layers[0].Compressed()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, compressed.Close()) })
+	_, err = io.Copy(io.Discard, compressed)
+	require.NoError(t, err)
 }
 
 func TestDiscoverPlatformsMutableTagKeepsLocalPlatform(t *testing.T) {

@@ -140,6 +140,24 @@ func TestValidateChiselUpgrade(t *testing.T) {
 	}
 }
 
+func TestValidateChiselUpgradeRejectsOriginalWrongArchitecture(t *testing.T) {
+	original := &copachisel.Manifest{
+		Packages: map[string]copachisel.Package{
+			"base-files": {Name: "base-files", Version: "1.0-1", SHA256: digestA, Architecture: "arm64"},
+		},
+		Slices: []string{"base-files_base"},
+	}
+	updated := &copachisel.Manifest{
+		Packages: map[string]copachisel.Package{
+			"base-files": {Name: "base-files", Version: "1.0-2", SHA256: digestB, Architecture: "amd64"},
+		},
+		Slices: []string{"base-files_base"},
+	}
+
+	err := validateChiselUpgrade(original, updated, "amd64")
+	require.ErrorContains(t, err, `original Chisel package "base-files" architecture "arm64" does not match target "amd64"`)
+}
+
 func TestChiselManifestsEqual(t *testing.T) {
 	manifest := &copachisel.Manifest{
 		Packages: map[string]copachisel.Package{

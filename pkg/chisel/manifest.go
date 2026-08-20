@@ -37,8 +37,8 @@ const (
 )
 
 var (
-	packageNamePattern = regexp.MustCompile(`^[a-z0-9](?:-?[.a-z0-9+]){1,}$`)
-	sliceNamePattern   = regexp.MustCompile(`^([a-z0-9](?:-?[.a-z0-9+]){1,})_([a-z](?:-?[a-z0-9]){2,})$`)
+	packageNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+$`)
+	sliceNamePattern   = regexp.MustCompile(`^([a-z0-9][a-z0-9+.-]+)_([a-z](?:-?[a-z0-9]){2,})$`)
 )
 
 // Package describes an installed Debian package recorded in a Chisel manifest.

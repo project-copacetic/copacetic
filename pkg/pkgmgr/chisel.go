@@ -33,8 +33,6 @@ import (
 )
 
 const (
-	// TODO: replace the tag with the published multi-platform digest before the
-	// tooling image is released. The image build is defined in images/chisel.
 	chiselToolImage   = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
 	chiselToolVersion = "v1.4.2"
 
@@ -241,6 +239,9 @@ func (dm *dpkgManager) installNativeChiselUpdates(ctx context.Context, updateMan
 	}
 	oldManifest, err := copachisel.ParseManifest(bytes.NewReader(oldManifestBytes))
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateOriginalChiselPackageArchitectures(oldManifest, chiselArch); err != nil {
 		return nil, nil, err
 	}
 
@@ -524,6 +525,10 @@ func writeLocalChiselReleaseHashPayload(digest hash.Hash, payload []byte) {
 }
 
 func validateChiselUpgrade(oldManifest, newManifest *copachisel.Manifest, expectedArch string) error {
+	if err := validateOriginalChiselPackageArchitectures(oldManifest, expectedArch); err != nil {
+		return err
+	}
+
 	newSlices := make(map[string]struct{}, len(newManifest.Slices))
 	for _, sliceName := range newManifest.Slices {
 		newSlices[sliceName] = struct{}{}
@@ -564,6 +569,15 @@ func validateChiselUpgrade(oldManifest, newManifest *copachisel.Manifest, expect
 	for _, name := range newManifest.Slices {
 		if _, existed := oldSlices[name]; !existed {
 			log.Infof("Chisel selected new transitive dependency slice %s", name)
+		}
+	}
+	return nil
+}
+
+func validateOriginalChiselPackageArchitectures(manifest *copachisel.Manifest, expectedArch string) error {
+	for name, pkg := range manifest.Packages {
+		if pkg.Architecture != expectedArch && pkg.Architecture != "all" {
+			return fmt.Errorf("original Chisel package %q architecture %q does not match target %q", name, pkg.Architecture, expectedArch)
 		}
 	}
 	return nil

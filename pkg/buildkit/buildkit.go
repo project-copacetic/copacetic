@@ -2187,7 +2187,7 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 		return fmt.Errorf("failed to write combined index.json: %w", err)
 	}
 
-	log.Infof("Successfully created mixed OCI layout with %d platform manifests", len(allManifests))
+	log.Infof("Successfully created OCI layout with %d platform manifests", len(allManifests))
 	return nil
 }
 
@@ -2208,116 +2208,17 @@ func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult,
 		return fmt.Errorf("no original reference found for preserved-only layout")
 	}
 
-	// Use go-containerregistry to get the original manifest and export only needed platforms
-	return exportOriginalImagePlatformsAsOCI(outputDir, originalRef, preservedPlatforms)
-}
-
-// exportOriginalImagePlatformsAsOCI uses go-containerregistry to export specific platforms.
-func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.Named, platforms []types.PatchPlatform) error {
-	log.Infof("Exporting %d platforms from original image %s using go-containerregistry", len(platforms), originalRef.String())
-
-	// Convert reference.Named to name.Reference for go-containerregistry
-	ref, err := name.ParseReference(originalRef.String())
+	preservedManifests, err := exportPreservedPlatformsToOutput(
+		outputDir,
+		originalRef,
+		preservedPlatforms,
+		make(map[string]bool),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to parse reference: %w", err)
+		return fmt.Errorf("failed to export preserved platforms: %w", err)
 	}
-
-	// Get the remote descriptor
-	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-	if err != nil {
-		return fmt.Errorf("failed to get remote descriptor: %w", err)
+	if len(preservedManifests) == 0 {
+		return fmt.Errorf("no manifests to include in preserved-only OCI layout")
 	}
-
-	// Check if it's a manifest list (multi-platform)
-	if desc.MediaType == v1types.OCIImageIndex || desc.MediaType == v1types.DockerManifestList {
-		// Parse the index
-		idx, err := desc.ImageIndex()
-		if err != nil {
-			return fmt.Errorf("failed to parse image index: %w", err)
-		}
-
-		// Get the index manifest
-		manifest, err := idx.IndexManifest()
-		if err != nil {
-			return fmt.Errorf("failed to get index manifest: %w", err)
-		}
-
-		// Create OCI layout structure
-		if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0o755); err != nil {
-			return fmt.Errorf("failed to create blobs directory: %w", err)
-		}
-
-		// Create oci-layout file
-		ociLayoutContent := `{"imageLayoutVersion": "1.0.0"}`
-		if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0o600); err != nil {
-			return fmt.Errorf("failed to write oci-layout file: %w", err)
-		}
-
-		// Filter manifests for the preserved platforms we want
-		var preservedManifests []v1.Descriptor
-		for _, platformSpec := range platforms {
-			for i := range manifest.Manifests {
-				desc := &manifest.Manifests[i]
-				if desc.Platform != nil &&
-					desc.Platform.OS == platformSpec.OS &&
-					desc.Platform.Architecture == platformSpec.Architecture {
-					preservedManifests = append(preservedManifests, *desc)
-					log.Debugf("Including preserved platform %s/%s", desc.Platform.OS, desc.Platform.Architecture)
-					break
-				}
-			}
-		}
-
-		// Create new index with only preserved platforms
-		newIndex := &v1.IndexManifest{
-			SchemaVersion: 2,
-			Manifests:     preservedManifests,
-		}
-
-		// Write the index
-		indexBytes, err := json.MarshalIndent(newIndex, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal index: %w", err)
-		}
-
-		if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexBytes, 0o600); err != nil {
-			return fmt.Errorf("failed to write index.json: %w", err)
-		}
-
-		log.Infof("Successfully created OCI layout with %d preserved platforms", len(preservedManifests))
-		return nil
-	}
-
-	// Single platform image - just create a simple index
-	log.Info("Single platform image - creating simple index")
-	singleIndex := &v1.IndexManifest{
-		SchemaVersion: 2,
-		Manifests: []v1.Descriptor{{
-			MediaType: desc.MediaType,
-			Digest:    desc.Digest,
-			Size:      desc.Size,
-		}},
-	}
-
-	// Create directory structure
-	if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0o755); err != nil {
-		return fmt.Errorf("failed to create blobs directory: %w", err)
-	}
-
-	// Write files
-	ociLayoutContent := `{"imageLayoutVersion": "1.0.0"}`
-	if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0o600); err != nil {
-		return fmt.Errorf("failed to write oci-layout file: %w", err)
-	}
-
-	indexBytes, err := json.MarshalIndent(singleIndex, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal single index: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexBytes, 0o600); err != nil {
-		return fmt.Errorf("failed to write index.json: %w", err)
-	}
-
-	return nil
+	return createFinalOCILayout(outputDir, preservedManifests)
 }

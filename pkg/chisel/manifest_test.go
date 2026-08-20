@@ -69,6 +69,15 @@ func TestParseManifest(t *testing.T) {
 	assert.Equal(t, digestC, hardLink.Digest())
 }
 
+func TestPackageAndSliceNamesAcceptDebianPackageGrammar(t *testing.T) {
+	const packageName = "golang-github-sean--pager-dev"
+
+	assert.True(t, packageNamePattern.MatchString(packageName))
+	parsedPackage, err := packageForSlice(packageName + "_libs")
+	require.NoError(t, err)
+	assert.Equal(t, packageName, parsedPackage)
+}
+
 func TestParseManifestAcceptsHardLinkedSymlinks(t *testing.T) {
 	compressed := compressJSONWall(t, manifestRecordsWithSymlinkHardLinks(t), jsonWallOptions{})
 
