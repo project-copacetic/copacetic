@@ -104,7 +104,7 @@ COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
 go test ./test/e2e/chisel \
   --addr=docker:// \
   --copa="$COPA_BIN" \
-  -timeout 55m \
+  -timeout 115m \
   -v
 ```
 
