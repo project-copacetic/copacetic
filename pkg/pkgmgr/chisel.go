@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -43,6 +45,8 @@ const (
 	chiselValidationMark            = "/copa-chisel-validation-ok"
 	chiselOldExpectedPath           = "/copa-chisel-old.json"
 	chiselNewExpectedPath           = "/copa-chisel-new.json"
+	chiselOwnershipPathsPath        = "/copa-chisel-owned-paths"
+	chiselOwnershipScriptPath       = "/validate_chisel_ownership.sh"
 	chiselLocalReleaseArchivePath   = "/release.tar.zst"
 	chiselLocalReleaseArchiveMount  = "/copa-chisel-release-input"
 	maxChiselExpectationInlineBytes = 8 << 20
@@ -57,6 +61,9 @@ const (
 	// Keep extraction aligned with the limit enforced by chisel.InferRelease.
 	maxChiselOSReleaseBytes = 1 << 20
 )
+
+//go:embed scripts/validate_chisel_ownership.sh
+var validateChiselOwnershipScript []byte
 
 const nativeTargetedPatchError = NativeChiselTargetedPatchError
 
@@ -290,12 +297,15 @@ func (dm *dpkgManager) installNativeChiselUpdates(ctx context.Context, updateMan
 	}
 
 	if chiselManifestsEqual(oldManifest, newManifest) {
-		if _, err := validateChiselState(ctx, dm.config.Client, tooling, current, oldManifest); err == nil {
+		_, validationErr := validateChiselState(ctx, dm.config.Client, tooling, current, oldManifest)
+		if validationErr == nil {
+			validationErr = validateChiselOwnership(ctx, dm.config.Client, tooling, current, staged, oldManifest)
+		}
+		if validationErr == nil {
 			log.Info("No Chisel package or managed-filesystem updates were found for this image.")
 			return nil, nil, types.ErrNoUpdatesFound
-		} else {
-			log.Warnf("Chisel manifest is current but managed filesystem drift was detected; rebuilding managed paths: %v", err)
 		}
+		log.Warnf("Chisel manifest is current but managed filesystem drift was detected; rebuilding managed paths: %v", validationErr)
 	}
 
 	validatedFinal, err := reconcileChiselState(ctx, dm.config.Client, tooling, current, staged, oldManifest, newManifest)
@@ -661,6 +671,78 @@ func validateChiselState(ctx context.Context, client gwclient.Client, tooling, t
 		return llb.State{}, err
 	}
 	return validatedTarget, nil
+}
+
+func marshalChiselOwnershipPaths(manifest *copachisel.Manifest) ([]byte, error) {
+	paths := make([]string, 0, len(manifest.OwnedPaths))
+	for ownedPath := range manifest.OwnedPaths {
+		paths = append(paths, ownedPath)
+	}
+	sort.Strings(paths)
+
+	var payload bytes.Buffer
+	for _, ownedPath := range paths {
+		manifestPath := manifest.OwnedPaths[ownedPath].Path
+		pathWithoutDirectorySlash := manifestPath
+		if manifestPath != "/" && strings.HasSuffix(manifestPath, "/") {
+			pathWithoutDirectorySlash = strings.TrimSuffix(manifestPath, "/")
+		}
+		if manifestPath == "" || strings.IndexByte(manifestPath, 0) >= 0 || !path.IsAbs(manifestPath) ||
+			path.Clean(pathWithoutDirectorySlash) != pathWithoutDirectorySlash {
+			return nil, fmt.Errorf("cannot validate ownership for unsafe Chisel path %q", manifestPath)
+		}
+		payload.WriteString(manifestPath)
+		payload.WriteByte(0)
+	}
+	if payload.Len() > copachisel.MaxManifestSize {
+		return nil, fmt.Errorf(
+			"chisel ownership path list is %d bytes, exceeding the %d MiB generated-input limit",
+			payload.Len(), copachisel.MaxManifestSize>>20,
+		)
+	}
+	return payload.Bytes(), nil
+}
+
+// validateChiselOwnership runs inline with the pinned tooling image so this
+// metadata check does not require publishing a new validator binary merely to
+// compare the freshly staged UID/GID values with the current managed paths.
+//
+//nolint:gocritic // llb.State is an immutable graph handle passed by value throughout the BuildKit API.
+func validateChiselOwnership(
+	ctx context.Context,
+	client gwclient.Client,
+	tooling, target, staged llb.State,
+	manifest *copachisel.Manifest,
+) error {
+	paths, err := marshalChiselOwnershipPaths(manifest)
+	if err != nil {
+		return err
+	}
+	compressed, err := compressChiselExpectations(paths)
+	if err != nil {
+		return err
+	}
+	compressedPath := chiselOwnershipPathsPath + ".zst"
+	validator := tooling.
+		File(llb.Mkfile(compressedPath, 0o600, compressed[0])).
+		File(llb.Mkfile(chiselOwnershipScriptPath, 0o500, validateChiselOwnershipScript)).
+		File(llb.Rm(chiselValidationMark, llb.WithAllowNotFound(true)))
+	run := validator.Run(
+		llb.Args([]string{"/bin/sh", chiselOwnershipScriptPath}),
+		llb.AddEnv("OWNED_PATHS_ZSTD", compressedPath),
+		llb.AddEnv("OWNED_PATHS", chiselOwnershipPathsPath),
+		llb.AddEnv("TARGET_ROOT", "/target"),
+		llb.AddEnv("STAGED_ROOT", "/staged"),
+		llb.AddEnv("VALIDATION_MARK", chiselValidationMark),
+		llb.WithCustomName(fmt.Sprintf("Validating ownership for %d Chisel-managed paths", len(manifest.OwnedPaths))),
+	)
+	_ = run.AddMount("/target", target, llb.Readonly)
+	_ = run.AddMount("/staged", staged, llb.Readonly)
+	validationRoot := run.Root()
+	if _, err := buildkit.ExtractFileFromState(ctx, client, &validationRoot, chiselValidationMark); err != nil {
+		return err
+	}
+	return nil
 }
 
 func marshalChiselExpectedManifest(manifest *copachisel.Manifest) ([]byte, error) {

@@ -742,6 +742,49 @@ func TestMaterializeGitChiselReleaseReusesResolvedCommit(t *testing.T) {
 	ref.AssertExpectations(t)
 }
 
+func TestValidateChiselOwnershipUsesStagedState(t *testing.T) {
+	manifest := &copachisel.Manifest{OwnedPaths: map[string]copachisel.PathMetadata{
+		"/entry": {Path: "/entry", Mode: 0o600},
+	}}
+	ref := new(mocks.MockReference)
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{Filename: chiselValidationMark}).
+		Return([]byte{}, nil).
+		Once()
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := new(mocks.MockGWClient)
+	var captured gwclient.SolveRequest
+	client.On("Solve", mock.Anything, mock.MatchedBy(func(request gwclient.SolveRequest) bool {
+		captured = request
+		return true
+	})).Return(result, nil).Once()
+	staged := llb.Scratch().File(llb.Mkfile("/entry", 0o600, nil))
+
+	err := validateChiselOwnership(t.Context(), client, llb.Scratch(), llb.Scratch(), staged, manifest)
+	require.NoError(t, err)
+	definition, err := captured.Definition.MarshalVT()
+	require.NoError(t, err)
+	assert.Contains(t, string(definition), "validate_chisel_ownership.sh")
+	assert.Contains(t, string(definition), "/target")
+	assert.Contains(t, string(definition), "/staged")
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func TestMarshalChiselOwnershipPaths(t *testing.T) {
+	manifest := &copachisel.Manifest{OwnedPaths: map[string]copachisel.PathMetadata{
+		"/z":  {Path: "/z"},
+		"/a/": {Path: "/a/"},
+	}}
+	payload, err := marshalChiselOwnershipPaths(manifest)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("/a/\x00/z\x00"), payload)
+
+	manifest.OwnedPaths["/escape"] = copachisel.PathMetadata{Path: "/../escape"}
+	_, err = marshalChiselOwnershipPaths(manifest)
+	require.ErrorContains(t, err, "unsafe Chisel path")
+}
+
 func TestReconcileChiselStateCompressesLargeExpectations(t *testing.T) {
 	const pathCount = 24000
 	oldMarker := "OLD_CHISEL_EXPECTATION_SENTINEL"
