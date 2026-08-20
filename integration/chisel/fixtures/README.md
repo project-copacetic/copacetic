@@ -98,7 +98,7 @@ community images from `test/e2e/chisel/fixtures/test-images.json`:
 make build
 
 docker pull --platform linux/amd64 \
-  ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80
+  ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
 
 COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
 go test ./test/e2e/chisel \
@@ -208,7 +208,7 @@ The `test/e2e/chisel` suite now validates:
 - no-update repatching; and
 - partial-platform OCI output with untouched platform descriptors and blobs.
 
-CI pulls the published tooling image by immutable manifest-list digest (`ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80`). The publication workflow verifies all supported platforms, SBOM and provenance attestations, Chisel commit and Go compiler labels, the validator source checksum, and amd64/arm64 runtime behavior before assigning the versioned tag.
+CI pulls the published tooling image by immutable manifest-list digest (`ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c`). The publication workflow verifies all supported platforms, SBOM and provenance attestations, Chisel commit and Go compiler labels, the validator source checksum, and amd64/arm64 runtime behavior before assigning the versioned tag.
 
 Trivy remains applicable to the full-status layout only. Native
 `manifest.wall` coverage is comprehensive-update-only until a scanner can

@@ -33,7 +33,7 @@ import (
 )
 
 const (
-	chiselToolImage   = "ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80"
+	chiselToolImage   = "ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c"
 	chiselToolVersion = "v1.4.2"
 
 	chiselStageRoot                 = "/copa-chisel-root"

@@ -49,7 +49,7 @@ Build the prerequisites from the repository root:
 make build
 
 docker pull --platform linux/amd64 \
-  ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80
+  ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
 ```
 
 Run the complete package:
@@ -101,7 +101,7 @@ tagged tooling image.
 ## CI
 
 The `test-chisel` job in `.github/workflows/build.yml` pulls
-`ghcr.io/project-copacetic/copacetic/chisel@sha256:587015954e14bf51aea440e69c8bf30bd010abd57ed8dd42c19e2159577e8c80`
+`ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c`
 and runs the default package on an amd64 runner, including the real arm64
 Canonical, Microsoft, and community-image cases. The
 `test-chisel-secondary-architectures` job executes the tooling image for 386,
