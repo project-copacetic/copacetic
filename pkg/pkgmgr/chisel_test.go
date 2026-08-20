@@ -709,6 +709,39 @@ func TestMaterializeChiselRelease(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMaterializeGitChiselReleaseReusesResolvedCommit(t *testing.T) {
+	const (
+		location = "https://example.com/chisel-releases.git"
+		tag      = "ubuntu-24.04"
+		resolved = "0123456789abcdef0123456789abcdef01234567"
+	)
+	ref := new(mocks.MockReference)
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{Filename: chiselGitRevisionFile}).
+		Return([]byte(resolved+"\n"), nil).
+		Once()
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client := new(mocks.MockGWClient)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+
+	state, argument, provenance, err := materializeChiselRelease(t.Context(), client, llb.Scratch(), copachisel.Release{
+		Kind:     copachisel.ReleaseGit,
+		Location: location,
+		Revision: tag,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, chiselReleaseRoot, argument)
+	assert.Equal(t, location+"#"+resolved, provenance)
+	definition, err := state.Marshal(t.Context())
+	require.NoError(t, err)
+	serialized, err := definition.ToPB().MarshalVT()
+	require.NoError(t, err)
+	assert.Contains(t, string(serialized), resolved)
+	assert.NotContains(t, string(serialized), tag)
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
 func TestReconcileChiselStateCompressesLargeExpectations(t *testing.T) {
 	const pathCount = 24000
 	oldMarker := "OLD_CHISEL_EXPECTATION_SENTINEL"

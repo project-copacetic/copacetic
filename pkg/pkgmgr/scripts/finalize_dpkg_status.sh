@@ -72,9 +72,9 @@ $line"
             fi
 
             case "$line" in
-                "Package:"*)
-                    package_name=${line#Package:}
-                    package_name=${package_name#" "}
+                [Pp][Aa][Cc][Kk][Aa][Gg][Ee]:*)
+                    package_name=${line#*:}
+                    package_name=$(printf '%s\n' "$package_name" | sed 's/^[[:space:]]*//')
                     ;;
             esac
         done < "$STATUS_FILE"

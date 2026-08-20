@@ -2679,6 +2679,27 @@ func TestFinalizeDPKGStatusScript(t *testing.T) {
 		assert.Contains(t, string(tzdata), "Package: tzdata")
 	})
 
+	t.Run("status directory package fields are case insensitive", func(t *testing.T) {
+		root := t.TempDir()
+		dpkgDir := filepath.Join(root, "var", "lib", "dpkg")
+		require.NoError(t, os.MkdirAll(dpkgDir, 0o755))
+		status := "package:\tbase-files\nstatus: install ok installed\nversion: 1.0\n"
+		writeDPKGTestFile(t, filepath.Join(dpkgDir, "status"), []byte(status), 0o644)
+
+		runEmbeddedShellScript(t, finalizeDPKGStatusScript, map[string]string{
+			"DPKG_ROOT":              root,
+			"DPKG_INSTALLATION_MODE": dpkgInstallationModeExternalStatusDirectory.String(),
+			"STATUSD_FILE_MAP":       "base-files\tencoded-base-files\n",
+		})
+
+		entries, err := os.ReadDir(dpkgDir)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"status.d"}, directoryEntryNames(entries))
+		contents, err := os.ReadFile(filepath.Join(dpkgDir, "status.d", "encoded-base-files"))
+		require.NoError(t, err)
+		assert.Equal(t, status, string(contents))
+	})
+
 	t.Run("status directory filename map uses exact package keys", func(t *testing.T) {
 		root := t.TempDir()
 		dpkgDir := filepath.Join(root, "var", "lib", "dpkg")

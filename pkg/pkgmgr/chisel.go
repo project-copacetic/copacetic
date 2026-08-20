@@ -335,19 +335,7 @@ func materializeChiselRelease(ctx context.Context, client gwclient.Client, tooli
 	case copachisel.ReleaseNamed:
 		return tooling, release.Location, release.Location, nil
 	case copachisel.ReleaseGit:
-		gitTooling := tooling.Run(
-			llb.Args([]string{"/bin/sh", "-c", gitChiselReleaseCloneScript}),
-			llb.AddEnv("RELEASE_DIR", chiselReleaseRoot),
-			llb.AddEnv("REVISION_FILE", chiselGitRevisionFile),
-			llb.AddEnv("RELEASE_URL", release.Location),
-			llb.AddEnv("RELEASE_REV", release.Revision),
-			llb.AddEnv("MAX_RELEASE_FILES", fmt.Sprintf("%d", maxLocalReleaseFiles)),
-			llb.AddEnv("MAX_RELEASE_BYTES", fmt.Sprintf("%d", maxLocalReleaseBytes)),
-			llb.AddEnv("HOME", "/tmp/copa-chisel-git-home"),
-			llb.WithProxy(utils.GetProxy()),
-			llb.IgnoreCache,
-			llb.WithCustomName("Fetching pinned Chisel release definitions"),
-		).Root()
+		gitTooling := chiselGitReleaseState(tooling, release.Location, release.Revision)
 		resolvedBytes, err := buildkit.ExtractFileFromState(ctx, client, &gitTooling, chiselGitRevisionFile)
 		if err != nil {
 			return llb.State{}, "", "", fmt.Errorf("resolve pinned Chisel Git release %s: %w", release.String(), err)
@@ -356,7 +344,11 @@ func materializeChiselRelease(ctx context.Context, client gwclient.Client, tooli
 		if len(resolved) != 40 {
 			return llb.State{}, "", "", fmt.Errorf("resolved Chisel Git release returned invalid commit %q", resolved)
 		}
-		gitTooling = gitTooling.File(llb.Rm(chiselGitRevisionFile))
+		// The tag or abbreviated revision used for discovery can move before the
+		// returned graph is solved again. Rebuild that graph from the immutable
+		// commit observed by the first solve so its contents match provenance.
+		gitTooling = chiselGitReleaseState(tooling, release.Location, resolved).
+			File(llb.Rm(chiselGitRevisionFile))
 		return gitTooling, chiselReleaseRoot, release.Location + "#" + resolved, nil
 	case copachisel.ReleaseLocal:
 		releaseState, digest, err := localChiselReleaseState(release.Location)
@@ -380,6 +372,23 @@ zstd -q -d -c "$RELEASE_ARCHIVE" | tar -xpf - -C "$RELEASE_DIR"
 	default:
 		return llb.State{}, "", "", fmt.Errorf("unsupported Chisel release source kind %q", release.Kind)
 	}
+}
+
+//nolint:gocritic // llb.State is an immutable graph handle passed by value throughout the BuildKit API.
+func chiselGitReleaseState(tooling llb.State, location, revision string) llb.State {
+	return tooling.Run(
+		llb.Args([]string{"/bin/sh", "-c", gitChiselReleaseCloneScript}),
+		llb.AddEnv("RELEASE_DIR", chiselReleaseRoot),
+		llb.AddEnv("REVISION_FILE", chiselGitRevisionFile),
+		llb.AddEnv("RELEASE_URL", location),
+		llb.AddEnv("RELEASE_REV", revision),
+		llb.AddEnv("MAX_RELEASE_FILES", fmt.Sprintf("%d", maxLocalReleaseFiles)),
+		llb.AddEnv("MAX_RELEASE_BYTES", fmt.Sprintf("%d", maxLocalReleaseBytes)),
+		llb.AddEnv("HOME", "/tmp/copa-chisel-git-home"),
+		llb.WithProxy(utils.GetProxy()),
+		llb.IgnoreCache,
+		llb.WithCustomName("Fetching pinned Chisel release definitions"),
+	).Root()
 }
 
 func localChiselReleaseState(root string) (llb.State, string, error) {
