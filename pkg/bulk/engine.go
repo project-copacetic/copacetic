@@ -245,7 +245,7 @@ func toHelmImageMappings(mappings []ChartImageMapping) []helm.ImageMapping {
 	return result
 }
 
-func generateAndPushPatchedCharts(ctx context.Context, resolutions []chartResolution, mappings []ChartImageMapping, config *PatchConfig) error {
+func generateAndPushPatchedCharts(ctx context.Context, resolutions []chartResolution, mappings []ChartImageMapping, failedSources map[string]struct{}, config *PatchConfig) error {
 	if config.ChartTarget == nil || config.ChartTarget.Registry == "" {
 		return nil
 	}
@@ -261,6 +261,10 @@ func generateAndPushPatchedCharts(ctx context.Context, resolutions []chartResolu
 
 	for i := range resolutions {
 		res := &resolutions[i]
+		if chartHasFailedPatches(res, failedSources) {
+			errs = multierror.Append(errs, fmt.Errorf("chart '%s': not publishing wrapper because one or more image patch jobs failed", res.Spec.Name))
+			continue
+		}
 		chartMappings := filterMappingsForChart(res, mappings)
 		if len(chartMappings) == 0 {
 			log.Infof("No successfully patched images for chart '%s', skipping chart generation", res.Spec.Name)
@@ -307,6 +311,15 @@ func generateAndPushPatchedCharts(ctx context.Context, resolutions []chartResolu
 	}
 
 	return errs.ErrorOrNil()
+}
+
+func chartHasFailedPatches(res *chartResolution, failedSources map[string]struct{}) bool {
+	for _, image := range res.Images {
+		if _, failed := failedSources[image.Repository+":"+image.Tag]; failed {
+			return true
+		}
+	}
+	return false
 }
 
 // PatchFromConfig orchestrates the bulk patching process based on a configuration file.
@@ -412,6 +425,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	jobsChan := make(chan job, len(jobsToRun))
 	errChan := make(chan error, len(jobsToRun))
 	results := make([]patchJobStatus, 0, len(jobsToRun))
+	failedSources := make(map[string]struct{})
 	var imageMappings []ChartImageMapping
 
 	log.Infof("Starting bulk patch for %d image(s) defined in %s...", len(config.Images), configPath)
@@ -442,6 +456,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 						Status: "Error",
 						Error:  errMessage,
 					})
+					failedSources[imageWithTag] = struct{}{}
 					mu.Unlock()
 					errChan <- errMessage
 					continue
@@ -459,6 +474,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 						Status: "Error",
 						Error:  errMessage,
 					})
+					failedSources[imageWithTag] = struct{}{}
 					mu.Unlock()
 					errChan <- errMessage
 					continue
@@ -518,6 +534,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 				if err != nil {
 					jobResult.Status = "Failed"
 					jobResult.Error = err
+					failedSources[imageWithTag] = struct{}{}
 					errChan <- err
 					log.Errorf("Failed to patch %s: %v", imageWithTag, err)
 				} else {
@@ -564,7 +581,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 	printSummary(results)
 
 	if config.ChartTarget != nil && len(chartResolutions) > 0 {
-		if err := generateAndPushPatchedCharts(ctx, chartResolutions, imageMappings, &config); err != nil {
+		if err := generateAndPushPatchedCharts(ctx, chartResolutions, imageMappings, failedSources, &config); err != nil {
 			log.Errorf("Failed to generate/push patched charts: %v", err)
 			multiErr = multierror.Append(multiErr, err)
 		}

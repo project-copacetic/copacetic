@@ -1,14 +1,14 @@
 package helm
 
 import (
+	"strings"
 	"testing"
-
-	helmchart "helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	helmchart "helm.sh/helm/v3/pkg/chart"
+	"helm.sh/helm/v3/pkg/chart/loader"
+	"helm.sh/helm/v3/pkg/chartutil"
 )
 
 // --- ResolveImageValuePaths tests ---
@@ -145,8 +145,7 @@ func TestResolveImageValuePaths_RepositoryWithoutTag(t *testing.T) {
 			// No "tag" key
 		},
 	}
-	images := []ChartImage{{Repository: "nginx", Tag: "latest"}}
-
+	images := []ChartImage{{Repository: "nginx", Tag: "1.25.0"}}
 	paths, err := ResolveImageValuePaths(values, images, nil)
 	require.NoError(t, err)
 
@@ -208,9 +207,9 @@ func TestBuildPatchedChart_Basic(t *testing.T) {
 	ch, err := BuildPatchedChart(original, spec, mappings, valuePaths)
 	require.NoError(t, err)
 
-	// Check metadata
 	assert.Equal(t, "vector-patched", ch.Metadata.Name)
-	assert.Equal(t, "0.53.0-patched.1", ch.Metadata.Version)
+	assert.True(t, strings.HasPrefix(ch.Metadata.Version, "0.53.0-patched."))
+	assert.NotEqual(t, "0.53.0-patched.1", ch.Metadata.Version)
 	assert.Equal(t, "v2", ch.Metadata.APIVersion)
 	assert.Equal(t, "application", ch.Metadata.Type)
 	assert.Contains(t, ch.Metadata.Description, "Copa-patched version of vector")
@@ -218,8 +217,7 @@ func TestBuildPatchedChart_Basic(t *testing.T) {
 	// Check annotations
 	assert.Equal(t, "vector", ch.Metadata.Annotations["copa.sh/source-chart"])
 	assert.Equal(t, "0.53.0", ch.Metadata.Annotations["copa.sh/source-version"])
-	assert.Equal(t, "oci://ghcr.io/vectordotdev/helm", ch.Metadata.Annotations["copa.sh/source-repository"])
-	assert.NotEmpty(t, ch.Metadata.Annotations["copa.sh/patched-at"])
+	assert.NotContains(t, ch.Metadata.Annotations, "copa.sh/patched-at")
 
 	// Check dependency
 	require.Len(t, ch.Metadata.Dependencies, 1)
@@ -314,6 +312,30 @@ func TestBuildPatchedChart_NoMatchingMappings(t *testing.T) {
 	_, err := BuildPatchedChart(original, spec, nil, valuePaths)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no patched mapping")
+}
+
+func TestBuildPatchedChart_RejectsMissingTagPath(t *testing.T) {
+	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	_, err := BuildPatchedChart(original, ChartSourceSpec{Repository: "oci://example.com/charts"}, []ImageMapping{{
+		OriginalRepo: "nginx", OriginalTag: "1.0.0", PatchedRepo: "nginx", PatchedTag: "1.0.0-patched",
+	}}, []ValuePathMapping{{ImageRepo: "nginx", ImageTag: "1.0.0", RepositoryPath: "image.repository"}})
+	require.ErrorContains(t, err, "no writable tag path")
+}
+
+func TestBuildPatchedChart_SanitizesSourceRepository(t *testing.T) {
+	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	repository := "https://" + "user:" + "token@" + "example.test/charts?signature=" + "secret#fragment"
+	chart, err := BuildPatchedChart(original, ChartSourceSpec{Repository: repository}, nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.test/charts", chart.Metadata.Annotations["copa.sh/source-repository"])
+	assert.Equal(t, "https://example.test/charts", chart.Metadata.Dependencies[0].Repository)
+}
+
+func TestPatchedChartVersionChangesWithMappings(t *testing.T) {
+	first := patchedChartVersion("1.0.0", []ImageMapping{{OriginalRepo: "nginx", OriginalTag: "1", PatchedRepo: "nginx", PatchedTag: "1-patched"}})
+	second := patchedChartVersion("1.0.0", []ImageMapping{{OriginalRepo: "nginx", OriginalTag: "1", PatchedRepo: "nginx", PatchedTag: "2-patched"}})
+	assert.Equal(t, first, patchedChartVersion("1.0.0", []ImageMapping{{OriginalRepo: "nginx", OriginalTag: "1", PatchedRepo: "nginx", PatchedTag: "1-patched"}}))
+	assert.NotEqual(t, first, second)
 }
 
 // --- Helper function tests ---

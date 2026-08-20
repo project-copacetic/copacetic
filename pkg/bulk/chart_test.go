@@ -145,8 +145,8 @@ func TestPatchChart_EndToEnd(t *testing.T) {
 	assert.Contains(t, patchedImages[0], "redis:7.0")
 	assert.Contains(t, patchedImages[0], "redis:7.0-patched")
 
-	// Verify chart was pushed
-	assert.Equal(t, "oci://ghcr.io/myorg/charts/mychart-patched:1.0.0-patched.1", pushedRef)
+	// Verify chart was pushed with a mapping-derived immutable version.
+	assert.Contains(t, pushedRef, "oci://ghcr.io/myorg/charts/mychart-patched:1.0.0-patched.")
 }
 
 func TestPatchChart_MultipleImages(t *testing.T) {
@@ -237,7 +237,7 @@ spec:
 	require.NoError(t, err)
 
 	assert.Equal(t, 2, patchedCount)
-	assert.Equal(t, "oci://ghcr.io/myorg/charts/myapp-patched:2.0.0-patched.1", pushedRef)
+	assert.Contains(t, pushedRef, "oci://ghcr.io/myorg/charts/myapp-patched:2.0.0-patched.")
 }
 
 func TestPatchChart_NoImagesFound(t *testing.T) {

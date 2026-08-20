@@ -119,7 +119,7 @@ func PatchChart(ctx context.Context, opts *types.Options) error {
 	config := PatchConfig{
 		ChartTarget: &ChartTargetSpec{Registry: opts.ChartRegistry},
 	}
-	if err := generateAndPushPatchedCharts(ctx, resolutions, mappings, &config); err != nil {
+	if err := generateAndPushPatchedCharts(ctx, resolutions, mappings, nil, &config); err != nil {
 		return fmt.Errorf("failed to generate/push patched chart: %w", err)
 	}
 

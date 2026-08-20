@@ -1,10 +1,12 @@
 package helm
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
-	"time"
 
 	helmchart "helm.sh/helm/v3/pkg/chart"
 )
@@ -190,7 +192,7 @@ func matchExplicitPath(imageRepo string, explicitPaths map[string]string) (strin
 // original chart and overrides its image values with patched references.
 //
 // The wrapper chart:
-//   - Has name "{original}-patched" and version "{original-version}-patched.1"
+//   - Has name "{original}-patched" and a deterministic version derived from patched image mappings
 //   - Declares the original chart as a dependency
 //   - Sets values that override image repository/tag for each patched image
 //   - Includes Copa metadata annotations for traceability
@@ -212,24 +214,28 @@ func BuildPatchedChart(
 		return nil, err
 	}
 
+	sanitizedRepository, err := sanitizeRepository(chartSpec.Repository)
+	if err != nil {
+		return nil, err
+	}
+
 	patchedChart := &helmchart.Chart{
 		Metadata: &helmchart.Metadata{
 			APIVersion:  helmchart.APIVersionV2,
 			Name:        origName + "-patched",
-			Version:     origVersion + "-patched.1",
+			Version:     patchedChartVersion(origVersion, mappings),
 			Description: fmt.Sprintf("Copa-patched version of %s %s", origName, origVersion),
 			Type:        "application",
 			Annotations: map[string]string{
 				"copa.sh/source-chart":      origName,
 				"copa.sh/source-version":    origVersion,
-				"copa.sh/source-repository": chartSpec.Repository,
-				"copa.sh/patched-at":        time.Now().UTC().Format(time.RFC3339),
+				"copa.sh/source-repository": sanitizedRepository,
 			},
 			Dependencies: []*helmchart.Dependency{
 				{
 					Name:       origName,
 					Version:    origVersion,
-					Repository: chartSpec.Repository,
+					Repository: sanitizedRepository,
 				},
 			},
 		},
@@ -273,6 +279,10 @@ func buildOverrideValues(subchartName string, mappings []ImageMapping, valuePath
 			continue
 		}
 
+		if valuePath.TagPath == "" {
+			return nil, fmt.Errorf("no writable tag path found for image %q", valuePath.ImageRepo+":"+valuePath.ImageTag)
+		}
+
 		repository := patched.PatchedRepo
 		if valuePath.RegistryPath != "" {
 			registry, remainder := splitRegistry(patched.PatchedRepo)
@@ -280,14 +290,39 @@ func buildOverrideValues(subchartName string, mappings []ImageMapping, valuePath
 			repository = remainder
 		}
 		setNestedValue(subchartValues, valuePath.RepositoryPath, repository)
-		if valuePath.TagPath != "" {
-			setNestedValue(subchartValues, valuePath.TagPath, patched.PatchedTag)
-		}
+		setNestedValue(subchartValues, valuePath.TagPath, patched.PatchedTag)
 	}
 	if len(subchartValues) == 0 {
 		return map[string]interface{}{}, nil
 	}
 	return map[string]interface{}{subchartName: subchartValues}, nil
+}
+
+func patchedChartVersion(sourceVersion string, mappings []ImageMapping) string {
+	entries := make([]string, len(mappings))
+	for i, mapping := range mappings {
+		entries[i] = strings.Join([]string{mapping.OriginalRepo, mapping.OriginalTag, mapping.PatchedRepo, mapping.PatchedTag}, "\x00")
+	}
+	sort.Strings(entries)
+	sum := sha256.Sum256([]byte(strings.Join(entries, "\n")))
+	return sourceVersion + "-patched." + hex.EncodeToString(sum[:6])
+}
+
+func sanitizeRepository(repository string) (string, error) {
+	parsed, err := url.Parse(repository)
+	if err != nil {
+		return "", fmt.Errorf("invalid chart repository: %w", err)
+	}
+	if parsed.Scheme == "" {
+		if strings.ContainsAny(repository, "@?#") {
+			return "", fmt.Errorf("chart repository must be a URL when it contains credentials or query data")
+		}
+		return repository, nil
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
 }
 
 func findPatchedMapping(imageRepo, imageTag string, lookup map[imageMappingKey]ImageMapping) (ImageMapping, bool) {

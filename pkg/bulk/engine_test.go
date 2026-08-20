@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/helm"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
 func TestBuildTargetRepository(t *testing.T) {
@@ -226,4 +228,20 @@ charts:
 	require.NoError(t, err)
 	err = PatchFromConfig(context.Background(), path, &types.Options{})
 	require.ErrorContains(t, err, "COPA_EXPERIMENTAL=1")
+}
+
+func TestGenerateAndPushPatchedChartsRejectsFailedChartImage(t *testing.T) {
+	resolution := chartResolution{
+		Spec:  ChartSpec{Name: "app", Version: "1.0.0", Repository: "oci://example.com/charts"},
+		Chart: &helmchart.Chart{Metadata: &helmchart.Metadata{Name: "app", Version: "1.0.0"}},
+		Images: []helm.ChartImage{
+			{Repository: "nginx", Tag: "1.0"},
+			{Repository: "redis", Tag: "7.0"},
+		},
+	}
+	mappings := []ChartImageMapping{{OriginalRepo: "nginx", OriginalTag: "1.0", PatchedRepo: "nginx", PatchedTag: "1.0-patched"}}
+	config := PatchConfig{ChartTarget: &ChartTargetSpec{Registry: "oci://example.com/patched"}}
+
+	err := generateAndPushPatchedCharts(context.Background(), []chartResolution{resolution}, mappings, map[string]struct{}{"redis:7.0": {}}, &config)
+	require.ErrorContains(t, err, "not publishing wrapper")
 }
