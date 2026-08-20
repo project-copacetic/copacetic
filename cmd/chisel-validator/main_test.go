@@ -84,6 +84,30 @@ func TestValidateRejectsMissingSpecialModeBits(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsOwnershipMismatch(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "entry")
+	writeFileWithMode(t, path, nil, 0o600)
+
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	actual, err := ownershipFromFileInfo("/entry", info)
+	require.NoError(t, err)
+	unexpected := actual
+	if unexpected.UID == ^uint32(0) {
+		unexpected.UID--
+	} else {
+		unexpected.UID++
+	}
+
+	err = validate(root, expectedManifest{Paths: []expectedPath{{
+		Path:      "/entry",
+		Mode:      "0600",
+		ownership: &unexpected,
+	}}})
+	require.ErrorContains(t, err, "ownership is")
+}
+
 func TestReconcilePreservesSpecialModeBits(t *testing.T) {
 	target := t.TempDir()
 	staged := t.TempDir()
@@ -108,6 +132,53 @@ func TestReconcilePreservesSpecialModeBits(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(0o3770), unixMode(sharedInfo.Mode()))
 	require.NoError(t, validate(target, manifest))
+}
+
+func TestReconcilePreservesOwnership(t *testing.T) {
+	target := t.TempDir()
+	staged := t.TempDir()
+
+	parentPath := filepath.Join(staged, "parent")
+	managedPath := filepath.Join(parentPath, "managed")
+	filePath := filepath.Join(managedPath, "file")
+	linkPath := filepath.Join(managedPath, "link")
+	require.NoError(t, os.Mkdir(parentPath, 0o750))
+	require.NoError(t, os.Mkdir(managedPath, 0o750))
+	content := []byte("owned content")
+	writeFileWithMode(t, filePath, content, 0o640)
+	require.NoError(t, os.Symlink("file", linkPath))
+
+	paths := []string{parentPath, managedPath, filePath, linkPath}
+	if os.Geteuid() == 0 {
+		for i, path := range paths {
+			require.NoError(t, os.Lchown(path, 1200+i, 2200+i))
+		}
+		// chown may clear special mode bits, so restore the intended modes.
+		require.NoError(t, os.Chmod(parentPath, 0o750))
+		require.NoError(t, os.Chmod(managedPath, 0o750))
+		require.NoError(t, os.Chmod(filePath, 0o640))
+	}
+
+	wantOwnership := make(map[string]pathOwnership, len(paths))
+	for _, path := range paths {
+		info, err := os.Lstat(path)
+		require.NoError(t, err)
+		ownership, err := ownershipFromFileInfo(path, info)
+		require.NoError(t, err)
+		wantOwnership[filepath.Base(path)] = ownership
+	}
+
+	manifest := expectedManifest{Paths: []expectedPath{
+		{Path: "/parent/managed/", Mode: "0750"},
+		{Path: "/parent/managed/file", Mode: "0640", SHA256: hashString(string(content)), Size: uint64(len(content))},
+		{Path: "/parent/managed/link", Mode: symlinkMode(t, linkPath), Link: "file"},
+	}}
+	require.NoError(t, reconcile(target, staged, expectedManifest{}, manifest))
+
+	assertPathOwnership(t, filepath.Join(target, "parent"), wantOwnership["parent"])
+	assertPathOwnership(t, filepath.Join(target, "parent", "managed"), wantOwnership["managed"])
+	assertPathOwnership(t, filepath.Join(target, "parent", "managed", "file"), wantOwnership["file"])
+	assertPathOwnership(t, filepath.Join(target, "parent", "managed", "link"), wantOwnership["link"])
 }
 
 func TestIdentityFromFileInfo(t *testing.T) {
@@ -558,6 +629,15 @@ func symlinkMode(t *testing.T, path string) string {
 	require.NoError(t, err)
 	require.NotZero(t, info.Mode()&fs.ModeSymlink)
 	return fmt.Sprintf("0%o", info.Mode().Perm())
+}
+
+func assertPathOwnership(t *testing.T, path string, expected pathOwnership) {
+	t.Helper()
+	info, err := os.Lstat(path)
+	require.NoError(t, err)
+	actual, err := ownershipFromFileInfo(path, info)
+	require.NoError(t, err)
+	assert.Equal(t, expected, actual)
 }
 
 func writeFileWithMode(t *testing.T, path string, data []byte, mode os.FileMode) {

@@ -366,10 +366,63 @@ type statePathTestReference struct {
 	gwclient.Reference
 	stat    *fstypes.Stat
 	statErr error
+	data    []byte
+	readErr error
 }
 
 func (r *statePathTestReference) StatFile(context.Context, gwclient.StatRequest) (*fstypes.Stat, error) {
 	return r.stat, r.statErr
+}
+
+func (r *statePathTestReference) ReadFile(context.Context, gwclient.ReadRequest) ([]byte, error) {
+	return r.data, r.readErr
+}
+
+func TestTryExtractOSReleaseFromState(t *testing.T) {
+	osRelease := []byte("ID=ubuntu\nVERSION_ID=20.04\n")
+	tests := []struct {
+		name      string
+		ref       *statePathTestReference
+		wantData  []byte
+		wantExist bool
+		wantError string
+	}{
+		{
+			name:      "present",
+			ref:       &statePathTestReference{stat: &fstypes.Stat{Size: int64(len(osRelease))}, data: osRelease},
+			wantData:  osRelease,
+			wantExist: true,
+		},
+		{
+			name: "serialized BuildKit missing error",
+			ref: &statePathTestReference{
+				statErr: errors.New("failed to solve: lstat " + osReleasePath + ": no such file or directory"),
+			},
+		},
+		{
+			name:      "stat failure",
+			ref:       &statePathTestReference{statErr: status.Error(codes.PermissionDenied, "denied")},
+			wantError: "unable to stat",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result := gwclient.NewResult()
+			result.SetRef(test.ref)
+			client := &statePathTestClient{result: result}
+			state := llb.Scratch()
+
+			data, exists, err := TryExtractOSReleaseFromState(t.Context(), client, &state)
+			assert.Equal(t, test.wantData, data)
+			assert.Equal(t, test.wantExist, exists)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestStatePathExists(t *testing.T) {

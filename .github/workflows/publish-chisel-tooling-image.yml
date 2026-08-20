@@ -6,14 +6,14 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: publish-chisel-tooling-v1.4.2-copa.1
+  group: publish-chisel-tooling-v1.4.2-copa.2
   cancel-in-progress: false
 
 env:
   CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
   CHISEL_VERSION: v1.4.2
   IMAGE_NAME: ghcr.io/project-copacetic/copacetic/chisel
-  IMAGE_TAG: v1.4.2-copa.1
+  IMAGE_TAG: v1.4.2-copa.2
   PLATFORMS: linux/amd64,linux/arm64,linux/386,linux/arm/v7,linux/ppc64le,linux/s390x,linux/riscv64
 
 permissions:
@@ -77,10 +77,13 @@ jobs:
         env:
           METADATA_FILE: ${{ runner.temp }}/chisel-build-metadata.json
         run: |
+          go_version="$(awk '/^go / { print $2; exit }' go.mod)"
+          test -n "${go_version}"
           validator_source_sha256="$(sha256sum cmd/chisel-validator/main.go | awk '{print $1}')"
           docker buildx build \
             --file images/chisel/Dockerfile \
             --platform "${PLATFORMS}" \
+            --build-arg "GO_VERSION=${go_version}" \
             --build-arg "CHISEL_VERSION=${CHISEL_VERSION}" \
             --build-arg "CHISEL_COMMIT=${CHISEL_COMMIT}" \
             --build-arg "COPA_VALIDATOR_SOURCE_SHA256=${validator_source_sha256}" \
@@ -95,6 +98,7 @@ jobs:
           {
             echo "digest=${digest}"
             echo "reference=${IMAGE_NAME}@${digest}"
+            echo "go_version=${go_version}"
             echo "validator_source_sha256=${validator_source_sha256}"
           } >>"${GITHUB_OUTPUT}"
           printf '%s\n' "${digest}" >"${RUNNER_TEMP}/chisel-manifest-digest.txt"
@@ -103,6 +107,7 @@ jobs:
         env:
           IMAGE_REF: ${{ steps.build.outputs.reference }}
           REPORT_FILE: ${{ runner.temp }}/chisel-verification.md
+          GO_VERSION: ${{ steps.build.outputs.go_version }}
           VALIDATOR_SOURCE_SHA256: ${{ steps.build.outputs.validator_source_sha256 }}
         run: |
           .github/workflows/scripts/chisel/verify-image.sh \
@@ -110,7 +115,8 @@ jobs:
             "${CHISEL_VERSION}" \
             "${CHISEL_COMMIT}" \
             "${REPORT_FILE}" \
-            "${VALIDATOR_SOURCE_SHA256}"
+            "${VALIDATOR_SOURCE_SHA256}" \
+            "${GO_VERSION}"
 
       - name: Recheck immutable release tag
         env:

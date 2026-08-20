@@ -388,6 +388,21 @@ func explicitNativeChiselOS(
 	version := ""
 	if release.Kind == copachisel.ReleaseNamed {
 		version = strings.TrimPrefix(release.Location, "ubuntu-")
+	} else {
+		osRelease, exists, err := common.TryExtractOSReleaseFromState(ctx, c, currentSuppliedImageState(config))
+		if err != nil {
+			return "", "", false, fmt.Errorf("inspect target image OS metadata for explicit Chisel release: %w", err)
+		}
+		if exists {
+			osInfo, err := common.GetOSInfo(ctx, osRelease)
+			if err != nil {
+				return "", "", false, fmt.Errorf("parse target image OS metadata for explicit Chisel release: %w", err)
+			}
+			if osInfo.Version == "" {
+				return "", "", false, fmt.Errorf("target image OS metadata for explicit Chisel release does not contain VERSION_ID")
+			}
+			version = osInfo.Version
+		}
 	}
 	return utils.OSTypeUbuntu, version, true, nil
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -376,6 +378,136 @@ func TestExplicitNativeChiselOSManifestInspection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExplicitNativeChiselOSUsesTargetVersionForExternalRelease(t *testing.T) {
+	osRelease := []byte("NAME=Ubuntu\nID=ubuntu\nVERSION_ID=20.04\n")
+	tests := []struct {
+		name          string
+		override      func(*testing.T) string
+		osRelease     []byte
+		osReleaseStat error
+		wantVersion   string
+		wantError     string
+	}{
+		{
+			name:        "local release",
+			override:    func(t *testing.T) string { return t.TempDir() },
+			osRelease:   osRelease,
+			wantVersion: "20.04",
+		},
+		{
+			name: "Git release",
+			override: func(*testing.T) string {
+				return "https://github.com/canonical/chisel-releases.git#ca7ad8113998470ff77231af799c363c4a48feca"
+			},
+			osRelease:   osRelease,
+			wantVersion: "20.04",
+		},
+		{
+			name:     "missing OS metadata is tolerated",
+			override: func(t *testing.T) string { return t.TempDir() },
+			osReleaseStat: &os.PathError{
+				Op:   "stat",
+				Path: "/etc/os-release",
+				Err:  fs.ErrNotExist,
+			},
+		},
+		{
+			name:      "malformed OS metadata is rejected",
+			override:  func(t *testing.T) string { return t.TempDir() },
+			osRelease: []byte("NAME=Ubuntu\nVERSION_ID\n"),
+			wantError: "parse target image OS metadata",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client, ref := nativeChiselOSReleaseClient(t, test.osRelease, test.osReleaseStat)
+			config := &buildkit.Config{
+				Client:     client,
+				ImageState: llb.Scratch(),
+				Platform:   &v1.Platform{OS: "linux", Architecture: "amd64"},
+			}
+
+			osType, version, explicit, err := explicitNativeChiselOS(
+				t.Context(),
+				client,
+				config,
+				test.override(t),
+			)
+
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, utils.OSTypeUbuntu, osType)
+				assert.Equal(t, test.wantVersion, version)
+				assert.True(t, explicit)
+			}
+			client.AssertExpectations(t)
+			ref.AssertExpectations(t)
+		})
+	}
+}
+
+func TestSetupPackageManagerExitOnEOLWithLocalChiselRelease(t *testing.T) {
+	originalBaseURL := utils.GetEOLAPIBaseURL()
+	defer utils.SetEOLAPIBaseURL(originalBaseURL)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/ubuntu/releases/20.04", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, err := w.Write([]byte(`{"result":{"isEol":true,"eolFrom":"2025-05-31","isMaintained":false}}`))
+		assert.NoError(t, err)
+	}))
+	defer server.Close()
+	utils.SetEOLAPIBaseURL(server.URL)
+
+	client, ref := nativeChiselOSReleaseClient(
+		t,
+		[]byte("NAME=Ubuntu\nID=ubuntu\nVERSION_ID=20.04\n"),
+		nil,
+	)
+	config := &buildkit.Config{
+		Client:     client,
+		ImageState: llb.Scratch(),
+		Platform:   &v1.Platform{OS: "linux", Architecture: "amd64"},
+	}
+
+	_, err := setupPackageManager(t.Context(), client, config, &Options{
+		WorkingFolder: t.TempDir(),
+		ChiselRelease: t.TempDir(),
+		ExitOnEOL:     true,
+	})
+	require.ErrorContains(t, err, "exiting due to EOL operating system: ubuntu 20.04")
+	client.AssertExpectations(t)
+	ref.AssertExpectations(t)
+}
+
+func nativeChiselOSReleaseClient(
+	t *testing.T,
+	osRelease []byte,
+	osReleaseStatErr error,
+) (*mocks.MockGWClient, *mocks.MockReference) {
+	t.Helper()
+	client := new(mocks.MockGWClient)
+	ref := new(mocks.MockReference)
+	result := gwclient.NewResult()
+	result.SetRef(ref)
+	client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Twice()
+	ref.On("StatFile", mock.Anything, mock.MatchedBy(func(req gwclient.StatRequest) bool {
+		return req.Path == pkgmgr.NativeChiselManifestPath
+	})).Return(&fsutiltypes.Stat{Path: pkgmgr.NativeChiselManifestPath}, nil).Once()
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: "/etc/os-release"}).
+		Return(&fsutiltypes.Stat{Path: "/etc/os-release", Size: int64(len(osRelease))}, osReleaseStatErr).
+		Once()
+	if osReleaseStatErr == nil {
+		ref.On("ReadFile", mock.Anything, mock.MatchedBy(func(req gwclient.ReadRequest) bool {
+			return req.Filename == "/etc/os-release"
+		})).Return(osRelease, nil).Once()
+	}
+	return client, ref
 }
 
 func TestPreflightReportForNativeChiselRejectsEveryReportKind(t *testing.T) {

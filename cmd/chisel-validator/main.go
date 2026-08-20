@@ -35,11 +35,17 @@ type expectedPath struct {
 	Size        uint64   `json:"size,omitempty"`
 	Link        string   `json:"link,omitempty"`
 	Inode       uint64   `json:"inode,omitempty"`
+	ownership   *pathOwnership
 }
 
 type fileIdentity struct {
 	Device uint64
 	Inode  uint64
+}
+
+type pathOwnership struct {
+	UID uint32
+	GID uint32
 }
 
 type integerDevice interface {
@@ -111,7 +117,8 @@ func readExpectedManifest(file string) (expectedManifest, error) {
 		return expectedManifest{}, fmt.Errorf("decode expected manifest: %w", err)
 	}
 	seen := make(map[string]struct{}, len(expected.Paths))
-	for _, record := range expected.Paths {
+	for i := range expected.Paths {
+		record := &expected.Paths[i]
 		if _, exists := seen[record.Path]; exists {
 			return expectedManifest{}, fmt.Errorf("duplicate expected path %q", record.Path)
 		}
@@ -134,8 +141,8 @@ func validate(rootPath string, expected expectedManifest) error {
 
 func validateRoot(root *os.Root, expected expectedManifest) error {
 	hardLinks := map[uint64][]fileIdentity{}
-	for _, pathRecord := range expected.Paths {
-		if err := validatePath(root, &pathRecord, hardLinks); err != nil {
+	for i := range expected.Paths {
+		if err := validatePath(root, &expected.Paths[i], hardLinks); err != nil {
 			return err
 		}
 	}
@@ -176,6 +183,22 @@ func validatePath(root *os.Root, record *expectedPath, hardLinks map[uint64][]fi
 	info, err := root.Lstat(name)
 	if err != nil {
 		return fmt.Errorf("stat %q: %w", record.Path, err)
+	}
+	if record.ownership != nil {
+		actualOwnership, err := ownershipFromFileInfo(record.Path, info)
+		if err != nil {
+			return err
+		}
+		if actualOwnership != *record.ownership {
+			return fmt.Errorf(
+				"path %q ownership is %d:%d, expected %d:%d",
+				record.Path,
+				actualOwnership.UID,
+				actualOwnership.GID,
+				record.ownership.UID,
+				record.ownership.GID,
+			)
+		}
 	}
 
 	expectedMode, err := strconv.ParseUint(record.Mode, 8, 32)
@@ -254,6 +277,9 @@ func reconcile(targetPath, stagedPath string, oldManifest, newManifest expectedM
 	if err := rejectUndeclaredStagedEntries(staged, newManifest); err != nil {
 		return err
 	}
+	if err := populateExpectedOwnership(staged, &newManifest); err != nil {
+		return err
+	}
 
 	target, err := os.OpenRoot(targetPath)
 	if err != nil {
@@ -278,9 +304,30 @@ func reconcile(targetPath, stagedPath string, oldManifest, newManifest expectedM
 	return nil
 }
 
+func populateExpectedOwnership(root *os.Root, expected *expectedManifest) error {
+	for i := range expected.Paths {
+		record := &expected.Paths[i]
+		name, err := rootedName(record.Path)
+		if err != nil {
+			return err
+		}
+		info, err := root.Lstat(name)
+		if err != nil {
+			return fmt.Errorf("stat staged path %q for ownership: %w", record.Path, err)
+		}
+		ownership, err := ownershipFromFileInfo(record.Path, info)
+		if err != nil {
+			return err
+		}
+		record.ownership = &ownership
+	}
+	return nil
+}
+
 func pathMap(manifest expectedManifest) map[string]expectedPath {
 	result := make(map[string]expectedPath, len(manifest.Paths))
-	for _, record := range manifest.Paths {
+	for i := range manifest.Paths {
+		record := manifest.Paths[i]
 		manifestPath := record.Path
 		if manifestPath != "/" {
 			manifestPath = strings.TrimSuffix(manifestPath, "/")
@@ -480,6 +527,9 @@ func copyNewPaths(target, staged *os.Root, oldByPath, newByPath map[string]expec
 				return fmt.Errorf("create managed directory %q: %w", manifestPath, err)
 			}
 		}
+		if err := applyExpectedOwnership(target, name, &record); err != nil {
+			return err
+		}
 		if err := target.Chmod(name, expectedMode(&record)); err != nil {
 			return fmt.Errorf("set mode on managed directory %q: %w", manifestPath, err)
 		}
@@ -515,7 +565,8 @@ func copyNewPaths(target, staged *os.Root, oldByPath, newByPath map[string]expec
 			return err
 		}
 		firstName, _ := rootedName(group[0].Path)
-		for _, record := range group[1:] {
+		for i := 1; i < len(group); i++ {
+			record := &group[i]
 			if err := ensurePathParents(target, staged, record.Path); err != nil {
 				return err
 			}
@@ -547,6 +598,9 @@ func copyPath(target, staged *os.Root, record *expectedPath) error {
 		if err := target.Symlink(link, name); err != nil {
 			return fmt.Errorf("create managed symlink %q: %w", record.Path, err)
 		}
+		if err := applyExpectedOwnership(target, name, record); err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -566,6 +620,9 @@ func copyPath(target, staged *os.Root, record *expectedPath) error {
 	}
 	if closeErr != nil {
 		return fmt.Errorf("close managed file %q: %w", record.Path, closeErr)
+	}
+	if err := applyExpectedOwnership(target, name, record); err != nil {
+		return err
 	}
 	if err := target.Chmod(name, expectedMode(record)); err != nil {
 		return fmt.Errorf("set mode on managed file %q: %w", record.Path, err)
@@ -609,8 +666,48 @@ func ensurePathParents(target, staged *os.Root, manifestPath string) error {
 		if err := target.Mkdir(current, stagedInfo.Mode().Perm()); err != nil {
 			return fmt.Errorf("create parent %q: %w", current, err)
 		}
+		ownership, err := ownershipFromFileInfo("/"+filepath.ToSlash(current), stagedInfo)
+		if err != nil {
+			return err
+		}
+		if err := applyOwnership(target, current, "/"+filepath.ToSlash(current), ownership); err != nil {
+			return err
+		}
+		if err := target.Chmod(current, preservedMode(stagedInfo.Mode())); err != nil {
+			return fmt.Errorf("set mode on parent %q: %w", current, err)
+		}
 	}
 	return nil
+}
+
+func applyExpectedOwnership(root *os.Root, name string, record *expectedPath) error {
+	if record.ownership == nil {
+		return fmt.Errorf("managed path %q has no staged ownership metadata", record.Path)
+	}
+	return applyOwnership(root, name, record.Path, *record.ownership)
+}
+
+func applyOwnership(root *os.Root, name, manifestPath string, ownership pathOwnership) error {
+	uid, err := chownID(ownership.UID)
+	if err != nil {
+		return fmt.Errorf("path %q UID: %w", manifestPath, err)
+	}
+	gid, err := chownID(ownership.GID)
+	if err != nil {
+		return fmt.Errorf("path %q GID: %w", manifestPath, err)
+	}
+	if err := root.Lchown(name, uid, gid); err != nil {
+		return fmt.Errorf("set ownership on managed path %q to %d:%d: %w", manifestPath, ownership.UID, ownership.GID, err)
+	}
+	return nil
+}
+
+func chownID(id uint32) (int, error) {
+	maxInt := uint64(^uint(0) >> 1)
+	if uint64(id) > maxInt {
+		return 0, fmt.Errorf("value %d exceeds the platform chown limit", id)
+	}
+	return int(id), nil
 }
 
 func rootedName(manifestPath string) (string, error) {
@@ -704,6 +801,10 @@ func expectedMode(record *expectedPath) fs.FileMode {
 	return result
 }
 
+func preservedMode(mode fs.FileMode) fs.FileMode {
+	return mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
+}
+
 func unixMode(mode fs.FileMode) uint64 {
 	result := uint64(mode.Perm())
 	if mode&fs.ModeSetuid != 0 {
@@ -728,6 +829,14 @@ func identityFromFileInfo(path string, info fs.FileInfo) (fileIdentity, error) {
 		return fileIdentity{}, fmt.Errorf("path %q has invalid negative device number %d", path, stat.Dev)
 	}
 	return fileIdentity{Device: device, Inode: stat.Ino}, nil
+}
+
+func ownershipFromFileInfo(path string, info fs.FileInfo) (pathOwnership, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return pathOwnership{}, fmt.Errorf("path %q does not expose ownership metadata", path)
+	}
+	return pathOwnership{UID: stat.Uid, GID: stat.Gid}, nil
 }
 
 func nonNegativeDevice[T integerDevice](device T) (uint64, bool) {

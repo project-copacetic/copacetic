@@ -1032,11 +1032,15 @@ jobs:
           CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
         run: |
           set -eu -o pipefail
+          validator_source_sha256="$(sha256sum cmd/chisel-validator/main.go | awk '{print $1}')"
+          go_version="$(awk '/^go / { print $2; exit }' go.mod)"
           .github/workflows/scripts/chisel/verify-image.sh \
             "${CHISEL_TOOLING_IMAGE}" \
             "${CHISEL_VERSION}" \
             "${CHISEL_COMMIT}" \
-            "${RUNNER_TEMP}/chisel-tooling-verification.md"
+            "${RUNNER_TEMP}/chisel-tooling-verification.md" \
+            "${validator_source_sha256}" \
+            "${go_version}"
       - name: Run network-independent Chisel tests
         shell: bash
         run: |

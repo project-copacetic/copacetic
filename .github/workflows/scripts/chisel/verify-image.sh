@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-if (( $# < 4 || $# > 5 )); then
-	echo "usage: $0 <image@sha256:digest> <expected-version> <expected-commit> <report-path> [expected-validator-source-sha256]" >&2
+if (( $# < 4 || $# > 6 )); then
+	echo "usage: $0 <image@sha256:digest> <expected-version> <expected-commit> <report-path> [expected-validator-source-sha256] [expected-go-version]" >&2
 	exit 2
 fi
 
@@ -12,6 +12,7 @@ readonly expected_version="$2"
 readonly expected_commit="$3"
 readonly report_path="$4"
 readonly expected_validator_source_sha256="${5:-}"
+readonly expected_go_version="${6:-}"
 readonly image_name="${image_ref%@*}"
 readonly image_digest="${image_ref##*@}"
 work_dir="$(mktemp -d)"
@@ -41,6 +42,9 @@ if [[ "${image_name}" == "${image_ref}" || ! "${image_digest}" =~ ^sha256:[0-9a-
 fi
 if [[ -n "${expected_validator_source_sha256}" && ! "${expected_validator_source_sha256}" =~ ^[0-9a-f]{64}$ ]]; then
 	fail "expected validator source checksum must be a lowercase SHA-256 digest"
+fi
+if [[ -n "${expected_go_version}" && ! "${expected_go_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+	fail "expected Go version must use major.minor.patch form"
 fi
 
 mkdir -p "$(dirname -- "${report_path}")"
@@ -82,9 +86,12 @@ docker pull --platform linux/amd64 "${image_ref}" >/dev/null
 	if [[ -n "${expected_validator_source_sha256}" ]]; then
 		echo "- Expected validator source SHA-256: \`${expected_validator_source_sha256}\`"
 	fi
+	if [[ -n "${expected_go_version}" ]]; then
+		echo "- Expected Go compiler version: \`${expected_go_version}\`"
+	fi
 	echo
-	echo "| Platform | Image manifest | Provenance | SBOM | Chisel commit | Validator source |"
-	echo "| --- | --- | --- | --- | --- | --- |"
+	echo "| Platform | Image manifest | Provenance | SBOM | Chisel commit | Validator source | Go compiler |"
+	echo "| --- | --- | --- | --- | --- | --- | --- |"
 } >"${report_path}"
 
 for platform in "${expected_platforms[@]}"; do
@@ -132,6 +139,16 @@ for platform in "${expected_platforms[@]}"; do
 		validator_source_report="${actual_validator_source_sha256}"
 	fi
 
+	go_version_report="not checked"
+	if [[ -n "${expected_go_version}" ]]; then
+		actual_go_version="$(docker buildx imagetools inspect "${image_name}@${platform_digest}" \
+			--format '{{ index .Image.Config.Labels "sh.copa.go.version" }}')"
+		if [[ "${actual_go_version}" != "${expected_go_version}" ]]; then
+			fail "${platform} has sh.copa.go.version=${actual_go_version:-<missing>}, expected ${expected_go_version}"
+		fi
+		go_version_report="${actual_go_version}"
+	fi
+
 	attestation_digests=()
 	while IFS= read -r digest; do
 		attestation_digests+=("${digest}")
@@ -175,8 +192,8 @@ for platform in "${expected_platforms[@]}"; do
 		fail "${platform} is missing an SPDX SBOM attestation"
 	fi
 
-	printf "| \`%s\` | \`%s\` | yes | yes | \`%s\` | \`%s\` |\n" \
-		"${platform}" "${platform_digest}" "${actual_commit}" "${validator_source_report}" >>"${report_path}"
+	printf "| \`%s\` | \`%s\` | yes | yes | \`%s\` | \`%s\` | \`%s\` |\n" \
+		"${platform}" "${platform_digest}" "${actual_commit}" "${validator_source_report}" "${go_version_report}" >>"${report_path}"
 done
 
 {

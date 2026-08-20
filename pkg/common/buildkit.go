@@ -36,6 +36,20 @@ func ExtractOSReleaseFromState(ctx context.Context, c gwclient.Client, state *ll
 	return buildkit.ExtractFileFromStateWithLimit(ctx, c, state, osReleasePath, maxOSReleaseBytes)
 }
 
+// TryExtractOSReleaseFromState reads /etc/os-release when present. A genuinely
+// missing file is reported as exists=false; solve, stat, size, and read failures
+// remain errors so callers cannot silently skip OS-dependent safety checks.
+func TryExtractOSReleaseFromState(ctx context.Context, c gwclient.Client, state *llb.State) ([]byte, bool, error) {
+	data, err := ExtractOSReleaseFromState(ctx, c, state)
+	if err == nil {
+		return data, true, nil
+	}
+	if statePathNotFound(err, osReleasePath) {
+		return nil, false, nil
+	}
+	return nil, false, err
+}
+
 // SetupBuildkitConfigAndManager initializes buildkit config and package manager.
 // This combines the common pattern used in both generate and patch commands.
 func SetupBuildkitConfigAndManager(
