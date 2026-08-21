@@ -603,9 +603,10 @@ func extractReportDirectory(ctx context.Context, ref gwclient.Reference, reportP
 }
 
 const (
-	chiselReleaseContextName = "chisel-release"
-	maxFrontendReleaseBytes  = 64 << 20
-	maxFrontendReleaseFiles  = 10000
+	chiselReleaseContextName       = "chisel-release"
+	chiselReleaseExtractionDirName = "release"
+	maxFrontendReleaseBytes        = 64 << 20
+	maxFrontendReleaseFiles        = 10000
 )
 
 // extractChiselReleaseFromContext copies a local Chisel release directory from
@@ -651,13 +652,18 @@ func extractChiselReleaseFromContext(ctx context.Context, client gwclient.Client
 	if err != nil {
 		return "", errors.Wrap(err, "failed to create Chisel release temp directory")
 	}
+	releaseDir := filepath.Join(tempDir, chiselReleaseExtractionDirName)
+	if err := os.Mkdir(releaseDir, 0o700); err != nil {
+		os.RemoveAll(tempDir)
+		return "", errors.Wrap(err, "failed to create extracted Chisel release directory")
+	}
 	fileCount := 0
 	var totalBytes int64
-	if err := extractFrontendContextDirectory(ctx, reference, cleaned, tempDir, &fileCount, &totalBytes); err != nil {
+	if err := extractFrontendContextDirectory(ctx, reference, cleaned, releaseDir, &fileCount, &totalBytes); err != nil {
 		os.RemoveAll(tempDir)
 		return "", err
 	}
-	return tempDir, nil
+	return releaseDir, nil
 }
 
 func extractFrontendContextDirectory(ctx context.Context, reference gwclient.Reference, sourcePath, destinationPath string, fileCount *int, totalBytes *int64) error {

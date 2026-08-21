@@ -593,26 +593,45 @@ func TestPatchSingleArchImageRejectsReportPlatformMismatchBeforeBuildKit(t *test
 }
 
 func TestPatchSingleArchImageReturnsNoUpdatesFoundAfterFiltering(t *testing.T) {
-	t.Parallel()
+	originalBKNewClient := bkNewClient
+	t.Cleanup(func() { bkNewClient = originalBKNewClient })
 
-	result, err := patchSingleArchImage(
-		context.Background(),
-		&types.Options{
-			Image:             "localhost:65535/test-image:latest",
-			Report:            filepath.Join("..", "report", "testdata", "trivy_python_venv.json"),
-			Scanner:           "trivy",
-			PkgTypes:          utils.PkgTypeOS,
-			LibraryPatchLevel: utils.PatchTypePatch,
+	tests := []struct {
+		name      string
+		newClient func(context.Context, buildkit.Opts) (*buildkitclient.Client, error)
+	}{
+		{name: "preflight connection failure", newClient: originalBKNewClient},
+		{
+			name: "client construction failure",
+			newClient: func(context.Context, buildkit.Opts) (*buildkitclient.Client, error) {
+				return nil, errors.New("unable to construct BuildKit client")
+			},
 		},
-		types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},
-		false,
-		nil,
-	)
+	}
 
-	assert.ErrorIs(t, err, types.ErrNoUpdatesFound)
-	require.NotNil(t, result)
-	assert.Equal(t, "localhost:65535/test-image:latest", result.OriginalRef.String())
-	assert.Equal(t, result.OriginalRef.String(), result.PatchedRef.String())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bkNewClient = tt.newClient
+			result, err := patchSingleArchImage(
+				context.Background(),
+				&types.Options{
+					Image:             "localhost:65535/test-image:latest",
+					Report:            filepath.Join("..", "report", "testdata", "trivy_python_venv.json"),
+					Scanner:           "trivy",
+					PkgTypes:          utils.PkgTypeOS,
+					LibraryPatchLevel: utils.PatchTypePatch,
+				},
+				types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},
+				false,
+				nil,
+			)
+
+			assert.ErrorIs(t, err, types.ErrNoUpdatesFound)
+			require.NotNil(t, result)
+			assert.Equal(t, "localhost:65535/test-image:latest", result.OriginalRef.String())
+			assert.Equal(t, result.OriginalRef.String(), result.PatchedRef.String())
+		})
+	}
 }
 
 func TestEmptyReportPreflightUsesNativeSuppliedPatchedImage(t *testing.T) {

@@ -846,6 +846,9 @@ func (r *frontendReleaseContextReference) ReadDir(_ context.Context, req gwclien
 }
 
 func (r *frontendReleaseContextReference) StatFile(_ context.Context, req gwclient.StatRequest) (*fstypes.Stat, error) {
+	if _, ok := r.directories[filepath.Clean(req.Path)]; ok {
+		return &fstypes.Stat{Path: req.Path, Mode: uint32(os.ModeDir | 0o755)}, nil
+	}
 	data, ok := r.files[filepath.Clean(req.Path)]
 	if !ok {
 		return nil, fmt.Errorf("unexpected Chisel release file stat %q", req.Path)
@@ -1026,4 +1029,34 @@ func TestExtractChiselReleaseFromContextRejectsUnsafePaths(t *testing.T) {
 
 	_, err = extractChiselReleaseFromContext(t.Context(), nil, "../outside")
 	require.ErrorContains(t, err, "escapes its BuildKit context")
+}
+
+func TestExtractChiselReleaseFromContextUsesStableReleaseBasename(t *testing.T) {
+	const releaseContents = "format: v1\n"
+	releaseFile := filepath.Join(frontendReleaseRoot, "chisel.yaml")
+	reference := &frontendReleaseContextReference{
+		directories: map[string][]*fstypes.Stat{
+			frontendReleaseRoot: {
+				{Path: releaseFile, Mode: uint32(0o644), Size: int64(len(releaseContents))},
+			},
+		},
+		files: map[string][]byte{releaseFile: []byte(releaseContents)},
+	}
+	result := gwclient.NewResult()
+	result.SetRef(reference)
+	client := &frontendMetadataTestClient{result: result}
+
+	first, err := extractChiselReleaseFromContext(t.Context(), client, frontendReleaseRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(filepath.Dir(first)) })
+	second, err := extractChiselReleaseFromContext(t.Context(), client, frontendReleaseRoot)
+	require.NoError(t, err)
+	t.Cleanup(func() { os.RemoveAll(filepath.Dir(second)) })
+
+	assert.NotEqual(t, filepath.Dir(first), filepath.Dir(second))
+	assert.Equal(t, chiselReleaseExtractionDirName, filepath.Base(first))
+	assert.Equal(t, filepath.Base(first), filepath.Base(second))
+	contents, err := os.ReadFile(filepath.Join(first, "chisel.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, releaseContents, string(contents))
 }

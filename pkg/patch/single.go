@@ -165,18 +165,25 @@ func patchSingleArchImageWithUpdates(
 		log.Debugf("updates to apply: %v", updates)
 	}
 
+	reportHasNoUpdates := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0
+
 	// Create the BuildKit client after report parsing to preserve parse-error
 	// behavior, then run a shell-less native Chisel preflight before handling an
 	// otherwise empty report.
 	bkClient, err := bkNewClient(ctx, bkOpts)
 	if err != nil {
+		if reportFile != "" && reportHasNoUpdates {
+			log.Debugf("Unable to create a BuildKit client to preflight an empty report for native Chisel metadata: %v", err)
+			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res.Summary = updates.CombinedSummary()
+			return res, types.ErrNoUpdatesFound
+		}
 		return nil, err
 	}
 	defer bkClient.Close()
 
 	// Resolve image reference
 	ref := resolveImageReference(imageName)
-	reportHasNoUpdates := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0
 	if reportFile != "" && reportHasNoUpdates {
 		if err := rejectTargetedNativeChiselPatch(ctx, bkClient, ref, &targetPlatform.Platform); err != nil {
 			// Preserve the historical ErrNoUpdatesFound result for non-native
