@@ -632,6 +632,76 @@ assert_target_path_safe() {
     esac
 }
 
+# Resolve symlinks in the target namespace without letting absolute targets
+# escape into the tooling container's root filesystem.
+resolve_target_path() {
+    rtp_pending=${1#/}
+    rtp_resolved=""
+    rtp_symlinks=0
+
+    while [ -n "$rtp_pending" ]; do
+        case "$rtp_pending" in
+            */*)
+                rtp_component=${rtp_pending%%/*}
+                rtp_pending=${rtp_pending#*/}
+                ;;
+            *)
+                rtp_component=$rtp_pending
+                rtp_pending=""
+                ;;
+        esac
+
+        case "$rtp_component" in
+            ''|.) continue ;;
+            ..)
+                case "$rtp_resolved" in
+                    */*) rtp_resolved=${rtp_resolved%/*} ;;
+                    *) rtp_resolved="" ;;
+                esac
+                continue
+                ;;
+        esac
+
+        if [ -n "$rtp_resolved" ]; then
+            rtp_candidate=/$rtp_resolved/$rtp_component
+        else
+            rtp_candidate=/$rtp_component
+        fi
+        rtp_host_path=$DPKG_ROOT$rtp_candidate
+        if [ ! -L "$rtp_host_path" ]; then
+            rtp_resolved=${rtp_candidate#/}
+            continue
+        fi
+
+        rtp_symlinks=$((rtp_symlinks + 1))
+        if [ "$rtp_symlinks" -gt 40 ]; then
+            echo "too many symlinks while resolving target path: $1" >&2
+            return 1
+        fi
+        rtp_link=$(readlink "$rtp_host_path") || {
+            echo "cannot read target symlink: $rtp_candidate" >&2
+            return 1
+        }
+        case "$rtp_link" in
+            /*)
+                rtp_resolved=""
+                rtp_link=${rtp_link#/}
+                ;;
+        esac
+        if [ -n "$rtp_link" ] && [ -n "$rtp_pending" ]; then
+            rtp_pending=$rtp_link/$rtp_pending
+        elif [ -n "$rtp_link" ]; then
+            rtp_pending=$rtp_link
+        fi
+    done
+
+    if [ -n "$rtp_resolved" ]; then
+        printf '/%s\n' "$rtp_resolved"
+    else
+        printf '/\n'
+    fi
+}
+
 snapshot_missing_tool_paths() {
     missing_tool_backup=$DOWNLOAD_DIR/missing-tool-backup
     missing_tool_remove=$DOWNLOAD_DIR/missing-tool-remove
@@ -651,11 +721,16 @@ snapshot_missing_tool_paths() {
             case "$missing_tool" in
                 *[!a-zA-Z0-9+._-]*) echo "invalid missing dpkg tool name: $missing_tool" >&2; exit 1 ;;
             esac
-            relative_path=$tool_directory/$missing_tool
+            resolved_tool_directory=$(resolve_target_path "$tool_directory")
+            case "$resolved_tool_directory" in
+                /) relative_path=/$missing_tool ;;
+                *) relative_path=$resolved_tool_directory/$missing_tool ;;
+            esac
             target_path=$DPKG_ROOT$relative_path
             assert_target_path_safe "$target_path"
-            if [ -x "$target_path" ]; then
-                echo "target dpkg tool marked missing is executable: $relative_path" >&2
+            resolved_tool_path=$(resolve_target_path "$tool_directory/$missing_tool")
+            if [ -x "$DPKG_ROOT$resolved_tool_path" ]; then
+                echo "target dpkg tool marked missing is executable: $tool_directory/$missing_tool" >&2
                 exit 1
             fi
             if [ -e "$target_path" ] || [ -L "$target_path" ]; then

@@ -1473,18 +1473,20 @@ func TestAptGetDownloadScriptRemovesFilesMissingFromUpdatedPackage(t *testing.T)
 	oldKeptPath := filepath.Join(dpkgRoot, "usr", "lib", "app", "kept")
 	obsoletePath := filepath.Join(dpkgRoot, "usr", "lib", "app", "obsolete")
 	introducedToolPath := filepath.Join(dpkgRoot, "usr", "bin", "tee")
-	placeholderToolPath := filepath.Join(dpkgRoot, "bin", "tee")
+	placeholderToolPath := filepath.Join(dpkgRoot, "usr", "local", "bin", "tee")
 
 	status := []byte("Package: app\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "triggers"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Dir(oldKeptPath), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(introducedToolPath), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Dir(placeholderToolPath), 0o755))
+	require.NoError(t, os.Symlink("/usr/bin", filepath.Join(dpkgRoot, "bin")))
 	writeDPKGTestFile(t, statusPath, status, 0o600)
 	writeDPKGResolverStatusTestFile(t, resolverPath, status)
 	writeDPKGTestFile(t, oldKeptPath, []byte("old-kept"), 0o644)
 	writeDPKGTestFile(t, obsoletePath, []byte("obsolete"), 0o644)
-	writeDPKGTestFile(t, placeholderToolPath, []byte("application-placeholder"), 0o600)
+	require.NoError(t, os.Symlink("/bin/sh", placeholderToolPath))
 	writeDPKGTestFile(t, packagesPath, []byte("app:amd64\n"), 0o600)
 	writeDPKGTestFile(t, floorsPath, []byte("app:amd64|1.0|2.0\n"), 0o600)
 	writeDPKGTestFile(t, finalizePath, finalizeDPKGStatusScript, 0o700)
@@ -1505,7 +1507,7 @@ esac
 archive=$2
 case "$1" in
     -R)
-        mkdir -p "$3/DEBIAN" "$3/usr/lib/app" "$3/usr/bin" "$3/bin"
+        mkdir -p "$3/DEBIAN" "$3/usr/lib/app" "$3/usr/bin" "$3/usr/local/bin"
         case "$archive" in
             */original-archives/*)
                 printf old-kept > "$3/usr/lib/app/kept"
@@ -1516,8 +1518,8 @@ case "$1" in
                 ;;
         esac
         printf packaged-tool > "$3/usr/bin/tee"
-        printf packaged-tool > "$3/bin/tee"
-        chmod 755 "$3/usr/bin/tee" "$3/bin/tee"
+        printf packaged-tool > "$3/usr/local/bin/tee"
+        chmod 755 "$3/usr/bin/tee" "$3/usr/local/bin/tee"
         ;;
     -b)
         mkdir -p "$3.contents"
@@ -1580,7 +1582,6 @@ case "$action" in
             fi
         done < "$root/var/lib/dpkg/info/app.list"
         cp -R "$payload/usr/." "$root/usr/"
-        cp -R "$payload/bin/." "$root/bin/"
         cat > "$root/var/lib/dpkg/status" <<'EOF'
 Package: app
 Status: install ok installed
@@ -1605,7 +1606,7 @@ esac
 		"DPKG_INSTALLATION_MODE":        dpkgInstallationModeExternalFullStatus.String(),
 		"LIFECYCLE_PACKAGES":            "",
 		"MISSING_DPKG_TOOLS":            "tee",
-		"TARGET_TOOL_PATHS":             "/usr/bin:/bin",
+		"TARGET_TOOL_PATHS":             "/bin:/usr/local/bin",
 		"ALLOW_BUSYBOX_LIFECYCLE_SHELL": "true",
 		"ALLOW_REGULAR_DEV_NULL":        "true",
 		"TARGET_DPKG_ARCH":              "amd64",
@@ -1615,10 +1616,12 @@ esac
 	assertFileContent(t, oldKeptPath, "new-kept")
 	assert.NoFileExists(t, obsoletePath)
 	assert.NoFileExists(t, introducedToolPath)
-	assertFileContent(t, placeholderToolPath, "application-placeholder")
-	placeholderInfo, err := os.Stat(placeholderToolPath)
+	placeholderInfo, err := os.Lstat(placeholderToolPath)
 	require.NoError(t, err)
-	assert.Equal(t, fs.FileMode(0o600), placeholderInfo.Mode().Perm())
+	assert.True(t, placeholderInfo.Mode()&fs.ModeSymlink != 0)
+	placeholderTarget, err := os.Readlink(placeholderToolPath)
+	require.NoError(t, err)
+	assert.Equal(t, "/bin/sh", placeholderTarget)
 	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"))
 	updatedStatus, err := os.ReadFile(statusPath)
 	require.NoError(t, err)
