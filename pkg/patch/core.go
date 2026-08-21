@@ -395,13 +395,14 @@ func explicitNativeChiselOS(
 		}
 		if exists {
 			osInfo, err := common.GetOSInfo(ctx, osRelease)
-			if err != nil {
-				return "", "", false, fmt.Errorf("parse target image OS metadata for explicit Chisel release: %w", err)
+			switch {
+			case err != nil:
+				log.Warnf("Unable to use target image OS metadata for explicit Chisel release EOL check: %v. Patch attempt will proceed.", err)
+			case osInfo.Version == "":
+				log.Warn("Target image OS metadata for explicit Chisel release does not contain VERSION_ID; skipping EOL check.")
+			default:
+				version = osInfo.Version
 			}
-			if osInfo.Version == "" {
-				return "", "", false, fmt.Errorf("target image OS metadata for explicit Chisel release does not contain VERSION_ID")
-			}
-			version = osInfo.Version
 		}
 	}
 	return utils.OSTypeUbuntu, version, true, nil

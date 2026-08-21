@@ -388,7 +388,6 @@ func TestExplicitNativeChiselOSUsesTargetVersionForExternalRelease(t *testing.T)
 		osRelease     []byte
 		osReleaseStat error
 		wantVersion   string
-		wantError     string
 	}{
 		{
 			name:        "local release",
@@ -414,10 +413,16 @@ func TestExplicitNativeChiselOSUsesTargetVersionForExternalRelease(t *testing.T)
 			},
 		},
 		{
-			name:      "malformed OS metadata is rejected",
+			name:      "malformed OS metadata is tolerated for local release",
 			override:  func(t *testing.T) string { return t.TempDir() },
 			osRelease: []byte("NAME=Ubuntu\nVERSION_ID\n"),
-			wantError: "parse target image OS metadata",
+		},
+		{
+			name: "missing VERSION_ID is tolerated for Git release",
+			override: func(*testing.T) string {
+				return "https://github.com/canonical/chisel-releases.git#ca7ad8113998470ff77231af799c363c4a48feca"
+			},
+			osRelease: []byte("NAME=Ubuntu\nID=ubuntu\n"),
 		},
 	}
 
@@ -437,14 +442,10 @@ func TestExplicitNativeChiselOSUsesTargetVersionForExternalRelease(t *testing.T)
 				test.override(t),
 			)
 
-			if test.wantError != "" {
-				require.ErrorContains(t, err, test.wantError)
-			} else {
-				require.NoError(t, err)
-				assert.Equal(t, utils.OSTypeUbuntu, osType)
-				assert.Equal(t, test.wantVersion, version)
-				assert.True(t, explicit)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, utils.OSTypeUbuntu, osType)
+			assert.Equal(t, test.wantVersion, version)
+			assert.True(t, explicit)
 			client.AssertExpectations(t)
 			ref.AssertExpectations(t)
 		})
