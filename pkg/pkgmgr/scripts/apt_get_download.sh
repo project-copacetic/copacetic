@@ -163,6 +163,114 @@ is_selected_package() {
     return 1
 }
 
+download_original_archive() {
+    doa_identity=$1
+    doa_installed_version=$2
+    doa_package=${doa_identity%%:*}
+    doa_architecture=${doa_identity#*:}
+    doa_request=$doa_package=$doa_installed_version
+    if [ "$doa_architecture" != all ]; then
+        doa_request=$doa_package:$doa_architecture=$doa_installed_version
+    fi
+
+    doa_download_dir=$(mktemp -d "$original_archives_dir/download.XXXXXX")
+    if ! (cd "$doa_download_dir" && apt-get -o Acquire::Retries=3 download -- "$doa_request" >&2); then
+        echo "unable to obtain installed archive for $doa_identity version $doa_installed_version" >&2
+        return 1
+    fi
+
+    doa_match=""
+    for doa_candidate in "$doa_download_dir"/*.deb; do
+        [ -f "$doa_candidate" ] || continue
+        doa_candidate_package=$("$DPKG_DEB_TOOL" -f "$doa_candidate" Package)
+        doa_candidate_architecture=$("$DPKG_DEB_TOOL" -f "$doa_candidate" Architecture)
+        doa_candidate_version=$("$DPKG_DEB_TOOL" -f "$doa_candidate" Version)
+        if [ "$doa_candidate_package" != "$doa_package" ] ||
+            ! package_identity_matches "$doa_candidate_package:$doa_candidate_architecture" "$doa_identity" ||
+            [ "$doa_candidate_version" != "$doa_installed_version" ]; then
+            echo "downloaded archive does not match installed package $doa_identity version $doa_installed_version: $doa_candidate" >&2
+            return 1
+        fi
+        if [ -n "$doa_match" ]; then
+            echo "multiple installed archives were downloaded for $doa_identity version $doa_installed_version" >&2
+            return 1
+        fi
+        doa_match=$doa_candidate
+    done
+    if [ -z "$doa_match" ]; then
+        echo "no installed archive was downloaded for $doa_identity version $doa_installed_version" >&2
+        return 1
+    fi
+    printf '%s\n' "$doa_match"
+}
+
+reconstruct_original_ownership() {
+    original_archives_dir=$DOWNLOAD_DIR/original-archives
+    original_extract_root=$(mktemp -d)
+    original_sanitized_dir=$DOWNLOAD_DIR/original-sanitized
+    original_sanitized_archives=$DOWNLOAD_DIR/original-sanitized-archives
+    ownership_root=$(mktemp -d)
+    ownership_info_dir=""
+    mkdir -p "$original_archives_dir" "$original_sanitized_dir" "$ownership_root/var/lib/dpkg/info" "$ownership_root/var/lib/dpkg/triggers"
+    : > "$ownership_root/var/lib/dpkg/status"
+    : > "$original_sanitized_archives"
+
+    ownership_archive_count=0
+    while IFS= read -r retained_archive || [ -n "$retained_archive" ]; do
+        [ -f "$retained_archive" ] || continue
+        ownership_package=$("$DPKG_DEB_TOOL" -f "$retained_archive" Package)
+        ownership_architecture=$("$DPKG_DEB_TOOL" -f "$retained_archive" Architecture)
+        ownership_identity=$ownership_package:$ownership_architecture
+        if ! lookup_version_floor "$ownership_identity" && ! lookup_version_floor "$ownership_package"; then
+            # A newly installed dependency has no old payload to remove.
+            continue
+        fi
+        [ -n "$FLOOR_INSTALLED" ] || continue
+
+        original_archive=$(download_original_archive "$ownership_identity" "$FLOOR_INSTALLED")
+        ownership_archive_count=$((ownership_archive_count + 1))
+        original_unpacked=$original_extract_root/$ownership_archive_count
+        "$DPKG_DEB_TOOL" -R "$original_archive" "$original_unpacked"
+        rm -f "$original_unpacked/DEBIAN/config" "$original_unpacked/DEBIAN/preinst" \
+            "$original_unpacked/DEBIAN/postinst" "$original_unpacked/DEBIAN/prerm" \
+            "$original_unpacked/DEBIAN/postrm" "$original_unpacked/DEBIAN/triggers"
+        original_sanitized=$original_sanitized_dir/$ownership_package-$ownership_architecture.deb
+        "$DPKG_DEB_TOOL" -b "$original_unpacked" "$original_sanitized" >/dev/null
+        printf '%s\n' "$original_sanitized" >> "$original_sanitized_archives"
+    done < "$retained_archives_file"
+
+    if [ "$ownership_archive_count" -eq 0 ]; then
+        return 0
+    fi
+
+    while IFS= read -r original_sanitized || [ -n "$original_sanitized" ]; do
+        [ -f "$original_sanitized" ] || continue
+        "$DPKG_TOOL" --root="$ownership_root" --admindir="$ownership_root/var/lib/dpkg" --force-all --unpack "$original_sanitized"
+    done < "$original_sanitized_archives"
+
+    ownership_list_count=$(find "$ownership_root/var/lib/dpkg/info" -type f -name '*.list' | wc -l | tr -d ' ')
+    if [ "$ownership_list_count" -ne "$ownership_archive_count" ]; then
+        echo "failed to reconstruct package ownership: expected $ownership_archive_count list files, found $ownership_list_count" >&2
+        return 1
+    fi
+    for ownership_metadata in "$ownership_root/var/lib/dpkg/info"/* "$ownership_root/var/lib/dpkg/info"/.[!.]* "$ownership_root/var/lib/dpkg/info"/..?*; do
+        if [ ! -e "$ownership_metadata" ] && [ ! -L "$ownership_metadata" ]; then
+            continue
+        fi
+        if [ ! -f "$ownership_metadata" ] || [ -L "$ownership_metadata" ]; then
+            echo "reconstructed package ownership contains an unsupported entry: $ownership_metadata" >&2
+            return 1
+        fi
+        case "${ownership_metadata##*/}" in
+            *.config|*.preinst|*.postinst|*.prerm|*.postrm|*.triggers)
+                echo "reconstructed package ownership unexpectedly contains lifecycle metadata: $ownership_metadata" >&2
+                return 1
+                ;;
+        esac
+    done
+    ownership_info_dir=$ownership_root/var/lib/dpkg/info
+}
+
 discard_rejected_selected_packages() {
     drsp_rejected_file=$1
     drsp_remaining_file=$(mktemp)
@@ -727,6 +835,12 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     done < "$retained_roots"
     sort -u "$retained_paths" -o "$retained_paths"
 
+    # dpkg needs the old package path lists to remove payload files that no
+    # longer exist in the selected versions. Rebuild only non-executable
+    # ownership metadata from exact installed-version archives, failing closed
+    # when those archives are unavailable.
+    reconstruct_original_ownership
+
     original_multiarch=$DOWNLOAD_DIR/original-multiarch
     awk '
         BEGIN { RS = ""; OFS = "|" }
@@ -994,12 +1108,15 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     sort -u "$transient_restore" -o "$transient_restore"
     sort -u "$transient_directories" -o "$transient_directories"
 
-    # The Go preflight rejects targets with an existing dpkg info directory,
-    # and the temporary database is reconstructed with empty lifecycle state.
-    # Fail closed if any input hook or trigger nevertheless reached this stage.
+    # The Go preflight rejects targets with an existing dpkg info directory.
+    # Confirm the mounted database is still empty, then add only the ownership
+    # metadata reconstructed above. Lifecycle hooks and triggers remain absent.
     if find "$DPKG_ROOT/var/lib/dpkg/info" "$DPKG_ROOT/var/lib/dpkg/triggers" -mindepth 1 -print -quit | grep -q .; then
         echo "external full-status lifecycle metadata must be empty before script-free installation" >&2
         exit 1
+    fi
+    if [ -n "$ownership_info_dir" ]; then
+        cp -a "$ownership_info_dir/." "$DPKG_ROOT/var/lib/dpkg/info/"
     fi
 
     set -- "$sanitized_dir"/*.deb

@@ -423,6 +423,30 @@ func TestGitChiselReleaseCloneScriptResolvesPinnedRevisions(t *testing.T) {
 	}
 }
 
+func TestGitChiselReleaseCloneScriptDoesNotLetTagShadowFullCommit(t *testing.T) {
+	requireGitTestTools(t)
+	repository := t.TempDir()
+	runGitTestCommand(t, repository, "init", "-q")
+	runGitTestCommand(t, repository, "config", "user.name", "Copa Test")
+	runGitTestCommand(t, repository, "config", "user.email", "copa@example.invalid")
+
+	releaseFile := filepath.Join(repository, "release.yaml")
+	writePackageManagerTestFile(t, releaseFile, []byte("pinned"), 0o600)
+	runGitTestCommand(t, repository, "add", ".")
+	runGitTestCommand(t, repository, "commit", "-q", "-m", "pinned release")
+	pinnedCommit := strings.TrimSpace(runGitTestCommand(t, repository, "rev-parse", "HEAD"))
+
+	writePackageManagerTestFile(t, releaseFile, []byte("shadow tag"), 0o600)
+	runGitTestCommand(t, repository, "commit", "-q", "-a", "-m", "shadow release")
+	runGitTestCommand(t, repository, "tag", pinnedCommit)
+
+	releaseDir, resolved := executeGitReleaseCloneScript(t, repository, pinnedCommit, 100, 1<<20)
+	assert.Equal(t, pinnedCommit, resolved)
+	contents, err := os.ReadFile(filepath.Join(releaseDir, "release.yaml"))
+	require.NoError(t, err)
+	assert.Equal(t, "pinned", string(contents))
+}
+
 func TestGitChiselReleaseCloneScriptRejectsUnresolvedRevision(t *testing.T) {
 	requireGitTestTools(t)
 	repository, _ := createGitReleaseRepository(t, map[string]string{"release.yaml": "data"}, nil)

@@ -79,15 +79,18 @@ git init -q "$RELEASE_DIR"
 git -C "$RELEASE_DIR" remote add origin "$RELEASE_URL"
 
 fetch_ref=""
-if git ls-remote --exit-code --tags "$RELEASE_URL" "refs/tags/$RELEASE_REV" "refs/tags/$RELEASE_REV^{}" >/dev/null 2>&1; then
+expected_commit=""
+if printf '%s' "$RELEASE_REV" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+    fetch_ref=$RELEASE_REV
+    expected_commit=$(printf '%s' "$RELEASE_REV" | tr 'A-F' 'a-f')
+elif git ls-remote --exit-code --tags "$RELEASE_URL" "refs/tags/$RELEASE_REV" "refs/tags/$RELEASE_REV^{}" >/dev/null 2>&1; then
     fetch_ref="refs/tags/$RELEASE_REV"
-elif printf '%s' "$RELEASE_REV" | grep -Eq '^[0-9a-fA-F]{7,40}$'; then
+elif printf '%s' "$RELEASE_REV" | grep -Eq '^[0-9a-fA-F]{7,39}$'; then
     matches=$(git ls-remote "$RELEASE_URL" | awk -v prefix="$RELEASE_REV" 'index($1, prefix) == 1 {print $1}' | sort -u)
     count=$(printf '%s\n' "$matches" | sed '/^$/d' | wc -l | tr -d ' ')
     if [ "$count" -eq 1 ]; then
         fetch_ref=$matches
-    elif [ "${#RELEASE_REV}" -eq 40 ]; then
-        fetch_ref=$RELEASE_REV
+        expected_commit=$matches
     else
         echo "Git revision $RELEASE_REV does not uniquely resolve to an advertised commit" >&2
         exit 1
@@ -100,6 +103,10 @@ fi
 git -c credential.helper= -C "$RELEASE_DIR" fetch --depth=1 --no-tags origin "$fetch_ref"
 git -C "$RELEASE_DIR" checkout -q --detach FETCH_HEAD
 resolved=$(git -C "$RELEASE_DIR" rev-parse HEAD)
+if [ -n "$expected_commit" ] && [ "$resolved" != "$expected_commit" ]; then
+    echo "Git revision $RELEASE_REV resolved to unexpected commit $resolved" >&2
+    exit 1
+fi
 rm -rf "$RELEASE_DIR/.git"
 
 release_real=$(readlink -f "$RELEASE_DIR")

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/containerd/platforms"
@@ -82,7 +83,9 @@ var (
 	readFile                 = os.ReadFile
 	lookPath                 = exec.LookPath
 	localImagePlatforms      = utils.LocalImagePlatforms
+	localImageIndex          = utils.LocalImageIndex
 	getRemoteImageDescriptor = remote.Get
+	getImageFromDaemon       = daemon.Image
 	tryGetManifestFromLocal  = TryGetManifestFromLocal
 )
 
@@ -269,87 +272,55 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 	imageName := ref.String()
 	log.Debugf("Attempting to get manifest from local daemon for %s", imageName)
 
-	// Try to get the image from the local daemon using go-containerregistry
-	// First, try to get it as an image index (multi-platform)
 	ctx := context.Background()
-
-	// Attempt to read raw manifest from daemon
-	// The daemon package doesn't directly expose manifest inspection, so we use a workaround:
-	// Try to get the image and then extract its raw manifest
-	img, err := daemon.Image(ref, daemon.WithContext(ctx))
+	index, localDescriptor, found, err := localImageIndex(ctx, imageName)
 	if err != nil {
-		log.Debugf("Failed to get image from daemon for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to get image from local daemon: %v", err)
+		return nil, fmt.Errorf("failed to inspect image in local daemon: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("image %q was not found in the local daemon", imageName)
+	}
+	if index != nil {
+		rawManifest, err := json.Marshal(index)
+		if err != nil {
+			return nil, fmt.Errorf("marshal local image index: %w", err)
+		}
+		descriptor := v1.Descriptor{
+			MediaType:   v1types.MediaType(index.MediaType),
+			Size:        int64(len(rawManifest)),
+			Annotations: index.Annotations,
+		}
+		if localDescriptor != nil && localDescriptor.Digest != "" {
+			descriptor.Digest, err = v1.NewHash(localDescriptor.Digest.String())
+			if err != nil {
+				return nil, fmt.Errorf("parse local image index digest: %w", err)
+			}
+		} else {
+			descriptor.Digest = v1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", sha256.Sum256(rawManifest))}
+		}
+		return &remote.Descriptor{Descriptor: descriptor, Manifest: rawManifest}, nil
 	}
 
-	// Get the raw manifest
+	img, err := getImageFromDaemon(ref, daemon.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get image from local daemon: %w", err)
+	}
 	rawManifest, err := img.RawManifest()
 	if err != nil {
-		log.Debugf("Failed to get raw manifest for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to get raw manifest: %v", err)
+		return nil, fmt.Errorf("failed to get raw local manifest: %w", err)
 	}
-
-	// Parse the manifest to determine if it's a manifest list
-	var manifestData map[string]interface{}
-	if err := json.Unmarshal(rawManifest, &manifestData); err != nil {
-		log.Debugf("Failed to parse manifest JSON for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to parse manifest JSON: %v", err)
+	mediaType, err := img.MediaType()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local manifest media type: %w", err)
 	}
-
-	// Check if this is a manifest list (has "manifests" field)
-	if manifests, ok := manifestData["manifests"]; ok {
-		if manifestSlice, ok := manifests.([]interface{}); ok && len(manifestSlice) > 0 {
-			log.Debugf("Found multi-platform manifest from daemon with %d platforms", len(manifestSlice))
-
-			// Parse the manifest list to extract individual platform image references
-			var enhancedManifestData struct {
-				MediaType string `json:"mediaType"`
-				Manifests []struct {
-					Digest    string `json:"digest"`
-					MediaType string `json:"mediaType"`
-					Size      int64  `json:"size"`
-					Platform  struct {
-						Architecture string `json:"architecture"`
-						OS           string `json:"os"`
-						Variant      string `json:"variant,omitempty"`
-					} `json:"platform"`
-				} `json:"manifests"`
-			}
-
-			if err := json.Unmarshal(rawManifest, &enhancedManifestData); err != nil {
-				log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
-				return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
-			}
-
-			// Log platform information for debugging
-			log.Debugf("Manifest list contains the following platforms:")
-			for i, manifest := range enhancedManifestData.Manifests {
-				log.Debugf("  Platform %d: %s/%s (digest: %s)", i+1,
-					manifest.Platform.OS, manifest.Platform.Architecture,
-					manifest.Digest[:12]+"...")
-			}
-
-			// Determine media type
-			mediaType := "application/vnd.docker.distribution.manifest.list.v2+json"
-			if enhancedManifestData.MediaType != "" {
-				mediaType = enhancedManifestData.MediaType
-			}
-
-			// Calculate digest from the manifest content
-			digest := fmt.Sprintf("%x", sha256.Sum256(rawManifest))
-
-			return &remote.Descriptor{
-				Descriptor: v1.Descriptor{
-					MediaType: v1types.MediaType(mediaType),
-					Size:      int64(len(rawManifest)),
-					Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
-				},
-				Manifest: rawManifest,
-			}, nil
-		}
+	digest, err := img.Digest()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get local manifest digest: %w", err)
 	}
-
-	return nil, fmt.Errorf("single-platform image")
+	return &remote.Descriptor{
+		Descriptor: v1.Descriptor{MediaType: mediaType, Size: int64(len(rawManifest)), Digest: digest},
+		Manifest:   rawManifest,
+	}, nil
 }
 
 // platformsFromIndexManifest converts the entries of a multi-platform image
@@ -699,41 +670,119 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 	return configData, nil, image, nil
 }
 
+type imageConfigLabelsDocument struct {
+	image     map[string]json.RawMessage
+	config    map[string]json.RawMessage
+	labelsKey string
+	labels    map[string]string
+}
+
+func parseImageConfigLabels(imageConfig []byte) (*imageConfigLabelsDocument, error) {
+	var image map[string]json.RawMessage
+	if err := json.Unmarshal(imageConfig, &image); err != nil {
+		return nil, fmt.Errorf("parse image config: %w", err)
+	}
+	configData, ok := image["config"]
+	if !ok {
+		return nil, fmt.Errorf("image config does not contain a config field")
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return nil, fmt.Errorf("image config does not contain an object-valued config field: %w", err)
+	}
+	if config == nil {
+		return nil, fmt.Errorf("image config does not contain an object-valued config field")
+	}
+
+	labelsKey := "Labels"
+	labelsData, upperExists := config[labelsKey]
+	if lowerLabels, lowerExists := config["labels"]; !upperExists && lowerExists {
+		labelsKey = "labels"
+		labelsData = lowerLabels
+	} else if !upperExists && !lowerExists {
+		for key, data := range config {
+			if !strings.EqualFold(key, "labels") {
+				continue
+			}
+			if labelsData != nil {
+				return nil, fmt.Errorf("image config contains multiple case-insensitive labels fields")
+			}
+			labelsKey = key
+			labelsData = data
+		}
+	}
+
+	labels := make(map[string]string)
+	if len(labelsData) > 0 && string(labelsData) != "null" {
+		if err := json.Unmarshal(labelsData, &labels); err != nil {
+			return nil, fmt.Errorf("image config labels field is not a string-valued object: %w", err)
+		}
+	}
+
+	return &imageConfigLabelsDocument{
+		image:     image,
+		config:    config,
+		labelsKey: labelsKey,
+		labels:    labels,
+	}, nil
+}
+
+func (document *imageConfigLabelsDocument) marshal() ([]byte, error) {
+	// JSON field matching is case-insensitive. Remove every spelling except the
+	// selected source so stale variants cannot shadow the updated labels.
+	for key := range document.config {
+		if strings.EqualFold(key, "labels") {
+			delete(document.config, key)
+		}
+	}
+
+	labelsData, err := json.Marshal(document.labels)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config labels: %w", err)
+	}
+	document.config[document.labelsKey] = labelsData
+	configData, err := json.Marshal(document.config)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config object: %w", err)
+	}
+	document.image["config"] = configData
+	updated, err := json.Marshal(document.image)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config: %w", err)
+	}
+	return updated, nil
+}
+
+// AddImageConfigLabels returns imageConfig with labels merged into its OCI
+// config. The input is left unchanged, and supplied values take precedence.
+func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte, error) {
+	if len(labels) == 0 {
+		return imageConfig, nil
+	}
+	document, err := parseImageConfigLabels(imageConfig)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range labels {
+		document.labels[key] = value
+	}
+	return document.marshal()
+}
+
 func setupLabels(image string, configData []byte) (string, []byte, error) {
-	imageConfig := make(map[string]interface{})
-	err := json.Unmarshal(configData, &imageConfig)
+	document, err := parseImageConfigLabels(configData)
 	if err != nil {
 		return "", nil, err
 	}
 
-	configMap, ok := imageConfig["config"].(map[string]interface{})
-	if !ok {
-		err := fmt.Errorf("type assertion to map[string]interface{} failed")
+	baseImage := document.labels["BaseImage"]
+	if baseImage == "" {
+		document.labels["BaseImage"] = image
+	}
+	imageWithLabels, err := document.marshal()
+	if err != nil {
 		return "", nil, err
 	}
-
-	var baseImage string
-	labels := configMap["labels"]
-	if labels == nil {
-		configMap["labels"] = make(map[string]interface{})
-	}
-	labelsMap, ok := configMap["labels"].(map[string]interface{})
-	if !ok {
-		err := fmt.Errorf("type assertion to map[string]interface{} failed")
-		return "", nil, err
-	}
-	if baseImageValue := labelsMap["BaseImage"]; baseImageValue != nil {
-		baseImage, ok = baseImageValue.(string)
-		if !ok {
-			err := fmt.Errorf("type assertion to string failed")
-			return "", nil, err
-		}
-	} else {
-		labelsMap["BaseImage"] = image
-	}
-
-	imageWithLabels, _ := json.Marshal(imageConfig)
-
 	return baseImage, imageWithLabels, nil
 }
 
@@ -789,7 +838,9 @@ func ExtractFileFromStateWithLimit(
 
 // ReadFileWithLimit reads path from a BuildKit reference after enforcing a
 // maximum file size. It uses bounded range requests so each unary gateway
-// response remains safely below BuildKit's 16 MiB gRPC message limit.
+// response remains safely below BuildKit's 16 MiB gRPC message limit. Reads
+// continue through EOF because StatFile reports lstat metadata while ReadFile
+// follows symlinks, so the stat size is not necessarily the resolved file size.
 func ReadFileWithLimit(ctx context.Context, ref gwclient.Reference, path string, maxSize int64) ([]byte, error) {
 	if maxSize < 0 {
 		return nil, fmt.Errorf("maximum size for %q must not be negative", path)
@@ -805,18 +856,28 @@ func ReadFileWithLimit(ctx context.Context, ref gwclient.Reference, path string,
 	if stat.Size < 0 {
 		return nil, fmt.Errorf("unable to read %q: BuildKit reported a negative size of %d bytes", path, stat.Size)
 	}
-	if stat.Size > maxSize {
+	if os.FileMode(stat.Mode)&os.ModeSymlink == 0 && stat.Size > maxSize {
 		return nil, fmt.Errorf("file %q is %d bytes, exceeding the maximum allowed size of %d bytes", path, stat.Size, maxSize)
 	}
 
 	maxInt := int64(^uint(0) >> 1)
-	if stat.Size > maxInt {
-		return nil, fmt.Errorf("unable to read %q: file size %d exceeds the platform read limit", path, stat.Size)
+	capacity := min(stat.Size, maxSize)
+	if capacity > maxInt {
+		capacity = 0
 	}
+	data := make([]byte, 0, int(capacity))
+	for offset := int64(0); ; {
+		if offset > maxInt {
+			return nil, fmt.Errorf("unable to read %q: offset %d exceeds the platform read limit", path, offset)
+		}
 
-	data := make([]byte, 0, int(stat.Size))
-	for offset := int64(0); offset < stat.Size; {
-		chunkSize := min(maxGatewayReadFileChunkSize, stat.Size-offset)
+		remaining := maxSize - offset
+		chunkSize := maxGatewayReadFileChunkSize
+		if remaining < chunkSize {
+			// Read one byte past the limit so an exact-boundary file can be
+			// distinguished from an oversized resolved symlink target.
+			chunkSize = remaining + 1
+		}
 		chunk, err := ref.ReadFile(ctx, gwclient.ReadRequest{
 			Filename: path,
 			Range: &gwclient.FileRange{
@@ -827,16 +888,57 @@ func ReadFileWithLimit(ctx context.Context, ref gwclient.Reference, path string,
 		if err != nil {
 			return nil, fmt.Errorf("unable to read %q at offset %d: %w", path, offset, err)
 		}
-		if int64(len(chunk)) != chunkSize {
-			return nil, fmt.Errorf(
-				"unable to read %q at offset %d: expected %d bytes from BuildKit, received %d",
-				path, offset, chunkSize, len(chunk),
-			)
+		if int64(len(chunk)) > remaining {
+			return nil, fmt.Errorf("file %q exceeds the maximum allowed size of %d bytes", path, maxSize)
 		}
 		data = append(data, chunk...)
-		offset += chunkSize
+		offset += int64(len(chunk))
+		if int64(len(chunk)) < chunkSize {
+			return data, nil
+		}
 	}
-	return data, nil
+}
+
+func platformIdentityEqual(left, right *specs.Platform) bool {
+	normalizedLeft := platforms.Normalize(*left)
+	normalizedRight := platforms.Normalize(*right)
+	return normalizedLeft.OS == normalizedRight.OS &&
+		normalizedLeft.Architecture == normalizedRight.Architecture &&
+		normalizedLeft.Variant == normalizedRight.Variant &&
+		normalizedLeft.OSVersion == normalizedRight.OSVersion &&
+		slices.Equal(normalizedLeft.OSFeatures, normalizedRight.OSFeatures)
+}
+
+func imagePlatformSpec(platform *v1.Platform) specs.Platform {
+	return specs.Platform{
+		OS:           platform.OS,
+		Architecture: platform.Architecture,
+		Variant:      platform.Variant,
+		OSVersion:    platform.OSVersion,
+		OSFeatures:   platform.OSFeatures,
+	}
+}
+
+func matchingPlatformDescriptor(manifest *v1.IndexManifest, target *specs.Platform) (*v1.Descriptor, error) {
+	var match *v1.Descriptor
+	for i := range manifest.Manifests {
+		descriptor := &manifest.Manifests[i]
+		if descriptor.Platform == nil {
+			continue
+		}
+		descriptorPlatform := imagePlatformSpec(descriptor.Platform)
+		if !platformIdentityEqual(&descriptorPlatform, target) {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("image index contains multiple descriptors matching platform %+v", platforms.Normalize(*target))
+		}
+		match = descriptor
+	}
+	if match == nil {
+		return nil, fmt.Errorf("image index contains no descriptor matching platform %+v", platforms.Normalize(*target))
+	}
+	return match, nil
 }
 
 // ReadFileErr distinguishes the cause of a file extraction failure so callers
@@ -1837,7 +1939,17 @@ func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor
 	// genuine single-image digest from a masked index. Fail closed when the
 	// remote descriptor cannot be verified so preserved platforms are never
 	// silently dropped. Mutable tags continue to use the local descriptor.
-	if digestRef, immutable := ref.(name.Digest); immutable && !desc.MediaType.IsIndex() {
+	if digestRef, immutable := ref.(name.Digest); immutable {
+		if desc.MediaType.IsIndex() {
+			if desc.Digest.String() != digestRef.DigestStr() {
+				return nil, false, fmt.Errorf(
+					"local descriptor digest %s does not match immutable reference %s",
+					desc.Digest.String(), digestRef.DigestStr(),
+				)
+			}
+			log.Debugf("Successfully fetched immutable image index from local daemon for preserved platforms")
+			return desc, true, nil
+		}
 		remoteDesc, remoteErr := getRemoteImageDescriptor(digestRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
 		if remoteErr != nil {
 			return nil, false, fmt.Errorf("verify immutable descriptor %q for preserved platforms: %w", ref.String(), remoteErr)
@@ -1854,6 +1966,12 @@ func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor
 		if remoteDesc.MediaType.IsIndex() {
 			log.Debugf("Locally cached child masks the matching remote index for %s; using remote index for preserved platforms", ref.String())
 			return remoteDesc, false, nil
+		}
+		if desc.Digest.String() != digestRef.DigestStr() {
+			return nil, false, fmt.Errorf(
+				"local descriptor digest %s does not match verified immutable image %s",
+				desc.Digest.String(), digestRef.DigestStr(),
+			)
 		}
 
 		log.Debugf("Verified %s as a genuine single-image digest; using the local descriptor", ref.String())
@@ -1963,17 +2081,9 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 				if err != nil {
 					return nil, fmt.Errorf("failed to parse preserved descriptor reference: %w", err)
 				}
-				platformDesc, err := TryGetManifestFromLocal(platformRef)
-				if err == nil {
-					img, err = platformDesc.Image()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get preserved image from local descriptor %s: %w", mdesc.Digest, err)
-					}
-				} else {
-					img, err = remote.Image(platformRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-					if err != nil {
-						return nil, fmt.Errorf("failed to get preserved descriptor %s: %w", mdesc.Digest, err)
-					}
+				img, err = getImageFromDaemon(platformRef)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get preserved descriptor %s from local daemon: %w", mdesc.Digest, err)
 				}
 			} else {
 				var err error
@@ -2027,41 +2137,40 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 		// Filter image manifests for the preserved platforms, then preserve any
 		// source attestations whose subject points to those unchanged children.
 		for _, platformSpec := range preservedPlatforms {
-			for i := range manifest.Manifests {
-				mdesc := &manifest.Manifests[i]
-				if mdesc.Platform == nil ||
-					mdesc.Platform.OS != platformSpec.OS ||
-					mdesc.Platform.Architecture != platformSpec.Architecture ||
-					(platformSpec.Variant != "" && mdesc.Platform.Variant != platformSpec.Variant) {
+			mdesc, err := matchingPlatformDescriptor(manifest, &platformSpec.Platform)
+			if err != nil {
+				return nil, err
+			}
+
+			entry, err := materializeDescriptor(mdesc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to preserve platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
+			}
+			manifests = append(manifests, entry)
+
+			subject := mdesc.Digest.String()
+			for j := range manifest.Manifests {
+				attestation := &manifest.Manifests[j]
+				if attestation.Annotations["vnd.docker.reference.type"] != "attestation-manifest" ||
+					attestation.Annotations["vnd.docker.reference.digest"] != subject {
 					continue
 				}
-
-				entry, err := materializeDescriptor(mdesc)
+				attestationEntry, err := materializeDescriptor(attestation)
 				if err != nil {
-					return nil, fmt.Errorf("failed to preserve platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
+					return nil, fmt.Errorf("failed to preserve attestation for %s: %w", subject, err)
 				}
-				manifests = append(manifests, entry)
-
-				subject := mdesc.Digest.String()
-				for j := range manifest.Manifests {
-					attestation := &manifest.Manifests[j]
-					if attestation.Annotations["vnd.docker.reference.type"] != "attestation-manifest" ||
-						attestation.Annotations["vnd.docker.reference.digest"] != subject {
-						continue
-					}
-					attestationEntry, err := materializeDescriptor(attestation)
-					if err != nil {
-						return nil, fmt.Errorf("failed to preserve attestation for %s: %w", subject, err)
-					}
-					manifests = append(manifests, attestationEntry)
-				}
-				break
+				manifests = append(manifests, attestationEntry)
 			}
 		}
 	} else {
 		// Single platform image
 		// Materialize single-platform image blobs
-		img, err := desc.Image()
+		var img v1.Image
+		if isLocal {
+			img, err = getImageFromDaemon(ref)
+		} else {
+			img, err = desc.Image()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to get single-platform image: %w", err)
 		}

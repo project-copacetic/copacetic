@@ -581,6 +581,7 @@ func TestLoadStatusDirectoryRejectsControlCharactersInFilenamesAtomically(t *tes
 		t.Run(tt.name, func(t *testing.T) {
 			config := statusDirectoryTestConfig(
 				t,
+				maxBytes,
 				nulTerminatedStatusDirectoryNames("valid", tt.filename),
 				nil,
 			)
@@ -648,7 +649,7 @@ func TestLoadStatusDirectoryRejectsInvalidPackageFilesAtomically(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			statusdNames := nulTerminatedStatusDirectoryNames("a-valid", "z-invalid")
 			validStatus := []byte("Package: valid\nVersion: 1\nArchitecture: amd64\n")
-			config := statusDirectoryTestConfig(t, statusdNames, map[string][]byte{
+			config := statusDirectoryTestConfig(t, maxBytes, statusdNames, map[string][]byte{
 				"a-valid":   validStatus,
 				"z-invalid": tt.contents,
 			})
@@ -678,7 +679,7 @@ func TestLoadStatusDirectoryRejectsDuplicatePackages(t *testing.T) {
 	statusdNames := nulTerminatedStatusDirectoryNames("first", "second")
 	firstStatus := []byte("Package: duplicate\nVersion: 1\n")
 	secondStatus := []byte("Package: duplicate\nVersion: 2\n")
-	config := statusDirectoryTestConfig(t, statusdNames, map[string][]byte{
+	config := statusDirectoryTestConfig(t, maxBytes, statusdNames, map[string][]byte{
 		"first":  firstStatus,
 		"second": secondStatus,
 	})
@@ -705,6 +706,7 @@ func TestLoadStatusDirectorySortsFilenamesDeterministically(t *testing.T) {
 	zStatus := []byte("Package: z\nVersion: 2\n")
 	config := statusDirectoryTestConfig(
 		t,
+		maxBytes,
 		nulTerminatedStatusDirectoryNames("z-file", "a-file"),
 		map[string][]byte{
 			"a-file": aStatus,
@@ -741,7 +743,7 @@ func nulTerminatedStatusDirectoryNames(names ...string) []byte {
 	return contents.Bytes()
 }
 
-func statusDirectoryTestConfig(t *testing.T, statusdNames []byte, files map[string][]byte) *buildkit.Config {
+func statusDirectoryTestConfig(t *testing.T, maxBytes int64, statusdNames []byte, files map[string][]byte) *buildkit.Config {
 	t.Helper()
 
 	ref := &mocks.MockReference{}
@@ -749,15 +751,24 @@ func statusDirectoryTestConfig(t *testing.T, statusdNames []byte, files map[stri
 		Return(&fstypes.Stat{Size: int64(len(statusdNames))}, nil).Once()
 	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
 		Filename: dpkgStatusdListFilename,
-		Range:    &gwclient.FileRange{Offset: 0, Length: len(statusdNames)},
+		Range:    &gwclient.FileRange{Offset: 0, Length: int(maxBytes + 1)},
 	}).Return(statusdNames, nil).Once()
-	for name, contents := range files {
+	remainingBytes := maxBytes - int64(len(statusdNames))
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		contents := files[name]
 		path := filepath.Join(dpkgStatusdFilesFolder, name)
 		ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).
 			Return(&fstypes.Stat{Size: int64(len(contents))}, nil).Once()
-		ref.On("ReadFile", mock.Anything, mock.MatchedBy(func(request gwclient.ReadRequest) bool {
-			return request.Filename == path && request.Range != nil && request.Range.Offset == 0 && request.Range.Length == len(contents)
-		})).Return(contents, nil).Once()
+		ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+			Filename: path,
+			Range:    &gwclient.FileRange{Offset: 0, Length: int(remainingBytes + 1)},
+		}).Return(contents, nil).Once()
+		remainingBytes -= int64(len(contents))
 	}
 
 	result := gwclient.NewResult()
@@ -788,14 +799,14 @@ func TestLoadStatusDirectoryEnforcesAggregateSizeLimit(t *testing.T) {
 		Once()
 	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
 		Filename: dpkgStatusdListFilename,
-		Range:    &gwclient.FileRange{Offset: 0, Length: len(statusdNames)},
+		Range:    &gwclient.FileRange{Offset: 0, Length: int(maxBytes + 1)},
 	}).Return(statusdNames, nil).Once()
 	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: firstPath}).
 		Return(&fstypes.Stat{Size: int64(len(firstStatus))}, nil).
 		Once()
 	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
 		Filename: firstPath,
-		Range:    &gwclient.FileRange{Offset: 0, Length: len(firstStatus)},
+		Range:    &gwclient.FileRange{Offset: 0, Length: int(maxBytes - int64(len(statusdNames)) + 1)},
 	}).Return(firstStatus, nil).Once()
 	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: secondPath}).
 		Return(&fstypes.Stat{Size: remainingBytes + 1}, nil).
@@ -1254,6 +1265,7 @@ func TestAptGetDownloadScriptResolvesClosureAndSkipsUnsafeVersions(t *testing.T)
 printf '%s\n' "$*" >> "$APT_LOG"
 command=''
 after_separator=false
+download_request=''
 for arg in "$@"; do
     case "$arg" in
         update|download|install) command=$arg ;;
@@ -1261,6 +1273,8 @@ for arg in "$@"; do
         *)
             if [ "$command" = install ] && [ "$after_separator" = true ]; then
                 : > "$DOWNLOAD_DIR/$arg.deb"
+            elif [ "$command" = download ] && [ "$after_separator" = true ]; then
+                download_request=$arg
             fi
             ;;
     esac
@@ -1268,8 +1282,9 @@ done
 case "$command" in
     update) exit 0 ;;
     download)
-        echo 'external full-status updates must use apt-get install --download-only' >&2
-        exit 90
+        package=${download_request%%:*}
+        package=${package%%=*}
+        : > "$PWD/$package-old.deb"
         ;;
     install)
         case " $* " in
@@ -1314,10 +1329,17 @@ case "$1" in
     -f)
         package=${2##*/}
         package=${package%.deb}
+        package=${package%-old}
+        old=false
+        case "$2" in */original-archives/*) old=true ;; esac
         case "$3" in
             Package) printf '%s\n' "$package" ;;
             Architecture) printf 'amd64\n' ;;
             Version)
+                if [ "$old" = true ]; then
+                    case "$package" in safe|tightened-dependency) printf '1.0\n' ;; *) exit 2 ;; esac
+                    exit 0
+                fi
                 case "$package" in
                     safe) printf '2.1\n' ;;
                     downgrade) printf '2.5\n' ;;
@@ -1342,6 +1364,20 @@ if [ "$1" = '--compare-versions' ]; then
         *) exit 2 ;;
     esac
 fi
+case " $* " in
+    *" --unpack "*)
+        root=''
+        archive=''
+        for arg in "$@"; do
+            case "$arg" in --root=*) root=${arg#--root=} ;; *.deb) archive=$arg ;; esac
+        done
+        package=${archive##*/}
+        package=${package%-amd64.deb}
+        mkdir -p "$root/var/lib/dpkg/info"
+        : > "$root/var/lib/dpkg/info/$package.list"
+        exit 0
+        ;;
+esac
 printf '%s\n' "$*" >> "$INSTALL_LOG"
 `)
 	writeTestExecutable(t, binDir, "busybox", "#!/bin/sh\n[ \"$1\" = --list ] && printf 'sh\\nsed\\ngrep\\nawk\\n'\n")
@@ -1371,7 +1407,8 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 	require.NoError(t, err)
 	assert.Contains(t, string(aptCalls), "install -- safe downgrade below-fixed")
 	assert.Contains(t, string(aptCalls), "install -- safe")
-	assert.NotContains(t, string(aptCalls), " download ")
+	assert.Contains(t, string(aptCalls), "download -- safe:amd64=1.0")
+	assert.Contains(t, string(aptCalls), "download -- tightened-dependency:amd64=1.0")
 
 	installArgs, err := os.ReadFile(installLog)
 	require.NoError(t, err)
@@ -1421,6 +1458,156 @@ printf '%s\n' "$*" >> "$INSTALL_LOG"
 	assertFileContent(t, filepath.Join(dpkgRoot, "usr", "bin", "apt-get"), "application-owned-apt")
 	assertFileContent(t, filepath.Join(dpkgRoot, "usr", "bin", "dpkg"), "application-owned-dpkg")
 	assert.FileExists(t, filepath.Join(dpkgRoot, "app", "sentinel"))
+}
+
+func TestAptGetDownloadScriptRemovesFilesMissingFromUpdatedPackage(t *testing.T) {
+	binDir := t.TempDir()
+	workDir := t.TempDir()
+	downloadDir := filepath.Join(workDir, "downloads")
+	dpkgRoot := filepath.Join(workDir, "rootfs")
+	packagesPath := filepath.Join(workDir, "packages.txt")
+	floorsPath := filepath.Join(workDir, "version-floors")
+	resolverPath := filepath.Join(downloadDir, "resolver-status")
+	finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
+	statusPath := filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status")
+	oldKeptPath := filepath.Join(dpkgRoot, "usr", "lib", "app", "kept")
+	obsoletePath := filepath.Join(dpkgRoot, "usr", "lib", "app", "obsolete")
+
+	status := []byte("Package: app\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "triggers"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(oldKeptPath), 0o755))
+	writeDPKGTestFile(t, statusPath, status, 0o600)
+	writeDPKGResolverStatusTestFile(t, resolverPath, status)
+	writeDPKGTestFile(t, oldKeptPath, []byte("old-kept"), 0o644)
+	writeDPKGTestFile(t, obsoletePath, []byte("obsolete"), 0o644)
+	writeDPKGTestFile(t, packagesPath, []byte("app:amd64\n"), 0o600)
+	writeDPKGTestFile(t, floorsPath, []byte("app:amd64|1.0|2.0\n"), 0o600)
+	writeDPKGTestFile(t, finalizePath, finalizeDPKGStatusScript, 0o700)
+
+	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+command=''
+for arg in "$@"; do
+    case "$arg" in update|download|install) command=$arg ;; esac
+done
+case "$command" in
+    update) exit 0 ;;
+    install) : > "$DOWNLOAD_DIR/app.deb" ;;
+    download) : > "$PWD/app-old.deb" ;;
+    *) exit 91 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+archive=$2
+case "$1" in
+    -R)
+        mkdir -p "$3/DEBIAN" "$3/usr/lib/app"
+        case "$archive" in
+            */original-archives/*)
+                printf old-kept > "$3/usr/lib/app/kept"
+                printf obsolete > "$3/usr/lib/app/obsolete"
+                ;;
+            *)
+                printf new-kept > "$3/usr/lib/app/kept"
+                ;;
+        esac
+        ;;
+    -b)
+        mkdir -p "$3.contents"
+        cp -R "$2/." "$3.contents/"
+        : > "$3"
+        ;;
+    -f)
+        case "$3" in
+            Package) printf 'app\n' ;;
+            Architecture) printf 'amd64\n' ;;
+            Version)
+                case "$archive" in */original-archives/*) printf '1.0\n' ;; *) printf '2.0\n' ;; esac
+                ;;
+            Depends|Pre-Depends|Breaks|Conflicts|Multi-Arch|Provides) exit 0 ;;
+            *) exit 2 ;;
+        esac
+        ;;
+    *) exit 2 ;;
+esac
+`)
+	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+if [ "$1" = '--compare-versions' ]; then
+    case "$2|$3|$4" in
+        '2.0|ge|1.0'|'2.0|ge|2.0') exit 0 ;;
+        *) exit 2 ;;
+    esac
+fi
+
+root=''
+action=''
+archive=''
+for arg in "$@"; do
+    case "$arg" in
+        --root=*) root=${arg#--root=} ;;
+        --unpack|--install) action=$arg ;;
+        *.deb) archive=$arg ;;
+    esac
+done
+payload=$archive.contents
+case "$action" in
+    --unpack)
+        mkdir -p "$root/var/lib/dpkg/info"
+        (
+            cd "$payload"
+            find . -mindepth 1 ! -path './DEBIAN' ! -path './DEBIAN/*' -print | sed 's#^\.##'
+        ) > "$root/var/lib/dpkg/info/app.list"
+        ;;
+    --install)
+        new_paths=$(mktemp)
+        (
+            cd "$payload"
+            find . -mindepth 1 ! -path './DEBIAN' ! -path './DEBIAN/*' -print | sed 's#^\.##'
+        ) > "$new_paths"
+        while IFS= read -r old_path || [ -n "$old_path" ]; do
+            [ -n "$old_path" ] || continue
+            if grep -Fxq "$old_path" "$new_paths"; then continue; fi
+            target=$root$old_path
+            if [ -d "$target" ] && [ ! -L "$target" ]; then rmdir "$target" 2>/dev/null || true
+            else rm -f "$target"
+            fi
+        done < "$root/var/lib/dpkg/info/app.list"
+        cp -R "$payload/usr/." "$root/usr/"
+        cat > "$root/var/lib/dpkg/status" <<'EOF'
+Package: app
+Status: install ok installed
+Version: 2.0
+Architecture: amd64
+EOF
+        ;;
+    *) exit 92 ;;
+esac
+`)
+
+	runEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+		"PATH":                          binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"IGNORE_ERRORS":                 "false",
+		"UPDATE_ALL":                    "false",
+		"DPKG_ROOT":                     dpkgRoot,
+		"DOWNLOAD_DIR":                  downloadDir,
+		"PACKAGES_FILE":                 packagesPath,
+		"RESOLVER_STATUS_FILE":          resolverPath,
+		"VERSION_FLOORS_FILE":           floorsPath,
+		"FINALIZE_DPKG_STATUS_SCRIPT":   finalizePath,
+		"DPKG_INSTALLATION_MODE":        dpkgInstallationModeExternalFullStatus.String(),
+		"LIFECYCLE_PACKAGES":            "",
+		"ALLOW_BUSYBOX_LIFECYCLE_SHELL": "true",
+		"ALLOW_REGULAR_DEV_NULL":        "true",
+		"TARGET_DPKG_ARCH":              "amd64",
+		"STATUSD_FILE_MAP":              "{}",
+	})
+
+	assertFileContent(t, oldKeptPath, "new-kept")
+	assert.NoFileExists(t, obsoletePath)
+	assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"))
+	updatedStatus, err := os.ReadFile(statusPath)
+	require.NoError(t, err)
+	assert.Equal(t, "Package: app\nStatus: install ok installed\nVersion: 2.0\nArchitecture: amd64", strings.TrimSpace(string(updatedStatus)))
 }
 
 func TestAptGetDownloadScriptRejectsDirectLifecyclePackageBeforeTargetMutation(t *testing.T) {
@@ -1536,13 +1723,16 @@ case "$command" in
         : > "$DOWNLOAD_DIR/app.deb"
         : > "$DOWNLOAD_DIR/dash.deb"
         ;;
-    download) exit 90 ;;
+    download) : > "$PWD/app-old.deb" ;;
     *) exit 91 ;;
 esac
 `)
 	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
 package=${2##*/}
 package=${package%.deb}
+package=${package%-old}
+old=false
+case "$2" in */original-archives/*) old=true ;; esac
 case "$1" in
     -R)
         mkdir -p "$3/DEBIAN"
@@ -1569,7 +1759,7 @@ case "$1" in
         case "$3" in
             Package) printf '%s\n' "$package" ;;
             Architecture) printf 'amd64\n' ;;
-            Version) printf '2.0\n' ;;
+            Version) if [ "$old" = true ]; then printf '1.0\n'; else printf '2.0\n'; fi ;;
             Depends) [ "$package" = app ] && printf 'dash (>= 1.0)\n' ;;
             Pre-Depends|Multi-Arch|Provides) exit 0 ;;
             *) exit 2 ;;
@@ -1586,6 +1776,15 @@ if [ "$1" = '--compare-versions' ]; then
         *) exit 2 ;;
     esac
 fi
+case " $* " in
+    *" --unpack "*)
+        root=''
+        for arg in "$@"; do case "$arg" in --root=*) root=${arg#--root=} ;; esac; done
+        mkdir -p "$root/var/lib/dpkg/info"
+        : > "$root/var/lib/dpkg/info/app.list"
+        exit 0
+        ;;
+esac
 for arg in "$@"; do
     case "$arg" in
         *.deb)
@@ -2121,11 +2320,12 @@ done
 case "$command" in
     update) exit 0 ;;
     install) : > "$DOWNLOAD_DIR/app.deb" ;;
-    download) exit 90 ;;
+    download) : > "$PWD/app-old.deb" ;;
     *) exit 91 ;;
 esac
 `)
 	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+archive=$2
 case "$1" in
     -R)
         mkdir -p "$3/DEBIAN" "$3/usr/lib"
@@ -2136,7 +2336,9 @@ case "$1" in
         case "$3" in
             Package) printf 'app\n' ;;
             Architecture) printf '%s\n' "$SOURCE_ARCHITECTURE" ;;
-            Version) printf '2.0\n' ;;
+            Version)
+                case "$archive" in */original-archives/*) printf '1.0\n' ;; *) printf '2.0\n' ;; esac
+                ;;
             Depends) printf '%s\n' "$DEPENDENCY_CLAUSE" ;;
             Breaks) printf '%s\n' "$BREAKS_CLAUSE" ;;
             Conflicts) printf '%s\n' "$CONFLICTS_CLAUSE" ;;
@@ -2157,6 +2359,17 @@ if [ "$1" = '--compare-versions' ]; then
         *) exit 2 ;;
     esac
 fi
+case " $* " in
+    *" --unpack "*)
+        root=''
+        for arg in "$@"; do
+            case "$arg" in --root=*) root=${arg#--root=} ;; esac
+        done
+        mkdir -p "$root/var/lib/dpkg/info"
+        : > "$root/var/lib/dpkg/info/app.list"
+        exit 0
+        ;;
+esac
 exit 0
 `)
 

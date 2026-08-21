@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,6 +139,70 @@ func TestGetVerifiedRemoteIndex(t *testing.T) {
 			assert.Same(t, tt.desc, got)
 		})
 	}
+}
+
+func TestTryGetManifestFromLocalUsesDockerIndexMetadata(t *testing.T) {
+	const imageRef = "registry.example.com/local:latest"
+	indexDigest := digest.Digest("sha256:" + strings.Repeat("c", 64))
+	originalLocalIndex := localImageIndex
+	t.Cleanup(func() { localImageIndex = originalLocalIndex })
+
+	localImageIndex = func(context.Context, string) (*ispec.Index, *ispec.Descriptor, bool, error) {
+		return &ispec.Index{
+			MediaType: ispec.MediaTypeImageIndex,
+			Manifests: []ispec.Descriptor{
+				{
+					MediaType: ispec.MediaTypeImageManifest,
+					Digest:    digest.Digest("sha256:" + strings.Repeat("a", 64)),
+					Platform:  &ispec.Platform{OS: "linux", Architecture: "amd64"},
+				},
+				{
+					MediaType: ispec.MediaTypeImageManifest,
+					Digest:    digest.Digest("sha256:" + strings.Repeat("b", 64)),
+					Platform:  &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"},
+				},
+			},
+		}, &ispec.Descriptor{MediaType: ispec.MediaTypeImageIndex, Digest: indexDigest}, true, nil
+	}
+
+	ref, err := name.ParseReference(imageRef)
+	require.NoError(t, err)
+	desc, err := TryGetManifestFromLocal(ref)
+	require.NoError(t, err)
+	assert.True(t, desc.MediaType.IsIndex())
+	assert.Equal(t, indexDigest.String(), desc.Digest.String())
+
+	var index ispec.Index
+	require.NoError(t, json.Unmarshal(desc.Manifest, &index))
+	require.Len(t, index.Manifests, 2)
+	assert.Equal(t, "amd64", index.Manifests[0].Platform.Architecture)
+	assert.Equal(t, "arm64", index.Manifests[1].Platform.Architecture)
+}
+
+func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *testing.T) {
+	const requestedDigest = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	ref, err := name.NewDigest("example.com/test/image@sha256:" + requestedDigest)
+	require.NoError(t, err)
+	localIndex := testRemoteIndexDescriptor(requestedDigest)
+
+	originalLocal := tryGetManifestFromLocal
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		tryGetManifestFromLocal = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, error) {
+		return localIndex, nil
+	}
+	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+		t.Fatal("remote registry must not be consulted for a locally inspected index")
+		return nil, nil
+	}
+
+	got, isLocal, err := resolvePreservedPlatformsDescriptor(ref)
+	require.NoError(t, err)
+	assert.True(t, isLocal)
+	assert.Same(t, localIndex, got)
 }
 
 func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.T) {
@@ -399,7 +464,7 @@ func TestExtractFileFromStateWithLimit(t *testing.T) {
 			readData:      []byte("data"),
 			want:          []byte("data"),
 			wantRead:      true,
-			wantReadRange: &gwclient.FileRange{Offset: 0, Length: int(limit)},
+			wantReadRange: &gwclient.FileRange{Offset: 0, Length: int(limit + 1)},
 		},
 		{
 			name:        "oversized",
@@ -428,7 +493,7 @@ func TestExtractFileFromStateWithLimit(t *testing.T) {
 			wantErr:       readFailure,
 			wantErrText:   "unable to read",
 			wantRead:      true,
-			wantReadRange: &gwclient.FileRange{Offset: 0, Length: int(limit)},
+			wantReadRange: &gwclient.FileRange{Offset: 0, Length: int(limit + 1)},
 		},
 	}
 
@@ -501,7 +566,7 @@ func TestReadFileWithLimitChunksGatewayResponses(t *testing.T) {
 		Filename: path,
 		Range: &gwclient.FileRange{
 			Offset: int(maxGatewayReadFileChunkSize),
-			Length: len(lastChunk),
+			Length: len(lastChunk) + 1,
 		},
 	}).Return(lastChunk, nil).Once()
 
@@ -511,6 +576,110 @@ func TestReadFileWithLimitChunksGatewayResponses(t *testing.T) {
 	assert.Equal(t, firstChunk, got[:len(firstChunk)])
 	assert.Equal(t, lastChunk, got[len(firstChunk):])
 	ref.AssertExpectations(t)
+}
+
+func TestReadFileWithLimitUsesResolvedSymlinkSize(t *testing.T) {
+	const (
+		path  = "/etc/os-release"
+		limit = int64(64)
+	)
+	contents := []byte("ID=ubuntu\nVERSION_ID=24.04\n")
+
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).
+		Return(&fstypes.Stat{Size: limit + 1, Mode: uint32(os.ModeSymlink)}, nil).
+		Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: path,
+		Range:    &gwclient.FileRange{Offset: 0, Length: int(limit + 1)},
+	}).Return(contents, nil).Once()
+
+	got, err := ReadFileWithLimit(t.Context(), ref, path, limit)
+	require.NoError(t, err)
+	assert.Equal(t, contents, got)
+	ref.AssertExpectations(t)
+}
+
+func TestReadFileWithLimitRejectsOversizedResolvedSymlink(t *testing.T) {
+	const (
+		path  = "/etc/os-release"
+		limit = int64(4)
+	)
+
+	ref := &mocks.MockReference{}
+	ref.On("StatFile", mock.Anything, gwclient.StatRequest{Path: path}).
+		Return(&fstypes.Stat{Size: 1, Mode: uint32(os.ModeSymlink)}, nil).
+		Once()
+	ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{
+		Filename: path,
+		Range:    &gwclient.FileRange{Offset: 0, Length: int(limit + 1)},
+	}).Return([]byte("12345"), nil).Once()
+
+	_, err := ReadFileWithLimit(t.Context(), ref, path, limit)
+	require.ErrorContains(t, err, "exceeds the maximum allowed size of 4 bytes")
+	ref.AssertExpectations(t)
+}
+
+func TestMatchingPlatformDescriptorUsesCompleteNormalizedIdentity(t *testing.T) {
+	descriptor := func(hex string, platform ispec.Platform) remotev1.Descriptor {
+		imagePlatform := remotev1.Platform{
+			OS:           platform.OS,
+			Architecture: platform.Architecture,
+			Variant:      platform.Variant,
+			OSVersion:    platform.OSVersion,
+			OSFeatures:   platform.OSFeatures,
+		}
+		return remotev1.Descriptor{
+			Digest:   remotev1.Hash{Algorithm: "sha256", Hex: hex},
+			Platform: &imagePlatform,
+		}
+	}
+
+	t.Run("arm64 v8 is equivalent to omitted variant", func(t *testing.T) {
+		manifest := &remotev1.IndexManifest{Manifests: []remotev1.Descriptor{
+			descriptor(strings.Repeat("a", 64), ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}),
+		}}
+		target := ispec.Platform{OS: "linux", Architecture: "arm64"}
+		got, err := matchingPlatformDescriptor(manifest, &target)
+		require.NoError(t, err)
+		assert.Equal(t, strings.Repeat("a", 64), got.Digest.Hex)
+	})
+
+	t.Run("os version and features must match", func(t *testing.T) {
+		manifest := &remotev1.IndexManifest{Manifests: []remotev1.Descriptor{
+			descriptor(strings.Repeat("a", 64), ispec.Platform{
+				OS: "windows", Architecture: "amd64", OSVersion: "10.0.1", OSFeatures: []string{"win32k"},
+			}),
+			descriptor(strings.Repeat("b", 64), ispec.Platform{
+				OS: "windows", Architecture: "amd64", OSVersion: "10.0.2", OSFeatures: []string{"gpu", "win32k"},
+			}),
+		}}
+		target := ispec.Platform{
+			OS: "windows", Architecture: "amd64", OSVersion: "10.0.2", OSFeatures: []string{"win32k", "gpu"},
+		}
+		got, err := matchingPlatformDescriptor(manifest, &target)
+		require.NoError(t, err)
+		assert.Equal(t, strings.Repeat("b", 64), got.Digest.Hex)
+	})
+
+	t.Run("empty variant is not a wildcard", func(t *testing.T) {
+		manifest := &remotev1.IndexManifest{Manifests: []remotev1.Descriptor{
+			descriptor(strings.Repeat("a", 64), ispec.Platform{OS: "linux", Architecture: "arm", Variant: "v6"}),
+		}}
+		target := ispec.Platform{OS: "linux", Architecture: "arm", Variant: "v7"}
+		_, err := matchingPlatformDescriptor(manifest, &target)
+		require.ErrorContains(t, err, "contains no descriptor")
+	})
+
+	t.Run("ambiguous normalized matches fail", func(t *testing.T) {
+		manifest := &remotev1.IndexManifest{Manifests: []remotev1.Descriptor{
+			descriptor(strings.Repeat("a", 64), ispec.Platform{OS: "linux", Architecture: "arm64"}),
+			descriptor(strings.Repeat("b", 64), ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}),
+		}}
+		target := ispec.Platform{OS: "linux", Architecture: "arm64"}
+		_, err := matchingPlatformDescriptor(manifest, &target)
+		require.ErrorContains(t, err, "multiple descriptors")
+	})
 }
 
 func TestAddOCIExportMetadata(t *testing.T) {
@@ -851,19 +1020,33 @@ func TestSetupLabels(t *testing.T) {
 			} else {
 				assert.Equal(t, test.expectBaseImg, baseImage)
 
-				var updatedConfig map[string]interface{}
+				var updatedConfig ispec.Image
 				err := json.Unmarshal(updatedConfigData, &updatedConfig)
 				assert.NoError(t, err)
-
-				labels, ok := updatedConfig["config"].(map[string]interface{})["labels"].(map[string]interface{})
-				if !ok {
-					t.Errorf("type assertion to map[string]interface{} failed")
-					return
-				}
-				assert.Equal(t, test.expectImage, labels["BaseImage"])
+				assert.Equal(t, test.expectImage, updatedConfig.Config.Labels["BaseImage"])
 			}
 		})
 	}
+}
+
+func TestSetupLabelsPreservesBaseImageThroughAnnotationMerge(t *testing.T) {
+	const image = "registry.example.com/application:latest"
+	input := []byte(`{"config":{"Labels":{"existing":"preserved"}}}`)
+
+	baseImage, withBaseImage, err := setupLabels(image, input)
+	require.NoError(t, err)
+	assert.Empty(t, baseImage)
+
+	updated, err := AddImageConfigLabels(withBaseImage, map[string]string{
+		"sh.copa.chisel.release": "ubuntu-24.04",
+	})
+	require.NoError(t, err)
+
+	var config ispec.Image
+	require.NoError(t, json.Unmarshal(updated, &config))
+	assert.Equal(t, image, config.Config.Labels["BaseImage"])
+	assert.Equal(t, "preserved", config.Config.Labels["existing"])
+	assert.Equal(t, "ubuntu-24.04", config.Config.Labels["sh.copa.chisel.release"])
 }
 
 func TestUpdateImageConfigData(t *testing.T) {

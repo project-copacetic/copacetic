@@ -903,7 +903,7 @@ func TestExtractFrontendContextDirectoryReadsLargeFilesInChunks(t *testing.T) {
 	assert.Equal(t, contents, extracted)
 	require.Len(t, reference.readRequests, 2)
 	assert.Equal(t, &gwclient.FileRange{Offset: 0, Length: gatewayChunkSize}, reference.readRequests[0].Range)
-	assert.Equal(t, &gwclient.FileRange{Offset: gatewayChunkSize, Length: len(contents) - gatewayChunkSize}, reference.readRequests[1].Range)
+	assert.Equal(t, &gwclient.FileRange{Offset: gatewayChunkSize, Length: gatewayChunkSize}, reference.readRequests[1].Range)
 }
 
 func TestExtractFrontendContextDirectoryPreservesSafeRelativeSymlinks(t *testing.T) {

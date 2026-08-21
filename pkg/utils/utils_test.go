@@ -1018,6 +1018,71 @@ func TestLocalImagePlatforms_NotFound(t *testing.T) {
 	require.Nil(t, got)
 }
 
+func TestLocalImageIndexUsesManifestAwareInspection(t *testing.T) {
+	indexDigest := digest.Digest("sha256:" + strings.Repeat("c", 64))
+	amdDigest := digest.Digest("sha256:" + strings.Repeat("a", 64))
+	armDigest := digest.Digest("sha256:" + strings.Repeat("b", 64))
+	md := new(mockDockerClient)
+	md.On("ImageInspect", mock.Anything, mock.Anything, mock.Anything).Return(
+		dockerClient.ImageInspectResult{InspectResponse: mobyimage.InspectResponse{
+			Descriptor: &ocispec.Descriptor{
+				MediaType:   ocispec.MediaTypeImageIndex,
+				Digest:      indexDigest,
+				Annotations: map[string]string{"index": "local"},
+			},
+			Manifests: []mobyimage.ManifestSummary{
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType: ocispec.MediaTypeImageManifest,
+						Digest:    amdDigest,
+						Size:      123,
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "amd64"},
+					},
+				},
+				{
+					Kind:      mobyimage.ManifestKindImage,
+					Available: true,
+					Descriptor: ocispec.Descriptor{
+						MediaType: ocispec.MediaTypeImageManifest,
+						Digest:    armDigest,
+						Size:      456,
+					},
+					ImageData: &mobyimage.ImageProperties{
+						Platform: ocispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"},
+					},
+				},
+				{
+					Kind:      mobyimage.ManifestKindAttestation,
+					Available: false,
+					Descriptor: ocispec.Descriptor{
+						MediaType: "application/vnd.oci.image.manifest.v1+json",
+						Digest:    digest.Digest("sha256:" + strings.Repeat("d", 64)),
+					},
+				},
+			},
+		}},
+		nil,
+	)
+	defer stubNewClient(t, md)()
+
+	index, top, ok, err := LocalImageIndex(context.Background(), "registry.example.com/local:latest")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, index)
+	require.NotNil(t, top)
+	assert.Equal(t, indexDigest, top.Digest)
+	assert.Equal(t, "local", index.Annotations["index"])
+	require.Len(t, index.Manifests, 2)
+	require.NotNil(t, index.Manifests[0].Platform)
+	assert.Equal(t, "amd64", index.Manifests[0].Platform.Architecture)
+	require.NotNil(t, index.Manifests[1].Platform)
+	assert.Equal(t, "arm64", index.Manifests[1].Platform.Architecture)
+}
+
 // TestGetPlatformManifestAnnotations_LocalPerPlatform is the regression test
 // for the bug where GetPlatformManifestAnnotations delegated to
 // localIndexManifestAnnotations instead of the per-platform helper. With the

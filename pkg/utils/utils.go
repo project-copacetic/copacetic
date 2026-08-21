@@ -20,6 +20,7 @@ import (
 	mobyimage "github.com/moby/moby/api/types/image"
 	dockerClient "github.com/moby/moby/client"
 	"github.com/opencontainers/go-digest"
+	"github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	log "github.com/sirupsen/logrus"
@@ -613,6 +614,61 @@ func LocalImagePlatforms(ctx context.Context, imageRef string) ([]ocispec.Platfo
 		}}, true, nil
 	}
 	return nil, false, nil
+}
+
+// LocalImageIndex returns the locally available index metadata exposed by
+// Docker's manifest-aware image inspection. The second return value is the
+// top-level descriptor, and ok reports that the reference exists locally even
+// when it resolves to a single image instead of an index.
+func LocalImageIndex(ctx context.Context, imageRef string) (*ocispec.Index, *ocispec.Descriptor, bool, error) {
+	inspect, err := inspectLocalImage(ctx, imageRef)
+	if err != nil {
+		return nil, nil, false, err
+	}
+
+	var top *ocispec.Descriptor
+	if inspect.Descriptor != nil {
+		descriptor := *inspect.Descriptor
+		top = &descriptor
+	}
+	if top != nil && top.MediaType != ocispec.MediaTypeImageIndex && top.MediaType != string(types.DockerManifestList) {
+		return nil, top, true, nil
+	}
+	if len(inspect.Manifests) == 0 {
+		return nil, top, true, nil
+	}
+
+	manifests := make([]ocispec.Descriptor, 0, len(inspect.Manifests))
+	for i := range inspect.Manifests {
+		manifest := &inspect.Manifests[i]
+		if !manifest.Available {
+			continue
+		}
+		descriptor := manifest.Descriptor
+		if manifest.ImageData != nil {
+			platform := manifest.ImageData.Platform
+			descriptor.Platform = &platform
+		}
+		manifests = append(manifests, descriptor)
+	}
+	if len(manifests) == 0 {
+		return nil, top, true, fmt.Errorf("local image index %q contains no available manifests", imageRef)
+	}
+
+	mediaType := ocispec.MediaTypeImageIndex
+	var annotations map[string]string
+	if top != nil {
+		if top.MediaType != "" {
+			mediaType = top.MediaType
+		}
+		annotations = top.Annotations
+	}
+	return &ocispec.Index{
+		Versioned:   specs.Versioned{SchemaVersion: 2},
+		MediaType:   mediaType,
+		Manifests:   manifests,
+		Annotations: annotations,
+	}, top, true, nil
 }
 
 // LocalPlatformDescriptor returns the OCI descriptor for a specific platform
