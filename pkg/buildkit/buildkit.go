@@ -269,34 +269,37 @@ func isSupportedOsType(osType string) bool {
 // It returns a remote.Descriptor if successful, or an error if the manifest cannot be retrieved locally.
 // This is exported to support patching images that exist locally but not in a remote registry.
 func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
-	descriptor, _, err := getManifestFromLocal(ref)
+	descriptor, _, _, err := getManifestFromLocal(ref)
 	return descriptor, err
 }
 
-func getManifestFromLocal(ref name.Reference) (*remote.Descriptor, v1.Hash, error) {
+func getManifestFromLocal(ref name.Reference) (*remote.Descriptor, v1.Hash, bool, error) {
 	imageName := ref.String()
 	log.Debugf("Attempting to get manifest from local daemon for %s", imageName)
 
 	ctx := context.Background()
-	index, localDescriptor, found, err := localImageIndex(ctx, imageName)
+	index, localDescriptor, complete, found, err := localImageIndex(ctx, imageName)
 	if err != nil {
-		return nil, v1.Hash{}, fmt.Errorf("failed to inspect image in local daemon: %w", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to inspect image in local daemon: %w", err)
 	}
 	if !found {
-		return nil, v1.Hash{}, fmt.Errorf("image %q was not found in the local daemon", imageName)
+		return nil, v1.Hash{}, false, fmt.Errorf("image %q was not found in the local daemon", imageName)
 	}
 	if index != nil {
 		rawManifest, err := json.Marshal(index)
 		if err != nil {
-			return nil, v1.Hash{}, fmt.Errorf("marshal local image index: %w", err)
+			return nil, v1.Hash{}, false, fmt.Errorf("marshal local image index: %w", err)
 		}
 		manifestSum := sha256.Sum256(rawManifest)
 		manifestDigest := v1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", manifestSum)}
 		sourceDigest := manifestDigest
+		if !complete {
+			sourceDigest = v1.Hash{}
+		}
 		if localDescriptor != nil && localDescriptor.Digest != "" {
 			sourceDigest, err = v1.NewHash(localDescriptor.Digest.String())
 			if err != nil {
-				return nil, v1.Hash{}, fmt.Errorf("parse local image index digest: %w", err)
+				return nil, v1.Hash{}, false, fmt.Errorf("parse local image index digest: %w", err)
 			}
 		}
 		descriptor := v1.Descriptor{
@@ -305,29 +308,36 @@ func getManifestFromLocal(ref name.Reference) (*remote.Descriptor, v1.Hash, erro
 			Digest:      manifestDigest,
 			Annotations: index.Annotations,
 		}
-		return &remote.Descriptor{Descriptor: descriptor, Manifest: rawManifest}, sourceDigest, nil
+		return &remote.Descriptor{Descriptor: descriptor, Manifest: rawManifest}, sourceDigest, complete, nil
 	}
 
 	img, err := getImageFromDaemon(ref, daemon.WithContext(ctx))
 	if err != nil {
-		return nil, v1.Hash{}, fmt.Errorf("failed to get image from local daemon: %w", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get image from local daemon: %w", err)
 	}
 	rawManifest, err := img.RawManifest()
 	if err != nil {
-		return nil, v1.Hash{}, fmt.Errorf("failed to get raw local manifest: %w", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get raw local manifest: %w", err)
 	}
 	mediaType, err := img.MediaType()
 	if err != nil {
-		return nil, v1.Hash{}, fmt.Errorf("failed to get local manifest media type: %w", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get local manifest media type: %w", err)
 	}
 	digest, err := img.Digest()
 	if err != nil {
-		return nil, v1.Hash{}, fmt.Errorf("failed to get local manifest digest: %w", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get local manifest digest: %w", err)
+	}
+	sourceDigest := digest
+	if localDescriptor != nil && localDescriptor.Digest != "" {
+		sourceDigest, err = v1.NewHash(localDescriptor.Digest.String())
+		if err != nil {
+			return nil, v1.Hash{}, false, fmt.Errorf("parse local source descriptor digest: %w", err)
+		}
 	}
 	return &remote.Descriptor{
 		Descriptor: v1.Descriptor{MediaType: mediaType, Size: int64(len(rawManifest)), Digest: digest},
 		Manifest:   rawManifest,
-	}, digest, nil
+	}, sourceDigest, complete, nil
 }
 
 // platformsFromIndexManifest converts the entries of a multi-platform image
@@ -1924,7 +1934,7 @@ func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) erro
 }
 
 func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor, bool, error) {
-	desc, sourceDigest, err := tryGetManifestFromLocal(ref)
+	desc, sourceDigest, complete, err := tryGetManifestFromLocal(ref)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
 		desc, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
@@ -1939,6 +1949,26 @@ func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor
 	}
 	if desc == nil {
 		return nil, false, fmt.Errorf("local daemon returned no descriptor for %q", ref.String())
+	}
+	if !complete {
+		if sourceDigest.Algorithm == "" || sourceDigest.Hex == "" {
+			return nil, false, fmt.Errorf("cannot reconcile incomplete local image index %q: source descriptor digest is unavailable", ref.String())
+		}
+		if digestRef, immutable := ref.(name.Digest); immutable && sourceDigest.String() != digestRef.DigestStr() {
+			return nil, false, fmt.Errorf(
+				"local source descriptor digest %s does not match immutable reference %s",
+				sourceDigest.String(), digestRef.DigestStr(),
+			)
+		}
+
+		sourceRef := ref.Context().Digest(sourceDigest.String())
+		remoteDesc, remoteErr := GetVerifiedRemoteIndex(sourceRef)
+		if remoteErr != nil {
+			return nil, false, fmt.Errorf("reconcile incomplete local image index %q: %w", ref.String(), remoteErr)
+		}
+
+		log.Debugf("Reconciled incomplete local image index for %s from verified remote descriptor %s", ref.String(), sourceDigest.String())
+		return remoteDesc, false, nil
 	}
 
 	// A local daemon may cache an immutable index digest as only the selected

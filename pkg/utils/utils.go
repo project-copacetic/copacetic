@@ -618,12 +618,13 @@ func LocalImagePlatforms(ctx context.Context, imageRef string) ([]ocispec.Platfo
 
 // LocalImageIndex returns the locally available index metadata exposed by
 // Docker's manifest-aware image inspection. The second return value is the
-// top-level descriptor, and ok reports that the reference exists locally even
-// when it resolves to a single image instead of an index.
-func LocalImageIndex(ctx context.Context, imageRef string) (*ocispec.Index, *ocispec.Descriptor, bool, error) {
+// top-level descriptor. Complete is false when Docker exposes an index but any
+// of its descriptors are unavailable locally, and ok reports that the reference
+// exists locally even when it resolves to a single image instead of an index.
+func LocalImageIndex(ctx context.Context, imageRef string) (*ocispec.Index, *ocispec.Descriptor, bool, bool, error) {
 	inspect, err := inspectLocalImage(ctx, imageRef)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, nil, false, false, err
 	}
 
 	var top *ocispec.Descriptor
@@ -632,16 +633,19 @@ func LocalImageIndex(ctx context.Context, imageRef string) (*ocispec.Index, *oci
 		top = &descriptor
 	}
 	if top != nil && top.MediaType != ocispec.MediaTypeImageIndex && top.MediaType != string(types.DockerManifestList) {
-		return nil, top, true, nil
+		return nil, top, true, true, nil
 	}
 	if len(inspect.Manifests) == 0 {
-		return nil, top, true, nil
+		complete := top == nil
+		return nil, top, complete, true, nil
 	}
 
 	manifests := make([]ocispec.Descriptor, 0, len(inspect.Manifests))
+	complete := true
 	for i := range inspect.Manifests {
 		manifest := &inspect.Manifests[i]
 		if !manifest.Available {
+			complete = false
 			continue
 		}
 		descriptor := manifest.Descriptor
@@ -652,7 +656,7 @@ func LocalImageIndex(ctx context.Context, imageRef string) (*ocispec.Index, *oci
 		manifests = append(manifests, descriptor)
 	}
 	if len(manifests) == 0 {
-		return nil, top, true, fmt.Errorf("local image index %q contains no available manifests", imageRef)
+		return nil, top, false, true, nil
 	}
 
 	mediaType := ocispec.MediaTypeImageIndex
@@ -668,7 +672,7 @@ func LocalImageIndex(ctx context.Context, imageRef string) (*ocispec.Index, *oci
 		MediaType:   mediaType,
 		Manifests:   manifests,
 		Annotations: annotations,
-	}, top, true, nil
+	}, top, complete, true, nil
 }
 
 // LocalPlatformDescriptor returns the OCI descriptor for a specific platform

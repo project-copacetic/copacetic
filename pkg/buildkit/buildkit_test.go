@@ -148,7 +148,7 @@ func TestTryGetManifestFromLocalUsesDockerIndexMetadata(t *testing.T) {
 	originalLocalIndex := localImageIndex
 	t.Cleanup(func() { localImageIndex = originalLocalIndex })
 
-	localImageIndex = func(context.Context, string) (*ispec.Index, *ispec.Descriptor, bool, error) {
+	localImageIndex = func(context.Context, string) (*ispec.Index, *ispec.Descriptor, bool, bool, error) {
 		return &ispec.Index{
 			MediaType: ispec.MediaTypeImageIndex,
 			Manifests: []ispec.Descriptor{
@@ -163,13 +163,14 @@ func TestTryGetManifestFromLocalUsesDockerIndexMetadata(t *testing.T) {
 					Platform:  &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"},
 				},
 			},
-		}, &ispec.Descriptor{MediaType: ispec.MediaTypeImageIndex, Digest: indexDigest}, true, nil
+		}, &ispec.Descriptor{MediaType: ispec.MediaTypeImageIndex, Digest: indexDigest}, true, true, nil
 	}
 
 	ref, err := name.ParseReference(imageRef)
 	require.NoError(t, err)
-	desc, sourceDigest, err := getManifestFromLocal(ref)
+	desc, sourceDigest, complete, err := getManifestFromLocal(ref)
 	require.NoError(t, err)
+	assert.True(t, complete)
 	assert.True(t, desc.MediaType.IsIndex())
 	manifestSum := sha256.Sum256(desc.Manifest)
 	assert.Equal(t, fmt.Sprintf("sha256:%x", manifestSum), desc.Digest.String())
@@ -197,8 +198,8 @@ func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *test
 		tryGetManifestFromLocal = originalLocal
 		getRemoteImageDescriptor = originalRemote
 	})
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, error) {
-		return localIndex, sourceDigest, nil
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+		return localIndex, sourceDigest, true, nil
 	}
 	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
 		t.Fatal("remote registry must not be consulted for a locally inspected index")
@@ -210,11 +211,50 @@ func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *test
 	assert.True(t, isLocal)
 	assert.Same(t, localIndex, got)
 
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, error) {
-		return localIndex, remotev1.Hash{Algorithm: "sha256", Hex: strings.Repeat("d", 64)}, nil
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+		return localIndex, remotev1.Hash{Algorithm: "sha256", Hex: strings.Repeat("d", 64)}, true, nil
 	}
 	_, _, err = resolvePreservedPlatformsDescriptor(ref)
 	require.ErrorContains(t, err, "does not match immutable reference")
+}
+
+func TestResolvePreservedPlatformsDescriptorReconcilesIncompleteLocalIndex(t *testing.T) {
+	const sourceHex = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	sourceDigest := remotev1.Hash{Algorithm: "sha256", Hex: sourceHex}
+	localIndex := testRemoteIndexDescriptor(sourceHex)
+	manifestSum := sha256.Sum256(localIndex.Manifest)
+	localIndex.Digest = remotev1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", manifestSum)}
+	remoteIndex := testRemoteIndexDescriptor(sourceHex)
+
+	immutableRef, err := name.NewDigest("example.com/test/image@" + sourceDigest.String())
+	require.NoError(t, err)
+	mutableRef, err := name.ParseReference("example.com/test/image:latest")
+	require.NoError(t, err)
+
+	originalLocal := tryGetManifestFromLocal
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		tryGetManifestFromLocal = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+
+	for _, ref := range []name.Reference{immutableRef, mutableRef} {
+		t.Run(ref.Identifier(), func(t *testing.T) {
+			tryGetManifestFromLocal = func(gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+				assert.Equal(t, ref.String(), gotRef.String())
+				return localIndex, sourceDigest, false, nil
+			}
+			getRemoteImageDescriptor = func(gotRef name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+				assert.Equal(t, ref.Context().Digest(sourceDigest.String()).String(), gotRef.String())
+				return remoteIndex, nil
+			}
+
+			got, isLocal, err := resolvePreservedPlatformsDescriptor(ref)
+			require.NoError(t, err)
+			assert.False(t, isLocal)
+			assert.Same(t, remoteIndex, got)
+		})
+	}
 }
 
 func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.T) {
@@ -289,9 +329,9 @@ func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			remoteCalls := 0
-			tryGetManifestFromLocal = func(gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, error) {
+			tryGetManifestFromLocal = func(gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 				assert.Equal(t, tt.ref.String(), gotRef.String())
-				return localChild, localChild.Digest, nil
+				return localChild, localChild.Digest, true, nil
 			}
 			getRemoteImageDescriptor = func(gotRef name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
 				remoteCalls++
@@ -349,8 +389,8 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 		tryGetManifestFromLocal = originalLocal
 		getRemoteImageDescriptor = originalRemote
 	})
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, error) {
-		return nil, remotev1.Hash{}, errors.New("image is not available locally")
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+		return nil, remotev1.Hash{}, false, errors.New("image is not available locally")
 	}
 	getRemoteImageDescriptor = remote.Get
 

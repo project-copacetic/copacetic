@@ -1069,9 +1069,10 @@ func TestLocalImageIndexUsesManifestAwareInspection(t *testing.T) {
 	)
 	defer stubNewClient(t, md)()
 
-	index, top, ok, err := LocalImageIndex(context.Background(), "registry.example.com/local:latest")
+	index, top, complete, ok, err := LocalImageIndex(context.Background(), "registry.example.com/local:latest")
 	require.NoError(t, err)
 	require.True(t, ok)
+	assert.False(t, complete)
 	require.NotNil(t, index)
 	require.NotNil(t, top)
 	assert.Equal(t, indexDigest, top.Digest)
