@@ -1048,6 +1048,8 @@ jobs:
           go test ./integration/chisel ./cmd/chisel-validator ./internal/testutil/chiselverify -count=1
       - name: Run Ubuntu Chiseled e2e tests
         shell: bash
+        env:
+          COPA_CHISEL_PATCH_TIMEOUT: "75m"
         run: |
           set -eu -o pipefail
           gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/chisel --addr=docker:// --copa="$(pwd)/copa" -timeout 115m
