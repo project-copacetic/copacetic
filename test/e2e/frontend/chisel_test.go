@@ -331,13 +331,11 @@ func assertFrontendChiselProvenance(t *testing.T, snapshot *frontendChiselSnapsh
 
 func assertLocalFrontendChiselProvenance(t *testing.T, provenance string) {
 	t.Helper()
-	const prefix = "local:copa-frontend-chisel-release-"
+	const prefix = "local:release@sha256:"
 	require.Truef(t, strings.HasPrefix(provenance, prefix), "unexpected local Chisel provenance %q", provenance)
-	parts := strings.SplitN(provenance, "@sha256:", 2)
-	require.Len(t, parts, 2)
-	require.NotEmpty(t, strings.TrimPrefix(parts[0], "local:"))
-	require.Len(t, parts[1], 64)
-	_, err := hex.DecodeString(parts[1])
+	digest := strings.TrimPrefix(provenance, prefix)
+	require.Len(t, digest, 64)
+	_, err := hex.DecodeString(digest)
 	require.NoError(t, err, "local Chisel provenance digest is not hexadecimal")
 }
 
