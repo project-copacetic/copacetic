@@ -65,6 +65,7 @@ const (
 	dpkgNativeQualifier         = "native"
 	dpkgArchitectureAll         = "all"
 	dpkgArchitectureAny         = "any"
+	dpkgTargetToolPaths         = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 	// Bound target-controlled Debian metadata before reading it into the
 	// Copa/frontend process. status.d uses one budget for its generated file
 	// list and every copied metadata file combined.
@@ -97,6 +98,7 @@ type dpkgManager struct {
 	tempStatusFile         []byte
 	resolverStatusFile     []byte
 	targetDPKGArchitecture string
+	missingDPKGTools       []string
 	chiselRelease          string
 	chiselAnnotations      map[string]string
 }
@@ -466,6 +468,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		llb.AddEnv("DPKG_STATUS_PATH", dpkgStatusPath),
 		llb.AddEnv("DPKG_STATUS_FOLDER", dpkgStatusFolder),
 		llb.AddEnv("REQUIRED_DPKG_TOOLS", strings.Join(requiredDPKGTools, " ")),
+		llb.AddEnv("TARGET_TOOL_PATHS", dpkgTargetToolPaths),
 		llb.AddEnv("RESULTS_PATH", resultsPath),
 		llb.AddEnv("RESULT_STATUS_PATH", filepath.Join(resultsPath, dpkgStatusOutputFilename)),
 		llb.AddEnv("RESULT_STATUSD_LIST_PATH", filepath.Join(resultsPath, dpkgStatusdListFilename)),
@@ -525,6 +528,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 		dm.tempStatusFile = status.databaseContents
 		dm.resolverStatusFile = resolverContents
 		dm.statusdFileMap = nil
+		dm.missingDPKGTools = append([]string(nil), probeResult.missingTools...)
 
 		log.Warnf(
 			"Target has %s but is missing required tools (%s); using external tooling. Installing complete .deb archives may add files not present in the original image",
@@ -2020,6 +2024,8 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		llb.AddEnv("DEBIAN_FRONTEND", "noninteractive"),
 		llb.AddEnv("DPKG_INSTALLATION_MODE", dm.installationMode.String()),
 		llb.AddEnv("LIFECYCLE_PACKAGES", externalFullStatusLifecyclePackageList),
+		llb.AddEnv("MISSING_DPKG_TOOLS", strings.Join(dm.missingDPKGTools, " ")),
+		llb.AddEnv("TARGET_TOOL_PATHS", dpkgTargetToolPaths),
 		llb.AddEnv("STATUSD_FILE_MAP", string(statusdFileMapData)),
 		buildkit.Sh(`/download.sh`),
 		llb.WithProxy(utils.GetProxy()),

@@ -523,6 +523,13 @@ func TestValidateReportPlatform(t *testing.T) {
 			target: v1.Platform{OS: LINUX, Architecture: "arm", Variant: "v7"},
 		},
 		{
+			name: "defaults empty arm report variant to v7",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: armArchitecture},
+			}},
+			target: v1.Platform{OS: LINUX, Architecture: armArchitecture, Variant: "v7"},
+		},
+		{
 			name: "rejects architecture mismatch",
 			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
 				Config: unversioned.Config{Arch: "amd64"},

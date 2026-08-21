@@ -288,25 +288,25 @@ func TestNativeChiselPartialPlatformOCI(t *testing.T) {
 	assert.Equal(t, "v1.4.2", labels["sh.copa.chisel.version"])
 }
 
-func TestAptlessFullStatusRealImage(t *testing.T) {
+func TestAptlessFullStatusFixture(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping real-image Chisel e2e test in short mode")
+		t.Skip("skipping apt-less full-status e2e test in short mode")
 	}
 	requireTool(t, "docker")
 	requireTool(t, "trivy")
 
-	fixture := loadFixture(t, "microsoft-full-status-dotnet")
-	pullImage(t, fixture.Reference, fixture.Platform)
+	fixture := buildAptlessFullStatusFixture(t, platformLinuxAMD64)
 	before := captureImage(t, fixture.Reference, fixture.Platform)
 	require.Nil(t, before.Manifest)
 	require.NotEmpty(t, before.DPKGStatus)
 	assertFullStatusLayout(t, &before)
 	beforePackages := parseDPKGStatus(t, before.DPKGStatus)
+	beforeTree := canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree)
 
 	cacheDir := filepath.Join(t.TempDir(), "trivy-cache")
 	integrationcommon.DownloadDBToDir(t, cacheDir)
 	reportPath := filepath.Join(t.TempDir(), "report.json")
-	vulnsBefore := scanOSImage(t, fixture.Reference, reportPath, cacheDir, fixture.Platform, true)
+	vulnsBefore := scanOSImage(t, fixture.Reference, reportPath, cacheDir, fixture.Platform, false)
 	require.NotEmpty(t, vulnsBefore, "expected fixable OS vulnerabilities in baseline image")
 
 	patched := uniqueImage("full-status")
@@ -326,6 +326,7 @@ func TestAptlessFullStatusRealImage(t *testing.T) {
 	after := captureImage(t, patched, fixture.Platform)
 	assertFullStatusLayout(t, &after)
 	assertImageConfigPreserved(t, &before.Config, &after.Config)
+	assert.Equal(t, beforeTree, canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "unmanaged fixture content changed")
 	afterPackages := parseDPKGStatus(t, after.DPKGStatus)
 	assertNoDPKGDowngrades(t, beforePackages, afterPackages)
 	for _, name := range fixture.ExpectedUpgradePackages {
@@ -341,10 +342,6 @@ func TestAptlessFullStatusRealImage(t *testing.T) {
 		}
 	}
 
-	beforeRuntime := runDocker(t, fixture.Platform, fixture.Reference, "--info")
-	afterRuntime := runDocker(t, fixture.Platform, patched, "--info")
-	assert.Equal(t, beforeRuntime, afterRuntime, "OS patching must not replace the separately copied .NET runtime")
-
 	if patchImageOrNoUpdates(t,
 		"patch",
 		"--image", patched,
@@ -354,10 +351,9 @@ func TestAptlessFullStatusRealImage(t *testing.T) {
 		comprehensiveSnapshot := captureImage(t, comprehensive, fixture.Platform)
 		assertFullStatusLayout(t, &comprehensiveSnapshot)
 		assertImageConfigPreserved(t, &before.Config, &comprehensiveSnapshot.Config)
+		assert.Equal(t, beforeTree, canonicalTreeHash(t, comprehensiveSnapshot.RootFSTar, fixture.PreserveTree), "comprehensive patch changed unmanaged fixture content")
 		comprehensivePackages := parseDPKGStatus(t, comprehensiveSnapshot.DPKGStatus)
 		assertNoDPKGDowngrades(t, afterPackages, comprehensivePackages)
-		comprehensiveRuntime := runDocker(t, fixture.Platform, comprehensive, "--info")
-		assert.Equal(t, beforeRuntime, comprehensiveRuntime, "comprehensive OS patching must not replace the separately copied .NET runtime")
 		assertNoUpdates(t, "patch", "--image", comprehensive, "--tag", uniqueImage("full-status-repatch"), "--platform", fixture.Platform)
 	}
 }

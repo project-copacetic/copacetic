@@ -14,9 +14,9 @@ It is intentionally separate from the network-independent fixture tests in
 | `TestNativeChiselMultiPlatformOCIUpdatesAMD64AndARM64` | Canonical multi-platform Ubuntu .NET Chiseled index | Patches amd64 and arm64 independently in one operation and validates each output manifest, config, package set, and managed rootfs |
 | `TestNativeChiselSecondaryArchitecturesOCI` | Canonical multi-platform Ubuntu .NET Chiseled index, ppc64le and s390x | Re-cuts both secondary architectures in one OCI output and validates changed platform descriptors, preserved image configuration, package upgrades without downgrades, and each managed rootfs against its generated manifest |
 | `TestNativeChiselCommunityImagePreservesApplication` | Community Sonarr image, amd64 | Explicit release override, preservation of the complete `/Sonarr` tree, isolated application startup, provenance labels, and no-update repatching |
-| `TestAptlessFullStatusRealImage` | Microsoft .NET Jammy Chiseled, amd64 | Trivy OS-only report patching keyed by vulnerability ID and package, final dpkg versions at or above every reported fixed version, full-status preservation, runtime/config preservation, and comprehensive follow-up |
-| `TestAptlessFullStatusComprehensiveFromBaselineARM64` | Microsoft .NET Jammy Chiseled, arm64 | Comprehensive patching directly from the unpatched baseline, strict package upgrades, cleanup, runtime/config preservation, and no-update repatching |
-| `TestAptlessFullStatusComprehensiveFromBaselineARMv7` | Microsoft .NET Jammy Chiseled, arm/v7 | The same baseline comprehensive flow under emulation, including full-status preservation, package upgrades without downgrades, cleanup, runtime/config preservation, and no-update repatching |
+| `TestAptlessFullStatusFixture` | Pinned Ubuntu 24.04 GA apt-less fixture, amd64 | Trivy OS-only report patching keyed by vulnerability ID and package, final dpkg versions at or above every reported fixed version, full-status and unmanaged-content preservation, and comprehensive follow-up |
+| `TestAptlessFullStatusComprehensiveFromBaselineARM64` | Pinned Ubuntu 24.04 GA apt-less fixture, arm64 | Comprehensive patching directly from the unpatched baseline, strict package upgrades, cleanup, config/content preservation, and no-update repatching |
+| `TestAptlessFullStatusComprehensiveFromBaselineARMv7` | Pinned Ubuntu 24.04 GA apt-less fixture, arm/v7 | The same baseline comprehensive flow under emulation, including package upgrades without downgrades, cleanup, config/content preservation, and no-update repatching |
 | `TestDistrolessStatusDirectoryPreservesEncodedFilenames` | Google distroless Debian 12, amd64 | A digest-pinned real `status.d` root with an injected unmanaged sentinel and encoded status filename; validates exact filename preservation, absence of `/var/lib/dpkg/status`, package upgrades, sentinel preservation, and tooling cleanup |
 | `TestNativeChiselPartialPlatformOCI` | Canonical multi-platform Ubuntu .NET Chiseled index | Patches amd64 while preserving complete arm64, ppc64le, and s390x descriptors and every referenced OCI blob |
 | `TestNativeChiselRejectsTargetedReportBeforeOutput` | Canonical Ubuntu .NET Chiseled | Exact comprehensive-only report error and strict absence of Docker or OCI output |
@@ -26,8 +26,11 @@ It is intentionally separate from the network-independent fixture tests in
 
 The exact registry references are stored in
 [`fixtures/test-images.json`](./fixtures/test-images.json). Do not replace a
-digest with a mutable tag. Synthetic derivatives are built only from those
-pinned references and the pinned Copa Chisel tooling image.
+digest with a mutable tag. The apt-less full-status images are built locally
+from the pinned Ubuntu GA base using
+[`integration/chisel/fixtures/full-status-no-tools`](../../../integration/chisel/fixtures/full-status-no-tools);
+other synthetic derivatives use the pinned references and Copa Chisel tooling
+image.
 
 ## Prerequisites
 
@@ -88,9 +91,9 @@ COPA_CHISEL_SECONDARY_ARCHES=1 COPA_CHISEL_PATCH_TIMEOUT=75m \
 ```
 
 These opt-in cases re-cut the Canonical native image for ppc64le and s390x and
-comprehensively patch the Microsoft full-status image for arm/v7. They run under
-emulation and are separated from the default package run to keep its duration
-predictable.
+comprehensively patch the generated apt-less full-status fixture for arm/v7.
+They run under emulation and are separated from the default package run to keep
+its duration predictable.
 
 Allow approximately 75 to 115 minutes for the complete package, depending on
 registry, emulation, and Ubuntu/Debian archive performance. The tests are
@@ -103,13 +106,14 @@ tagged tooling image.
 The `test-chisel` job in `.github/workflows/build.yml` pulls
 `ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c`
 and runs the default package on an amd64 runner, including the real arm64
-Canonical, Microsoft, and community-image cases. The
+Canonical and community-image cases plus generated apt-less full-status
+fixtures. The
 `test-chisel-secondary-architectures` job executes the tooling image for 386,
-arm/v7, ppc64le, riscv64, and s390x, then runs the opt-in native and full-status
-patch tests for arm/v7, ppc64le, and s390x. The 386 and riscv64 coverage is
-currently limited to tooling-image execution plus Copa's architecture-mapping
-unit tests because no suitable digest-pinned real-image patch fixtures are in
-the suite. The publication workflow separately verifies every supported
+arm/v7, ppc64le, riscv64, and s390x, then runs native patch tests for ppc64le and
+s390x plus apt-less full-status patching for arm/v7. The 386 and riscv64 coverage
+is currently limited to tooling-image execution plus Copa's architecture-mapping
+unit tests because no suitable digest-pinned patch fixtures are in the suite.
+The publication workflow separately verifies every supported
 tooling-image platform, SBOM and provenance attestations,
 Chisel commit labels, the validator source checksum, and amd64/arm64 tooling
 runtime behavior.

@@ -158,8 +158,10 @@ jq -s '{
 
 ## Build the local synthetic fixtures
 
-The full-status Dockerfile defaults to an immutable Ubuntu 24.04 image index
-and does not access apt repositories:
+The full-status Dockerfile defaults to the immutable Ubuntu 24.04 GA image
+index. Its release-pocket package versions remain retrievable while current
+security versions provide deterministic patch targets. The fixture build does
+not access apt repositories:
 
 ```bash
 docker buildx build \
@@ -200,8 +202,8 @@ The previous blocker to executable native patch smoke tests has been removed.
 The `test/e2e/chisel` suite now validates:
 
 - comprehensive native re-cuts for Canonical and community images;
-- report-driven and comprehensive updates for Microsoft's apt-less full-status
-  layout;
+- report-driven and comprehensive updates for a locally built apt-less
+  full-status layout based on the pinned Ubuntu GA image;
 - runtime and image-configuration preservation;
 - absence of apt, dpkg, BusyBox, and shell tooling in patched outputs;
 - no package downgrades and complete native manifest package metadata;

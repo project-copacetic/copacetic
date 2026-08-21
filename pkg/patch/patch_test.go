@@ -24,6 +24,11 @@ import (
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
+const (
+	armArchitecture    = "arm"
+	linuxARMv7Platform = "linux/arm/v7"
+)
+
 func TestRemoveIfNotDebug(t *testing.T) {
 	// Test removing working folder when not in debug mode
 	t.Run("RemoveWorkingFolder", func(t *testing.T) {
@@ -295,6 +300,13 @@ func TestResolveSingleReportPlatform(t *testing.T) {
 				Config: unversioned.Config{Arch: "aarch64", Variant: "v8"},
 			}},
 			want: linuxARM64Platform,
+		},
+		{
+			name: "defaults implicit arm report variant to v7",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: armArchitecture},
+			}},
+			want: linuxARMv7Platform,
 		},
 		{
 			name:      "explicit platform",

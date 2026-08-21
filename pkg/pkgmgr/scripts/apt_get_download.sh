@@ -12,6 +12,8 @@ RESOLVER_STATUS_FILE=${RESOLVER_STATUS_FILE:-$DOWNLOAD_DIR/resolver-status}
 TARGET_DPKG_ARCH=${TARGET_DPKG_ARCH:-}
 BUSYBOX=${BUSYBOX:-/bin/busybox}
 LIFECYCLE_PACKAGES=${LIFECYCLE_PACKAGES-dpkg dash init-system-helpers debconf perl-base tar apt apt-utils bash busybox busybox-static}
+MISSING_DPKG_TOOLS=${MISSING_DPKG_TOOLS:-}
+TARGET_TOOL_PATHS=${TARGET_TOOL_PATHS:-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin}
 DPKG_TOOL=${DPKG_TOOL:-$(command -v dpkg)}
 DPKG_DEB_TOOL=${DPKG_DEB_TOOL:-$(command -v dpkg-deb)}
 
@@ -630,6 +632,66 @@ assert_target_path_safe() {
     esac
 }
 
+snapshot_missing_tool_paths() {
+    missing_tool_backup=$DOWNLOAD_DIR/missing-tool-backup
+    missing_tool_remove=$DOWNLOAD_DIR/missing-tool-remove
+    missing_tool_restore=$DOWNLOAD_DIR/missing-tool-restore
+    tool_directories=$DOWNLOAD_DIR/target-tool-directories
+    mkdir -p "$missing_tool_backup"
+    : > "$missing_tool_remove"
+    : > "$missing_tool_restore"
+    printf '%s\n' "$TARGET_TOOL_PATHS" | tr ':' '\n' > "$tool_directories"
+
+    while IFS= read -r tool_directory || [ -n "$tool_directory" ]; do
+        case "$tool_directory" in
+            /*) ;;
+            *) echo "invalid target tool directory: $tool_directory" >&2; exit 1 ;;
+        esac
+        for missing_tool in $MISSING_DPKG_TOOLS; do
+            case "$missing_tool" in
+                *[!a-zA-Z0-9+._-]*) echo "invalid missing dpkg tool name: $missing_tool" >&2; exit 1 ;;
+            esac
+            relative_path=$tool_directory/$missing_tool
+            target_path=$DPKG_ROOT$relative_path
+            assert_target_path_safe "$target_path"
+            if [ -x "$target_path" ]; then
+                echo "target dpkg tool marked missing is executable: $relative_path" >&2
+                exit 1
+            fi
+            if [ -e "$target_path" ] || [ -L "$target_path" ]; then
+                backup_path=$missing_tool_backup$relative_path
+                mkdir -p "$(dirname "$backup_path")"
+                cp -a "$target_path" "$backup_path"
+                printf '%s\n' "$relative_path" >> "$missing_tool_restore"
+            else
+                printf '%s\n' "$relative_path" >> "$missing_tool_remove"
+            fi
+        done
+    done < "$tool_directories"
+
+    sort -u "$missing_tool_remove" -o "$missing_tool_remove"
+    sort -u "$missing_tool_restore" -o "$missing_tool_restore"
+}
+
+restore_missing_tool_paths() {
+    while IFS= read -r relative_path || [ -n "$relative_path" ]; do
+        [ -n "$relative_path" ] || continue
+        target_path=$DPKG_ROOT$relative_path
+        assert_target_path_safe "$target_path"
+        rm -rf "$target_path"
+    done < "$missing_tool_remove"
+
+    while IFS= read -r relative_path || [ -n "$relative_path" ]; do
+        [ -n "$relative_path" ] || continue
+        target_path=$DPKG_ROOT$relative_path
+        backup_path=$missing_tool_backup$relative_path
+        assert_target_path_safe "$target_path"
+        rm -rf "$target_path"
+        mkdir -p "$(dirname "$target_path")"
+        cp -a "$backup_path" "$target_path"
+    done < "$missing_tool_restore"
+}
+
 filter_status_to_final_inventory() {
     current_status=$DPKG_ROOT/var/lib/dpkg/status
     filtered_status=$DOWNLOAD_DIR/filtered-status
@@ -792,6 +854,7 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
     : > "$transient_remove"; : > "$transient_restore"; : > "$transient_directories"
     cp "$DPKG_ROOT/var/lib/dpkg/status" "$original_status"
     dpkg_root_real=$(readlink -f "$DPKG_ROOT")
+    snapshot_missing_tool_paths
 
     for deb in ./*.deb; do
         [ -f "$deb" ] || continue
@@ -1143,6 +1206,7 @@ if [ "$DPKG_INSTALLATION_MODE" = "external-full-status" ]; then
         if [ -d "$target" ] && [ ! -L "$target" ]; then chmod "$mode" "$target"; chown "$uid:$gid" "$target"; fi
     done < "$transient_directories"
 
+    restore_missing_tool_paths
     filter_status_to_final_inventory
     rm -rf "$sanitize_root"
 else

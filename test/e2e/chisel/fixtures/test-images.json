@@ -59,37 +59,14 @@
     "preserveTree": "Sonarr/"
   },
   {
-    "id": "microsoft-full-status-dotnet",
-    "layout": "external-full-status",
-    "reference": "mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled@sha256:e41fc0f37cc2ac256aa3969d14d73328699ab1d39909abd5df3e62a60af5be68",
+    "id": "ubuntu-full-status-base",
+    "layout": "external-full-status-fixture-base",
+    "reference": "docker.io/library/ubuntu:24.04@sha256:562456a05a0dbd62a671c1854868862a4687bf979a96d48ae8e766642cd911e8",
     "platform": "linux/amd64",
     "expectedUpgradePackages": [
-      "libc6",
-      "libssl3"
+      "libc6"
     ],
-    "runtimeContains": "Microsoft.NETCore.App"
-  },
-  {
-    "id": "microsoft-full-status-dotnet-arm64",
-    "layout": "external-full-status",
-    "reference": "mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled@sha256:d98351c2f260cc2bbc40fdc8f7ffdd74c4fc8215fb27abf5ee011d8d25777b92",
-    "platform": "linux/arm64",
-    "expectedUpgradePackages": [
-      "libc6",
-      "libssl3"
-    ],
-    "runtimeContains": "Microsoft.NETCore.App"
-  },
-  {
-    "id": "microsoft-full-status-dotnet-arm-v7",
-    "layout": "external-full-status",
-    "reference": "mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled@sha256:2c8580f2701cbdc0c721ce4f94aae90f97a2d801194f974d1b02f7cc5fb6190e",
-    "platform": "linux/arm/v7",
-    "expectedUpgradePackages": [
-      "libc6",
-      "libssl3"
-    ],
-    "runtimeContains": "Microsoft.NETCore.App"
+    "preserveTree": "opt/copa-fixture/"
   },
   {
     "id": "canonical-native-index",

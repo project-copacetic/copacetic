@@ -237,30 +237,30 @@ func TestNativeChiselSecondaryArchitecturesOCI(t *testing.T) {
 }
 
 func TestAptlessFullStatusComprehensiveFromBaselineARM64(t *testing.T) {
-	testAptlessFullStatusComprehensiveFromBaseline(t, "microsoft-full-status-dotnet-arm64", "arm64")
+	testAptlessFullStatusComprehensiveFromBaseline(t, platformLinuxARM64, "arm64")
 }
 
 func TestAptlessFullStatusComprehensiveFromBaselineARMv7(t *testing.T) {
 	requireSecondaryArchitectureTests(t)
-	testAptlessFullStatusComprehensiveFromBaseline(t, "microsoft-full-status-dotnet-arm-v7", "arm")
+	testAptlessFullStatusComprehensiveFromBaseline(t, "linux/arm/v7", "arm")
 }
 
-func testAptlessFullStatusComprehensiveFromBaseline(t *testing.T, fixtureID, binfmtArchitecture string) {
+func testAptlessFullStatusComprehensiveFromBaseline(t *testing.T, platform, binfmtArchitecture string) {
 	t.Helper()
 	if testing.Short() {
-		t.Skip("skipping real-image Chisel e2e test in short mode")
+		t.Skip("skipping apt-less full-status e2e test in short mode")
 	}
 	requireTool(t, "docker")
-	fixture := loadFixture(t, fixtureID)
-	ensurePlatformExecution(t, fixture.Platform, binfmtArchitecture)
+	ensurePlatformExecution(t, platform, binfmtArchitecture)
 
-	pullImage(t, fixture.Reference, fixture.Platform)
+	fixture := buildAptlessFullStatusFixture(t, platform)
 	before := captureImage(t, fixture.Reference, fixture.Platform)
 	assertFullStatusLayout(t, &before)
 	beforePackages := parseDPKGStatus(t, before.DPKGStatus)
-	beforeRuntime := runDocker(t, fixture.Platform, fixture.Reference, "--info")
+	beforeTree := canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree)
 
-	patched := uniqueImage("full-status-comprehensive-arm64")
+	platformSuffix := strings.ReplaceAll(strings.TrimPrefix(platform, "linux/"), "/", "-")
+	patched := uniqueImage("full-status-comprehensive-" + platformSuffix)
 	t.Cleanup(func() { removeImage(patched) })
 	patchImage(t,
 		"patch",
@@ -277,12 +277,11 @@ func testAptlessFullStatusComprehensiveFromBaseline(t *testing.T, fixtureID, bin
 	for _, name := range fixture.ExpectedUpgradePackages {
 		requireVersionGreater(t, afterPackages[name].Version, beforePackages[name].Version, name)
 	}
-	afterRuntime := runDocker(t, fixture.Platform, patched, "--info")
-	assert.Equal(t, beforeRuntime, afterRuntime, "comprehensive OS patching must not replace the separately copied .NET runtime")
+	assert.Equal(t, beforeTree, canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "comprehensive patch changed unmanaged fixture content")
 	assertNoUpdates(t,
 		"patch",
 		"--image", patched,
-		"--tag", uniqueImage("full-status-comprehensive-arm64-repatch"),
+		"--tag", uniqueImage("full-status-comprehensive-"+platformSuffix+"-repatch"),
 		"--platform", fixture.Platform,
 	)
 }
@@ -565,16 +564,38 @@ func buildImageFromDockerfile(t *testing.T, prefix, platform, dockerfile string,
 		require.NoError(t, os.MkdirAll(filepath.Dir(filename), 0o755))
 		require.NoError(t, os.WriteFile(filename, data, 0o600))
 	}
+	return buildImageFromContext(t, prefix, platform, contextDir)
+}
+
+func buildAptlessFullStatusFixture(t *testing.T, platform string) realImageFixture {
+	t.Helper()
+	fixture := loadFixture(t, "ubuntu-full-status-base")
+	baseReference := fixture.Reference
+	fixture.Platform = platform
+	fixture.Reference = buildImageFromContext(
+		t,
+		"aptless-full-status-"+strings.ReplaceAll(strings.TrimPrefix(platform, "linux/"), "/", "-"),
+		platform,
+		filepath.Join("..", "..", "..", "integration", "chisel", "fixtures", "full-status-no-tools"),
+		"--build-arg", "UBUNTU_IMAGE="+baseReference,
+	)
+	return fixture
+}
+
+func buildImageFromContext(t *testing.T, prefix, platform, contextDir string, extraArgs ...string) string {
+	t.Helper()
 	image := uniqueImage(prefix)
 	t.Cleanup(func() { removeImage(image) })
-	run(t,
-		"docker", "buildx", "build",
+	args := []string{
+		"buildx", "build",
 		"--load",
 		"--provenance=false",
 		"--platform", platform,
 		"--tag", image,
-		contextDir,
-	)
+	}
+	args = append(args, extraArgs...)
+	args = append(args, contextDir)
+	run(t, "docker", args...)
 	return image
 }
 
