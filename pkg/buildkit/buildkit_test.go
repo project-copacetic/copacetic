@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -615,4 +616,27 @@ func TestOCIExporterAttrs(t *testing.T) {
 			assert.Equal(t, tc.wantForceCompression, hasForceCompression)
 		})
 	}
+}
+
+func TestPlatformsFromIndexManifest(t *testing.T) {
+	linux := func(arch, variant string) *v1.Platform {
+		return &v1.Platform{OS: "linux", Architecture: arch, Variant: variant}
+	}
+
+	manifest := &v1.IndexManifest{
+		Manifests: []v1.Descriptor{
+			{Platform: linux("amd64", "")},
+			{Platform: nil}, // e.g. attestation or provenance entry
+			{Platform: linux("arm64", "v8")},
+			{Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"}},
+		},
+	}
+
+	got := platformsFromIndexManifest(manifest)
+
+	want := []types.PatchPlatform{
+		{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}},
+		{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}, // v8 variant stripped
+	}
+	assert.Equal(t, want, got)
 }

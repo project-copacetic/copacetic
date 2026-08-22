@@ -318,6 +318,47 @@ func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
 	return nil, fmt.Errorf("single-platform image")
 }
 
+// platformsFromIndexManifest converts the entries of a multi-platform image
+// index into the platforms copa can patch. Entries without a platform (for
+// example attestation or provenance entries) or with an unknown platform are
+// skipped, since an image index can legitimately contain them.
+func platformsFromIndexManifest(manifest *v1.IndexManifest) []types.PatchPlatform {
+	var platforms []types.PatchPlatform
+	for i := range manifest.Manifests {
+		m := &manifest.Manifests[i]
+
+		// Skip manifests with no platform (e.g. attestation or provenance
+		// entries). Reading m.Platform below would otherwise panic.
+		if m.Platform == nil {
+			log.Debugf("Skipping manifest with no platform")
+			continue
+		}
+		if m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
+			log.Debugf("Skipping manifest with unknown platform: %s/%s", m.Platform.OS, m.Platform.Architecture)
+			continue
+		}
+
+		patchPlatform := types.PatchPlatform{
+			Platform: specs.Platform{
+				OS:           m.Platform.OS,
+				Architecture: m.Platform.Architecture,
+				Variant:      m.Platform.Variant,
+				OSVersion:    m.Platform.OSVersion,
+				OSFeatures:   m.Platform.OSFeatures,
+			},
+			ReportFile:     "",    // No report file for platforms discovered from reference
+			ShouldPreserve: false, // Default to false, will be set appropriately later
+		}
+		if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
+			// some scanners may not add v8 to arm64 reports, so we
+			// need to remove it here to maintain consistency
+			patchPlatform.Variant = ""
+		}
+		platforms = append(platforms, patchPlatform)
+	}
+	return platforms
+}
+
 // DiscoverPlatformsFromReference discovers platforms from both local and remote manifests.
 // It first attempts to inspect the manifest locally using Docker API
 // to get raw manifest data and determine if it's multi-platform.
@@ -420,6 +461,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			platforms = append(platforms, patchPlatform)
 		}
 		return platforms, nil
+		return platformsFromIndexManifest(manifest), nil
 	}
 
 	// For single-platform images, try to get the image config to extract platform information
