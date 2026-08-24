@@ -1029,3 +1029,25 @@ func TestFilterGoDowngrades(t *testing.T) {
 		})
 	}
 }
+
+func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
+	config := &buildkit.Config{}
+	currentState := &config.ImageState
+	manager := &golangManager{}
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name:             "github.com/gin-gonic/gin",
+				InstalledVersion: "v1.9.1",
+				FixedVersion:     "v1.7.7",
+				Type:             utils.GoModules,
+			},
+		},
+	}
+
+	state, errPkgs, err := manager.InstallUpdates(t.Context(), currentState, manifest, false)
+
+	require.NoError(t, err)
+	assert.Empty(t, errPkgs)
+	assert.Same(t, currentState, state)
+}
