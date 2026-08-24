@@ -1158,6 +1158,21 @@ replace github.com/pkg/legacy => golang.org/x/net v0.23.0
 			wantErr: false,
 		},
 		{
+			name: "required module resolved through cross-module replace",
+			goMod: `module example.com/app
+
+go 1.22
+
+require github.com/pkg/legacy v0.17.0
+
+replace github.com/pkg/legacy => golang.org/x/net v0.23.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/pkg/legacy", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
+		},
+		{
 			name: "replace directive pins version below target",
 			goMod: `module example.com/app
 
@@ -1174,7 +1189,7 @@ replace golang.org/x/net => golang.org/x/net v0.17.0
 			errSubstr: "v0.17.0",
 		},
 		{
-			name: "local replace directive falls back to require",
+			name: "local replace directive cannot prove applied version",
 			goMod: `module example.com/app
 
 go 1.22
@@ -1182,6 +1197,22 @@ go 1.22
 require golang.org/x/net v0.23.0
 
 replace golang.org/x/net => ./vendored/net
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "local replacement",
+		},
+		{
+			name: "version-specific replace for unselected version is ignored",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+
+replace golang.org/x/net v0.17.0 => golang.org/x/net v0.10.0
 `,
 			updates: unversioned.LangUpdatePackages{
 				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
