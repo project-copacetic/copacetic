@@ -1055,3 +1055,42 @@ func TestRebuilderUsesGoModTidyDashE(t *testing.T) {
 	assert.NotContains(t, body, `"%s mod tidy"`,
 		"rebuilder.go must not invoke bare 'go mod tidy' (regression: missing -e flag)")
 }
+
+// TestGenerateGoModDeterministicOrder guards against the require block being
+// emitted in Go map iteration order, which made the synthesized go.mod differ
+// byte-for-byte between runs and broke build reproducibility.
+func TestGenerateGoModDeterministicOrder(t *testing.T) {
+	buildInfo := &BuildInfo{
+		ModulePath: "github.com/example/app",
+		GoVersion:  "go1.22.0",
+		Dependencies: map[string]string{
+			"github.com/zzz/last":  "v1.0.0",
+			"github.com/aaa/first": "v2.0.0",
+			"golang.org/x/term":    "v0.20.0",
+		},
+	}
+	updates := map[string]string{
+		"golang.org/x/net":  "0.56.0",
+		"golang.org/x/sys":  "0.44.0",
+		"golang.org/x/text": "0.39.0",
+	}
+
+	rebuilder := NewRebuilder()
+	want := rebuilder.generateGoMod(buildInfo, updates)
+
+	// Existing dependencies sort before the updated modules, and each group is
+	// ordered by module path.
+	requireBlock := []string{
+		"\tgithub.com/aaa/first v2.0.0\n",
+		"\tgithub.com/zzz/last v1.0.0\n",
+		"\tgolang.org/x/term v0.20.0\n",
+		"\tgolang.org/x/net v0.56.0\n",
+		"\tgolang.org/x/sys v0.44.0\n",
+		"\tgolang.org/x/text v0.39.0\n",
+	}
+	assert.Contains(t, want, strings.Join(requireBlock, ""))
+
+	for i := 0; i < 20; i++ {
+		assert.Equal(t, want, rebuilder.generateGoMod(buildInfo, updates))
+	}
+}

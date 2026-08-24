@@ -957,6 +957,7 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
+
 	// Run mod tidy to sync go.sum after dependency updates.
 	// This is needed both for generated go.mod and for cloned source where
 	// the resolved graph may include dependencies not in the original go.sum.
@@ -1077,7 +1078,8 @@ func (r *Rebuilder) generateGoMod(buildInfo *BuildInfo, updates map[string]strin
 	if len(buildInfo.Dependencies) > 0 || len(updates) > 0 {
 		sb.WriteString("require (\n")
 
-		for module, version := range buildInfo.Dependencies {
+		for _, module := range sortedKeys(buildInfo.Dependencies) {
+			version := buildInfo.Dependencies[module]
 			if _, hasUpdate := updates[module]; hasUpdate {
 				continue
 			}
@@ -1087,14 +1089,25 @@ func (r *Rebuilder) generateGoMod(buildInfo *BuildInfo, updates map[string]strin
 			fmt.Fprintf(&sb, "\t%s %s\n", module, version)
 		}
 
-		for module, version := range updates {
-			fmt.Fprintf(&sb, "\t%s %s\n", module, normalizeVersion(version))
+		for _, module := range sortedKeys(updates) {
+			fmt.Fprintf(&sb, "\t%s %s\n", module, normalizeVersion(updates[module]))
 		}
 
 		sb.WriteString(")\n")
 	}
 
 	return sb.String()
+}
+
+// sortedKeys returns the map's keys in ascending order so callers emit build
+// steps and file contents deterministically instead of in map iteration order.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // constructBuildCommand constructs a go build command from build info.
