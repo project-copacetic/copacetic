@@ -1063,122 +1063,213 @@ func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
 	assert.Same(t, currentState, state)
 }
 
-func TestAppendIncompatibleIfNeeded(t *testing.T) {
+// TestVerifyGoModUpdates asserts that the post-update go.mod check catches
+// updates that did not land. `go mod tidy -e` drops requirements for modules
+// no longer imported by reachable code, so a `go get` bump can be silently
+// reverted and the package still reported as patched.
+func TestVerifyGoModUpdates(t *testing.T) {
 	tests := []struct {
-		name       string
-		modulePath string
-		version    string
-		expected   string
+		name      string
+		goMod     string
+		updates   unversioned.LangUpdatePackages
+		wantErr   bool
+		errSubstr string
 	}{
 		{
-			name:       "pre-module major v2+ without path suffix",
-			modulePath: "github.com/docker/docker",
-			version:    "v28.0.0",
-			expected:   "v28.0.0+incompatible",
+			name: "module present at target version",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
 		},
 		{
-			name:       "module path with matching major suffix",
-			modulePath: "github.com/foo/bar/v2",
-			version:    "v2.1.0",
-			expected:   "v2.1.0",
+			name: "module dropped by tidy",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/text v0.14.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "golang.org/x/net",
 		},
 		{
-			name:       "major v0",
-			modulePath: "github.com/foo/bar",
-			version:    "v0.9.1",
-			expected:   "v0.9.1",
+			name: "landed version below target",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.17.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "v0.17.0",
 		},
 		{
-			name:       "major v1",
-			modulePath: "github.com/foo/bar",
-			version:    "v1.2.3",
-			expected:   "v1.2.3",
+			name: "landed version above target",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.25.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
 		},
 		{
-			name:       "already suffixed",
-			modulePath: "github.com/docker/docker",
-			version:    "v28.0.0+incompatible",
-			expected:   "v28.0.0+incompatible",
+			name: "target version without v prefix",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "0.23.0"},
+			},
+			wantErr: false,
 		},
 		{
-			name:       "pseudo-version at v0",
-			modulePath: "github.com/foo/bar",
-			version:    "v0.0.0-20230101120000-abcdef123456",
-			expected:   "v0.0.0-20230101120000-abcdef123456",
+			name: "resolved via replace directive",
+			goMod: `module example.com/app
+
+go 1.22
+
+require github.com/pkg/legacy v1.0.0
+
+replace github.com/pkg/legacy => golang.org/x/net v0.23.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
 		},
 		{
-			name:       "pseudo-version at major v2 without path suffix",
-			modulePath: "github.com/foo/bar",
-			version:    "v2.0.1-0.20230101120000-abcdef123456",
-			expected:   "v2.0.1-0.20230101120000-abcdef123456+incompatible",
+			name: "replace directive pins version below target",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+
+replace golang.org/x/net => golang.org/x/net v0.17.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "v0.17.0",
 		},
 		{
-			name:       "pseudo-version at major v2 with path suffix",
-			modulePath: "github.com/foo/bar/v2",
-			version:    "v2.0.1-0.20230101120000-abcdef123456",
-			expected:   "v2.0.1-0.20230101120000-abcdef123456",
+			name: "local replace directive falls back to require",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+
+replace golang.org/x/net => ./vendored/net
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
 		},
 		{
-			name:       "invalid version left unchanged",
-			modulePath: "github.com/foo/bar",
-			version:    "not-a-version",
-			expected:   "not-a-version",
+			name: "incompatible suffix compares by semver core",
+			goMod: `module example.com/app
+
+go 1.22
+
+require github.com/docker/docker v25.0.6+incompatible
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/docker/docker", FixedVersion: "v25.0.6+incompatible"},
+			},
+			wantErr: false,
 		},
 		{
-			name:       "empty version left unchanged",
-			modulePath: "github.com/foo/bar",
-			version:    "",
-			expected:   "",
+			name: "incompatible suffix below target",
+			goMod: `module example.com/app
+
+go 1.22
+
+require github.com/docker/docker v24.0.9+incompatible
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/docker/docker", FixedVersion: "v25.0.6+incompatible"},
+			},
+			wantErr:   true,
+			errSubstr: "github.com/docker/docker",
 		},
 		{
-			// A version that already carries build metadata must not gain a
-			// second '+' component, which would be invalid semver.
-			name:       "existing build metadata left unchanged",
-			modulePath: "github.com/foo/bar",
-			version:    "v2.0.0+build1",
-			expected:   "v2.0.0+build1",
+			name: "empty updates",
+			goMod: `module example.com/app
+
+go 1.22
+`,
+			updates: unversioned.LangUpdatePackages{},
+			wantErr: false,
+		},
+		{
+			name: "updates without fixed version are skipped",
+			goMod: `module example.com/app
+
+go 1.22
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: ""},
+			},
+			wantErr: false,
+		},
+		{
+			name:  "unparseable go.mod",
+			goMod: "this is not a go.mod\n",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "go.mod",
+		},
+		{
+			name: "multiple modules, one missing",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+				{Name: "golang.org/x/text", FixedVersion: "v0.14.0"},
+			},
+			wantErr:   true,
+			errSubstr: "golang.org/x/text",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := appendIncompatibleIfNeeded(tt.modulePath, tt.version)
-			assert.Equal(t, tt.expected, result, "Module: %s, version: %s", tt.modulePath, tt.version)
+			err := verifyGoModUpdates([]byte(tt.goMod), tt.updates)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errSubstr)
+				return
+			}
+			assert.NoError(t, err)
 		})
 	}
-}
-
-// TestIncompatibleVersionsPassValidation ensures the +incompatible build tag
-// survives the existing version validation and cleaning paths.
-func TestIncompatibleVersionsPassValidation(t *testing.T) {
-	assert.True(t, isValidGoVersion("v28.0.0+incompatible"))
-	assert.NoError(t, validateGoVersion("v28.0.0+incompatible"))
-	assert.Equal(t, "v28.0.0+incompatible", cleanGoVersion("v28.0.0+incompatible"))
-}
-
-// TestBuildBinaryUpdateMap asserts that the binary-rebuild path normalizes the
-// versions it records as module requirements: a missing 'v' prefix is added and
-// pre-module major>=2 dependencies gain the +incompatible build tag, matching
-// the `go get` spec construction used by the in-image module path.
-func TestBuildBinaryUpdateMap(t *testing.T) {
-	updates := unversioned.LangUpdatePackages{
-		{Name: "github.com/docker/docker", FixedVersion: "v28.0.0"},
-		{Name: "github.com/moby/moby", FixedVersion: "28.0.0"},
-		{Name: "github.com/foo/bar/v2", FixedVersion: "v2.1.0"},
-		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
-		{Name: "github.com/already/tagged", FixedVersion: "v3.1.0+incompatible"},
-		{Name: "github.com/no/fix", FixedVersion: ""},
-		{Name: "k8s.io/kubernetes", FixedVersion: "v1.30.0"},
-	}
-
-	got := buildBinaryUpdateMap(updates)
-
-	want := map[string]string{
-		"github.com/docker/docker":  "v28.0.0+incompatible",
-		"github.com/moby/moby":      "v28.0.0+incompatible",
-		"github.com/foo/bar/v2":     "v2.1.0",
-		"golang.org/x/net":          "v0.23.0",
-		"github.com/already/tagged": "v3.1.0+incompatible",
-	}
-	assert.Equal(t, want, got)
 }
