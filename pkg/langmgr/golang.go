@@ -13,6 +13,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
@@ -211,6 +212,64 @@ func appendIncompatibleIfNeeded(modulePath, version string) string {
 // working binary.
 func buildGoUpdateCmd(modPath, allGetCmd string) string {
 	return fmt.Sprintf(`sh -c 'cd %s && %s && go mod tidy -e'`, modPath, allGetCmd)
+}
+
+// verifyGoModUpdates confirms that the requested version bumps are reflected in
+// the go.mod produced by the update step. `go mod tidy -e` removes requirements
+// for modules that are no longer imported by reachable code, so a successful
+// `go get` can be silently reverted and the package still reported as patched.
+// The effective version of a module is the version from a replace directive
+// targeting it, if any, otherwise its require entry.
+func verifyGoModUpdates(goModContent []byte, updates unversioned.LangUpdatePackages) error {
+	hasTargets := false
+	for _, u := range updates {
+		if u.FixedVersion != "" {
+			hasTargets = true
+			break
+		}
+	}
+	if !hasTargets {
+		return nil
+	}
+
+	f, err := modfile.Parse("go.mod", goModContent, nil)
+	if err != nil {
+		return fmt.Errorf("failed to parse go.mod after update: %w", err)
+	}
+
+	required := make(map[string]string, len(f.Require))
+	for _, r := range f.Require {
+		if r != nil && r.Mod.Path != "" {
+			required[r.Mod.Path] = r.Mod.Version
+		}
+	}
+	// A replace directive pointing at the module overrides its require entry.
+	// Filesystem replacements carry no version, so they leave the require entry
+	// as the effective version.
+	replaced := make(map[string]string, len(f.Replace))
+	for _, rep := range f.Replace {
+		if rep != nil && rep.New.Path != "" && rep.New.Version != "" {
+			replaced[rep.New.Path] = rep.New.Version
+		}
+	}
+
+	for _, u := range updates {
+		if u.FixedVersion == "" {
+			continue
+		}
+		landed, ok := replaced[u.Name]
+		if !ok {
+			landed, ok = required[u.Name]
+		}
+		if !ok || landed == "" {
+			return fmt.Errorf("module %s not found in go.mod after update; the requested version %s was not applied or was removed by 'go mod tidy'", u.Name, u.FixedVersion)
+		}
+		if isLessThanGoVersion(landed, u.FixedVersion) {
+			return fmt.Errorf("module %s is at %s in go.mod after update, expected %s or newer", u.Name, landed, u.FixedVersion)
+		}
+	}
+
+	return nil
 }
 
 // filterGoPackages filters for Go module and binary packages.
@@ -1012,6 +1071,19 @@ func (gm *golangManager) updateGoModule(
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
+	// Confirm the bumps survived 'go mod tidy -e' instead of trusting the exit
+	// code. Skipped for workspaces: the go.work root has no authoritative
+	// go.mod, since requirements land in the member modules.
+	if !isWorkspace {
+		goModBytes, err := buildkit.ExtractFileFromState(ctx, gm.config.Client, &state, modPath+"/go.mod")
+		if err != nil {
+			return state, fmt.Errorf("failed to read %s/go.mod after update: %w", modPath, err)
+		}
+		if err := verifyGoModUpdates(goModBytes, updates); err != nil {
+			return state, err
+		}
+	}
+
 	// Check for vendor directory and update if present
 	hasVendor, _ := gm.detectVendor(ctx, &state, modPath)
 	if hasVendor {
@@ -1131,6 +1203,15 @@ func (gm *golangManager) upgradePackagesWithTooling(
 			llb.Shlex(updateCmd),
 			llb.WithProxy(utils.GetProxy()),
 		).Root()
+
+		// Confirm the bumps survived 'go mod tidy -e' instead of trusting the exit code.
+		goModBytes, extractErr := buildkit.ExtractFileFromState(ctx, gm.config.Client, &toolingState, "/workspace/go.mod")
+		if extractErr != nil {
+			return currentState, nil, fmt.Errorf("failed to read go.mod after update at %s: %w", modPath, extractErr)
+		}
+		if verifyErr := verifyGoModUpdates(goModBytes, updates); verifyErr != nil {
+			return currentState, nil, fmt.Errorf("go module update verification failed at %s: %w", modPath, verifyErr)
+		}
 
 		// Check if vendor exists in original and update if so
 		hasVendor, _ := gm.detectVendor(ctx, &state, modPath)
