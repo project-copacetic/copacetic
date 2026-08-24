@@ -10,7 +10,6 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
 func TestBuildTargetRepository(t *testing.T) {
@@ -233,7 +232,7 @@ charts:
 func TestGenerateAndPushPatchedChartsRejectsFailedChartImage(t *testing.T) {
 	resolution := chartResolution{
 		Spec:  ChartSpec{Name: "app", Version: "1.0.0", Repository: "oci://example.com/charts"},
-		Chart: &helmchart.Chart{Metadata: &helmchart.Metadata{Name: "app", Version: "1.0.0"}},
+		Chart: &helm.Chart{Metadata: helm.Metadata{Name: "app", Version: "1.0.0"}},
 		Images: []helm.ChartImage{
 			{Repository: "nginx", Tag: "1.0"},
 			{Repository: "redis", Tag: "7.0"},

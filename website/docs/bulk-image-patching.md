@@ -20,6 +20,8 @@ resulting limitations.
 
 Chart-aware patching discovers the images rendered by a Helm chart, patches them in their original repositories, and publishes a self-contained wrapper chart with the patched image overrides. Set `COPA_EXPERIMENTAL=1` and use `--push`; Copa will not publish a wrapper chart that points to local-only images.
 
+Chart patching requires the `helm` CLI in `PATH`. Copa invokes Helm directly for chart pull, rendering, packaging, and OCI push operations, so the CLI uses your existing Helm repository and registry credentials.
+
 ### Single chart
 
 ```bash

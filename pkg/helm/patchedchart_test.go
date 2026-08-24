@@ -1,14 +1,13 @@
 package helm
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	helmchart "helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chart/loader"
-	"helm.sh/helm/v3/pkg/chartutil"
 )
 
 // --- ResolveImageValuePaths tests ---
@@ -175,13 +174,11 @@ func TestResolveImageValuePaths_ReversePrefix(t *testing.T) {
 // --- BuildPatchedChart tests ---
 
 func TestBuildPatchedChart_Basic(t *testing.T) {
-	original := &helmchart.Chart{
-		Metadata: &helmchart.Metadata{
-			APIVersion: "v2",
-			Name:       "vector",
-			Version:    "0.53.0",
-		},
-	}
+	original := &Chart{Metadata: Metadata{
+		APIVersion: "v2",
+		Name:       "vector",
+		Version:    "0.53.0",
+	}}
 	spec := ChartSourceSpec{
 		Name:       "vector",
 		Version:    "0.53.0",
@@ -236,13 +233,11 @@ func TestBuildPatchedChart_Basic(t *testing.T) {
 }
 
 func TestBuildPatchedChart_MultipleImages(t *testing.T) {
-	original := &helmchart.Chart{
-		Metadata: &helmchart.Metadata{
-			APIVersion: "v2",
-			Name:       "myapp",
-			Version:    "2.0.0",
-		},
-	}
+	original := &Chart{Metadata: Metadata{
+		APIVersion: "v2",
+		Name:       "myapp",
+		Version:    "2.0.0",
+	}}
 	spec := ChartSourceSpec{
 		Name:       "myapp",
 		Version:    "2.0.0",
@@ -295,13 +290,11 @@ func TestBuildPatchedChart_NilChart(t *testing.T) {
 }
 
 func TestBuildPatchedChart_NoMatchingMappings(t *testing.T) {
-	original := &helmchart.Chart{
-		Metadata: &helmchart.Metadata{
-			APIVersion: "v2",
-			Name:       "myapp",
-			Version:    "1.0.0",
-		},
-	}
+	original := &Chart{Metadata: Metadata{
+		APIVersion: "v2",
+		Name:       "myapp",
+		Version:    "1.0.0",
+	}}
 	spec := ChartSourceSpec{Name: "myapp", Version: "1.0.0", Repository: "oci://example.com/charts"}
 
 	// Value paths exist but no matching mappings
@@ -315,7 +308,7 @@ func TestBuildPatchedChart_NoMatchingMappings(t *testing.T) {
 }
 
 func TestBuildPatchedChart_RejectsMissingTagPath(t *testing.T) {
-	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	original := &Chart{Metadata: Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
 	_, err := BuildPatchedChart(original, ChartSourceSpec{Repository: "oci://example.com/charts"}, []ImageMapping{{
 		OriginalRepo: "nginx", OriginalTag: "1.0.0", PatchedRepo: "nginx", PatchedTag: "1.0.0-patched",
 	}}, []ValuePathMapping{{ImageRepo: "nginx", ImageTag: "1.0.0", RepositoryPath: "image.repository"}})
@@ -323,7 +316,7 @@ func TestBuildPatchedChart_RejectsMissingTagPath(t *testing.T) {
 }
 
 func TestBuildPatchedChart_SanitizesSourceRepository(t *testing.T) {
-	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	original := &Chart{Metadata: Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
 	repository := "https://" + "user:" + "token@" + "example.test/charts?signature=" + "secret#fragment"
 	chart, err := BuildPatchedChart(original, ChartSourceSpec{Repository: repository}, nil, nil)
 	require.NoError(t, err)
@@ -417,7 +410,7 @@ func TestResolveImageValuePaths_NameSchema(t *testing.T) {
 }
 
 func TestBuildPatchedChart_RegistryRepositorySchema(t *testing.T) {
-	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "nginx", Version: "1.0.0"}}
+	original := &Chart{Metadata: Metadata{APIVersion: "v2", Name: "nginx", Version: "1.0.0"}}
 	images := []ChartImage{{Repository: "docker.io/bitnami/nginx", Tag: "1.0.0"}}
 	paths, err := ResolveImageValuePaths(map[string]interface{}{"image": map[string]interface{}{
 		"registry": "docker.io", "repository": "bitnami/nginx", "tag": "1.0.0",
@@ -436,8 +429,8 @@ func TestBuildPatchedChart_RegistryRepositorySchema(t *testing.T) {
 	assert.Equal(t, "ghcr.io", image["registry"])
 	assert.Equal(t, "acme/nginx", image["repository"])
 	assert.Equal(t, "1.0.0-patched", image["tag"])
-	require.Len(t, patched.Dependencies(), 1)
-	assert.Same(t, original, patched.Dependencies()[0])
+	require.Len(t, patched.Metadata.Dependencies, 1)
+	assert.Equal(t, "nginx", patched.Metadata.Dependencies[0].Name)
 }
 
 func TestResolveImageValuePaths_UsesTagToDisambiguate(t *testing.T) {
@@ -461,7 +454,7 @@ func TestResolveImageValuePaths_RejectsAmbiguousPaths(t *testing.T) {
 }
 
 func TestBuildPatchedChart_ScalarImageSchema(t *testing.T) {
-	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+	original := &Chart{Metadata: Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
 	images := []ChartImage{{Repository: "ghcr.io/acme/app", Tag: "v1"}}
 	paths, err := ResolveImageValuePaths(map[string]interface{}{"workload": map[string]interface{}{"image": "ghcr.io/acme/app:v1"}}, images, nil)
 	require.NoError(t, err)
@@ -476,14 +469,14 @@ func TestBuildPatchedChart_ScalarImageSchema(t *testing.T) {
 	assert.Equal(t, "ghcr.io/acme/app:v1-patched", workload["image"])
 }
 
-func TestBuildPatchedChart_PackagesOriginalDependency(t *testing.T) {
-	original := &helmchart.Chart{Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}}
+func TestWriteChartDirectoryEmbedsOriginalDependency(t *testing.T) {
+	originalArchive := testChartArchive(t, "app", "1.0.0", "")
+	original := &Chart{Metadata: Metadata{APIVersion: "v2", Name: "app", Version: "1.0.0"}, Archive: originalArchive}
 	patched, err := BuildPatchedChart(original, ChartSourceSpec{Repository: "oci://example.com/charts"}, nil, nil)
 	require.NoError(t, err)
-	archive, err := chartutil.Save(patched, t.TempDir())
+	dir := t.TempDir()
+	require.NoError(t, writeChartDirectory(dir, patched))
+	archive, err := os.ReadFile(filepath.Join(dir, "charts", "app-1.0.0.tgz"))
 	require.NoError(t, err)
-	loaded, err := loader.Load(archive)
-	require.NoError(t, err)
-	require.Len(t, loaded.Dependencies(), 1)
-	assert.Equal(t, "app", loaded.Dependencies()[0].Name())
+	assert.Equal(t, originalArchive, archive)
 }

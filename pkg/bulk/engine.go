@@ -19,7 +19,6 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
-	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
 // patchJobStatus represents the status of a single image patching job.
@@ -35,7 +34,7 @@ type patchJobStatus struct {
 // chartResolution holds a downloaded Helm chart alongside its discovered images.
 type chartResolution struct {
 	Spec   ChartSpec
-	Chart  *helmchart.Chart
+	Chart  *helm.Chart
 	Images []helm.ChartImage
 }
 
@@ -296,18 +295,18 @@ func generateAndPushPatchedCharts(ctx context.Context, resolutions []chartResolu
 		ociRef := fmt.Sprintf(
 			"%s/%s:%s",
 			strings.TrimSuffix(config.ChartTarget.Registry, "/"),
-			patchedChart.Name(),
+			patchedChart.Metadata.Name,
 			patchedChart.Metadata.Version,
 		)
 
-		log.Infof("Packaging and pushing patched chart '%s' to %s...", patchedChart.Name(), ociRef)
+		log.Infof("Packaging and pushing patched chart '%s' to %s...", patchedChart.Metadata.Name, ociRef)
 		result, err := helm.PackageAndPush(ctx, patchedChart, ociRef)
 		if err != nil {
 			errs = multierror.Append(errs, fmt.Errorf("chart '%s': failed to push: %w", res.Spec.Name, err))
 			continue
 		}
 
-		log.Infof("Successfully pushed patched chart '%s' → %s", patchedChart.Name(), result.Ref)
+		log.Infof("Successfully pushed patched chart '%s' → %s", patchedChart.Metadata.Name, result)
 	}
 
 	return errs.ErrorOrNil()

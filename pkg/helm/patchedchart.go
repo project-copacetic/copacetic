@@ -7,11 +7,8 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-
-	helmchart "helm.sh/helm/v3/pkg/chart"
 )
 
-// ImageMapping represents the mapping from an original image to its patched replacement.
 type ImageMapping struct {
 	OriginalRepo string
 	OriginalTag  string
@@ -19,7 +16,6 @@ type ImageMapping struct {
 	PatchedTag   string
 }
 
-// ValuePathMapping links one discovered chart image to its values path.
 type ValuePathMapping struct {
 	ImageRepo      string
 	ImageTag       string
@@ -29,13 +25,9 @@ type ValuePathMapping struct {
 	FullReference  bool
 }
 
-// ResolveImageValuePaths locates an unambiguous values path for each image.
-// Explicit paths take priority. Auto-detection supports repository/tag,
-// registry/repository/tag, name/tag, and scalar image fields.
 func ResolveImageValuePaths(chartValues map[string]interface{}, images []ChartImage, explicitPaths map[string]string) ([]ValuePathMapping, error) {
 	candidates := findRepositoryPaths(chartValues, "")
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].path < candidates[j].path })
-
 	result := make([]ValuePathMapping, 0, len(images))
 	for _, image := range images {
 		if explicitPath, found := matchExplicitPath(image.Repository, explicitPaths); found {
@@ -46,14 +38,12 @@ func ResolveImageValuePaths(chartValues map[string]interface{}, images []ChartIm
 			result = append(result, candidate.mapping(image))
 			continue
 		}
-
 		bestScore := 0
 		var best []repositoryCandidate
 		for _, candidate := range candidates {
 			score := candidate.matchScore(image)
 			if score > bestScore {
-				bestScore = score
-				best = []repositoryCandidate{candidate}
+				bestScore, best = score, []repositoryCandidate{candidate}
 			} else if score > 0 && score == bestScore {
 				best = append(best, candidate)
 			}
@@ -74,22 +64,15 @@ func ResolveImageValuePaths(chartValues map[string]interface{}, images []ChartIm
 }
 
 type repositoryCandidate struct {
-	path          string
-	tagPath       string
-	registryPath  string
-	value         string
-	tag           string
-	fullReference bool
+	path, tagPath, registryPath, value, tag string
+	fullReference                           bool
 }
 
 func (candidate *repositoryCandidate) mapping(image ChartImage) ValuePathMapping {
 	return ValuePathMapping{
-		ImageRepo:      image.Repository,
-		ImageTag:       image.Tag,
-		RepositoryPath: candidate.path,
-		TagPath:        candidate.tagPath,
-		RegistryPath:   candidate.registryPath,
-		FullReference:  candidate.fullReference,
+		ImageRepo: image.Repository, ImageTag: image.Tag,
+		RepositoryPath: candidate.path, TagPath: candidate.tagPath,
+		RegistryPath: candidate.registryPath, FullReference: candidate.fullReference,
 	}
 }
 
@@ -113,7 +96,6 @@ func findRepositoryPaths(values map[string]interface{}, prefix string) []reposit
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-
 	var results []repositoryCandidate
 	for _, key := range keys {
 		value := values[key]
@@ -121,7 +103,6 @@ func findRepositoryPaths(values map[string]interface{}, prefix string) []reposit
 		if prefix != "" {
 			currentPath = prefix + "." + key
 		}
-
 		if key == "image" {
 			if imageRef, ok := value.(string); ok && imageRef != "" {
 				repo, tag, err := parseImageRef(imageRef)
@@ -130,7 +111,6 @@ func findRepositoryPaths(values map[string]interface{}, prefix string) []reposit
 				}
 			}
 		}
-
 		child, ok := value.(map[string]interface{})
 		if !ok {
 			continue
@@ -188,86 +168,45 @@ func matchExplicitPath(imageRepo string, explicitPaths map[string]string) (strin
 	return "", false
 }
 
-// BuildPatchedChart creates an in-memory wrapper Helm chart that depends on the
-// original chart and overrides its image values with patched references.
-//
-// The wrapper chart:
-//   - Has name "{original}-patched" and a deterministic version derived from patched image mappings
-//   - Declares the original chart as a dependency
-//   - Sets values that override image repository/tag for each patched image
-//   - Includes Copa metadata annotations for traceability
-func BuildPatchedChart(
-	originalChart *helmchart.Chart,
-	chartSpec ChartSourceSpec,
-	mappings []ImageMapping,
-	valuePaths []ValuePathMapping,
-) (*helmchart.Chart, error) {
-	if originalChart == nil || originalChart.Metadata == nil {
-		return nil, fmt.Errorf("original chart or its metadata is nil")
+// BuildPatchedChart creates local wrapper chart files and embeds the original archive.
+func BuildPatchedChart(original *Chart, chartSpec ChartSourceSpec, mappings []ImageMapping, valuePaths []ValuePathMapping) (*Chart, error) {
+	if original == nil {
+		return nil, fmt.Errorf("original chart is nil")
 	}
-
-	origName := originalChart.Metadata.Name
-	origVersion := originalChart.Metadata.Version
-
-	overrideValues, err := buildOverrideValues(origName, mappings, valuePaths)
+	overrideValues, err := buildOverrideValues(original.Metadata.Name, mappings, valuePaths)
 	if err != nil {
 		return nil, err
 	}
-
-	sanitizedRepository, err := sanitizeRepository(chartSpec.Repository)
+	repository, err := sanitizeRepository(chartSpec.Repository)
 	if err != nil {
 		return nil, err
 	}
-
-	patchedChart := &helmchart.Chart{
-		Metadata: &helmchart.Metadata{
-			APIVersion:  helmchart.APIVersionV2,
-			Name:        origName + "-patched",
-			Version:     patchedChartVersion(origVersion, mappings),
-			Description: fmt.Sprintf("Copa-patched version of %s %s", origName, origVersion),
+	return &Chart{
+		Metadata: Metadata{
+			APIVersion: "v2", Name: original.Metadata.Name + "-patched",
+			Version:     patchedChartVersion(original.Metadata.Version, mappings),
+			Description: fmt.Sprintf("Copa-patched version of %s %s", original.Metadata.Name, original.Metadata.Version),
 			Type:        "application",
 			Annotations: map[string]string{
-				"copa.sh/source-chart":      origName,
-				"copa.sh/source-version":    origVersion,
-				"copa.sh/source-repository": sanitizedRepository,
+				"copa.sh/source-chart": original.Metadata.Name, "copa.sh/source-version": original.Metadata.Version,
+				"copa.sh/source-repository": repository,
 			},
-			Dependencies: []*helmchart.Dependency{
-				{
-					Name:       origName,
-					Version:    origVersion,
-					Repository: sanitizedRepository,
-				},
-			},
+			Dependencies: []Dependency{{Name: original.Metadata.Name, Version: original.Metadata.Version, Repository: repository}},
 		},
-		Values: overrideValues,
-	}
-	patchedChart.SetDependencies(originalChart)
-	return patchedChart, nil
+		Values: overrideValues, Archive: original.Archive,
+	}, nil
 }
 
-// ChartSourceSpec contains the repository information needed for the dependency reference.
-type ChartSourceSpec struct {
-	Name       string
-	Version    string
-	Repository string
-}
-
-// buildOverrideValues constructs the values.yaml map for the wrapper chart.
-// All paths are scoped under the subchart name (Helm convention for dependency overrides).
-//
-// For example, if the original chart is "vector" and the image path is "image.repository",
-// the override key becomes "vector.image.repository".
-type imageMappingKey struct {
-	repository string
-	tag        string
-}
+type (
+	ChartSourceSpec struct{ Name, Version, Repository string }
+	imageMappingKey struct{ repository, tag string }
+)
 
 func buildOverrideValues(subchartName string, mappings []ImageMapping, valuePaths []ValuePathMapping) (map[string]interface{}, error) {
 	lookup := make(map[imageMappingKey]ImageMapping, len(mappings))
 	for _, mapping := range mappings {
-		lookup[imageMappingKey{repository: mapping.OriginalRepo, tag: mapping.OriginalTag}] = mapping
+		lookup[imageMappingKey{mapping.OriginalRepo, mapping.OriginalTag}] = mapping
 	}
-
 	subchartValues := make(map[string]interface{})
 	for _, valuePath := range valuePaths {
 		patched, found := findPatchedMapping(valuePath.ImageRepo, valuePath.ImageTag, lookup)
@@ -278,11 +217,9 @@ func buildOverrideValues(subchartName string, mappings []ImageMapping, valuePath
 			setNestedValue(subchartValues, valuePath.RepositoryPath, patched.PatchedRepo+":"+patched.PatchedTag)
 			continue
 		}
-
 		if valuePath.TagPath == "" {
 			return nil, fmt.Errorf("no writable tag path found for image %q", valuePath.ImageRepo+":"+valuePath.ImageTag)
 		}
-
 		repository := patched.PatchedRepo
 		if valuePath.RegistryPath != "" {
 			registry, remainder := splitRegistry(patched.PatchedRepo)
@@ -326,7 +263,7 @@ func sanitizeRepository(repository string) (string, error) {
 }
 
 func findPatchedMapping(imageRepo, imageTag string, lookup map[imageMappingKey]ImageMapping) (ImageMapping, bool) {
-	if mapping, ok := lookup[imageMappingKey{repository: imageRepo, tag: imageTag}]; ok {
+	if mapping, ok := lookup[imageMappingKey{imageRepo, imageTag}]; ok {
 		return mapping, true
 	}
 	for key, mapping := range lookup {
@@ -345,23 +282,15 @@ func splitRegistry(repository string) (string, string) {
 	return "", repository
 }
 
-// setNestedValue sets a value in a nested map using a dot-delimited path.
-// For example, setNestedValue(m, "image.repository", "nginx") creates:
-//
-//	m["image"]["repository"] = "nginx"
 func setNestedValue(m map[string]interface{}, path string, value interface{}) {
-	parts := strings.Split(path, ".")
-	current := m
-	for i, part := range parts {
-		if i == len(parts)-1 {
-			current[part] = value
-		} else {
-			next, ok := current[part].(map[string]interface{})
-			if !ok {
-				next = make(map[string]interface{})
-				current[part] = next
-			}
-			current = next
+	keys := strings.Split(path, ".")
+	for _, key := range keys[:len(keys)-1] {
+		child, ok := m[key].(map[string]interface{})
+		if !ok {
+			child = make(map[string]interface{})
+			m[key] = child
 		}
+		m = child
 	}
+	m[keys[len(keys)-1]] = value
 }

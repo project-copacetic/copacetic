@@ -4,56 +4,68 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
-	helmchart "helm.sh/helm/v3/pkg/chart"
-	"helm.sh/helm/v3/pkg/chartutil"
-	helmregistry "helm.sh/helm/v3/pkg/registry"
+	"gopkg.in/yaml.v3"
 )
 
-// SaveChart packages a chart to a .tgz archive in the given directory.
-// It is a function variable to allow test injection.
-var SaveChart = chartutil.Save
+// PackageAndPushFunc is replaceable in tests.
+var PackageAndPushFunc = packageAndPush
 
-// PushChart pushes a packaged chart to an OCI registry.
-// It is a function variable to allow test injection.
-var PushChart = func(ctx context.Context, data []byte, ref string) (*helmregistry.PushResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	client, err := helmregistry.NewClient(
-		helmregistry.ClientOptEnableCache(true),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Helm registry client: %w", err)
-	}
-	return client.Push(data, ref)
+// PackageAndPush delegates to the configured chart publisher.
+func PackageAndPush(ctx context.Context, ch *Chart, ociRef string) (string, error) {
+	return PackageAndPushFunc(ctx, ch, ociRef)
 }
 
-// PackageAndPush packages a chart and pushes it to the given OCI reference.
-func PackageAndPush(ctx context.Context, ch *helmchart.Chart, ociRef string) (*helmregistry.PushResult, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+func packageAndPush(ctx context.Context, ch *Chart, ociRef string) (string, error) {
 	tmpDir, err := os.MkdirTemp("", "copa-chart-push-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir for chart packaging: %w", err)
+		return "", fmt.Errorf("create chart package directory: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
-
-	chartPath, err := SaveChart(ch, tmpDir)
-	if err != nil {
-		return nil, fmt.Errorf("failed to package chart %q: %w", ch.Name(), err)
+	chartDir := filepath.Join(tmpDir, ch.Metadata.Name)
+	if err := writeChartDirectory(chartDir, ch); err != nil {
+		return "", err
 	}
-
-	data, err := os.ReadFile(chartPath) // #nosec G304 — path from controlled temp dir
-	if err != nil {
-		return nil, fmt.Errorf("failed to read packaged chart: %w", err)
+	if _, err := RunHelm(ctx, "package", chartDir, "--destination", tmpDir); err != nil {
+		return "", fmt.Errorf("package chart %q: %w", ch.Metadata.Name, err)
 	}
-
-	result, err := PushChart(ctx, data, ociRef)
+	archivePath, err := findChartArchivePath(tmpDir, ch.Metadata.Name)
 	if err != nil {
-		return nil, fmt.Errorf("failed to push chart to %s: %w", ociRef, err)
+		return "", err
 	}
+	destination, ok := strings.CutSuffix(ociRef, "/"+ch.Metadata.Name+":"+ch.Metadata.Version)
+	if !ok {
+		return "", fmt.Errorf("chart reference %q does not match chart %s:%s", ociRef, ch.Metadata.Name, ch.Metadata.Version)
+	}
+	if _, err := RunHelm(ctx, "push", archivePath, destination); err != nil {
+		return "", fmt.Errorf("push chart to %s: %w", ociRef, err)
+	}
+	return ociRef, nil
+}
 
-	return result, nil
+func writeChartDirectory(dir string, ch *Chart) error {
+	if err := os.MkdirAll(filepath.Join(dir, "charts"), 0o700); err != nil {
+		return fmt.Errorf("create wrapper chart directory: %w", err)
+	}
+	metadata, err := yaml.Marshal(ch.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal wrapper Chart.yaml: %w", err)
+	}
+	values, err := yaml.Marshal(ch.Values)
+	if err != nil {
+		return fmt.Errorf("marshal wrapper values.yaml: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Chart.yaml"), metadata, 0o600); err != nil {
+		return fmt.Errorf("write wrapper Chart.yaml: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "values.yaml"), values, 0o600); err != nil {
+		return fmt.Errorf("write wrapper values.yaml: %w", err)
+	}
+	dependency := filepath.Join(dir, "charts", ch.Metadata.Dependencies[0].Name+"-"+ch.Metadata.Dependencies[0].Version+".tgz")
+	if err := os.WriteFile(dependency, ch.Archive, 0o600); err != nil {
+		return fmt.Errorf("write embedded chart dependency: %w", err)
+	}
+	return nil
 }

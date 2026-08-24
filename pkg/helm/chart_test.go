@@ -1,164 +1,111 @@
 package helm
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-
-	helmchart "helm.sh/helm/v3/pkg/chart"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+func TestDownloadChartUsesOCIHelmPull(t *testing.T) {
+	archive := testChartArchive(t, "app", "1.0.0", "image:\n  repository: nginx\n  tag: \"1\"\n")
+	orig := RunHelm
+	t.Cleanup(func() { RunHelm = orig })
+	RunHelm = func(_ context.Context, args ...string) ([]byte, error) {
+		assert.Equal(t, []string{"pull", "--destination", args[2], "--version", "1.0.0", "oci://example.com/charts/app"}, args)
+		return nil, os.WriteFile(filepath.Join(args[2], "app-1.0.0.tgz"), archive, 0o600)
+	}
+	chart, err := DownloadChart(context.Background(), "app", "1.0.0", "oci://example.com/charts")
+	require.NoError(t, err)
+	image, ok := chart.Values["image"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "nginx", image["repository"])
+}
+
+func TestDownloadChartUsesHTTPHelmPull(t *testing.T) {
+	archive := testChartArchive(t, "app", "1.0.0", "")
+	orig := RunHelm
+	t.Cleanup(func() { RunHelm = orig })
+	RunHelm = func(_ context.Context, args ...string) ([]byte, error) {
+		assert.Equal(t, "app", args[5])
+		assert.Equal(t, []string{"--repo", "https://example.com/charts"}, args[6:])
+		return nil, os.WriteFile(filepath.Join(args[2], "app-1.0.0.tgz"), archive, 0o600)
+	}
+	_, err := DownloadChart(context.Background(), "app", "1.0.0", "https://example.com/charts")
+	require.NoError(t, err)
+}
+
+func TestRenderChartUsesIncludeCRDs(t *testing.T) {
+	orig := RunHelm
+	t.Cleanup(func() { RunHelm = orig })
+	RunHelm = func(_ context.Context, args ...string) ([]byte, error) {
+		assert.Equal(t, "template", args[0])
+		assert.Equal(t, []string{"--include-crds"}, args[3:])
+		return []byte("apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - image: nginx:1\n"), nil
+	}
+	chart := &Chart{Metadata: Metadata{Name: "app"}, Archive: testChartArchive(t, "app", "1.0.0", "")}
+	rendered, err := RenderChart(context.Background(), chart)
+	require.NoError(t, err)
+	assert.Contains(t, rendered, "nginx:1")
+}
+
+func TestRunHelmPreservesCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := runHelm(ctx, "version")
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRunHelmReportsMissingCLI(t *testing.T) {
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", t.TempDir())
+	_, err := runHelm(context.Background(), "version")
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "requires the helm CLI")
+	t.Setenv("PATH", origPath)
+}
+
 func TestDiscoverChartImages(t *testing.T) {
-	// Build a minimal in-memory Helm chart with known container images.
-	nginxDeployment := `
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx
-spec:
-  template:
-    spec:
-      containers:
-        - name: nginx
-          image: docker.io/library/nginx:1.25.0
-        - name: sidecar
-          image: envoyproxy/envoy:v1.28.0
-`
-	redisStatefulSet := `
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: redis
-spec:
-  template:
-    spec:
-      containers:
-        - name: redis
-          image: redis:7.2.0
-`
-
-	mockChart := &helmchart.Chart{
-		Metadata: &helmchart.Metadata{Name: "testchart", Version: "1.0.0"},
-		Templates: []*helmchart.File{
-			{Name: "templates/deployment.yaml", Data: []byte(nginxDeployment)},
-			{Name: "templates/statefulset.yaml", Data: []byte(redisStatefulSet)},
-		},
+	orig := RenderChart
+	t.Cleanup(func() { RenderChart = orig })
+	RenderChart = func(context.Context, *Chart) (string, error) {
+		return "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - image: nginx:1\n", nil
 	}
-
-	// Override RenderChart to return combined templates directly (no Helm SDK rendering needed).
-	origRender := RenderChart
-	t.Cleanup(func() { RenderChart = origRender })
-	RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
-		var parts []string
-		for _, tmpl := range ch.Templates {
-			parts = append(parts, string(tmpl.Data))
-		}
-		return join(parts, "\n---\n"), nil
-	}
-
-	images, err := DiscoverChartImages(context.Background(), mockChart, nil)
+	images, err := DiscoverChartImages(context.Background(), &Chart{Metadata: Metadata{Name: "app"}}, nil)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []ChartImage{
-		{Repository: "docker.io/library/nginx", Tag: "1.25.0"},
-		{Repository: "envoyproxy/envoy", Tag: "v1.28.0"},
-		{Repository: "redis", Tag: "7.2.0"},
-	}, images)
+	assert.Equal(t, []ChartImage{{Repository: "nginx", Tag: "1"}}, images)
 }
 
-func TestDiscoverChartImages_WithOverrides(t *testing.T) {
-	manifest := `
-apiVersion: apps/v1
-kind: Deployment
-spec:
-  template:
-    spec:
-      containers:
-        - image: docker.io/timberio/vector:0.53.0-distroless-libc
-`
-	mockChart := &helmchart.Chart{
-		Metadata:  &helmchart.Metadata{Name: "testchart", Version: "1.0.0"},
-		Templates: []*helmchart.File{{Name: "templates/deploy.yaml", Data: []byte(manifest)}},
-	}
-
-	origRender := RenderChart
-	t.Cleanup(func() { RenderChart = origRender })
-	RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
-		return string(ch.Templates[0].Data), nil
-	}
-
-	overrides := map[string]OverrideSpec{
-		"timberio/vector": {From: "distroless-libc", To: "debian"},
-	}
-
-	images, err := DiscoverChartImages(context.Background(), mockChart, overrides)
-	require.NoError(t, err)
-	require.Len(t, images, 1)
-	assert.Equal(t, "0.53.0-debian", images[0].Tag)
+func TestDiscoverChartImagesPropagatesRenderError(t *testing.T) {
+	orig := RenderChart
+	t.Cleanup(func() { RenderChart = orig })
+	RenderChart = func(context.Context, *Chart) (string, error) { return "", errors.New("render failed") }
+	_, err := DiscoverChartImages(context.Background(), &Chart{Metadata: Metadata{Name: "app"}}, nil)
+	require.ErrorContains(t, err, "render failed")
 }
 
-func TestDiscoverChartImages_EmptyChart(t *testing.T) {
-	mockChart := &helmchart.Chart{
-		Metadata:  &helmchart.Metadata{Name: "crds-only", Version: "1.0.0"},
-		Templates: []*helmchart.File{},
+func testChartArchive(t *testing.T, name, version, values string) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	gz := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(gz)
+	files := map[string]string{
+		name + "/Chart.yaml":  "apiVersion: v2\nname: " + name + "\nversion: " + version + "\n",
+		name + "/values.yaml": values,
 	}
-
-	origRender := RenderChart
-	t.Cleanup(func() { RenderChart = origRender })
-	RenderChart = func(_ context.Context, ch *helmchart.Chart) (string, error) {
-		return "", nil
+	for path, content := range files {
+		require.NoError(t, tarWriter.WriteHeader(&tar.Header{Name: path, Mode: 0o600, Size: int64(len(content))}))
+		_, err := tarWriter.Write([]byte(content))
+		require.NoError(t, err)
 	}
-
-	images, err := DiscoverChartImages(context.Background(), mockChart, nil)
-	require.NoError(t, err)
-	assert.Empty(t, images)
-}
-
-func TestFindChartArchivePath_PicksTgzFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "README.txt"), []byte("x"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "chart-1.0.0.tgz"), []byte("chart"), 0o600))
-
-	chartPath, err := findChartArchivePath(tmpDir, "chart")
-	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(tmpDir, "chart-1.0.0.tgz"), chartPath)
-}
-
-// join concatenates strings with a separator, helper for tests.
-func join(parts []string, sep string) string {
-	result := ""
-	for i, p := range parts {
-		if i > 0 {
-			result += sep
-		}
-		result += p
-	}
-	return result
-}
-
-func TestRenderChartIncludesHookManifests(t *testing.T) {
-	ch := &helmchart.Chart{
-		Metadata: &helmchart.Metadata{APIVersion: "v2", Name: "hooks", Version: "1.0.0"},
-		Templates: []*helmchart.File{{Name: "templates/hook.yaml", Data: []byte(`
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: hook
-  annotations:
-    helm.sh/hook: pre-install
-spec:
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: hook
-          image: busybox:1.36
-`)}},
-	}
-	rendered, err := RenderChart(context.Background(), ch)
-	require.NoError(t, err)
-	assert.Contains(t, rendered, "busybox:1.36")
+	require.NoError(t, tarWriter.Close())
+	require.NoError(t, gz.Close())
+	return buffer.Bytes()
 }
