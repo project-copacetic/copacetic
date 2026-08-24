@@ -218,8 +218,8 @@ func buildGoUpdateCmd(modPath, allGetCmd string) string {
 // the go.mod produced by the update step. `go mod tidy -e` removes requirements
 // for modules that are no longer imported by reachable code, so a successful
 // `go get` can be silently reverted and the package still reported as patched.
-// The effective version of a module is the version from a replace directive
-// targeting it, if any, otherwise its require entry.
+// Applicable versioned replace directives override the old module's require
+// version and also count as an effective instance of their replacement target.
 func verifyGoModUpdates(goModContent []byte, updates unversioned.LangUpdatePackages) error {
 	hasTargets := false
 	for _, u := range updates {
@@ -243,29 +243,52 @@ func verifyGoModUpdates(goModContent []byte, updates unversioned.LangUpdatePacka
 			required[r.Mod.Path] = r.Mod.Version
 		}
 	}
-	// A replace directive pointing at the module overrides its require entry.
-	// Filesystem replacements carry no version, so they leave the require entry
-	// as the effective version.
-	replaced := make(map[string]string, len(f.Replace))
-	for _, rep := range f.Replace {
-		if rep != nil && rep.New.Path != "" && rep.New.Version != "" {
-			replaced[rep.New.Path] = rep.New.Version
-		}
-	}
 
 	for _, u := range updates {
 		if u.FixedVersion == "" {
 			continue
 		}
-		landed, ok := replaced[u.Name]
-		if !ok {
-			landed, ok = required[u.Name]
+
+		found := false
+		if requiredVersion, ok := required[u.Name]; ok {
+			found = true
+			landedVersion := requiredVersion
+			for _, rep := range f.Replace {
+				if rep == nil || rep.Old.Path != u.Name {
+					continue
+				}
+				if rep.Old.Version != "" && rep.Old.Version != requiredVersion {
+					continue
+				}
+				if rep.New.Version == "" {
+					return fmt.Errorf("module %s has local replacement %s; cannot verify requested version %s", u.Name, rep.New.Path, u.FixedVersion)
+				}
+				landedVersion = rep.New.Version
+				break
+			}
+			if isLessThanGoVersion(landedVersion, u.FixedVersion) {
+				return fmt.Errorf("module %s is at %s in go.mod after update, expected %s or newer", u.Name, landedVersion, u.FixedVersion)
+			}
 		}
-		if !ok || landed == "" {
+
+		// A module can also enter the build list as the target of a replacement
+		// for another required module.
+		for _, rep := range f.Replace {
+			if rep == nil || rep.Old.Path == u.Name || rep.New.Path != u.Name || rep.New.Version == "" {
+				continue
+			}
+			oldVersion, ok := required[rep.Old.Path]
+			if !ok || (rep.Old.Version != "" && rep.Old.Version != oldVersion) {
+				continue
+			}
+			found = true
+			if isLessThanGoVersion(rep.New.Version, u.FixedVersion) {
+				return fmt.Errorf("module %s is at %s in go.mod after update, expected %s or newer", u.Name, rep.New.Version, u.FixedVersion)
+			}
+		}
+
+		if !found {
 			return fmt.Errorf("module %s not found in go.mod after update; the requested version %s was not applied or was removed by 'go mod tidy'", u.Name, u.FixedVersion)
-		}
-		if isLessThanGoVersion(landed, u.FixedVersion) {
-			return fmt.Errorf("module %s is at %s in go.mod after update, expected %s or newer", u.Name, landed, u.FixedVersion)
 		}
 	}
 
