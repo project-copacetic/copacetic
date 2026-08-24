@@ -13,6 +13,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
 
@@ -174,6 +175,30 @@ func cleanGoVersion(version string) string {
 	}
 
 	return ""
+}
+
+// appendIncompatibleIfNeeded adds the "+incompatible" build tag that `go get`
+// requires for pre-modules dependencies released at major version 2 or higher
+// whose module path carries no /vN suffix (github.com/docker/docker@v28.0.0,
+// for example). Scanner reports commonly omit the tag and `go get` rejects the
+// bare version outright.
+func appendIncompatibleIfNeeded(modulePath, version string) string {
+	if !semver.IsValid(version) || strings.HasSuffix(version, "+incompatible") {
+		return version
+	}
+
+	switch semver.Major(version) {
+	case "v0", "v1":
+		return version
+	}
+
+	// A path major suffix (/v2, /v3, ...) means the dependency is modules-aware,
+	// so the version is used as-is.
+	if _, pathMajor, ok := module.SplitPathVersion(modulePath); !ok || pathMajor != "" {
+		return version
+	}
+
+	return version + "+incompatible"
 }
 
 // buildGoUpdateCmd assembles the shell command run inside the build container
@@ -942,6 +967,7 @@ func (gm *golangManager) updateGoModule(
 			if !strings.HasPrefix(version, "v") {
 				version = "v" + version
 			}
+			version = appendIncompatibleIfNeeded(u.Name, version)
 			spec := fmt.Sprintf("%s@%s", u.Name, version)
 			getCommands = append(getCommands, fmt.Sprintf("go get %s", spec))
 		} else {
@@ -1069,6 +1095,7 @@ func (gm *golangManager) upgradePackagesWithTooling(
 				if !strings.HasPrefix(version, "v") {
 					version = "v" + version
 				}
+				version = appendIncompatibleIfNeeded(u.Name, version)
 				spec := fmt.Sprintf("%s@%s", u.Name, version)
 				getCommands = append(getCommands, fmt.Sprintf("go get %s", spec))
 			}

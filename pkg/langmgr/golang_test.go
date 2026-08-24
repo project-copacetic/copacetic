@@ -1062,3 +1062,88 @@ func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
 		"downgrade-skipped packages must be reported as unpatched so they stay out of validated updates")
 	assert.Same(t, currentState, state)
 }
+
+func TestAppendIncompatibleIfNeeded(t *testing.T) {
+	tests := []struct {
+		name       string
+		modulePath string
+		version    string
+		expected   string
+	}{
+		{
+			name:       "pre-module major v2+ without path suffix",
+			modulePath: "github.com/docker/docker",
+			version:    "v28.0.0",
+			expected:   "v28.0.0+incompatible",
+		},
+		{
+			name:       "module path with matching major suffix",
+			modulePath: "github.com/foo/bar/v2",
+			version:    "v2.1.0",
+			expected:   "v2.1.0",
+		},
+		{
+			name:       "major v0",
+			modulePath: "github.com/foo/bar",
+			version:    "v0.9.1",
+			expected:   "v0.9.1",
+		},
+		{
+			name:       "major v1",
+			modulePath: "github.com/foo/bar",
+			version:    "v1.2.3",
+			expected:   "v1.2.3",
+		},
+		{
+			name:       "already suffixed",
+			modulePath: "github.com/docker/docker",
+			version:    "v28.0.0+incompatible",
+			expected:   "v28.0.0+incompatible",
+		},
+		{
+			name:       "pseudo-version at v0",
+			modulePath: "github.com/foo/bar",
+			version:    "v0.0.0-20230101120000-abcdef123456",
+			expected:   "v0.0.0-20230101120000-abcdef123456",
+		},
+		{
+			name:       "pseudo-version at major v2 without path suffix",
+			modulePath: "github.com/foo/bar",
+			version:    "v2.0.1-0.20230101120000-abcdef123456",
+			expected:   "v2.0.1-0.20230101120000-abcdef123456+incompatible",
+		},
+		{
+			name:       "pseudo-version at major v2 with path suffix",
+			modulePath: "github.com/foo/bar/v2",
+			version:    "v2.0.1-0.20230101120000-abcdef123456",
+			expected:   "v2.0.1-0.20230101120000-abcdef123456",
+		},
+		{
+			name:       "invalid version left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "not-a-version",
+			expected:   "not-a-version",
+		},
+		{
+			name:       "empty version left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "",
+			expected:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := appendIncompatibleIfNeeded(tt.modulePath, tt.version)
+			assert.Equal(t, tt.expected, result, "Module: %s, version: %s", tt.modulePath, tt.version)
+		})
+	}
+}
+
+// TestIncompatibleVersionsPassValidation ensures the +incompatible build tag
+// survives the existing version validation and cleaning paths.
+func TestIncompatibleVersionsPassValidation(t *testing.T) {
+	assert.True(t, isValidGoVersion("v28.0.0+incompatible"))
+	assert.NoError(t, validateGoVersion("v28.0.0+incompatible"))
+	assert.Equal(t, "v28.0.0+incompatible", cleanGoVersion("v28.0.0+incompatible"))
+}
