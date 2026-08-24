@@ -199,6 +199,32 @@ func TestGetUniqueLatestUpdates(t *testing.T) {
 	}
 }
 
+func TestGetUniqueLatestUpdatesDeterministicOrder(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "urllib3", FixedVersion: "2.2.0", Type: "python-pkg", PkgPath: "usr/lib/python3.12/site-packages"},
+		{Name: "golang.org/x/net", FixedVersion: "0.23.0", Type: "gobinary", PkgPath: "usr/bin/app"},
+		{Name: "lodash", FixedVersion: "4.17.21", Type: "node-pkg", PkgPath: "app/node_modules"},
+		{Name: "urllib3", FixedVersion: "2.1.0", Type: "python-pkg", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+		{Name: "golang.org/x/net", FixedVersion: "0.24.0", Type: "gobinary", PkgPath: "usr/bin/other"},
+		{Name: "golang.org/x/crypto", FixedVersion: "0.31.0", Type: "gobinary", PkgPath: "usr/bin/app"},
+		{Name: "lodash", FixedVersion: "4.17.20", Type: "node-pkg", PkgPath: "app/node_modules"},
+	}
+
+	// Sorted by (Type, Name, PkgPath) with the highest fixed version kept per key.
+	expected := unversioned.LangUpdatePackages{
+		{Name: "golang.org/x/crypto", FixedVersion: "0.31.0", Type: "gobinary", PkgPath: "usr/bin/app"},
+		{Name: "golang.org/x/net", FixedVersion: "0.23.0", Type: "gobinary", PkgPath: "usr/bin/app"},
+		{Name: "golang.org/x/net", FixedVersion: "0.24.0", Type: "gobinary", PkgPath: "usr/bin/other"},
+		{Name: "lodash", FixedVersion: "4.17.21", Type: "node-pkg", PkgPath: "app/node_modules"},
+		{Name: "urllib3", FixedVersion: "2.1.0", Type: "python-pkg", PkgPath: "opt/venv/lib/python3.12/site-packages"},
+		{Name: "urllib3", FixedVersion: "2.2.0", Type: "python-pkg", PkgPath: "usr/lib/python3.12/site-packages"},
+	}
+
+	result, err := GetUniqueLatestUpdates(updates, mockVersionComparer(), false)
+	require.NoError(t, err)
+	assert.Equal(t, expected, result)
+}
+
 func TestGetValidatedUpdatesMap(t *testing.T) {
 	tempDir := t.TempDir()
 
