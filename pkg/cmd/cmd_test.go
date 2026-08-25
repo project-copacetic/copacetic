@@ -110,7 +110,14 @@ func TestChartModeValidatesRequiredFlags(t *testing.T) {
 	}{
 		{name: "version and repository", args: []string{"--chart", "reloader"}, want: "--chart requires --chart-version and --chart-repo"},
 		{name: "chart registry", args: []string{"--chart", "reloader", "--chart-version", "1.2.1", "--chart-repo", "oci://example.com/charts"}, want: "--chart requires --chart-registry"},
-		{name: "push", args: []string{"--chart", "reloader", "--chart-version", "1.2.1", "--chart-repo", "oci://example.com/charts", "--chart-registry", "oci://example.com/patched"}, want: "requires --push"},
+		{
+			name: "push",
+			args: []string{
+				"--chart", "reloader", "--chart-version", "1.2.1", "--chart-repo", "oci://example.com/charts",
+				"--chart-registry", "oci://example.com/patched",
+			},
+			want: "requires --push",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
