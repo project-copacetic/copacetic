@@ -9,7 +9,11 @@ This guide covers Copa's bulk image patching capability for patching many images
 Bulk mode adds a `--config` flag to `copa patch`. Instead of targeting one image, Copa reads a PatchConfig file, discovers tags (via list, pattern, or latest), and runs patch jobs concurrently. This is ideal for nightly sweeps, release hardening, or keeping base images up to date.
 
 :::note
-Bulk patching uses Copa's comprehensive update-all flow. Vulnerability report–driven bulk patching is planned for a future release.
+Without `--report`, bulk patching uses Copa's comprehensive update-all flow. A
+report directory can be supplied for existing-output skip checks; the current
+implementation also forwards that report directory to jobs that are not
+skipped. See [Skip Already-Patched Images](#skip-already-patched-images) for the
+resulting limitations.
 :::
 
 ## PatchConfig Schema
@@ -20,6 +24,10 @@ Top‑level fields:
 # copa-bulk-config.yaml
 apiVersion: copa.sh/v1alpha1
 kind: PatchConfig
+
+# Optional: default Chisel release for native Chisel images. If omitted, Copa
+# infers ubuntu-<VERSION_ID> from each target image.
+chiselRelease: ubuntu-24.04
 
 # Optional: global default target for all images
 target:
@@ -38,6 +46,9 @@ images:
 
   - name: "python"
     image: "docker.io/library/python"
+    # Optional per-image override of the top-level Chisel release. HTTPS Git URLs
+    # must include a pinned commit or tag fragment.
+    chiselRelease: https://example.com/releases.git#abc123
     tags:
       strategy: "list"
       list: ["3.9.18", "3.10.13", "3.11.7"]
@@ -67,6 +78,21 @@ images:
 
 - strategy: latest
   - Select a single highest version by semantic versioning (or registry timestamp fallback for non‑semver) and patch only that tag.
+
+## Ubuntu Chiseled images
+
+Native images with `/var/lib/chisel/manifest.wall` are supported in bulk mode
+when the run omits `--report`; each executed job then performs a comprehensive
+re-cut. Set `chiselRelease` at the top level to define
+a default, then set it on an image entry to override that default. If neither
+value is present, Copa infers `ubuntu-<VERSION_ID>` from the image.
+
+Accepted values are a standard release name (`ubuntu-24.04`), a local release
+directory, or a pinned HTTPS Git URL
+(`https://example.com/releases.git#abc123`). Unpinned or non-HTTPS Git URLs are rejected.
+Initial support can resolve public archives only; Ubuntu Pro, ESM, FIPS, and
+private archive credentials are not forwarded. See
+[Ubuntu Chiseled Images](./chiseled-images.md) for details.
 
 ## Multi‑Platform Behavior
 
@@ -101,7 +127,7 @@ copa patch --config ./copa-bulk-config.yaml --oci-dir ./out
 
 Restrictions in bulk mode:
 
-- `--config` cannot be combined with `--image` or `--tag`.
+- `--config` cannot be combined with `--image`, `--tag`, or the CLI `--chisel-release` flag. Put Chisel release defaults and overrides in the YAML.
 - Global flags like `--push`, `--timeout`, `--ignore-errors`, `--oci-dir`, `--compression`, and `--force-compression` apply to every job defined by the config.
 
 ## Behavior and Output
@@ -116,7 +142,20 @@ Restrictions in bulk mode:
 Copa can skip re-patching images that already have patched versions with no fixable vulnerabilities. This saves time and compute in scheduled/CI environments.
 
 :::note
-This skip feature uses vulnerability reports to decide **whether** to re-patch, not **what** to patch. When patching occurs, Copa still applies comprehensive updates to all packages (update-all flow), not selective patching based on specific CVEs.
+Reports first decide **whether** an existing output can be skipped. In the
+current implementation, the report directory is also forwarded to jobs that
+are not skipped, so those jobs follow report-directory patching behavior rather
+than a pure no-report comprehensive update.
+:::
+
+:::warning Native Chisel reports
+
+Bulk runs that supply `--report` are not currently compatible with native
+`manifest.wall` images. Copa's pinned Trivy version does not inventory that
+metadata format, and the report path is currently forwarded to jobs that are
+not skipped, which native Chisel patching rejects. Run native Chisel bulk jobs
+without `--report` so every selected image receives a comprehensive re-cut.
+
 :::
 
 ### How It Works
@@ -130,7 +169,10 @@ When you run `copa patch --config` with `--push` and `-r`:
    - If report shows fixable vulnerabilities → re-patches **from the original source image** with version-bumped tag
    - If report not found → proceeds with patching (fail-open behavior)
 
-**Important**: Re-patches are always created from the original source image (not the previous patched image), ensuring comprehensive updates and preventing layer buildup. The skip feature saves time by avoiding this re-work when no new vulnerabilities are present.
+**Important**: Re-patches are always created from the original source image,
+not the previous patched image. This prevents layer buildup. The skip feature
+saves time by avoiding re-work when no new fixable vulnerabilities are present
+in the supplied report.
 
 ### Report Directory Setup
 

@@ -1,0 +1,8 @@
+{"jsonwall":"1.0","schema":"1.0","count":8}
+{"kind":"content","slice":"fixture-pkg_data","path":"/opt/copa-fixture/data.txt"}
+{"kind":"content","slice":"fixture-pkg_manifest","path":"/var/lib/chisel/manifest.wall"}
+{"kind":"package","name":"fixture-pkg","version":"1.0-1","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","arch":"amd64"}
+{"kind":"path","path":"/opt/copa-fixture/data.txt","mode":"0644","slices":["fixture-pkg_data"],"sha256":"e80b71cd14d3cbd65f4173abcbfcf01a545dbca32a72d575108b553a648cc96f","size":8}
+{"kind":"path","path":"/var/lib/chisel/manifest.wall","mode":"0644","slices":["fixture-pkg_manifest"]}
+{"kind":"slice","name":"fixture-pkg_data"}
+{"kind":"slice","name":"fixture-pkg_manifest"}

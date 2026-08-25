@@ -49,9 +49,13 @@ All debian-based images have their `minor.patch` versioning stripped and `-slim`
 
 #### Ubuntu
 
-All Ubuntu-based images use the same versioning that was passed in. e.g. if `tomcat:10.1.17-jre17-temurin-jammy` is passed in, `ghcr.io/project-copacetic/copacetic/ubuntu:22.04` will be used for the tooling image.
-
-There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being patched without a Trivy scan, Copa is unable to parse a scan for versioning information. In these scenarios, Copa will fallback to `ghcr.io/project-copacetic/copacetic/debian:stable-slim` as the tooling image.
+Copa selects DPKG tooling from the target's detected Ubuntu version. For
+example, patching `tomcat:10.1.17-jre17-temurin-jammy` uses
+`ghcr.io/project-copacetic/copacetic/ubuntu:22.04`. This selection works in both
+report-driven and comprehensive no-report modes; Ubuntu targets do not fall
+back to Debian tooling when a report is omitted. Native images containing
+`/var/lib/chisel/manifest.wall` use Copa's dedicated Chisel tooling image
+instead.
 
 ### RPM
 

@@ -53,6 +53,7 @@ type patchArgs struct {
 	eolAPIBaseURL       string
 	exitOnEOL           bool
 	configFile          string
+	chiselRelease       string
 }
 
 func NewPatchCmd() *cobra.Command {
@@ -62,7 +63,7 @@ func NewPatchCmd() *cobra.Command {
 		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
 		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
 copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
@@ -114,6 +115,7 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 				EOLAPIBaseURL:       ua.eolAPIBaseURL,
 				ExitOnEOL:           ua.exitOnEOL,
 				ConfigFile:          ua.configFile,
+				ChiselRelease:       ua.chiselRelease,
 			}
 
 			if ua.configFile == "" && ua.appImage == "" {
@@ -124,6 +126,9 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 			if ua.configFile != "" {
 				if ua.appImage != "" || ua.patchedTag != "" {
 					return errors.New("--config cannot be used with --image or --tag")
+				}
+				if cmd.Flags().Changed("chisel-release") {
+					return errors.New("--chisel-release cannot be used with --config")
 				}
 
 				log.Info("Starting in bulk image patching mode...")
@@ -138,10 +143,11 @@ copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)`,
 		},
 	}
 	flags := patchCmd.Flags()
-	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file (Comprehensive update only). Cannot be used with --image or --tag.")
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file. Cannot be used with --image, --tag, or --chisel-release.")
 	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory of reports")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
+	flags.StringVar(&ua.chiselRelease, "chisel-release", "", "Chisel release name, local directory, or pinned HTTPS Git URL override")
 	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched",
 		"Suffix for the patched image (if no explicit --tag provided)")
 	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")

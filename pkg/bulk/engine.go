@@ -46,6 +46,15 @@ func mergeTarget(globalTarget, imageTarget TargetSpec) TargetSpec {
 	return result
 }
 
+// resolveChiselRelease returns the image-level Chisel release when provided,
+// otherwise it falls back to the top-level bulk default.
+func resolveChiselRelease(defaultRelease, imageRelease string) string {
+	if imageRelease != "" {
+		return imageRelease
+	}
+	return defaultRelease
+}
+
 // buildTargetRepository constructs the target repository path by combining
 // the target registry with the image name (last path segment) from the source image.
 //
@@ -229,6 +238,7 @@ func PatchFromConfig(ctx context.Context, configPath string, opts *types.Options
 				jobOpts.PatchedTag = patchedImageRef
 				jobOpts.Platforms = spec.Platforms
 				jobOpts.Suffix = ""
+				jobOpts.ChiselRelease = resolveChiselRelease(config.ChiselRelease, spec.ChiselRelease)
 
 				// Execute the patch operation.
 				err = patch.Patch(ctx, &jobOpts)

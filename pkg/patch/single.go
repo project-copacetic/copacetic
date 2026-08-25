@@ -23,6 +23,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -36,6 +37,12 @@ const (
 	defaultTag  = "latest"
 	LINUX       = "linux"
 )
+
+var errNativeChiselTargetedPatch = errors.New(pkgmgr.NativeChiselTargetedPatchError)
+
+type buildkitBuildClient interface {
+	Build(context.Context, client.SolveOpt, string, gwclient.BuildFunc, chan *client.SolveStatus) (*client.SolveResponse, error)
+}
 
 // removeIfNotDebug removes working folder unless debug mode is enabled.
 func removeIfNotDebug(workingFolder string) {
@@ -56,6 +63,18 @@ func patchSingleArchImage(
 	targetPlatform types.PatchPlatform,
 	multiPlatform bool,
 	sharedProgressCh chan<- *client.SolveStatus,
+) (*types.PatchResult, error) {
+	return patchSingleArchImageWithUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil)
+}
+
+func patchSingleArchImageWithUpdates(
+	ctx context.Context,
+	opts *types.Options,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
+	updates *unversioned.UpdateManifest,
 ) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
@@ -79,17 +98,10 @@ func patchSingleArchImage(
 	libraryPatchLevel := opts.LibraryPatchLevel
 	toolchainPatchLevel := opts.ToolchainPatchLevel
 	goVCSURL := opts.GoVCSURL
+	chiselRelease := opts.ChiselRelease
 
 	if reportFile == "" && output != "" {
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
-	}
-
-	// if the target platform is different from the host platform, we need to check if emulation is enabled
-	// only need to do this check if we're patching a multi-platform image
-	if multiPlatform {
-		if err := validatePlatformEmulation(targetPlatform); err != nil {
-			return nil, err
-		}
 	}
 
 	// parse the image reference
@@ -115,11 +127,16 @@ func patchSingleArchImage(
 	}
 	defer cleanup()
 
-	// Parse report for update packages
-	var updates *unversioned.UpdateManifest
+	// Parse report for update packages unless the single-report orchestration
+	// already parsed it to derive an implicit target platform.
 	if reportFile != "" {
-		updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
-		if err != nil {
+		if updates == nil {
+			updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err := validateReportPlatform(updates, &targetPlatform); err != nil {
 			return nil, err
 		}
 
@@ -143,28 +160,57 @@ func patchSingleArchImage(
 			}
 
 			log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
-
-			// If after filtering there are zero OS and zero library updates, return an error
-			// only when user explicitly requested some package types (default is OS) but none are patchable.
-			if len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0 {
-				res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
-				res.Summary = updates.CombinedSummary()
-				return res, types.ErrNoUpdatesFound
-			}
 		}
 
 		log.Debugf("updates to apply: %v", updates)
 	}
 
-	// Create buildkit client
+	reportHasNoUpdates := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0
+
+	// Create the BuildKit client after report parsing to preserve parse-error
+	// behavior, then run a shell-less native Chisel preflight before handling an
+	// otherwise empty report.
 	bkClient, err := bkNewClient(ctx, bkOpts)
 	if err != nil {
+		if reportFile != "" && reportHasNoUpdates {
+			log.Debugf("Unable to create a BuildKit client to preflight an empty report for native Chisel metadata: %v", err)
+			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res.Summary = updates.CombinedSummary()
+			return res, types.ErrNoUpdatesFound
+		}
 		return nil, err
 	}
 	defer bkClient.Close()
 
 	// Resolve image reference
 	ref := resolveImageReference(imageName)
+	if reportFile != "" && reportHasNoUpdates {
+		if err := rejectTargetedNativeChiselPatch(ctx, bkClient, ref, &targetPlatform.Platform); err != nil {
+			// Preserve the historical ErrNoUpdatesFound result for non-native
+			// empty reports when BuildKit is unavailable to perform the preflight.
+			// A positively identified native image always returns the exact
+			// targeted-patching error.
+			if errors.Is(err, errNativeChiselTargetedPatch) {
+				return nil, err
+			}
+			log.Debugf("Unable to preflight an empty report for native Chisel metadata: %v", err)
+		}
+	}
+
+	// Keep the existing empty-report behavior for non-native images. Native
+	// images have already returned the targeted-patching error above.
+	if reportHasNoUpdates {
+		res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+		res.Summary = updates.CombinedSummary()
+		return res, types.ErrNoUpdatesFound
+	}
+
+	// Validate against the selected BuildKit workers instead of the Copa host.
+	// Remote and multi-node builders may support the target natively or through
+	// worker-side emulation even when the client machine does not.
+	if err := validateBuildkitPlatformSupport(ctx, bkClient, targetPlatform); err != nil {
+		return nil, err
+	}
 
 	// Determine the loader type
 	finalLoaderType := determineLoaderType(loader, bkOpts.Addr)
@@ -235,10 +281,12 @@ func patchSingleArchImage(
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
+	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
+		patchBuildErr = err
 		if err != nil {
 			return err
 		}
@@ -274,7 +322,8 @@ func patchSingleArchImage(
 	}
 
 	// Wait for completion
-	if err := eg.Wait(); err != nil {
+	waitErr := eg.Wait()
+	if err := selectPatchWaitError(waitErr, patchBuildErr); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
 			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
 			if updates != nil {
@@ -296,36 +345,52 @@ func patchSingleArchImage(
 	return result, nil
 }
 
-// validatePlatformEmulation checks if emulation is available for cross-platform builds.
-func validatePlatformEmulation(targetPlatform types.PatchPlatform) error { //nolint:gocritic
-	hostPlatform := platforms.Normalize(platforms.DefaultSpec())
-	if hostPlatform.OS != LINUX {
-		hostPlatform.OS = LINUX
+// selectPatchWaitError preserves the package-manager no-update sentinel when
+// the concurrently running image loader reports an error after receiving an
+// empty export stream. BuildKit's file-sync session can serialize that sentinel
+// through Docker's HTTP request-body error before the gateway build returns,
+// leaving patchBuildErr as context cancellation instead of the typed error.
+// Other loader errors remain authoritative.
+func selectPatchWaitError(waitErr, patchBuildErr error) error {
+	if errors.Is(patchBuildErr, types.ErrNoUpdatesFound) {
+		return patchBuildErr
+	}
+	if errors.Is(waitErr, types.ErrNoUpdatesFound) {
+		return waitErr
+	}
+	if waitErr != nil && strings.Contains(waitErr.Error(), types.ErrNoUpdatesFound.Error()) {
+		return types.ErrNoUpdatesFound
+	}
+	return waitErr
+}
+
+// validateBuildkitPlatformSupport checks whether any selected BuildKit worker
+// advertises the resolved target platform. Worker platform lists account for
+// native architecture and worker-side binfmt/QEMU support.
+func validateBuildkitPlatformSupport(ctx context.Context, client *client.Client, targetPlatform types.PatchPlatform) error { //nolint:gocritic
+	workers, err := listWorkers(ctx, client)
+	if err != nil {
+		return fmt.Errorf("list BuildKit workers for platform validation: %w", err)
 	}
 
-	platformsEqual := hostPlatform.OS == targetPlatform.OS &&
-		hostPlatform.Architecture == targetPlatform.Architecture
-
-	if platformsEqual {
-		log.Debugf("Host platform %+v matches target platform %+v", hostPlatform, targetPlatform)
-		return nil
+	target := platforms.Normalize(targetPlatform.Platform)
+	for _, worker := range workers {
+		if worker == nil {
+			continue
+		}
+		for _, workerPlatform := range worker.Platforms {
+			if platforms.Only(platforms.Normalize(workerPlatform)).Match(target) {
+				log.Debugf("BuildKit worker %s supports target platform %s", worker.ID, platforms.Format(target))
+				return nil
+			}
+		}
 	}
 
-	log.Debugf("Host platform %+v does not match target platform %+v", hostPlatform, targetPlatform)
-
-	if emulationEnabled := buildkit.QemuAvailable(&targetPlatform); !emulationEnabled {
-		platform := targetPlatform.OS + "/" + targetPlatform.Architecture
-
-		log.Warnf("Emulation is not enabled for platform %s.\n"+
-			"To enable emulation, see docs: \n"+
-			"https://docs.docker.com/build/building/multi-platform/#qemu",
-			platform)
-
-		return fmt.Errorf("emulation is not enabled for platform %s", platform)
-	}
-
-	log.Debugf("Emulation is enabled for platform %+v", targetPlatform)
-	return nil
+	platform := platforms.Format(target)
+	return fmt.Errorf(
+		"emulation is not enabled for platform %s on any BuildKit worker; configure a native worker or QEMU/binfmt support",
+		platform,
+	)
 }
 
 // setupWorkingFolder creates and configures the working directory.
@@ -424,6 +489,67 @@ func loadImageToRuntime(ctx context.Context, pipeR io.ReadCloser, patchedImageNa
 	return pipeR.Close()
 }
 
+func validateReportPlatform(updates *unversioned.UpdateManifest, targetPlatform *types.PatchPlatform) error {
+	if updates == nil {
+		return nil
+	}
+
+	reportArch := strings.TrimSpace(updates.Metadata.Config.Arch)
+	if reportArch == "" {
+		return nil
+	}
+
+	target := targetPlatform.Platform
+	if target.OS == "" {
+		target.OS = LINUX
+	}
+	target = platforms.Normalize(target)
+	reportPlatform := platforms.Normalize(ispec.Platform{
+		OS:           target.OS,
+		Architecture: reportArch,
+		Variant:      strings.TrimSpace(updates.Metadata.Config.Variant),
+	})
+
+	if reportPlatform.Architecture != target.Architecture || reportPlatform.Variant != target.Variant {
+		return fmt.Errorf(
+			"scan report platform %s does not match target platform %s; generate the report for the selected platform or choose a matching --platform",
+			platforms.Format(reportPlatform),
+			platforms.Format(target),
+		)
+	}
+
+	return nil
+}
+
+func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuildClient, image string, platform *ispec.Platform) error {
+	var manifestExists bool
+	_, err := bkClient.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, platform)
+		if err != nil {
+			return nil, err
+		}
+
+		manifestExists, err = common.StateFileExists(
+			ctx,
+			c,
+			currentSuppliedImageState(config),
+			platform,
+			pkgmgr.NativeChiselManifestPath,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return gwclient.NewResult(), nil
+	}, nil)
+	if err != nil {
+		return fmt.Errorf("inspect target image for native Chisel metadata: %w", err)
+	}
+	if manifestExists {
+		return errNativeChiselTargetedPatch
+	}
+	return nil
+}
+
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
@@ -447,25 +573,16 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		log.Debugf("Got image descriptor for %s", patchedImageName)
 	}
 
-	// Add original manifest annotations if we have a patched descriptor.
-	// originalAnnotations were captured before patching to avoid a mutable-tag
-	// race where the same tag is reused for the patched image.
-	if patchedDesc != nil && len(originalAnnotations) > 0 {
-		// Create augmented descriptor with original annotations
-		augmentedDesc := *patchedDesc
-		if augmentedDesc.Annotations == nil {
-			augmentedDesc.Annotations = make(map[string]string)
-		}
-
-		// Copy original annotations
-		maps.Copy(augmentedDesc.Annotations, originalAnnotations)
-
-		// Update creation timestamp and add Copa annotations
-		augmentedDesc.Annotations["org.opencontainers.image.created"] = time.Now().UTC().Format(time.RFC3339)
-		augmentedDesc.Annotations[copaAnnotationKeyPrefix+".image.patched"] = time.Now().UTC().Format(time.RFC3339)
-
-		patchedDesc = &augmentedDesc
-		log.Debugf("Preserved %d manifest level annotations for platform %s", len(originalAnnotations), targetPlatform.Platform)
+	// Add original and package-manager annotations if we have a patched
+	// descriptor. originalAnnotations were captured before patching to avoid a
+	// mutable-tag race where the same tag is reused for the patched image.
+	var managerAnnotations map[string]string
+	if patchResult != nil {
+		managerAnnotations = patchResult.Annotations
+	}
+	patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	if patchedDesc != nil {
+		log.Debugf("Added %d original and %d package-manager manifest annotations for platform %s", len(originalAnnotations), len(managerAnnotations), targetPlatform.Platform)
 	}
 
 	patchedRef, err := reference.ParseNamed(patchedImageName)
@@ -489,6 +606,25 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	return result, nil
 }
 
+func augmentPatchedDescriptor(descriptor *ispec.Descriptor, originalAnnotations, managerAnnotations map[string]string) *ispec.Descriptor {
+	if descriptor == nil {
+		return nil
+	}
+
+	augmented := *descriptor
+	augmented.Annotations = maps.Clone(descriptor.Annotations)
+	if augmented.Annotations == nil {
+		augmented.Annotations = make(map[string]string)
+	}
+	maps.Copy(augmented.Annotations, originalAnnotations)
+	maps.Copy(augmented.Annotations, managerAnnotations)
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	augmented.Annotations["org.opencontainers.image.created"] = now
+	augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"] = now
+	return &augmented
+}
+
 // executePatchBuild executes the actual patch build process.
 func executePatchBuild(
 	ctx context.Context,
@@ -504,6 +640,7 @@ func executePatchBuild(
 	exitOnEOL bool,
 	toolchainPatchLevel string,
 	goVCSURL string,
+	chiselRelease string,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -544,6 +681,7 @@ func executePatchBuild(
 			ExitOnEOL:           exitOnEOL,
 			ToolchainPatchLevel: toolchainPatchLevel,
 			GoVCSURL:            goVCSURL,
+			ChiselRelease:       chiselRelease,
 		}
 
 		// Execute the core patching logic
