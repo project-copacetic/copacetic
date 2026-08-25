@@ -957,7 +957,6 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-
 	// Run mod tidy to sync go.sum after dependency updates.
 	// This is needed both for generated go.mod and for cloned source where
 	// the resolved graph may include dependencies not in the original go.sum.
