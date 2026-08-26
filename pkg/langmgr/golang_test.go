@@ -946,23 +946,26 @@ func TestBuildGoUpdateCmd(t *testing.T) {
 
 func TestFilterGoDowngrades(t *testing.T) {
 	tests := []struct {
-		name          string
-		input         unversioned.LangUpdatePackages
-		expectedNames []string
+		name            string
+		input           unversioned.LangUpdatePackages
+		expectedNames   []string
+		expectedSkipped []string
 	}{
 		{
 			name: "fixed version older than installed - skipped",
 			input: unversioned.LangUpdatePackages{
 				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
 			},
-			expectedNames: []string{},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
 		},
 		{
 			name: "fixed version equal to installed - skipped",
 			input: unversioned.LangUpdatePackages{
 				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.7", FixedVersion: "v1.7.7", Type: utils.GoModules},
 			},
-			expectedNames: []string{},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
 		},
 		{
 			name: "fixed version newer than installed - kept",
@@ -977,7 +980,8 @@ func TestFilterGoDowngrades(t *testing.T) {
 				{Name: "github.com/gin-gonic/gin", InstalledVersion: "1.9.1", FixedVersion: "1.7.7", Type: utils.GoModules},
 				{Name: "golang.org/x/net", InstalledVersion: "0.4.0", FixedVersion: "0.5.0", Type: utils.GoModules},
 			},
-			expectedNames: []string{"golang.org/x/net"},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
 		},
 		{
 			name: "empty installed version - kept",
@@ -1014,18 +1018,24 @@ func TestFilterGoDowngrades(t *testing.T) {
 				{Name: "golang.org/x/net", InstalledVersion: "v0.4.0", FixedVersion: "v0.5.0", Type: utils.GoModules},
 				{Name: "golang.org/x/text", InstalledVersion: "v0.3.8", FixedVersion: "v0.3.8", Type: utils.GoModules},
 			},
-			expectedNames: []string{"golang.org/x/net"},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin", "golang.org/x/text"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := filterGoDowngrades(tt.input)
+			result, skipped := filterGoDowngrades(tt.input)
 			names := make([]string, 0, len(result))
 			for _, pkg := range result {
 				names = append(names, pkg.Name)
 			}
 			assert.Equal(t, tt.expectedNames, names)
+			assert.Equal(t, tt.expectedSkipped, skipped)
+			for _, skippedName := range skipped {
+				assert.NotContains(t, names, skippedName,
+					"skipped downgrade must not appear in the updates that get applied")
+			}
 		})
 	}
 }
@@ -1048,6 +1058,7 @@ func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
 	state, errPkgs, err := manager.InstallUpdates(t.Context(), currentState, manifest, false)
 
 	require.NoError(t, err)
-	assert.Empty(t, errPkgs)
+	assert.Equal(t, []string{"github.com/gin-gonic/gin"}, errPkgs,
+		"downgrade-skipped packages must be reported as unpatched so they stay out of validated updates")
 	assert.Same(t, currentState, state)
 }
