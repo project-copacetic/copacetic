@@ -16,6 +16,52 @@ skipped. See [Skip Already-Patched Images](#skip-already-patched-images) for the
 resulting limitations.
 :::
 
+## Helm Chart Patching (Experimental)
+
+Chart-aware patching discovers the images rendered by a Helm chart, patches them in their original repositories, and publishes a self-contained wrapper chart with the patched image overrides. Set `COPA_EXPERIMENTAL=1` and use `--push`; Copa will not publish a wrapper chart that points to local-only images.
+
+Chart patching requires the `helm` CLI in `PATH`. Copa invokes Helm directly for chart pull, rendering, packaging, and OCI push operations, so the CLI uses your existing Helm repository and registry credentials.
+
+### Single chart
+
+```bash
+export COPA_EXPERIMENTAL=1
+
+copa patch \
+  --chart reloader \
+  --chart-version 1.2.1 \
+  --chart-repo oci://ghcr.io/stakater/charts \
+  --chart-registry oci://ghcr.io/myorg/charts \
+  --push
+```
+
+`--chart-registry` controls only the wrapper chart destination. Patched images are pushed back to their original repositories. Chart mode is mutually exclusive with `--image` and `--config`.
+
+The wrapper embeds the original chart as a dependency, so consumers can install it directly without running `helm dependency update`.
+
+### Charts in PatchConfig
+
+```yaml
+apiVersion: copa.sh/v1alpha1
+kind: PatchConfig
+target:
+  tag: "{{ .SourceTag }}-patched"
+chartTarget:
+  registry: oci://ghcr.io/myorg/charts
+charts:
+  - name: reloader
+    version: "1.2.1"
+    repository: oci://ghcr.io/stakater/charts
+overrides:
+  ghcr.io/stakater/reloader:
+    valuePath: reloader.deployment.image
+```
+
+Run the config with `COPA_EXPERIMENTAL=1 copa patch --config copa-bulk-config.yaml --push`.
+
+Copa recognizes scalar `image` values and the common `name/tag`, `repository/tag`, and `registry/repository/tag` schemas. Use `overrides.valuePath` when multiple values paths are equally valid. Chart generation fails rather than publishing partial or ambiguous overrides. Digest-pinned images are rejected because replacing a digest with a tag could select different image content.
+
+
 ## PatchConfig Schema
 
 Top‑level fields:
