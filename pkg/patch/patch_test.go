@@ -3,21 +3,30 @@ package patch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 	"text/tabwriter"
 	"time"
 
+	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	buildkitclient "github.com/moby/buildkit/client"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+)
+
+const (
+	armArchitecture    = "arm"
+	linuxARMv7Platform = "linux/arm/v7"
 )
 
 func TestRemoveIfNotDebug(t *testing.T) {
@@ -218,6 +227,135 @@ func TestPatch_BuildReturnsNilResponse(t *testing.T) {
 	// The exact error message may vary depending on how far the patch process gets
 	// before failing (BuildKit connection, image loading, etc.)
 	t.Logf("Patch returned error as expected (and did not panic): %v", err)
+}
+
+func TestPatchWithContextDerivesImplicitPlatformFromReport(t *testing.T) {
+	const (
+		amd64Arch      = "amd64"
+		alpineImageRef = "docker.io/library/alpine:3.20"
+		patchedTag     = "patched"
+		trivyScanner   = "trivy"
+	)
+
+	hostArch := common.GetDefaultLinuxPlatform().Architecture
+	reportArch := ARM64
+	if hostArch == reportArch {
+		reportArch = amd64Arch
+	}
+
+	reportData, err := os.ReadFile("../report/testdata/trivy_valid.json")
+	require.NoError(t, err)
+	var reportJSON map[string]any
+	require.NoError(t, json.Unmarshal(reportData, &reportJSON))
+	metadata, ok := reportJSON["Metadata"].(map[string]any)
+	require.True(t, ok)
+	imageConfig, ok := metadata["ImageConfig"].(map[string]any)
+	require.True(t, ok)
+	imageConfig["architecture"] = reportArch
+	reportData, err = json.Marshal(reportJSON)
+	require.NoError(t, err)
+
+	reportPath := t.TempDir() + "/report.json"
+	require.NoError(t, os.WriteFile(reportPath, reportData, 0o600))
+
+	originalBKNewClient := bkNewClient
+	buildkitCalled := false
+	buildkitErr := errors.New("buildkit reached after implicit report platform resolution")
+	bkNewClient = func(context.Context, buildkit.Opts) (*buildkitclient.Client, error) {
+		buildkitCalled = true
+		return nil, buildkitErr
+	}
+	t.Cleanup(func() { bkNewClient = originalBKNewClient })
+
+	err = patchWithContext(context.Background(), &types.Options{
+		Image:             alpineImageRef,
+		Report:            reportPath,
+		PatchedTag:        patchedTag,
+		Scanner:           trivyScanner,
+		PkgTypes:          "os",
+		LibraryPatchLevel: "patch",
+	})
+
+	assert.ErrorIs(t, err, buildkitErr)
+	assert.True(t, buildkitCalled, "implicit report architecture should be resolved before BuildKit creation")
+}
+
+func TestResolveSingleReportPlatform(t *testing.T) {
+	const linuxARM64Platform = "linux/arm64"
+
+	tests := []struct {
+		name      string
+		platforms []string
+		updates   *unversioned.UpdateManifest
+		want      string
+		wantErr   string
+	}{
+		{
+			name: "defaults to host platform without report architecture",
+			want: platforms.Format(common.GetDefaultLinuxPlatform()),
+		},
+		{
+			name: "derives implicit platform from report metadata",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "aarch64", Variant: "v8"},
+			}},
+			want: linuxARM64Platform,
+		},
+		{
+			name: "defaults implicit arm report variant to v7",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: armArchitecture},
+			}},
+			want: linuxARMv7Platform,
+		},
+		{
+			name:      "explicit platform",
+			platforms: []string{"linux/amd64"},
+			want:      "linux/amd64",
+		},
+		{
+			name:      "explicit platform is not replaced by report metadata",
+			platforms: []string{"linux/amd64"},
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: ARM64},
+			}},
+			want: "linux/amd64",
+		},
+		{
+			name:      "normalizes variant",
+			platforms: []string{"linux/arm64/v8"},
+			want:      "linux/arm64",
+		},
+		{
+			name:      "rejects multiple platforms",
+			platforms: []string{"linux/amd64", "linux/arm64"},
+			wantErr:   "a single report file can target only one platform",
+		},
+		{
+			name:      "rejects unsupported platform",
+			platforms: []string{"linux/mips64"},
+			wantErr:   "unsupported platform",
+		},
+		{
+			name: "rejects unsupported report platform",
+			updates: &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				Config: unversioned.Config{Arch: "bogus", Variant: "v1"},
+			}},
+			wantErr: "unsupported scan report platform",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveSingleReportPlatformWithUpdates(tt.platforms, tt.updates)
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got.String())
+		})
+	}
 }
 
 func TestArchTag(t *testing.T) {

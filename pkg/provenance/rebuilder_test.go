@@ -325,6 +325,50 @@ func TestNormalizeVersion(t *testing.T) {
 	}
 }
 
+func TestBuildGoModEditArgs(t *testing.T) {
+	args, err := buildGoModEditArgs("/usr/local/go/bin/go", map[string]string{
+		"google.golang.org/grpc": "v1.57.1",
+		"golang.org/x/sys":       "0.44.0",
+		"golang.org/x/net":       "v0.56.0",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/usr/local/go/bin/go",
+		"mod",
+		"edit",
+		"-require=golang.org/x/net@v0.56.0",
+		"-require=golang.org/x/sys@v0.44.0",
+		"-require=google.golang.org/grpc@v1.57.1",
+	}, args)
+}
+
+func TestBuildGoModEditArgsRejectsUnsafeInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates map[string]string
+		wantErr string
+	}{
+		{
+			name:    "unsafe module",
+			updates: map[string]string{"example.com/mod;true": "v1.0.0"},
+			wantErr: "module name contains unsafe characters",
+		},
+		{
+			name:    "unsafe version",
+			updates: map[string]string{"example.com/mod": "v1.0.0;true"},
+			wantErr: "version contains unsafe characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildGoModEditArgs("go", tt.updates)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 func TestValidateBinaryPath(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -27,6 +27,11 @@ const (
 	unpackPath       = "/" + copaPrefix + "unpacked"
 	resultManifest   = "results.manifest"
 	imageCachePrefix = "ghcr.io/project-copacetic/copacetic"
+
+	ChiselReleaseAnnotation        = "sh.copa.chisel.release"
+	ChiselVersionAnnotation        = "sh.copa.chisel.version"
+	NativeChiselTargetedPatchError = "targeted patching of native Chisel manifests is not supported; omit --report to run a comprehensive Chisel update"
+	NativeChiselManifestPath       = "/var/lib/chisel/manifest.wall"
 )
 
 type PackageManager interface {
@@ -34,7 +39,48 @@ type PackageManager interface {
 	GetPackageType() string
 }
 
+// PackageManagerOptions contains optional settings used when constructing a
+// package manager.
+type PackageManagerOptions struct {
+	ChiselRelease string
+}
+
+// PackageManagerMetadata is an optional interface implemented by package
+// managers that produce OCI annotations while installing updates. Callers must
+// continue to support package managers that do not implement this interface.
+type PackageManagerMetadata interface {
+	Annotations() map[string]string
+}
+
+// GetPackageManagerAnnotations returns a defensive copy of annotations exposed
+// by manager. Package managers that do not implement PackageManagerMetadata
+// simply return no annotations.
+func GetPackageManagerAnnotations(manager PackageManager) map[string]string {
+	metadata, ok := manager.(PackageManagerMetadata)
+	if !ok {
+		return nil
+	}
+
+	annotations := metadata.Annotations()
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	result := make(map[string]string, len(annotations))
+	for key, value := range annotations {
+		result[key] = value
+	}
+	return result
+}
+
 func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
+	return GetPackageManagerWithOptions(osType, osVersion, config, workingFolder, PackageManagerOptions{})
+}
+
+// GetPackageManagerWithOptions constructs a package manager with optional
+// manager-specific settings while preserving the original constructor for
+// existing callers.
+func GetPackageManagerWithOptions(osType string, osVersion string, config *buildkit.Config, workingFolder string, managerOptions PackageManagerOptions) (PackageManager, error) {
 	canonicalOSType := utils.CanonicalOSType(osType)
 	switch canonicalOSType {
 	case utils.OSTypeAlpine:
@@ -48,6 +94,7 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 			workingFolder: workingFolder,
 			osVersion:     osVersion,
 			osType:        canonicalOSType,
+			chiselRelease: managerOptions.ChiselRelease,
 		}, nil
 	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
 		return &rpmManager{

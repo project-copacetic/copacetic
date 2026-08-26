@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/containerd/platforms"
@@ -20,6 +21,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
+	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -64,17 +66,52 @@ type OCILayoutExportOptions struct {
 	ForceCompression bool
 }
 
+type platformExportMetadata struct {
+	Config      []byte
+	Annotations map[string]string
+}
+
 const (
-	linux = "linux"
-	arm64 = "arm64"
+	linux                       = "linux"
+	arm64                       = "arm64"
+	maxGatewayReadFileChunkSize = int64(8 << 20)
 )
 
 // for testing.
 var (
-	readDir  = os.ReadDir
-	readFile = os.ReadFile
-	lookPath = exec.LookPath
+	readDir                  = os.ReadDir
+	readFile                 = os.ReadFile
+	lookPath                 = exec.LookPath
+	localImagePlatforms      = utils.LocalImagePlatforms
+	localImageIndex          = utils.LocalImageIndex
+	getRemoteImageDescriptor = remote.Get
+	getImageFromDaemon       = daemon.Image
+	tryGetManifestFromLocal  = getManifestFromLocal
 )
+
+// GetVerifiedRemoteIndex fetches an image index through an immutable digest
+// reference and verifies that the registry returned that exact index. Callers
+// must not use this helper with mutable tags when reconciling local images with
+// remote metadata.
+func GetVerifiedRemoteIndex(ref name.Digest) (*remote.Descriptor, error) {
+	desc, err := getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	if err != nil {
+		return nil, fmt.Errorf("fetch remote descriptor for %q: %w", ref.String(), err)
+	}
+	if desc == nil {
+		return nil, fmt.Errorf("registry returned no descriptor for %q", ref.String())
+	}
+	if !desc.MediaType.IsIndex() {
+		return nil, fmt.Errorf("remote descriptor for %q is not an image index", ref.String())
+	}
+	if desc.Digest.String() != ref.DigestStr() {
+		return nil, fmt.Errorf(
+			"remote descriptor digest %s does not match immutable reference %s",
+			desc.Digest.String(), ref.DigestStr(),
+		)
+	}
+	return desc, nil
+}
 
 func InitializeBuildkitConfig(
 	ctx context.Context,
@@ -232,90 +269,75 @@ func isSupportedOsType(osType string) bool {
 // It returns a remote.Descriptor if successful, or an error if the manifest cannot be retrieved locally.
 // This is exported to support patching images that exist locally but not in a remote registry.
 func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
+	descriptor, _, _, err := getManifestFromLocal(ref)
+	return descriptor, err
+}
+
+func getManifestFromLocal(ref name.Reference) (*remote.Descriptor, v1.Hash, bool, error) {
 	imageName := ref.String()
 	log.Debugf("Attempting to get manifest from local daemon for %s", imageName)
 
-	// Try to get the image from the local daemon using go-containerregistry
-	// First, try to get it as an image index (multi-platform)
 	ctx := context.Background()
-
-	// Attempt to read raw manifest from daemon
-	// The daemon package doesn't directly expose manifest inspection, so we use a workaround:
-	// Try to get the image and then extract its raw manifest
-	img, err := daemon.Image(ref, daemon.WithContext(ctx))
+	index, localDescriptor, complete, found, err := localImageIndex(ctx, imageName)
 	if err != nil {
-		log.Debugf("Failed to get image from daemon for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to get image from local daemon: %v", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to inspect image in local daemon: %w", err)
+	}
+	if !found {
+		return nil, v1.Hash{}, false, fmt.Errorf("image %q was not found in the local daemon", imageName)
+	}
+	if index != nil {
+		rawManifest, err := json.Marshal(index)
+		if err != nil {
+			return nil, v1.Hash{}, false, fmt.Errorf("marshal local image index: %w", err)
+		}
+		manifestSum := sha256.Sum256(rawManifest)
+		manifestDigest := v1.Hash{Algorithm: "sha256", Hex: fmt.Sprintf("%x", manifestSum)}
+		sourceDigest := manifestDigest
+		if !complete {
+			sourceDigest = v1.Hash{}
+		}
+		if localDescriptor != nil && localDescriptor.Digest != "" {
+			sourceDigest, err = v1.NewHash(localDescriptor.Digest.String())
+			if err != nil {
+				return nil, v1.Hash{}, false, fmt.Errorf("parse local image index digest: %w", err)
+			}
+		}
+		descriptor := v1.Descriptor{
+			MediaType:   v1types.MediaType(index.MediaType),
+			Size:        int64(len(rawManifest)),
+			Digest:      manifestDigest,
+			Annotations: index.Annotations,
+		}
+		return &remote.Descriptor{Descriptor: descriptor, Manifest: rawManifest}, sourceDigest, complete, nil
 	}
 
-	// Get the raw manifest
+	img, err := getImageFromDaemon(ref, daemon.WithContext(ctx))
+	if err != nil {
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get image from local daemon: %w", err)
+	}
 	rawManifest, err := img.RawManifest()
 	if err != nil {
-		log.Debugf("Failed to get raw manifest for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to get raw manifest: %v", err)
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get raw local manifest: %w", err)
 	}
-
-	// Parse the manifest to determine if it's a manifest list
-	var manifestData map[string]interface{}
-	if err := json.Unmarshal(rawManifest, &manifestData); err != nil {
-		log.Debugf("Failed to parse manifest JSON for %s: %v", imageName, err)
-		return nil, fmt.Errorf("failed to parse manifest JSON: %v", err)
+	mediaType, err := img.MediaType()
+	if err != nil {
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get local manifest media type: %w", err)
 	}
-
-	// Check if this is a manifest list (has "manifests" field)
-	if manifests, ok := manifestData["manifests"]; ok {
-		if manifestSlice, ok := manifests.([]interface{}); ok && len(manifestSlice) > 0 {
-			log.Debugf("Found multi-platform manifest from daemon with %d platforms", len(manifestSlice))
-
-			// Parse the manifest list to extract individual platform image references
-			var enhancedManifestData struct {
-				MediaType string `json:"mediaType"`
-				Manifests []struct {
-					Digest    string `json:"digest"`
-					MediaType string `json:"mediaType"`
-					Size      int64  `json:"size"`
-					Platform  struct {
-						Architecture string `json:"architecture"`
-						OS           string `json:"os"`
-						Variant      string `json:"variant,omitempty"`
-					} `json:"platform"`
-				} `json:"manifests"`
-			}
-
-			if err := json.Unmarshal(rawManifest, &enhancedManifestData); err != nil {
-				log.Debugf("Failed to parse enhanced manifest JSON for %s: %v", imageName, err)
-				return nil, fmt.Errorf("failed to parse enhanced manifest JSON: %v", err)
-			}
-
-			// Log platform information for debugging
-			log.Debugf("Manifest list contains the following platforms:")
-			for i, manifest := range enhancedManifestData.Manifests {
-				log.Debugf("  Platform %d: %s/%s (digest: %s)", i+1,
-					manifest.Platform.OS, manifest.Platform.Architecture,
-					manifest.Digest[:12]+"...")
-			}
-
-			// Determine media type
-			mediaType := "application/vnd.docker.distribution.manifest.list.v2+json"
-			if enhancedManifestData.MediaType != "" {
-				mediaType = enhancedManifestData.MediaType
-			}
-
-			// Calculate digest from the manifest content
-			digest := fmt.Sprintf("%x", sha256.Sum256(rawManifest))
-
-			return &remote.Descriptor{
-				Descriptor: v1.Descriptor{
-					MediaType: v1types.MediaType(mediaType),
-					Size:      int64(len(rawManifest)),
-					Digest:    v1.Hash{Algorithm: "sha256", Hex: digest},
-				},
-				Manifest: rawManifest,
-			}, nil
+	digest, err := img.Digest()
+	if err != nil {
+		return nil, v1.Hash{}, false, fmt.Errorf("failed to get local manifest digest: %w", err)
+	}
+	sourceDigest := digest
+	if localDescriptor != nil && localDescriptor.Digest != "" {
+		sourceDigest, err = v1.NewHash(localDescriptor.Digest.String())
+		if err != nil {
+			return nil, v1.Hash{}, false, fmt.Errorf("parse local source descriptor digest: %w", err)
 		}
 	}
-
-	return nil, fmt.Errorf("single-platform image")
+	return &remote.Descriptor{
+		Descriptor: v1.Descriptor{MediaType: mediaType, Size: int64(len(rawManifest)), Digest: digest},
+		Manifest:   rawManifest,
+	}, sourceDigest, complete, nil
 }
 
 // platformsFromIndexManifest converts the entries of a multi-platform image
@@ -372,15 +394,13 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 		return nil, fmt.Errorf("error parsing reference %q: %w", manifestRef, err)
 	}
 
-	// Prefer the local image store: query the Docker daemon directly via
-	// ImageInspect, which surfaces the full per-platform manifest list when the
-	// daemon uses the multi-platform (containerd) image store. This lets us
-	// patch images that exist locally but not in any remote registry — both
-	// single-platform and multi-platform — without any registry access.
-	if locals, ok, lerr := utils.LocalImagePlatforms(context.Background(), manifestRef); ok {
-		// Image was found locally; per LocalImagePlatforms' contract we must
-		// not fall back to a remote registry, even if no usable platforms
-		// were extracted.
+	// Prefer the local image store. Mutable tags and local references may name a
+	// different image remotely, so a successful local lookup is authoritative.
+	// For immutable digest references only, a daemon may expose just the host
+	// child of the referenced remote index; reconcile that single local platform
+	// with a remote index only after confirming the descriptor digest matches.
+	var desc *remote.Descriptor
+	if locals, ok, localErr := localImagePlatforms(context.Background(), manifestRef); ok {
 		if len(locals) == 0 {
 			return nil, fmt.Errorf("image %q found in local daemon but no usable platforms could be discovered", manifestRef)
 		}
@@ -394,32 +414,47 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 					OSVersion:    p.OSVersion,
 					OSFeatures:   p.OSFeatures,
 				},
-				ReportFile:     "",
-				ShouldPreserve: false,
 			}
 			if patchPlatform.Architecture == arm64 && patchPlatform.Variant == "v8" {
 				patchPlatform.Variant = ""
 			}
 			platforms = append(platforms, patchPlatform)
 		}
-		return platforms, nil
-	} else if lerr != nil {
-		log.Debugf("Local platform discovery failed for %s: %v", manifestRef, lerr)
-	}
-
-	// Try local daemon manifest list (legacy path), then fall back to remote
-	desc, err := TryGetManifestFromLocal(ref)
-	if err != nil {
-		log.Debugf("Failed to get manifest list from local daemon: %v", err)
-
-		log.Debugf("Falling back to remote registry for %s", manifestRef)
-		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-		if err != nil {
-			return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
+		if len(platforms) > 1 {
+			return platforms, nil
 		}
-		log.Debugf("Successfully fetched descriptor from remote registry for %s", manifestRef)
+
+		digestRef, immutable := ref.(name.Digest)
+		if !immutable {
+			return platforms, nil
+		}
+
+		remoteDesc, remoteErr := GetVerifiedRemoteIndex(digestRef)
+		if remoteErr != nil {
+			log.Debugf("Remote platform discovery failed for locally cached %s: %v", manifestRef, remoteErr)
+			return platforms, nil
+		}
+		log.Debugf("Locally cached child masks the matching remote index for %s; using remote platform list", manifestRef)
+		desc = remoteDesc
 	} else {
-		log.Debugf("Successfully fetched descriptor from local daemon for %s", manifestRef)
+		if localErr != nil {
+			log.Debugf("Local platform discovery failed for %s: %v", manifestRef, localErr)
+		}
+
+		// Try the legacy local daemon manifest path, then fall back to the remote registry.
+		var err error
+		desc, err = TryGetManifestFromLocal(ref)
+		if err != nil {
+			log.Debugf("Failed to get manifest list from local daemon: %v", err)
+			log.Debugf("Falling back to remote registry for %s", manifestRef)
+			desc, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+			if err != nil {
+				return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", manifestRef, err)
+			}
+			log.Debugf("Successfully fetched descriptor from remote registry for %s", manifestRef)
+		} else {
+			log.Debugf("Successfully fetched descriptor from local daemon for %s", manifestRef)
+		}
 	}
 
 	if desc.MediaType.IsIndex() {
@@ -680,47 +715,124 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 	return configData, nil, image, nil
 }
 
+type imageConfigLabelsDocument struct {
+	image     map[string]json.RawMessage
+	config    map[string]json.RawMessage
+	labelsKey string
+	labels    map[string]string
+}
+
+func parseImageConfigLabels(imageConfig []byte) (*imageConfigLabelsDocument, error) {
+	var image map[string]json.RawMessage
+	if err := json.Unmarshal(imageConfig, &image); err != nil {
+		return nil, fmt.Errorf("parse image config: %w", err)
+	}
+	configData, ok := image["config"]
+	if !ok {
+		return nil, fmt.Errorf("image config does not contain a config field")
+	}
+	var config map[string]json.RawMessage
+	if err := json.Unmarshal(configData, &config); err != nil {
+		return nil, fmt.Errorf("image config does not contain an object-valued config field: %w", err)
+	}
+	if config == nil {
+		return nil, fmt.Errorf("image config does not contain an object-valued config field")
+	}
+
+	labelsKey := "Labels"
+	labelsData, upperExists := config[labelsKey]
+	if lowerLabels, lowerExists := config["labels"]; !upperExists && lowerExists {
+		labelsKey = "labels"
+		labelsData = lowerLabels
+	} else if !upperExists && !lowerExists {
+		for key, data := range config {
+			if !strings.EqualFold(key, "labels") {
+				continue
+			}
+			if labelsData != nil {
+				return nil, fmt.Errorf("image config contains multiple case-insensitive labels fields")
+			}
+			labelsKey = key
+			labelsData = data
+		}
+	}
+
+	labels := make(map[string]string)
+	if len(labelsData) > 0 && string(labelsData) != "null" {
+		if err := json.Unmarshal(labelsData, &labels); err != nil {
+			return nil, fmt.Errorf("image config labels field is not a string-valued object: %w", err)
+		}
+	}
+
+	return &imageConfigLabelsDocument{
+		image:     image,
+		config:    config,
+		labelsKey: labelsKey,
+		labels:    labels,
+	}, nil
+}
+
+func (document *imageConfigLabelsDocument) marshal() ([]byte, error) {
+	// JSON field matching is case-insensitive. Remove every spelling except the
+	// selected source so stale variants cannot shadow the updated labels.
+	for key := range document.config {
+		if strings.EqualFold(key, "labels") {
+			delete(document.config, key)
+		}
+	}
+
+	labelsData, err := json.Marshal(document.labels)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config labels: %w", err)
+	}
+	document.config[document.labelsKey] = labelsData
+	configData, err := json.Marshal(document.config)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config object: %w", err)
+	}
+	document.image["config"] = configData
+	updated, err := json.Marshal(document.image)
+	if err != nil {
+		return nil, fmt.Errorf("marshal image config: %w", err)
+	}
+	return updated, nil
+}
+
+// AddImageConfigLabels returns imageConfig with labels merged into its OCI
+// config. The input is left unchanged, and supplied values take precedence.
+func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte, error) {
+	if len(labels) == 0 {
+		return imageConfig, nil
+	}
+	document, err := parseImageConfigLabels(imageConfig)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range labels {
+		document.labels[key] = value
+	}
+	return document.marshal()
+}
+
 func setupLabels(image string, configData []byte) (string, []byte, error) {
-	imageConfig := make(map[string]interface{})
-	err := json.Unmarshal(configData, &imageConfig)
+	document, err := parseImageConfigLabels(configData)
 	if err != nil {
 		return "", nil, err
 	}
 
-	configMap, ok := imageConfig["config"].(map[string]interface{})
-	if !ok {
-		err := fmt.Errorf("type assertion to map[string]interface{} failed")
+	baseImage := document.labels["BaseImage"]
+	if baseImage == "" {
+		document.labels["BaseImage"] = image
+	}
+	imageWithLabels, err := document.marshal()
+	if err != nil {
 		return "", nil, err
 	}
-
-	var baseImage string
-	labels := configMap["labels"]
-	if labels == nil {
-		configMap["labels"] = make(map[string]interface{})
-	}
-	labelsMap, ok := configMap["labels"].(map[string]interface{})
-	if !ok {
-		err := fmt.Errorf("type assertion to map[string]interface{} failed")
-		return "", nil, err
-	}
-	if baseImageValue := labelsMap["BaseImage"]; baseImageValue != nil {
-		baseImage, ok = baseImageValue.(string)
-		if !ok {
-			err := fmt.Errorf("type assertion to string failed")
-			return "", nil, err
-		}
-	} else {
-		labelsMap["BaseImage"] = image
-	}
-
-	imageWithLabels, _ := json.Marshal(imageConfig)
-
 	return baseImage, imageWithLabels, nil
 }
 
-// Extracts the bytes of the file denoted by `path` from the state `st`.
-func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
-	// since platform is obtained from host, override it in the case of Darwin
+func solveStateReference(ctx context.Context, c gwclient.Client, st *llb.State) (gwclient.Reference, error) {
+	// Since the platform is obtained from the host, override it for non-Linux hosts.
 	platform := platforms.Normalize(platforms.DefaultSpec())
 	if platform.OS != linux {
 		platform.OS = linux
@@ -739,14 +851,139 @@ func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State,
 		return nil, err
 	}
 
-	ref, err := resp.SingleRef()
+	return resp.SingleRef()
+}
+
+// ExtractFileFromState extracts the bytes of the file denoted by path from st.
+func ExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, error) {
+	ref, err := solveStateReference(ctx, c, st)
 	if err != nil {
 		return nil, err
 	}
 
-	return ref.ReadFile(ctx, gwclient.ReadRequest{
-		Filename: path,
-	})
+	return ref.ReadFile(ctx, gwclient.ReadRequest{Filename: path})
+}
+
+// ExtractFileFromStateWithLimit extracts path after verifying its size without
+// issuing an unbounded BuildKit read. The stat check happens before converting
+// the file size to int or asking BuildKit to allocate the response buffer.
+func ExtractFileFromStateWithLimit(
+	ctx context.Context,
+	c gwclient.Client,
+	st *llb.State,
+	path string,
+	maxSize int64,
+) ([]byte, error) {
+	ref, err := solveStateReference(ctx, c, st)
+	if err != nil {
+		return nil, err
+	}
+	return ReadFileWithLimit(ctx, ref, path, maxSize)
+}
+
+// ReadFileWithLimit reads path from a BuildKit reference after enforcing a
+// maximum file size. It uses bounded range requests so each unary gateway
+// response remains safely below BuildKit's 16 MiB gRPC message limit. Reads
+// continue through EOF because StatFile reports lstat metadata while ReadFile
+// follows symlinks, so the stat size is not necessarily the resolved file size.
+func ReadFileWithLimit(ctx context.Context, ref gwclient.Reference, path string, maxSize int64) ([]byte, error) {
+	if maxSize < 0 {
+		return nil, fmt.Errorf("maximum size for %q must not be negative", path)
+	}
+
+	stat, err := ref.StatFile(ctx, gwclient.StatRequest{Path: path})
+	if err != nil {
+		return nil, fmt.Errorf("unable to stat %q: %w", path, err)
+	}
+	if stat == nil {
+		return nil, fmt.Errorf("unable to stat %q: BuildKit returned no file metadata", path)
+	}
+	if stat.Size < 0 {
+		return nil, fmt.Errorf("unable to read %q: BuildKit reported a negative size of %d bytes", path, stat.Size)
+	}
+	if os.FileMode(stat.Mode)&os.ModeSymlink == 0 && stat.Size > maxSize {
+		return nil, fmt.Errorf("file %q is %d bytes, exceeding the maximum allowed size of %d bytes", path, stat.Size, maxSize)
+	}
+
+	maxInt := int64(^uint(0) >> 1)
+	capacity := min(stat.Size, maxSize)
+	if capacity > maxInt {
+		capacity = 0
+	}
+	data := make([]byte, 0, int(capacity))
+	for offset := int64(0); ; {
+		if offset > maxInt {
+			return nil, fmt.Errorf("unable to read %q: offset %d exceeds the platform read limit", path, offset)
+		}
+
+		remaining := maxSize - offset
+		chunkSize := maxGatewayReadFileChunkSize
+		if remaining < chunkSize {
+			// Read one byte past the limit so an exact-boundary file can be
+			// distinguished from an oversized resolved symlink target.
+			chunkSize = remaining + 1
+		}
+		chunk, err := ref.ReadFile(ctx, gwclient.ReadRequest{
+			Filename: path,
+			Range: &gwclient.FileRange{
+				Offset: int(offset),
+				Length: int(chunkSize),
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("unable to read %q at offset %d: %w", path, offset, err)
+		}
+		if int64(len(chunk)) > remaining {
+			return nil, fmt.Errorf("file %q exceeds the maximum allowed size of %d bytes", path, maxSize)
+		}
+		data = append(data, chunk...)
+		offset += int64(len(chunk))
+		if int64(len(chunk)) < chunkSize {
+			return data, nil
+		}
+	}
+}
+
+func platformIdentityEqual(left, right *specs.Platform) bool {
+	normalizedLeft := platforms.Normalize(*left)
+	normalizedRight := platforms.Normalize(*right)
+	return normalizedLeft.OS == normalizedRight.OS &&
+		normalizedLeft.Architecture == normalizedRight.Architecture &&
+		normalizedLeft.Variant == normalizedRight.Variant &&
+		normalizedLeft.OSVersion == normalizedRight.OSVersion &&
+		slices.Equal(normalizedLeft.OSFeatures, normalizedRight.OSFeatures)
+}
+
+func imagePlatformSpec(platform *v1.Platform) specs.Platform {
+	return specs.Platform{
+		OS:           platform.OS,
+		Architecture: platform.Architecture,
+		Variant:      platform.Variant,
+		OSVersion:    platform.OSVersion,
+		OSFeatures:   platform.OSFeatures,
+	}
+}
+
+func matchingPlatformDescriptor(manifest *v1.IndexManifest, target *specs.Platform) (*v1.Descriptor, error) {
+	var match *v1.Descriptor
+	for i := range manifest.Manifests {
+		descriptor := &manifest.Manifests[i]
+		if descriptor.Platform == nil {
+			continue
+		}
+		descriptorPlatform := imagePlatformSpec(descriptor.Platform)
+		if !platformIdentityEqual(&descriptorPlatform, target) {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("image index contains multiple descriptors matching platform %+v", platforms.Normalize(*target))
+		}
+		match = descriptor
+	}
+	if match == nil {
+		return nil, fmt.Errorf("image index contains no descriptor matching platform %+v", platforms.Normalize(*target))
+	}
+	return match, nil
 }
 
 // ReadFileErr distinguishes the cause of a file extraction failure so callers
@@ -784,25 +1021,7 @@ func (e *ReadFileErr) Unwrap() error {
 // error with which phase failed. Prefer this when callers need to treat a
 // missing file differently from a real failure of the build graph.
 func TryExtractFileFromState(ctx context.Context, c gwclient.Client, st *llb.State, path string) ([]byte, *ReadFileErr) {
-	platform := platforms.Normalize(platforms.DefaultSpec())
-	if platform.OS != linux {
-		platform.OS = linux
-	}
-
-	def, err := st.Marshal(ctx, llb.Platform(platform))
-	if err != nil {
-		return nil, &ReadFileErr{Err: err, SolveFailed: true}
-	}
-
-	resp, err := c.Solve(ctx, gwclient.SolveRequest{
-		Evaluate:   true,
-		Definition: def.ToPB(),
-	})
-	if err != nil {
-		return nil, &ReadFileErr{Err: err, SolveFailed: true}
-	}
-
-	ref, err := resp.SingleRef()
+	ref, err := solveStateReference(ctx, c, st)
 	if err != nil {
 		return nil, &ReadFileErr{Err: err, SolveFailed: true}
 	}
@@ -971,22 +1190,26 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Check if we have BuildKit states available
-	hasStates := false
-
-	for _, result := range results {
-		if result.PatchedState != nil {
-			hasStates = true
-			break
-		}
-	}
-
-	if hasStates {
-		log.Info("Using BuildKit states directly for OCI export")
+	if hasOCILayoutInputs(results, platforms) {
+		log.Info("Using patched states and/or preserved platforms for OCI export")
 		return createOCILayoutFromStates(outputDir, results, platforms, exportOpts)
 	}
 
-	return fmt.Errorf("no BuildKit states available for OCI export, cannot proceed")
+	return fmt.Errorf("no BuildKit states or preserved platforms available for OCI export, cannot proceed")
+}
+
+func hasOCILayoutInputs(results []types.PatchResult, platforms []types.PatchPlatform) bool {
+	for _, result := range results {
+		if result.PatchedState != nil {
+			return true
+		}
+	}
+	for _, platform := range platforms {
+		if platform.ShouldPreserve {
+			return true
+		}
+	}
+	return false
 }
 
 // createOCILayoutFromStates creates OCI layout directly from BuildKit states.
@@ -1010,6 +1233,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	// Build platform states from results for patched platforms only
 	var platformStates []llb.State
 	var platformSpecs []specs.Platform
+	var platformMetadata []platformExportMetadata
 
 	// Map results by platform for easy lookup
 	resultMap := make(map[string]*types.PatchResult)
@@ -1034,6 +1258,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 		if result, exists := resultMap[platformKey]; exists && result.PatchedState != nil {
 			platformStates = append(platformStates, *result.PatchedState)
 			platformSpecs = append(platformSpecs, platform.Platform)
+			platformMetadata = append(platformMetadata, ociPlatformExportMetadata(result))
 		}
 	}
 
@@ -1048,7 +1273,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	switch {
 	case hasPreservedPlatforms && hasPatchedPlatforms:
 		log.Infof("Creating mixed OCI layout with %d patched and %d preserved platforms", len(platformStates), len(preservedPlatforms))
-		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, preservedPlatforms, exportOpts)
+		return createMixedOCILayout(outputDir, results, platformStates, platformSpecs, platformMetadata, preservedPlatforms, exportOpts)
 	case hasPatchedPlatforms:
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
@@ -1073,7 +1298,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 				log.Debug("Using buildx driver for OCI layout export")
 				defer c.Close()
 
-				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+				return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 			}
 			c.Close()
 		}
@@ -1089,17 +1314,28 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	}
 	defer c.Close()
 
-	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 }
 
 // solveMultiPlatformOCI uses BuildKit client to solve multi-platform states and export to OCI layout.
-func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) error {
+func solveMultiPlatformOCI(
+	ctx context.Context,
+	c *client.Client,
+	outputDir string,
+	platformStates []llb.State,
+	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
+	exportOpts OCILayoutExportOptions,
+) error {
 	if len(platformStates) == 0 {
 		return fmt.Errorf("no platform states provided")
 	}
 
 	if len(platformStates) != len(platformSpecs) {
 		return fmt.Errorf("mismatch between states (%d) and platform specs (%d)", len(platformStates), len(platformSpecs))
+	}
+	if len(platformStates) != len(platformMetadata) {
+		return fmt.Errorf("mismatch between states (%d) and platform metadata (%d)", len(platformStates), len(platformMetadata))
 	}
 
 	// Remove output directory if it exists
@@ -1112,11 +1348,73 @@ func solveMultiPlatformOCI(ctx context.Context, c *client.Client, outputDir stri
 
 	if len(platformStates) == 1 {
 		// Single platform case - use output function to avoid diffcopy issues
-		return solveSinglePlatformOCI(ctx, c, outputDir, &platformStates[0], &platformSpecs[0], exportOpts)
+		return solveSinglePlatformOCI(ctx, c, outputDir, &platformStates[0], &platformSpecs[0], platformMetadata[0], exportOpts)
 	}
 
 	// Multi-platform case - solve each platform and combine
-	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs, exportOpts)
+	return solveAndCombineAllPlatforms(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
+}
+
+func ociPlatformExportMetadata(result *types.PatchResult) platformExportMetadata {
+	metadata := platformExportMetadata{Config: result.ConfigData}
+	if result.PatchedDesc == nil || len(result.PatchedDesc.Annotations) == 0 {
+		return metadata
+	}
+
+	metadata.Annotations = make(map[string]string, len(result.PatchedDesc.Annotations))
+	for key, value := range result.PatchedDesc.Annotations {
+		metadata.Annotations[key] = value
+	}
+
+	const versionAnnotation = "org.opencontainers.image.version"
+	originalVersion, ok := metadata.Annotations[versionAnnotation]
+	if !ok || result.PatchedRef == nil {
+		return metadata
+	}
+	patchedRef, ok := result.PatchedRef.(reference.Tagged)
+	if !ok || patchedRef.Tag() == "" {
+		return metadata
+	}
+
+	patchedTag := patchedRef.Tag()
+	metadata.Annotations[versionAnnotation] = rewriteOCIExportVersionAnnotation(originalVersion, patchedTag)
+	return metadata
+}
+
+func rewriteOCIExportVersionAnnotation(originalVersion, patchedTag string) string {
+	if originalVersion == "" || patchedTag == "" {
+		return originalVersion
+	}
+	if ociTagContainsVersionComponent(patchedTag, originalVersion) {
+		return patchedTag
+	}
+	return originalVersion + "-" + patchedTag
+}
+
+func ociTagContainsVersionComponent(tag, version string) bool {
+	for searchFrom := 0; searchFrom <= len(tag)-len(version); {
+		relative := strings.Index(tag[searchFrom:], version)
+		if relative < 0 {
+			return false
+		}
+		start := searchFrom + relative
+		end := start + len(version)
+		beforeBoundary := start == 0 || isOCIVersionTagSeparator(tag[start-1])
+		if !beforeBoundary && (tag[start-1] == 'v' || tag[start-1] == 'V') {
+			versionPrefix := start - 1
+			beforeBoundary = versionPrefix == 0 || isOCIVersionTagSeparator(tag[versionPrefix-1])
+		}
+		afterBoundary := end == len(tag) || isOCIVersionTagSeparator(tag[end])
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		searchFrom = start + 1
+	}
+	return false
+}
+
+func isOCIVersionTagSeparator(character byte) bool {
+	return character == '-' || character == '_' || character == '.' || character == '+'
 }
 
 func ociExporterAttrs(exportOpts OCILayoutExportOptions) map[string]string {
@@ -1134,8 +1432,52 @@ func ociExporterAttrs(exportOpts OCILayoutExportOptions) map[string]string {
 	return attrs
 }
 
+func addOCIExportMetadata(result *gwclient.Result, metadata platformExportMetadata) error {
+	if len(metadata.Config) == 0 {
+		return fmt.Errorf("patched platform is missing image config metadata")
+	}
+	result.AddMeta(exptypes.ExporterImageConfigKey, metadata.Config)
+	for key, value := range metadata.Annotations {
+		result.AddMeta(exptypes.AnnotationManifestKey(nil, key), []byte(value))
+	}
+	return nil
+}
+
+func solvePlatformOCI(
+	ctx context.Context,
+	c *client.Client,
+	state *llb.State,
+	platformSpec *specs.Platform,
+	metadata platformExportMetadata,
+	solveOpt *client.SolveOpt,
+) error {
+	_, err := c.Build(ctx, *solveOpt, "copa-oci-export", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
+		def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
+		if err != nil {
+			return nil, fmt.Errorf("marshal platform state: %w", err)
+		}
+		result, err := gateway.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB(), Evaluate: true})
+		if err != nil {
+			return nil, fmt.Errorf("solve platform state: %w", err)
+		}
+		if err := addOCIExportMetadata(result, metadata); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}, nil)
+	return err
+}
+
 // solveSinglePlatformOCI handles single platform OCI export using output function.
-func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir string, state *llb.State, platformSpec *specs.Platform, exportOpts OCILayoutExportOptions) error {
+func solveSinglePlatformOCI(
+	ctx context.Context,
+	c *client.Client,
+	outputDir string,
+	state *llb.State,
+	platformSpec *specs.Platform,
+	metadata platformExportMetadata,
+	exportOpts OCILayoutExportOptions,
+) error {
 	// Create solve options with output function to avoid diffcopy issues
 	solveOpt := client.SolveOpt{
 		Exports: []client.ExportEntry{{
@@ -1148,15 +1490,7 @@ func solveSinglePlatformOCI(ctx context.Context, c *client.Client, outputDir str
 		}},
 	}
 
-	// Marshal the state with platform constraint
-	def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
-	if err != nil {
-		return fmt.Errorf("failed to marshal LLB state: %w", err)
-	}
-
-	// Solve to tar
-	_, err = c.Solve(ctx, def, solveOpt, nil)
-	if err != nil {
+	if err := solvePlatformOCI(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
 		return fmt.Errorf("BuildKit solve failed: %w", err)
 	}
 
@@ -1223,7 +1557,15 @@ func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform) error
 }
 
 // solveAndCombineAllPlatforms solves each platform and combines them into one OCI layout.
-func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDir string, platformStates []llb.State, platformSpecs []specs.Platform, exportOpts OCILayoutExportOptions) error {
+func solveAndCombineAllPlatforms(
+	ctx context.Context,
+	c *client.Client,
+	outputDir string,
+	platformStates []llb.State,
+	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
+	exportOpts OCILayoutExportOptions,
+) error {
 	// Create temporary directory for platform tars
 	tempDir, err := os.MkdirTemp("", "copa-platforms-*")
 	if err != nil {
@@ -1249,14 +1591,7 @@ func solveAndCombineAllPlatforms(ctx context.Context, c *client.Client, outputDi
 			}},
 		}
 
-		// Marshal and solve this platform's definition
-		def, err := platformStates[i].Marshal(ctx, llb.Platform(platformSpecs[i]))
-		if err != nil {
-			return fmt.Errorf("failed to marshal platform: %w", err)
-		}
-
-		_, err = c.Solve(ctx, def, platformSolveOpt, nil)
-		if err != nil {
+		if err := solvePlatformOCI(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
 			return fmt.Errorf("failed to solve platform: %w", err)
 		}
 	}
@@ -1475,6 +1810,7 @@ func createMixedOCILayout(
 	results []types.PatchResult,
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
 	preservedPlatforms []types.PatchPlatform,
 	exportOpts OCILayoutExportOptions,
 ) error {
@@ -1502,7 +1838,7 @@ func createMixedOCILayout(
 		}
 		defer c.Close()
 
-		patchedManifests, err = exportPatchedPlatformsToTemp(ctx, c, patchedTempDir, platformStates, platformSpecs, exportOpts)
+		patchedManifests, err = exportPatchedPlatformsToTemp(ctx, c, patchedTempDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 		if err != nil {
 			return fmt.Errorf("failed to export patched platforms: %w", err)
 		}
@@ -1555,6 +1891,7 @@ func exportPatchedPlatformsToTemp(
 	tempDir string,
 	platformStates []llb.State,
 	platformSpecs []specs.Platform,
+	platformMetadata []platformExportMetadata,
 	exportOpts OCILayoutExportOptions,
 ) ([]map[string]interface{}, error) {
 	var manifests []map[string]interface{}
@@ -1575,14 +1912,7 @@ func exportPatchedPlatformsToTemp(
 			}},
 		}
 
-		// Marshal and solve this platform's definition
-		def, err := platformState.Marshal(ctx, llb.Platform(platformSpec))
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal platform: %w", err)
-		}
-
-		_, err = c.Solve(ctx, def, solveOpt, nil)
-		if err != nil {
+		if err := solvePlatformOCI(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
 			return nil, fmt.Errorf("failed to solve platform: %w", err)
 		}
 
@@ -1631,6 +1961,92 @@ func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) erro
 	})
 }
 
+func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor, bool, error) {
+	desc, sourceDigest, complete, err := tryGetManifestFromLocal(ref)
+	if err != nil {
+		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
+		desc, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to get remote descriptor: %w", err)
+		}
+		if desc == nil {
+			return nil, false, fmt.Errorf("remote registry returned no descriptor for %q", ref.String())
+		}
+		log.Debugf("Successfully fetched descriptor from remote registry for preserved platforms")
+		return desc, false, nil
+	}
+	if desc == nil {
+		return nil, false, fmt.Errorf("local daemon returned no descriptor for %q", ref.String())
+	}
+	if !complete {
+		if sourceDigest.Algorithm == "" || sourceDigest.Hex == "" {
+			return nil, false, fmt.Errorf("cannot reconcile incomplete local image index %q: source descriptor digest is unavailable", ref.String())
+		}
+		if digestRef, immutable := ref.(name.Digest); immutable && sourceDigest.String() != digestRef.DigestStr() {
+			return nil, false, fmt.Errorf(
+				"local source descriptor digest %s does not match immutable reference %s",
+				sourceDigest.String(), digestRef.DigestStr(),
+			)
+		}
+
+		sourceRef := ref.Context().Digest(sourceDigest.String())
+		remoteDesc, remoteErr := GetVerifiedRemoteIndex(sourceRef)
+		if remoteErr != nil {
+			return nil, false, fmt.Errorf("reconcile incomplete local image index %q: %w", ref.String(), remoteErr)
+		}
+
+		log.Debugf("Reconciled incomplete local image index for %s from verified remote descriptor %s", ref.String(), sourceDigest.String())
+		return remoteDesc, false, nil
+	}
+
+	// A local daemon may cache an immutable index digest as only the selected
+	// child image. Resolve the immutable reference remotely to distinguish a
+	// genuine single-image digest from a masked index. Fail closed when the
+	// remote descriptor cannot be verified so preserved platforms are never
+	// silently dropped. Mutable tags continue to use the local descriptor.
+	if digestRef, immutable := ref.(name.Digest); immutable {
+		if desc.MediaType.IsIndex() {
+			if sourceDigest.String() != digestRef.DigestStr() {
+				return nil, false, fmt.Errorf(
+					"local source descriptor digest %s does not match immutable reference %s",
+					sourceDigest.String(), digestRef.DigestStr(),
+				)
+			}
+			log.Debugf("Successfully fetched immutable image index from local daemon for preserved platforms")
+			return desc, true, nil
+		}
+		remoteDesc, remoteErr := getRemoteImageDescriptor(digestRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+		if remoteErr != nil {
+			return nil, false, fmt.Errorf("verify immutable descriptor %q for preserved platforms: %w", ref.String(), remoteErr)
+		}
+		if remoteDesc == nil {
+			return nil, false, fmt.Errorf("verify immutable descriptor %q for preserved platforms: registry returned no descriptor", ref.String())
+		}
+		if remoteDesc.Digest.String() != digestRef.DigestStr() {
+			return nil, false, fmt.Errorf(
+				"remote descriptor digest %s does not match immutable reference %s",
+				remoteDesc.Digest.String(), digestRef.DigestStr(),
+			)
+		}
+		if remoteDesc.MediaType.IsIndex() {
+			log.Debugf("Locally cached child masks the matching remote index for %s; using remote index for preserved platforms", ref.String())
+			return remoteDesc, false, nil
+		}
+		if sourceDigest.String() != digestRef.DigestStr() {
+			return nil, false, fmt.Errorf(
+				"local source descriptor digest %s does not match verified immutable image %s",
+				sourceDigest.String(), digestRef.DigestStr(),
+			)
+		}
+
+		log.Debugf("Verified %s as a genuine single-image digest; using the local descriptor", ref.String())
+		return desc, true, nil
+	}
+
+	log.Debugf("Successfully fetched descriptor from local daemon for preserved platforms")
+	return desc, true, nil
+}
+
 // exportPreservedPlatformsToOutput exports preserved platforms from original image to output directory.
 func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Named, preservedPlatforms []types.PatchPlatform, blobsSet map[string]bool) ([]map[string]interface{}, error) {
 	// Convert reference.Named to name.Reference for go-containerregistry
@@ -1639,18 +2055,9 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 		return nil, fmt.Errorf("failed to parse reference: %w", err)
 	}
 
-	// Try local daemon first, then fall back to remote
-	desc, err := TryGetManifestFromLocal(ref)
-	isLocal := (err == nil)
+	desc, isLocal, err := resolvePreservedPlatformsDescriptor(ref)
 	if err != nil {
-		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
-		desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-		if err != nil {
-			return nil, fmt.Errorf("failed to get remote descriptor: %w", err)
-		}
-		log.Debugf("Successfully fetched descriptor from remote registry for preserved platforms")
-	} else {
-		log.Debugf("Successfully fetched descriptor from local daemon for preserved platforms")
+		return nil, err
 	}
 
 	var manifests []map[string]interface{}
@@ -1728,104 +2135,107 @@ func exportPreservedPlatformsToOutput(outputDir string, originalRef reference.Na
 			return nil, fmt.Errorf("failed to get index manifest: %w", err)
 		}
 
-		// Filter manifests for the preserved platforms we want and materialize their blobs
-		for _, platformSpec := range preservedPlatforms {
-			for i := range manifest.Manifests {
-				mdesc := &manifest.Manifests[i]
-				if mdesc.Platform != nil &&
-					mdesc.Platform.OS == platformSpec.OS &&
-					mdesc.Platform.Architecture == platformSpec.Architecture {
-					var img v1.Image
-
-					// For local images, we need to fetch by digest using the daemon
-					// For remote images, we can use idx.Image() which has proper remote context
-					if isLocal {
-						// Construct digest reference for this platform
-						digestRef := fmt.Sprintf("%s@%s", originalRef.Name(), mdesc.Digest.String())
-						platformRef, err := name.ParseReference(digestRef)
-						if err != nil {
-							return nil, fmt.Errorf("failed to parse platform digest reference: %w", err)
-						}
-
-						// Try to get from local daemon first
-						platformDesc, err := TryGetManifestFromLocal(platformRef)
-						if err != nil {
-							// Fall back to remote if local fails
-							img, err = remote.Image(platformRef, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-							if err != nil {
-								return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
-							}
-						} else {
-							img, err = platformDesc.Image()
-							if err != nil {
-								return nil, fmt.Errorf("failed to get image from local descriptor for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
-							}
-						}
-					} else {
-						// Remote image - can use idx.Image() directly
-						img, err = idx.Image(mdesc.Digest)
-						if err != nil {
-							return nil, fmt.Errorf("failed to get image for preserved platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
-						}
-					}
-
-					// Write manifest blob (raw bytes) so index reference is resolvable offline
-					rawManifest, err := img.RawManifest()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get raw manifest: %w", err)
-					}
-					if err := writeBlobIfAbsent(mdesc.Digest, rawManifest); err != nil {
-						return nil, err
-					}
-
-					// Write config blob
-					cfgHash, err := img.ConfigName()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get config digest: %w", err)
-					}
-					rawConfig, err := img.RawConfigFile()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get raw config: %w", err)
-					}
-					if err := writeBlobIfAbsent(cfgHash, rawConfig); err != nil {
-						return nil, err
-					}
-
-					// Write layer blobs
-					layers, err := img.Layers()
-					if err != nil {
-						return nil, fmt.Errorf("failed to get layers: %w", err)
-					}
-					for _, layer := range layers {
-						if err := writeLayerIfAbsent(layer); err != nil {
-							return nil, err
-						}
-					}
-
-					// Create manifest entry for this preserved platform (index level descriptor)
-					manifestEntry := map[string]interface{}{
-						"mediaType": string(mdesc.MediaType),
-						"digest":    mdesc.Digest.String(),
-						"size":      mdesc.Size,
-						"platform": map[string]interface{}{
-							"os":           mdesc.Platform.OS,
-							"architecture": mdesc.Platform.Architecture,
-						},
-					}
-					if mdesc.Platform.Variant != "" {
-						if platform, ok := manifestEntry["platform"].(map[string]interface{}); ok {
-							platform["variant"] = mdesc.Platform.Variant
-						}
-					}
-					manifests = append(manifests, manifestEntry)
-					break
+		// Resolve and materialize any image-manifest descriptor from the source
+		// index. Attestation manifests use the same OCI image-manifest shape, so
+		// this also copies their config and in-toto layer blobs.
+		materializeDescriptor := func(mdesc *v1.Descriptor) (map[string]interface{}, error) {
+			var img v1.Image
+			if isLocal {
+				digestRef := fmt.Sprintf("%s@%s", originalRef.Name(), mdesc.Digest.String())
+				platformRef, err := name.ParseReference(digestRef)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse preserved descriptor reference: %w", err)
 				}
+				img, err = getImageFromDaemon(platformRef)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get preserved descriptor %s from local daemon: %w", mdesc.Digest, err)
+				}
+			} else {
+				var err error
+				img, err = idx.Image(mdesc.Digest)
+				if err != nil {
+					return nil, fmt.Errorf("failed to get preserved descriptor %s: %w", mdesc.Digest, err)
+				}
+			}
+
+			rawManifest, err := img.RawManifest()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get raw preserved manifest %s: %w", mdesc.Digest, err)
+			}
+			if err := writeBlobIfAbsent(mdesc.Digest, rawManifest); err != nil {
+				return nil, err
+			}
+
+			cfgHash, err := img.ConfigName()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get preserved config digest for %s: %w", mdesc.Digest, err)
+			}
+			rawConfig, err := img.RawConfigFile()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get raw preserved config for %s: %w", mdesc.Digest, err)
+			}
+			if err := writeBlobIfAbsent(cfgHash, rawConfig); err != nil {
+				return nil, err
+			}
+
+			layers, err := img.Layers()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get preserved layers for %s: %w", mdesc.Digest, err)
+			}
+			for _, layer := range layers {
+				if err := writeLayerIfAbsent(layer); err != nil {
+					return nil, err
+				}
+			}
+
+			descriptorJSON, err := json.Marshal(mdesc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal preserved descriptor %s: %w", mdesc.Digest, err)
+			}
+			var entry map[string]interface{}
+			if err := json.Unmarshal(descriptorJSON, &entry); err != nil {
+				return nil, fmt.Errorf("failed to decode preserved descriptor %s: %w", mdesc.Digest, err)
+			}
+			return entry, nil
+		}
+
+		// Filter image manifests for the preserved platforms, then preserve any
+		// source attestations whose subject points to those unchanged children.
+		for _, platformSpec := range preservedPlatforms {
+			mdesc, err := matchingPlatformDescriptor(manifest, &platformSpec.Platform)
+			if err != nil {
+				return nil, err
+			}
+
+			entry, err := materializeDescriptor(mdesc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to preserve platform %s/%s: %w", platformSpec.OS, platformSpec.Architecture, err)
+			}
+			manifests = append(manifests, entry)
+
+			subject := mdesc.Digest.String()
+			for j := range manifest.Manifests {
+				attestation := &manifest.Manifests[j]
+				if attestation.Annotations["vnd.docker.reference.type"] != "attestation-manifest" ||
+					attestation.Annotations["vnd.docker.reference.digest"] != subject {
+					continue
+				}
+				attestationEntry, err := materializeDescriptor(attestation)
+				if err != nil {
+					return nil, fmt.Errorf("failed to preserve attestation for %s: %w", subject, err)
+				}
+				manifests = append(manifests, attestationEntry)
 			}
 		}
 	} else {
 		// Single platform image
 		// Materialize single-platform image blobs
-		img, err := desc.Image()
+		var img v1.Image
+		if isLocal {
+			img, err = getImageFromDaemon(ref)
+		} else {
+			img, err = desc.Image()
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to get single-platform image: %w", err)
 		}
@@ -1951,7 +2361,7 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 		return fmt.Errorf("failed to write combined index.json: %w", err)
 	}
 
-	log.Infof("Successfully created mixed OCI layout with %d platform manifests", len(allManifests))
+	log.Infof("Successfully created OCI layout with %d platform manifests", len(allManifests))
 	return nil
 }
 
@@ -1972,116 +2382,17 @@ func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult,
 		return fmt.Errorf("no original reference found for preserved-only layout")
 	}
 
-	// Use go-containerregistry to get the original manifest and export only needed platforms
-	return exportOriginalImagePlatformsAsOCI(outputDir, originalRef, preservedPlatforms)
-}
-
-// exportOriginalImagePlatformsAsOCI uses go-containerregistry to export specific platforms.
-func exportOriginalImagePlatformsAsOCI(outputDir string, originalRef reference.Named, platforms []types.PatchPlatform) error {
-	log.Infof("Exporting %d platforms from original image %s using go-containerregistry", len(platforms), originalRef.String())
-
-	// Convert reference.Named to name.Reference for go-containerregistry
-	ref, err := name.ParseReference(originalRef.String())
+	preservedManifests, err := exportPreservedPlatformsToOutput(
+		outputDir,
+		originalRef,
+		preservedPlatforms,
+		make(map[string]bool),
+	)
 	if err != nil {
-		return fmt.Errorf("failed to parse reference: %w", err)
+		return fmt.Errorf("failed to export preserved platforms: %w", err)
 	}
-
-	// Get the remote descriptor
-	desc, err := remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
-	if err != nil {
-		return fmt.Errorf("failed to get remote descriptor: %w", err)
+	if len(preservedManifests) == 0 {
+		return fmt.Errorf("no manifests to include in preserved-only OCI layout")
 	}
-
-	// Check if it's a manifest list (multi-platform)
-	if desc.MediaType == v1types.OCIImageIndex || desc.MediaType == v1types.DockerManifestList {
-		// Parse the index
-		idx, err := desc.ImageIndex()
-		if err != nil {
-			return fmt.Errorf("failed to parse image index: %w", err)
-		}
-
-		// Get the index manifest
-		manifest, err := idx.IndexManifest()
-		if err != nil {
-			return fmt.Errorf("failed to get index manifest: %w", err)
-		}
-
-		// Create OCI layout structure
-		if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0o755); err != nil {
-			return fmt.Errorf("failed to create blobs directory: %w", err)
-		}
-
-		// Create oci-layout file
-		ociLayoutContent := `{"imageLayoutVersion": "1.0.0"}`
-		if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0o600); err != nil {
-			return fmt.Errorf("failed to write oci-layout file: %w", err)
-		}
-
-		// Filter manifests for the preserved platforms we want
-		var preservedManifests []v1.Descriptor
-		for _, platformSpec := range platforms {
-			for i := range manifest.Manifests {
-				desc := &manifest.Manifests[i]
-				if desc.Platform != nil &&
-					desc.Platform.OS == platformSpec.OS &&
-					desc.Platform.Architecture == platformSpec.Architecture {
-					preservedManifests = append(preservedManifests, *desc)
-					log.Debugf("Including preserved platform %s/%s", desc.Platform.OS, desc.Platform.Architecture)
-					break
-				}
-			}
-		}
-
-		// Create new index with only preserved platforms
-		newIndex := &v1.IndexManifest{
-			SchemaVersion: 2,
-			Manifests:     preservedManifests,
-		}
-
-		// Write the index
-		indexBytes, err := json.MarshalIndent(newIndex, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal index: %w", err)
-		}
-
-		if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexBytes, 0o600); err != nil {
-			return fmt.Errorf("failed to write index.json: %w", err)
-		}
-
-		log.Infof("Successfully created OCI layout with %d preserved platforms", len(preservedManifests))
-		return nil
-	}
-
-	// Single platform image - just create a simple index
-	log.Info("Single platform image - creating simple index")
-	singleIndex := &v1.IndexManifest{
-		SchemaVersion: 2,
-		Manifests: []v1.Descriptor{{
-			MediaType: desc.MediaType,
-			Digest:    desc.Digest,
-			Size:      desc.Size,
-		}},
-	}
-
-	// Create directory structure
-	if err := os.MkdirAll(filepath.Join(outputDir, "blobs", "sha256"), 0o755); err != nil {
-		return fmt.Errorf("failed to create blobs directory: %w", err)
-	}
-
-	// Write files
-	ociLayoutContent := `{"imageLayoutVersion": "1.0.0"}`
-	if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0o600); err != nil {
-		return fmt.Errorf("failed to write oci-layout file: %w", err)
-	}
-
-	indexBytes, err := json.MarshalIndent(singleIndex, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal single index: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexBytes, 0o600); err != nil {
-		return fmt.Errorf("failed to write index.json: %w", err)
-	}
-
-	return nil
+	return createFinalOCILayout(outputDir, preservedManifests)
 }

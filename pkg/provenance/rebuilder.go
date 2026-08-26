@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -138,6 +139,32 @@ func normalizeVersion(version string) string {
 		return version
 	}
 	return "v" + version
+}
+
+// buildGoModEditArgs builds a deterministic go mod edit command that records
+// scanner-fixed versions as module requirements. Go requirements are minimums
+// under minimal version selection, so related updates may resolve to a higher
+// compatible version without a later update downgrading an earlier fix.
+func buildGoModEditArgs(goBin string, updates map[string]string) ([]string, error) {
+	modules := make([]string, 0, len(updates))
+	for module := range updates {
+		modules = append(modules, module)
+	}
+	sort.Strings(modules)
+
+	args := []string{goBin, "mod", "edit"}
+	for _, module := range modules {
+		version := updates[module]
+		if err := validateGoModuleName(module); err != nil {
+			return nil, err
+		}
+		if strings.ContainsAny(version, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
+			return nil, fmt.Errorf("version contains unsafe characters: %s for module %s", version, module)
+		}
+		args = append(args, "-require="+module+"@"+normalizeVersion(version))
+	}
+
+	return args, nil
 }
 
 // formatOCILabelsForScript formats OCI image labels as key=value lines for shell consumption.
@@ -905,7 +932,23 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		llb.Args([]string{"sh", "-c", "apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*"}),
 	).Root()
 
-	// Download dependencies with retry (network can be flaky)
+	// Record all scanner-fixed versions as requirements in one edit. Applying
+	// them independently with `go get module@version` lets a later update
+	// downgrade an earlier one when the modules share dependencies. Requirements
+	// are version floors under Go's minimal version selection, so the resolved
+	// graph can raise a module when needed while preserving every scanner fix.
+	if len(updates) > 0 {
+		editArgs, err := buildGoModEditArgs(goBin, updates)
+		if err != nil {
+			return llb.State{}, err
+		}
+		for module, version := range updates {
+			log.Debugf("Requiring module %s: %s -> >= %s", module, buildInfo.Dependencies[module], normalizeVersion(version))
+		}
+		state = state.Run(llb.Args(editArgs)).Root()
+	}
+
+	// Download the resolved dependencies with retry (network can be flaky).
 	downloadCmd := fmt.Sprintf("%s mod download -x", goBin)
 	downloadScript := retryScript(downloadCmd, 3)
 	log.Debug("Running go mod download with retry...")
@@ -914,29 +957,9 @@ func (r *Rebuilder) buildBinaryWithUpdates(
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Apply updates with retry for each module.
-	// Validate module names and versions before constructing shell commands to prevent injection.
-	for module, version := range updates {
-		if err := validateGoModuleName(module); err != nil {
-			return llb.State{}, err
-		}
-		if strings.ContainsAny(version, ";&|`$(){}[]<>\"'\\*?!~# \t\n\r") {
-			return llb.State{}, fmt.Errorf("version contains unsafe characters: %s for module %s", version, module)
-		}
-		normalizedVersion := normalizeVersion(version)
-		log.Debugf("Updating module %s: %s -> %s", module, buildInfo.Dependencies[module], normalizedVersion)
-
-		getCmd := fmt.Sprintf("%s get %s@%s", goBin, module, normalizedVersion)
-		getScript := retryScript(getCmd, 3)
-		state = state.Run(
-			llb.Shlex(fmt.Sprintf("sh -c '%s'", strings.ReplaceAll(getScript, "'", "'\"'\"'"))),
-			llb.WithProxy(utils.GetProxy()),
-		).Root()
-	}
-
 	// Run mod tidy to sync go.sum after dependency updates.
 	// This is needed both for generated go.mod and for cloned source where
-	// go get may have added transitive dependencies not in the original go.sum.
+	// the resolved graph may include dependencies not in the original go.sum.
 	// The -e flag tolerates broken upstream go.mod files (missing transitive
 	// packages, stale module paths) so a CVE patch is not blocked by unrelated
 	// upstream module hygiene issues. The subsequent `go build` will still

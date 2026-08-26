@@ -23,6 +23,10 @@ Copa supports patching the following platforms:
 | `linux/s390x`   | IBM System z                             |
 | `linux/riscv64` | 64-bit RISC-V                            |
 
+Native Chisel re-cuts have one narrower exception: `linux/arm/v6` is not
+supported for images that use `/var/lib/chisel/manifest.wall`. See
+[Ubuntu Chiseled Images](./chiseled-images.md#platforms-and-provenance).
+
 :::note
 Any platform not listed above (such as `windows/amd64`) is not supported by Copa for patching. However, they'll be always be preserved as is if they exist in the original manifest.
 :::
@@ -45,7 +49,7 @@ export PLATFORMS="linux/amd64 linux/arm64"
 for platform in $PLATFORMS; do
   arch=$(echo $platform | cut -d'/' -f2 | sed 's/\//-/g')
   echo "Scanning $platform..."
-  trivy image --vuln-type os --scanners vuln --ignore-unfixed \
+  trivy image --pkg-types os --scanners vuln --ignore-unfixed \
     -f json -o reports/${arch}.json --image-src remote --platform $platform $IMAGE || \
     echo "Warning: Failed to scan $platform"
 done
@@ -87,7 +91,7 @@ These flags are essential for multi-platform patching:
 | Flag              | Description                                                     | Example                              |
 | ----------------- | --------------------------------------------------------------- | ------------------------------------ |
 | `--platform`      | Specifies which platforms to patch from manifest list           | `--platform linux/amd64,linux/arm64` |
-| `--report`        | Directory with platform-specific vulnerability reports          | `--report ./platform-reports/`       |
+| `--report`        | One report file or a directory of platform-specific reports      | `--report ./platform-reports/`       |
 | `--ignore-errors` | Continue patching other platforms if one fails                  | `--ignore-errors`                    |
 | `--push`          | Push all manifests and index/manifest list to registry          | `--push`                             |
 | `--oci-dir`       | Export multi-platform index/manifest as OCI layout directory    | `--oci-dir ./output-directory`       |
@@ -96,22 +100,24 @@ These flags are essential for multi-platform patching:
 
 - **Automatic platform detection**: Copa automatically detects whether an image is multi-platform (Docker manifest list or OCI Index) or single-platform and handles them accordingly.
 
-- **Report vs. platform flags**: The `--platform` flag is only available when not using `--report`. When using `--report`, platforms are determined by the reports available.
+- **Report and platform flags**: With one report file, pass zero or one `--platform` value; an explicit value is honored and must match the report architecture, while multiple values are rejected. If it is omitted, Copa determines the platform from the report metadata and uses the host's default Linux platform only as a fallback. With a report directory, platforms are determined from the reports and `--platform` is ignored. Without a report, `--platform` can select any subset of discovered platforms.
 
-- **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in the final manifest.
+- **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in a pushed index or an OCI layout.
 
-- **OCI layout export**: The `--oci-dir` flag creates a local OCI Image Layout directory structure for the patched manifest. Use when opting to not push to registry. `--push` and `--oci-dir` cannot be used together. 
+- **OCI layout export**: The `--oci-dir` flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. `--push` and `--oci-dir` cannot be used together.
 
-- **No local storage for unspecified platforms**: If `--push` is not specified, the individual patched images will be saved locally, but preserved platforms will only exist in the registry.
+- **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
 
-- **Single-platform fallback**: If you don't provide a `--report` directory and don't use `--platform`, Copa will detect if the image is single-platform and patch only that platform.
+- **No-report platform discovery**: In comprehensive no-report mode, Copa inspects the image. A single-platform image is patched as that discovered platform; otherwise the selected or discovered multi-platform set is used.
 
 :::note
 **Report-based vs. Platform-based patching:**
 
-- When using `--report`, Copa copies over unpatched platforms as a passthrough - only platforms with vulnerability reports are patched, while other platforms remain unchanged in the final multi-platform image.
+- With a report directory, only platforms with vulnerability reports are patched. Other platforms pass through unchanged in the pushed index or OCI layout.
 
-- When using `--platform`, only the specified platforms are patched, and others are preserved unchanged.
+- With one report file, Copa performs a single-platform patch. An optional single `--platform` value selects that platform explicitly; otherwise Copa uses the platform in the report metadata, falling back to the host's default Linux platform only when the report does not identify one.
+
+- When using `--platform` without a report, only the specified platforms are patched, and others are preserved unchanged in the pushed index or OCI layout.
 
 - When using neither flag, Copa patches all available platforms if the image is multi-platform.
 

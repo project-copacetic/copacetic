@@ -16,6 +16,8 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+const goStdlibPackage = "stdlib"
+
 // shellUnsafeChars are characters that must not appear in values interpolated into shell commands.
 const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
 
@@ -56,7 +58,7 @@ func validateGoPackageName(name string) error {
 
 	// Skip "stdlib" - this represents Go standard library vulnerabilities
 	// which can only be fixed by upgrading Go itself, not by updating dependencies
-	if name == "stdlib" {
+	if name == goStdlibPackage {
 		return fmt.Errorf("stdlib vulnerabilities require Go version upgrade, not supported: %s", name)
 	}
 
@@ -170,7 +172,7 @@ func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.L
 	stdlibFixedVersion := ""
 	for _, pkg := range langUpdates {
 		if pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary {
-			if pkg.Name == "stdlib" {
+			if pkg.Name == goStdlibPackage {
 				fixVer := cleanGoVersion(pkg.FixedVersion)
 				if fixVer != "" && (stdlibFixedVersion == "" || isLessThanGoVersion(stdlibFixedVersion, fixVer)) {
 					stdlibFixedVersion = fixVer
@@ -561,7 +563,7 @@ func collectGoBinaryInfo(langUpdates unversioned.LangUpdatePackages) (paths []st
 			continue
 		}
 		// Extract Go version from stdlib entries (e.g., "v1.26.0" -> "1.26.0").
-		if u.Name == "stdlib" && goVersion == "" && u.InstalledVersion != "" {
+		if u.Name == goStdlibPackage && goVersion == "" && u.InstalledVersion != "" {
 			goVersion = strings.TrimPrefix(u.InstalledVersion, "v")
 		}
 		if u.PkgPath != "" && !seen[u.PkgPath] {
