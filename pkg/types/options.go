@@ -59,4 +59,10 @@ type Options struct {
 	// EOL configuration
 	EOLAPIBaseURL string
 	ExitOnEOL     bool
+
+	// Chart patching
+	ChartName     string
+	ChartVersion  string
+	ChartRepo     string
+	ChartRegistry string
 }
