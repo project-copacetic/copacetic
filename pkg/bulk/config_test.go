@@ -108,3 +108,31 @@ pattern: "^1\\.2[0-9]+$"`,
 		})
 	}
 }
+
+func TestValidateOverrides(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides map[string]OverrideSpec
+		wantErr   bool
+	}{
+		{name: "rewrite", overrides: map[string]OverrideSpec{"app": {From: "slim", To: "bookworm"}}},
+		{name: "path only", overrides: map[string]OverrideSpec{"app": {ValuePath: "deployment.image"}}},
+		{name: "rewrite and path", overrides: map[string]OverrideSpec{"app": {From: "slim", To: "bookworm", ValuePath: "deployment.image"}}},
+		{name: "missing to", overrides: map[string]OverrideSpec{"app": {From: "slim"}}, wantErr: true},
+		{name: "empty", overrides: map[string]OverrideSpec{"app": {}}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateOverrides(tt.overrides)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected validation error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+		})
+	}
+}
