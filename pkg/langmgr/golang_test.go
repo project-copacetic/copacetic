@@ -1,9 +1,11 @@
 package langmgr
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -1143,7 +1145,9 @@ require golang.org/x/net v0.23.0
 			wantErr: false,
 		},
 		{
-			name: "resolved via replace directive",
+			// A replacement whose left-hand side is another module says nothing
+			// about u.Name: the two module paths have unrelated version lines.
+			name: "unrelated module replacement does not satisfy target",
 			goMod: `module example.com/app
 
 go 1.22
@@ -1155,7 +1159,8 @@ replace github.com/pkg/legacy => golang.org/x/net v0.23.0
 			updates: unversioned.LangUpdatePackages{
 				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
 			},
-			wantErr: false,
+			wantErr:   true,
+			errSubstr: "not found in go.mod",
 		},
 		{
 			name: "required module resolved through cross-module replace",
@@ -1189,7 +1194,9 @@ replace golang.org/x/net => golang.org/x/net v0.17.0
 			errSubstr: "v0.17.0",
 		},
 		{
-			name: "local replace directive cannot prove applied version",
+			// A filesystem replacement carries no version, so the require entry
+			// stays the effective version instead of failing the patch.
+			name: "filesystem replacement falls back to require version",
 			goMod: `module example.com/app
 
 go 1.22
@@ -1201,8 +1208,62 @@ replace golang.org/x/net => ./vendored/net
 			updates: unversioned.LangUpdatePackages{
 				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
 			},
+			wantErr: false,
+		},
+		{
+			name: "filesystem replacement fallback still enforces require version",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.17.0
+
+replace golang.org/x/net => ./vendored/net
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
 			wantErr:   true,
-			errSubstr: "local replacement",
+			errSubstr: "v0.17.0",
+		},
+		{
+			// go.mod resolution prefers a replacement that names a version over
+			// a filesystem replacement of the same module path.
+			name: "versioned replacement preferred over filesystem replacement",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.17.0
+
+replace golang.org/x/net => ./vendored/net
+
+replace golang.org/x/net v0.17.0 => golang.org/x/net v0.23.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
+		},
+		{
+			// A replacement pinned to the selected version wins over a
+			// path-wide replacement, as it does in the go command.
+			name: "version pinned replacement preferred over path wide replacement",
+			goMod: `module example.com/app
+
+go 1.22
+
+require golang.org/x/net v0.17.0
+
+replace golang.org/x/net => golang.org/x/net v0.23.0
+
+replace golang.org/x/net v0.17.0 => golang.org/x/net v0.10.0
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "v0.10.0",
 		},
 		{
 			name: "version-specific replace for unselected version is ignored",
@@ -1301,6 +1362,202 @@ require golang.org/x/net v0.23.0
 				return
 			}
 			assert.NoError(t, err)
+		})
+	}
+}
+
+// TestFilterUpdatesInGoMod asserts that verification is scoped to the modules a
+// given go.mod actually referenced before the update. Verifying every requested
+// update against every module in the image fails modules that never depended on
+// the vulnerable package.
+func TestFilterUpdatesInGoMod(t *testing.T) {
+	goMod := `module example.com/app
+
+go 1.22
+
+require (
+	golang.org/x/net v0.17.0
+	golang.org/x/text v0.14.0 // indirect
+)
+
+replace github.com/pkg/legacy => github.com/pkg/legacy v1.2.3
+`
+
+	tests := []struct {
+		name      string
+		goMod     string
+		updates   unversioned.LangUpdatePackages
+		want      []string
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name:  "keeps required modules and drops absent ones",
+			goMod: goMod,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+				{Name: "github.com/absent/mod", FixedVersion: "v1.0.0"},
+			},
+			want: []string{"golang.org/x/net"},
+		},
+		{
+			name:  "keeps indirect requirements",
+			goMod: goMod,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/text", FixedVersion: "v0.21.0"},
+			},
+			want: []string{"golang.org/x/text"},
+		},
+		{
+			name:  "keeps replaced module paths",
+			goMod: goMod,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/pkg/legacy", FixedVersion: "v1.2.3"},
+			},
+			want: []string{"github.com/pkg/legacy"},
+		},
+		{
+			name:  "no applicable updates",
+			goMod: goMod,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/absent/mod", FixedVersion: "v1.0.0"},
+			},
+			want: []string{},
+		},
+		{
+			name:      "unparseable go.mod",
+			goMod:     "not a go.mod\n",
+			updates:   unversioned.LangUpdatePackages{{Name: "golang.org/x/net", FixedVersion: "v0.23.0"}},
+			wantErr:   true,
+			errSubstr: "go.mod",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := filterUpdatesInGoMod([]byte(tt.goMod), tt.updates)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, getPackageNames(got))
+		})
+	}
+}
+
+// TestGoWorkspaceMemberModPaths asserts that workspace members are resolved from
+// go.work so each member's go.mod can be verified. The workspace root has no
+// authoritative go.mod: requirements land in the member modules.
+func TestGoWorkspaceMemberModPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		goWork    string
+		root      string
+		want      []string
+		wantErr   bool
+		errSubstr string
+	}{
+		{
+			name: "relative use entries",
+			goWork: `go 1.22
+
+use ./svc-a
+use ./svc-b
+`,
+			root: "/app",
+			want: []string{"/app/svc-a/go.mod", "/app/svc-b/go.mod"},
+		},
+		{
+			name: "use block with root and parent entries",
+			goWork: `go 1.22
+
+use (
+	.
+	../lib
+)
+`,
+			root: "/app",
+			want: []string{"/app/go.mod", "/lib/go.mod"},
+		},
+		{
+			name: "absolute use entry",
+			goWork: `go 1.22
+
+use /src/other
+`,
+			root: "/app",
+			want: []string{"/src/other/go.mod"},
+		},
+		{
+			name:      "no use entries",
+			goWork:    "go 1.22\n",
+			root:      "/app",
+			wantErr:   true,
+			errSubstr: "no module directories",
+		},
+		{
+			name:      "unparseable go.work",
+			goWork:    "not a go.work\n",
+			root:      "/app",
+			wantErr:   true,
+			errSubstr: "go.work",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := goWorkspaceMemberModPaths([]byte(tt.goWork), tt.root)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errSubstr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+// TestUpdateGoModuleReportsFailedPackages asserts that a failed module update
+// names the affected packages so callers can report them as unpatched. Without
+// the names, --ignore-errors drops the failure and the VEX document claims
+// remediation that never landed.
+func TestUpdateGoModuleReportsFailedPackages(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+		{Name: "golang.org/x/text", FixedVersion: "v0.21.0"},
+	}
+
+	tests := []struct {
+		name    string
+		modPath string
+		updates unversioned.LangUpdatePackages
+		want    []string
+	}{
+		{
+			name:    "unsafe module path",
+			modPath: "/app; rm -rf /",
+			updates: updates,
+			want:    []string{"golang.org/x/net", "golang.org/x/text"},
+		},
+		{
+			name:    "unsafe package name",
+			modPath: "/app",
+			updates: unversioned.LangUpdatePackages{{Name: "golang.org/x/net;id", FixedVersion: "v0.23.0"}},
+			want:    []string{"golang.org/x/net;id"},
+		},
+	}
+
+	gm := &golangManager{config: &buildkit.Config{}}
+	state := llb.Scratch()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, failed, err := gm.updateGoModule(context.Background(), &state, tt.modPath, tt.updates, false, false)
+			require.Error(t, err)
+			assert.Equal(t, tt.want, failed)
 		})
 	}
 }
