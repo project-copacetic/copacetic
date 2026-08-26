@@ -1130,6 +1130,14 @@ func TestAppendIncompatibleIfNeeded(t *testing.T) {
 			version:    "",
 			expected:   "",
 		},
+		{
+			// A version that already carries build metadata must not gain a
+			// second '+' component, which would be invalid semver.
+			name:       "existing build metadata left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "v2.0.0+build1",
+			expected:   "v2.0.0+build1",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1146,4 +1154,31 @@ func TestIncompatibleVersionsPassValidation(t *testing.T) {
 	assert.True(t, isValidGoVersion("v28.0.0+incompatible"))
 	assert.NoError(t, validateGoVersion("v28.0.0+incompatible"))
 	assert.Equal(t, "v28.0.0+incompatible", cleanGoVersion("v28.0.0+incompatible"))
+}
+
+// TestBuildBinaryUpdateMap asserts that the binary-rebuild path normalizes the
+// versions it records as module requirements: a missing 'v' prefix is added and
+// pre-module major>=2 dependencies gain the +incompatible build tag, matching
+// the `go get` spec construction used by the in-image module path.
+func TestBuildBinaryUpdateMap(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "github.com/docker/docker", FixedVersion: "v28.0.0"},
+		{Name: "github.com/moby/moby", FixedVersion: "28.0.0"},
+		{Name: "github.com/foo/bar/v2", FixedVersion: "v2.1.0"},
+		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+		{Name: "github.com/already/tagged", FixedVersion: "v3.1.0+incompatible"},
+		{Name: "github.com/no/fix", FixedVersion: ""},
+		{Name: "k8s.io/kubernetes", FixedVersion: "v1.30.0"},
+	}
+
+	got := buildBinaryUpdateMap(updates)
+
+	want := map[string]string{
+		"github.com/docker/docker":  "v28.0.0+incompatible",
+		"github.com/moby/moby":      "v28.0.0+incompatible",
+		"github.com/foo/bar/v2":     "v2.1.0",
+		"golang.org/x/net":          "v0.23.0",
+		"github.com/already/tagged": "v3.1.0+incompatible",
+	}
+	assert.Equal(t, want, got)
 }

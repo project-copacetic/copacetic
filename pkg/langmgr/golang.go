@@ -181,9 +181,11 @@ func cleanGoVersion(version string) string {
 // requires for pre-modules dependencies released at major version 2 or higher
 // whose module path carries no /vN suffix (github.com/docker/docker@v28.0.0,
 // for example). Scanner reports commonly omit the tag and `go get` rejects the
-// bare version outright.
+// bare version outright. Versions that already carry build metadata are left
+// alone: semver allows a single '+' component, so appending here would produce
+// an invalid version such as v2.0.0+build1+incompatible.
 func appendIncompatibleIfNeeded(modulePath, version string) string {
-	if !semver.IsValid(version) || strings.HasSuffix(version, "+incompatible") {
+	if !semver.IsValid(version) || strings.Contains(version, "+") {
 		return version
 	}
 
@@ -665,6 +667,36 @@ func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string, goVersion s
 	return binaries
 }
 
+// buildBinaryUpdateMap collects the module requirements shared across every
+// binary rebuilt from an image. Versions are normalized the same way the
+// in-image `go get` path normalizes them: a missing 'v' prefix is added and
+// pre-modules major>=2 dependencies gain the +incompatible build tag, since the
+// rebuild writes these values straight into go.mod requirements.
+func buildBinaryUpdateMap(updates unversioned.LangUpdatePackages) map[string]string {
+	updateMap := make(map[string]string)
+	log.Debugf("[updateMap] building from %d updates", len(updates))
+	for _, update := range updates {
+		if update.FixedVersion == "" {
+			log.Debugf("Skipping %s: no fixed version available", update.Name)
+			continue
+		}
+
+		// k8s.io/kubernetes has hundreds of replace directives and requires
+		// careful version coordination - skip for now
+		if strings.HasPrefix(update.Name, "k8s.io/kubernetes") {
+			log.Warnf("Skipping %s: k8s.io/kubernetes requires careful version coordination", update.Name)
+			continue
+		}
+
+		version := update.FixedVersion
+		if !strings.HasPrefix(version, "v") {
+			version = "v" + version
+		}
+		updateMap[update.Name] = appendIncompatibleIfNeeded(update.Name, version)
+	}
+	return updateMap
+}
+
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
 // When stdlibFixedVersion is set, only binaries built with a Go version older than
 // that version are rebuilt for stdlib fixes. Binaries already on a new enough Go
@@ -721,24 +753,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 		}
 	}
 
-	// Build update map from updates (shared across all binaries)
-	updateMap := make(map[string]string)
-	log.Debugf("[updateMap] building from %d updates", len(updates))
-	for _, update := range updates {
-		if update.FixedVersion == "" {
-			log.Debugf("Skipping %s: no fixed version available", update.Name)
-			continue
-		}
-
-		// k8s.io/kubernetes has hundreds of replace directives and requires
-		// careful version coordination - skip for now
-		if strings.HasPrefix(update.Name, "k8s.io/kubernetes") {
-			log.Warnf("Skipping %s: k8s.io/kubernetes requires careful version coordination", update.Name)
-			continue
-		}
-
-		updateMap[update.Name] = update.FixedVersion
-	}
+	updateMap := buildBinaryUpdateMap(updates)
 
 	if len(updateMap) == 0 && stdlibFixedVersion == "" {
 		return currentState, failedPackages, fmt.Errorf("no version updates to apply")
