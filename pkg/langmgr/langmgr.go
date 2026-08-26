@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/hashicorp/go-multierror"
 	"github.com/moby/buildkit/client/llb"
@@ -160,6 +161,18 @@ func GetUniqueLatestUpdates(
 			PkgPath:          info.pkgPath,
 		})
 	}
+
+	// Sort so the emitted order is stable across runs; downstream consumers build
+	// command sequences and LLB graphs from this slice.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Type != out[j].Type {
+			return out[i].Type < out[j].Type
+		}
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].PkgPath < out[j].PkgPath
+	})
 	return out, nil
 }
 
