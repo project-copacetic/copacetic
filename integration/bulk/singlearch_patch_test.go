@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/go-connections/nat"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -133,10 +134,10 @@ func startLocalRegistry(ctx context.Context) (testcontainers.Container, string, 
 			"REGISTRY_STORAGE_DELETE_ENABLED": "true",
 		},
 		HostConfigModifier: func(hostConfig *container.HostConfig) {
-			hostConfig.PortBindings = nat.PortMap{
-				"5000/tcp": []nat.PortBinding{
+			hostConfig.PortBindings = network.PortMap{
+				network.MustParsePort("5000/tcp"): []network.PortBinding{
 					{
-						HostIP:   "127.0.0.1",
+						HostIP:   netip.MustParseAddr("127.0.0.1"),
 						HostPort: fixedPort,
 					},
 				},
