@@ -943,3 +943,122 @@ func TestBuildGoUpdateCmd(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterGoDowngrades(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           unversioned.LangUpdatePackages
+		expectedNames   []string
+		expectedSkipped []string
+	}{
+		{
+			name: "fixed version older than installed - skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "fixed version equal to installed - skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.7", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "fixed version newer than installed - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.0", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "versions without v prefix are normalized",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "1.9.1", FixedVersion: "1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", InstalledVersion: "0.4.0", FixedVersion: "0.5.0", Type: utils.GoModules},
+			},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "empty installed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "empty fixed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "unparsable installed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "not-a-version", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "unparsable fixed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7, v1.8.0", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "mixed packages - only downgrades removed",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", InstalledVersion: "v0.4.0", FixedVersion: "v0.5.0", Type: utils.GoModules},
+				{Name: "golang.org/x/text", InstalledVersion: "v0.3.8", FixedVersion: "v0.3.8", Type: utils.GoModules},
+			},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin", "golang.org/x/text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, skipped := filterGoDowngrades(tt.input)
+			names := make([]string, 0, len(result))
+			for _, pkg := range result {
+				names = append(names, pkg.Name)
+			}
+			assert.Equal(t, tt.expectedNames, names)
+			assert.Equal(t, tt.expectedSkipped, skipped)
+			for _, skippedName := range skipped {
+				assert.NotContains(t, names, skippedName,
+					"skipped downgrade must not appear in the updates that get applied")
+			}
+		})
+	}
+}
+
+func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
+	config := &buildkit.Config{}
+	currentState := &config.ImageState
+	manager := &golangManager{}
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name:             "github.com/gin-gonic/gin",
+				InstalledVersion: "v1.9.1",
+				FixedVersion:     "v1.7.7",
+				Type:             utils.GoModules,
+			},
+		},
+	}
+
+	state, errPkgs, err := manager.InstallUpdates(t.Context(), currentState, manifest, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github.com/gin-gonic/gin"}, errPkgs,
+		"downgrade-skipped packages must be reported as unpatched so they stay out of validated updates")
+	assert.Same(t, currentState, state)
+}

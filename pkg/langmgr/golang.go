@@ -128,6 +128,29 @@ func isLessThanGoVersion(v1, v2 string) bool {
 	return semver.Compare(v1, v2) < 0
 }
 
+// filterGoDowngrades drops updates whose reported fixed version is not newer than
+// the installed version. A stale advisory would otherwise downgrade a module that
+// has already been patched. Updates with missing or unparsable versions are kept
+// so that existing behavior is unchanged. The names of the skipped updates are
+// returned so callers can report them as unpatched: the image is left unchanged
+// for those modules, so they must not end up in the validated updates that feed
+// the VEX document.
+func filterGoDowngrades(updates unversioned.LangUpdatePackages) (unversioned.LangUpdatePackages, []string) {
+	filtered := make(unversioned.LangUpdatePackages, 0, len(updates))
+	var skipped []string
+	for _, u := range updates {
+		if u.InstalledVersion != "" && u.FixedVersion != "" &&
+			isValidGoVersion(u.InstalledVersion) && isValidGoVersion(u.FixedVersion) &&
+			!isLessThanGoVersion(u.InstalledVersion, u.FixedVersion) {
+			log.Warnf("Skipping Go module %s: installed version %s is not older than fixed version %s", u.Name, u.InstalledVersion, u.FixedVersion)
+			skipped = append(skipped, u.Name)
+			continue
+		}
+		filtered = append(filtered, u)
+	}
+	return filtered, skipped
+}
+
 // cleanGoVersion extracts the first valid version from a comma-separated list.
 // This handles cases where Trivy returns multiple versions.
 func cleanGoVersion(version string) string {
@@ -282,6 +305,15 @@ func (gm *golangManager) InstallUpdates(
 				continue
 			}
 		}
+	}
+
+	updatesToAttempt, skippedDowngrades := filterGoDowngrades(updatesToAttempt)
+	// Skipped downgrades leave the module untouched in the image, so report them
+	// as unpatched to keep them out of the validated updates used for VEX.
+	errPkgsReported = append(errPkgsReported, skippedDowngrades...)
+	if len(updatesToAttempt) == 0 && !hasStdlib {
+		log.Warn("No Go update packages remain to apply after filtering out non-newer fixed versions.")
+		return currentState, errPkgsReported, nil
 	}
 
 	// Perform the upgrade
