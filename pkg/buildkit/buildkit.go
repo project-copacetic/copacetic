@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -23,6 +24,7 @@ import (
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
@@ -44,9 +46,15 @@ type Config struct {
 	Client            gwclient.Client
 	ConfigData        []byte
 	PatchedConfigData []byte
-	Platform          *specs.Platform
-	ImageState        llb.State
-	PatchedImageState llb.State
+	SourceLineage     *types.SourceLineage
+	// SourceLineageValidated is true when a supplied patched image carried a
+	// base lineage pair whose digest matches the base BuildKit actually selected.
+	// Multi-platform callers use this to avoid treating an index digest as a
+	// child-manifest digest when re-patching older Copa images.
+	SourceLineageValidated bool
+	Platform               *specs.Platform
+	ImageState             llb.State
+	PatchedImageState      llb.State
 	// ImageLabels contains OCI labels from the image config (e.g. org.opencontainers.image.*).
 	ImageLabels map[string]string
 }
@@ -64,6 +72,7 @@ type Opts struct {
 type OCILayoutExportOptions struct {
 	Compression      string
 	ForceCompression bool
+	IndexAnnotations map[string]string
 }
 
 type platformExportMetadata struct {
@@ -88,6 +97,142 @@ var (
 	getImageFromDaemon       = daemon.Image
 	tryGetManifestFromLocal  = getManifestFromLocal
 )
+
+// ImageSource captures the immutable identity and, for indexes, the platform
+// descriptors of one locally or remotely resolved image reference. A local
+// mutable tag is authoritative and is never replaced with same-named remote
+// content.
+type ImageSource struct {
+	Name       string
+	Descriptor specs.Descriptor
+	Index      *specs.Index
+}
+
+// PlatformDescriptor returns the one image manifest matching platform.
+func (source *ImageSource) PlatformDescriptor(platform *specs.Platform) (*specs.Descriptor, error) {
+	if source == nil || source.Index == nil {
+		return nil, errors.New("image source is not an index")
+	}
+	if platform == nil {
+		return nil, errors.New("platform is nil")
+	}
+
+	target := platforms.Normalize(*platform)
+	matcher := platforms.OnlyStrict(target)
+	var matched *specs.Descriptor
+	for i := range source.Index.Manifests {
+		descriptor := &source.Index.Manifests[i]
+		if descriptor.Platform == nil || !matcher.Match(platforms.Normalize(*descriptor.Platform)) {
+			continue
+		}
+		if matched != nil {
+			return nil, fmt.Errorf("image index contains multiple descriptors for platform %s", platforms.Format(target))
+		}
+		copy := *descriptor
+		matched = &copy
+	}
+	if matched == nil {
+		return nil, fmt.Errorf("image index contains no descriptor for platform %s", platforms.Format(target))
+	}
+	return matched, nil
+}
+
+// ResolveImageSource resolves top-level and platform descriptor identity using
+// the same local-first policy as Copa's platform discovery. The returned top
+// digest is the daemon's source descriptor digest, not a digest recomputed from
+// a possibly incomplete locally reconstructed index.
+func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, error) {
+	named, err := reference.ParseNormalizedNamed(imageRef)
+	if err != nil {
+		return nil, fmt.Errorf("parse image reference %q: %w", imageRef, err)
+	}
+	if reference.IsNameOnly(named) {
+		named = reference.TagNameOnly(named)
+	}
+	ref, err := name.ParseReference(named.String())
+	if err != nil {
+		return nil, fmt.Errorf("parse normalized image reference %q: %w", named.String(), err)
+	}
+
+	descriptor, sourceDigest, complete, localErr := tryGetManifestFromLocal(ref)
+	if localErr == nil {
+		if descriptor == nil {
+			return nil, fmt.Errorf("local daemon returned no descriptor for %q", named.String())
+		}
+		if sourceDigest.Algorithm == "" || sourceDigest.Hex == "" {
+			return nil, fmt.Errorf("local source descriptor digest is unavailable for %q", named.String())
+		}
+		immutable, isImmutable := ref.(name.Digest)
+		if isImmutable {
+			if sourceDigest.String() != immutable.DigestStr() {
+				return nil, fmt.Errorf("local source descriptor digest %s does not match immutable reference %s", sourceDigest.String(), immutable.DigestStr())
+			}
+		}
+		if !complete {
+			sourceRef := ref.Context().Digest(sourceDigest.String())
+			descriptor, err = GetVerifiedRemoteIndex(sourceRef)
+			if err != nil {
+				return nil, fmt.Errorf("reconcile incomplete local image index %q: %w", named.String(), err)
+			}
+			return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+		}
+		if isImmutable {
+			if descriptor.MediaType.IsIndex() {
+				descriptor.Digest = sourceDigest
+				return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+			}
+			// A daemon can expose a selected child for an immutable index. If the
+			// materialized descriptor digest differs from the daemon's top-level
+			// source digest, verify and use the exact remote index instead.
+			if descriptor.Digest.String() != sourceDigest.String() {
+				descriptor, err = GetVerifiedRemoteIndex(immutable)
+				if err != nil {
+					return nil, fmt.Errorf("resolve immutable source descriptor %q: %w", named.String(), err)
+				}
+				return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+			}
+		}
+
+		descriptor.Digest = sourceDigest
+		return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+	}
+	log.Debugf("Failed to resolve image source %s from local daemon: %v", named.String(), localErr)
+
+	descriptor, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("resolve image source %q remotely: %w", named.String(), err)
+	}
+	if descriptor == nil {
+		return nil, fmt.Errorf("registry returned no descriptor for %q", named.String())
+	}
+	return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+}
+
+func imageSourceFromRemoteDescriptor(sourceName string, descriptor *remote.Descriptor) (*ImageSource, error) {
+	if descriptor == nil || descriptor.Digest.Algorithm == "" || descriptor.Digest.Hex == "" {
+		return nil, fmt.Errorf("source descriptor digest is unavailable for %q", sourceName)
+	}
+	source := &ImageSource{
+		Name: sourceName,
+		Descriptor: specs.Descriptor{
+			MediaType:   string(descriptor.MediaType),
+			Digest:      digest.Digest(descriptor.Digest.String()),
+			Size:        descriptor.Size,
+			URLs:        slices.Clone(descriptor.URLs),
+			Annotations: maps.Clone(descriptor.Annotations),
+		},
+	}
+	if !descriptor.MediaType.IsIndex() {
+		return source, nil
+	}
+
+	var index specs.Index
+	if err := json.Unmarshal(descriptor.Manifest, &index); err != nil {
+		return nil, fmt.Errorf("parse source image index %q: %w", sourceName, err)
+	}
+	source.Index = &index
+	return source, nil
+}
 
 // GetVerifiedRemoteIndex fetches an image index through an immutable digest
 // reference and verifies that the registry returned that exact index. Callers
@@ -134,13 +279,19 @@ func InitializeBuildkitConfig(
 	if platform != nil {
 		resolveOpt.ImageOpt.Platform = platform
 	}
-	_, _, configData, err := c.ResolveImageConfig(ctx, userImage, resolveOpt)
+	_, userImageDigest, configData, err := c.ResolveImageConfig(ctx, userImage, resolveOpt)
 	if err != nil {
 		return nil, err
 	}
 
 	var baseImage string
-	config.ConfigData, config.PatchedConfigData, baseImage, err = updateImageConfigData(ctx, c, configData, userImage)
+	config.ConfigData, config.PatchedConfigData, baseImage, config.SourceLineage, config.SourceLineageValidated, err = updateImageConfigData(
+		ctx,
+		c,
+		configData,
+		userImage,
+		userImageDigest,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -633,17 +784,23 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *specs.Platfor
 	return "", fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
 }
 
-func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []byte, image string) ([]byte, []byte, string, error) {
+func updateImageConfigData(
+	ctx context.Context,
+	c gwclient.Client,
+	configData []byte,
+	image string,
+	imageDigest digest.Digest,
+) ([]byte, []byte, string, *types.SourceLineage, bool, error) {
 	baseImage, userImageConfig, err := setupLabels(image, configData)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", nil, false, err
 	}
 
 	if baseImage == "" {
 		configData = userImageConfig
 	} else {
 		patchedImageConfig := userImageConfig
-		_, _, baseImageConfig, err := c.ResolveImageConfig(ctx, baseImage, sourceresolver.Opt{
+		_, baseImageDigest, baseImageConfig, err := c.ResolveImageConfig(ctx, baseImage, sourceresolver.Opt{
 			ImageOpt: &sourceresolver.ResolveImageOpt{
 				ResolveMode: llb.ResolveModePreferLocal.String(),
 			},
@@ -654,12 +811,12 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 			imageConfig := make(map[string]interface{})
 			if err := json.Unmarshal(configData, &imageConfig); err != nil {
 				log.Warnf("Failed to unmarshal image config: %v", err)
-				return configData, nil, image, nil
+				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
 			}
 			configMap, ok := imageConfig["config"].(map[string]interface{})
 			if !ok {
 				log.Warnf("Invalid config structure in image config")
-				return configData, nil, image, nil
+				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
 			}
 			if configMap["labels"] == nil {
 				configMap["labels"] = make(map[string]interface{})
@@ -667,24 +824,57 @@ func updateImageConfigData(ctx context.Context, c gwclient.Client, configData []
 			labelsMap, ok := configMap["labels"].(map[string]interface{})
 			if !ok {
 				log.Warnf("Invalid labels structure in image config")
-				return configData, nil, image, nil
+				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
 			}
 			labelsMap["BaseImage"] = image
 			updatedConfigData, err := json.Marshal(imageConfig)
 			if err != nil {
 				log.Warnf("Failed to marshal updated image config: %v", err)
-				return configData, nil, image, nil
+				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
 			}
-			return updatedConfigData, nil, image, nil
+			return updatedConfigData, nil, image, newSourceLineage(image, imageDigest), false, nil
 		}
 
 		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)
 		configData = baseImageWithLabels
 
-		return configData, patchedImageConfig, baseImage, nil
+		lineage := newSourceLineage(baseImage, baseImageDigest)
+		validated := false
+		if recorded := sourceLineageFromConfig(patchedImageConfig); recorded.Valid() && recorded.Digest == baseImageDigest {
+			lineage = recorded
+			validated = true
+		}
+
+		return configData, patchedImageConfig, baseImage, lineage, validated, nil
 	}
 
-	return configData, nil, image, nil
+	return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
+}
+
+func newSourceLineage(image string, imageDigest digest.Digest) *types.SourceLineage {
+	if imageDigest.Validate() != nil {
+		return nil
+	}
+	imageName, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return nil
+	}
+	if reference.IsNameOnly(imageName) {
+		imageName = reference.TagNameOnly(imageName)
+	}
+	return &types.SourceLineage{Name: imageName.String(), Digest: imageDigest}
+}
+
+func sourceLineageFromConfig(configData []byte) *types.SourceLineage {
+	document, err := parseImageConfigLabels(configData)
+	if err != nil {
+		return nil
+	}
+	lineageDigest, err := digest.Parse(document.labels[specs.AnnotationBaseImageDigest])
+	if err != nil {
+		return nil
+	}
+	return newSourceLineage(document.labels[specs.AnnotationBaseImageName], lineageDigest)
 }
 
 type imageConfigLabelsDocument struct {
@@ -782,6 +972,23 @@ func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte,
 	}
 	for key, value := range labels {
 		document.labels[key] = value
+	}
+	return document.marshal()
+}
+
+// RemoveImageConfigLabels returns imageConfig without the named labels. This
+// keeps an unverified lineage pair from surviving a re-patch through copied
+// runtime configuration.
+func RemoveImageConfigLabels(imageConfig []byte, labels ...string) ([]byte, error) {
+	if len(labels) == 0 {
+		return imageConfig, nil
+	}
+	document, err := parseImageConfigLabels(imageConfig)
+	if err != nil {
+		return nil, err
+	}
+	for _, label := range labels {
+		delete(document.labels, label)
 	}
 	return document.marshal()
 }
@@ -1250,7 +1457,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
 		log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
-		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms)
+		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms, exportOpts.IndexAnnotations)
 	}
 
 	log.Infof("Creating OCI layout from %d BuildKit states", len(platformStates))
@@ -1476,7 +1683,7 @@ func solveSinglePlatformOCI(
 	os.Remove(tarPath)
 
 	// Fix platform information in the extracted OCI layout
-	if err := fixSinglePlatformInfo(outputDir, platformSpec); err != nil {
+	if err := fixSinglePlatformInfo(outputDir, platformSpec, exportOpts.IndexAnnotations); err != nil {
 		return fmt.Errorf("failed to fix platform information: %w", err)
 	}
 
@@ -1484,7 +1691,7 @@ func solveSinglePlatformOCI(
 }
 
 // fixSinglePlatformInfo corrects the platform information in a single-platform OCI layout.
-func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform) error {
+func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform, indexAnnotations map[string]string) error {
 	indexPath := filepath.Join(outputDir, "index.json")
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -1514,6 +1721,7 @@ func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform) error
 			}
 		}
 	}
+	addIndexAnnotations(index, indexAnnotations)
 
 	// Write back the corrected index
 	indexJSON, err := json.MarshalIndent(index, "", "  ")
@@ -1569,11 +1777,11 @@ func solveAndCombineAllPlatforms(
 	}
 
 	// Extract and combine all platform tars into multi-platform OCI layout
-	return extractAndCombinePlatformTars(outputDir, platformTars, platformSpecs)
+	return extractAndCombinePlatformTars(outputDir, platformTars, platformSpecs, exportOpts.IndexAnnotations)
 }
 
 // extractAndCombinePlatformTars extracts platform tars and combines them into multi-platform OCI layout.
-func extractAndCombinePlatformTars(outputDir string, platformTars []string, platformSpecs []specs.Platform) error {
+func extractAndCombinePlatformTars(outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string) error {
 	// Create output directory structure
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -1656,6 +1864,7 @@ func extractAndCombinePlatformTars(outputDir string, platformTars []string, plat
 		"mediaType":     "application/vnd.oci.image.index.v1+json",
 		"manifests":     platformManifests,
 	}
+	addIndexAnnotations(combinedIndex, indexAnnotations)
 
 	indexJSON, err := json.MarshalIndent(combinedIndex, "", "  ")
 	if err != nil {
@@ -1853,7 +2062,7 @@ func createMixedOCILayout(
 		return fmt.Errorf("no manifests to include in mixed OCI layout")
 	}
 
-	return createFinalOCILayout(outputDir, patchedManifests)
+	return createFinalOCILayout(outputDir, patchedManifests, exportOpts.IndexAnnotations)
 }
 
 // exportPatchedPlatformsToTemp exports patched platforms using BuildKit to a temporary directory.
@@ -2305,7 +2514,7 @@ func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform) (map[st
 }
 
 // createFinalOCILayout creates the final OCI layout with combined manifests.
-func createFinalOCILayout(outputDir string, allManifests []map[string]interface{}) error {
+func createFinalOCILayout(outputDir string, allManifests []map[string]interface{}, indexAnnotations map[string]string) error {
 	// Create output directory structure
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -2323,6 +2532,7 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 		"mediaType":     "application/vnd.oci.image.index.v1+json",
 		"manifests":     allManifests,
 	}
+	addIndexAnnotations(combinedIndex, indexAnnotations)
 
 	indexJSON, err := json.MarshalIndent(combinedIndex, "", "  ")
 	if err != nil {
@@ -2337,8 +2547,20 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 	return nil
 }
 
+func addIndexAnnotations(index map[string]interface{}, annotations map[string]string) {
+	if len(annotations) == 0 {
+		return
+	}
+	index["annotations"] = maps.Clone(annotations)
+}
+
 // createPreservedOnlyOCILayout creates an OCI layout from preserved platforms only.
-func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult, preservedPlatforms []types.PatchPlatform) error {
+func createPreservedOnlyOCILayout(
+	outputDir string,
+	results []types.PatchResult,
+	preservedPlatforms []types.PatchPlatform,
+	indexAnnotations map[string]string,
+) error {
 	log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
 
 	// Find the original image reference from results
@@ -2366,5 +2588,5 @@ func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult,
 	if len(preservedManifests) == 0 {
 		return fmt.Errorf("no manifests to include in preserved-only OCI layout")
 	}
-	return createFinalOCILayout(outputDir, preservedManifests)
+	return createFinalOCILayout(outputDir, preservedManifests, indexAnnotations)
 }

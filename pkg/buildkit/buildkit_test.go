@@ -142,6 +142,137 @@ func TestGetVerifiedRemoteIndex(t *testing.T) {
 	}
 }
 
+func TestResolveImageSourceUsesAuthoritativeLocalDigest(t *testing.T) {
+	const topHex = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	raw := []byte(`{
+		"schemaVersion":2,
+		"mediaType":"application/vnd.oci.image.index.v1+json",
+		"annotations":{"com.example":"preserved"},
+		"manifests":[{
+			"mediaType":"application/vnd.oci.image.manifest.v1+json",
+			"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"size":1,
+			"platform":{"os":"linux","architecture":"amd64"}
+		}]
+	}`)
+
+	originalLocal := tryGetManifestFromLocal
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		tryGetManifestFromLocal = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+		return &remote.Descriptor{
+			Descriptor: remotev1.Descriptor{
+				MediaType: remoteTypes.OCIImageIndex,
+				Digest:    remotev1.Hash{Algorithm: "sha256", Hex: strings.Repeat("d", 64)},
+				Size:      int64(len(raw)),
+			},
+			Manifest: raw,
+		}, remotev1.Hash{Algorithm: "sha256", Hex: topHex}, true, nil
+	}
+	remoteCalled := false
+	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+		remoteCalled = true
+		return nil, errors.New("remote lookup must not occur")
+	}
+
+	source, err := ResolveImageSource(t.Context(), "registry.example.com/team/app:latest")
+	require.NoError(t, err)
+	assert.False(t, remoteCalled)
+	assert.Equal(t, "registry.example.com/team/app:latest", source.Name)
+	assert.Equal(t, "sha256:"+topHex, source.Descriptor.Digest.String())
+	require.NotNil(t, source.Index)
+	assert.Equal(t, "preserved", source.Index.Annotations["com.example"])
+	child, err := source.PlatformDescriptor(&ispec.Platform{OS: "linux", Architecture: "amd64"})
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:"+strings.Repeat("a", 64), child.Digest.String())
+}
+
+func TestResolveImageSourceReconcilesIncompleteLocalIndexByDigest(t *testing.T) {
+	const sourceHex = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	sourceDigest := remotev1.Hash{Algorithm: "sha256", Hex: sourceHex}
+	localIndex := testRemoteIndexDescriptor(sourceHex)
+	remoteIndex := testRemoteIndexDescriptor(sourceHex)
+
+	originalLocal := tryGetManifestFromLocal
+	originalRemote := getRemoteImageDescriptor
+	t.Cleanup(func() {
+		tryGetManifestFromLocal = originalLocal
+		getRemoteImageDescriptor = originalRemote
+	})
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+		return localIndex, sourceDigest, false, nil
+	}
+	getRemoteImageDescriptor = func(gotRef name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+		assert.Equal(t, "registry.example.com/team/app@"+sourceDigest.String(), gotRef.String())
+		return remoteIndex, nil
+	}
+
+	source, err := ResolveImageSource(t.Context(), "registry.example.com/team/app:latest")
+	require.NoError(t, err)
+	assert.Equal(t, sourceDigest.String(), source.Descriptor.Digest.String())
+	require.NotNil(t, source.Index)
+}
+
+func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
+	ctx := t.Context()
+	t.Run("first patch", func(t *testing.T) {
+		imageDigest := digest.FromString("first-source")
+		configData := []byte(`{"config":{"labels":{}}}`)
+
+		_, patched, baseImage, lineage, validated, err := updateImageConfigData(
+			ctx,
+			&mocks.MockGWClient{},
+			configData,
+			"alpine:3.20",
+			imageDigest,
+		)
+		require.NoError(t, err)
+		assert.Nil(t, patched)
+		assert.Equal(t, "alpine:3.20", baseImage)
+		assert.Equal(t, &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: imageDigest}, lineage)
+		assert.False(t, validated)
+	})
+
+	t.Run("re-patch validated recorded base", func(t *testing.T) {
+		baseDigest := digest.FromString("original-base")
+		client := &mocks.MockGWClient{}
+		client.On("ResolveImageConfig", mock.Anything, "docker.io/library/alpine@"+baseDigest.String(), mock.Anything).
+			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"config":{"labels":{}}}`), nil).
+			Once()
+		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
+			baseDigest,
+			ispec.AnnotationBaseImageName,
+			ispec.AnnotationBaseImageDigest,
+			baseDigest,
+		))
+
+		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, "registry.example.com/app:patched", digest.FromString("patched"))
+		require.NoError(t, err)
+		require.NotNil(t, patched)
+		assert.Equal(t, &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: baseDigest}, lineage)
+		assert.True(t, validated)
+		client.AssertExpectations(t)
+	})
+}
+
+func TestCreateFinalOCILayoutIncludesIndexAnnotations(t *testing.T) {
+	outputDir := t.TempDir()
+	annotations := map[string]string{
+		ispec.AnnotationBaseImageName:   "registry.example.com/team/app:1.0",
+		ispec.AnnotationBaseImageDigest: digest.FromString("source-index").String(),
+	}
+
+	require.NoError(t, createFinalOCILayout(outputDir, nil, annotations))
+	data, err := os.ReadFile(filepath.Join(outputDir, "index.json"))
+	require.NoError(t, err)
+	var index ispec.Index
+	require.NoError(t, json.Unmarshal(data, &index))
+	assert.Equal(t, annotations, index.Annotations)
+}
+
 func TestTryGetManifestFromLocalUsesDockerIndexMetadata(t *testing.T) {
 	const imageRef = "registry.example.com/local:latest"
 	indexDigest := digest.Digest("sha256:" + strings.Repeat("c", 64))
@@ -401,6 +532,7 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 		outputDir,
 		[]types.PatchResult{{OriginalRef: originalRef}},
 		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}},
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -739,8 +871,10 @@ func TestAddOCIExportMetadata(t *testing.T) {
 	metadata := platformExportMetadata{
 		Config: []byte(`{"architecture":"arm64","os":"linux","config":{"User":"101"}}`),
 		Annotations: map[string]string{
-			"sh.copa.chisel.release": "ubuntu-24.04",
-			"sh.copa.chisel.version": "v1.4.2",
+			"sh.copa.chisel.release":        "ubuntu-24.04",
+			"sh.copa.chisel.version":        "v1.4.2",
+			ispec.AnnotationBaseImageName:   "registry.example.com/team/app:1.0",
+			ispec.AnnotationBaseImageDigest: digest.FromString("source-manifest").String(),
 		},
 	}
 
@@ -1110,7 +1244,7 @@ func TestUpdateImageConfigData(t *testing.T) {
 		expectedData := []byte(`{"config": {"labels": {"com.example.label": "value"}, {"BaseImage": "myimage:latest"}}}`)
 		image := "myimage:latest"
 
-		resultConfig, resultPatched, resultImage, err := updateImageConfigData(ctx, mockClient, configData, image)
+		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1132,12 +1266,12 @@ func TestUpdateImageConfigData(t *testing.T) {
 		mockClient := &mocks.MockGWClient{}
 		mockClient.On("ResolveImageConfig",
 			mock.Anything, mock.AnythingOfType("string"), mock.Anything).
-			Return("imageConfigString", digest.Digest("digest"), []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`), nil)
+			Return("imageConfigString", digest.FromString("rockylinux:latest"), []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`), nil)
 
 		configData := []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`)
 		image := "rockylinux:latest"
 
-		resultConfig, _, resultImage, err := updateImageConfigData(ctx, mockClient, configData, image)
+		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image))
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}

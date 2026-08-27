@@ -106,6 +106,8 @@ These flags are essential for multi-platform patching:
 
 - **OCI layout export**: The `--oci-dir` flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. `--push` and `--oci-dir` cannot be used together.
 
+- **Source lineage**: Newly patched OCI manifests record `org.opencontainers.image.base.name` and `org.opencontainers.image.base.digest` for the exact source manifest Copa patched. A patched OCI index records the source index digest while each patched child records its matching source manifest digest. Unchanged platform descriptors are preserved without adding new annotations. When re-patching, Copa follows its recorded original base; if it cannot establish one truthful common base for an index, it omits the index-level pair.
+
 - **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
 
 - **No-report platform discovery**: In comprehensive no-report mode, Copa inspects the image. A single-platform image is patched as that discovered platform; otherwise the selected or discovered multi-platform set is used.
@@ -125,6 +127,8 @@ These flags are essential for multi-platform patching:
 
 :::warning
 Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
+
+Docker schema 2 manifests and manifest lists do not support OCI annotations. Source-lineage annotations are therefore guaranteed only for OCI manifests, OCI indexes, and OCI layouts; Copa does not silently convert Docker-format output to OCI.
 :::
 
 ## Understanding the Results

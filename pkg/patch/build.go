@@ -77,7 +77,7 @@ func createBuildConfig(
 	// Forward original manifest annotations into the exporter so the pushed/
 	// loaded manifest preserves them. Copa's own annotations below always win
 	// when their keys collide because we set them last.
-	for k, v := range originalAnnotations {
+	for k, v := range withoutSourceLineageAnnotations(originalAnnotations) {
 		attrs["annotation."+k] = v
 	}
 	// Copa-specific annotations: bump the OCI created time and stamp our patched marker.

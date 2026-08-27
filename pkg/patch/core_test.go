@@ -176,6 +176,33 @@ func TestImageConfigWithAnnotationsUsesBaseConfigForFirstPatch(t *testing.T) {
 	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
 }
 
+func TestImageConfigWithAnnotationsReplacesSourceLineageAtomically(t *testing.T) {
+	staleDigest := digest.FromString("stale")
+	configData := []byte(
+		`{"config":{"Labels":{"org.opencontainers.image.base.name":"docker.io/library/stale:latest",` +
+			`"org.opencontainers.image.base.digest":"` + staleDigest.String() + `","preserved":"value"}}}`,
+	)
+
+	omitted, err := imageConfigWithAnnotations(&buildkit.Config{ConfigData: configData}, nil)
+	require.NoError(t, err)
+	var omittedImage v1.Image
+	require.NoError(t, json.Unmarshal(omitted, &omittedImage))
+	assert.NotContains(t, omittedImage.Config.Labels, v1.AnnotationBaseImageName)
+	assert.NotContains(t, omittedImage.Config.Labels, v1.AnnotationBaseImageDigest)
+	assert.Equal(t, "value", omittedImage.Config.Labels["preserved"])
+
+	lineage := &types.SourceLineage{
+		Name:   "docker.io/library/alpine:3.20",
+		Digest: digest.FromString("selected-base"),
+	}
+	replaced, err := imageConfigWithAnnotations(&buildkit.Config{ConfigData: configData}, sourceLineageAnnotations(lineage))
+	require.NoError(t, err)
+	var replacedImage v1.Image
+	require.NoError(t, json.Unmarshal(replaced, &replacedImage))
+	assert.Equal(t, lineage.Name, replacedImage.Config.Labels[v1.AnnotationBaseImageName])
+	assert.Equal(t, lineage.Digest.String(), replacedImage.Config.Labels[v1.AnnotationBaseImageDigest])
+}
+
 func TestPreservedImageStateCarriesExecutionEnvironment(t *testing.T) {
 	config := []byte(`{
 		"architecture":"arm64",
@@ -862,15 +889,94 @@ func TestOptions_ValidationScenarios(t *testing.T) {
 	}
 }
 
-func TestAddPackageManagerAnnotations(t *testing.T) {
+func TestAddResultAnnotations(t *testing.T) {
+	lineageDigest := digest.FromString("selected-base")
 	result := gwclient.NewResult()
 	annotations := map[string]string{
 		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
 		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+		v1.AnnotationBaseImageName:     "docker.io/library/alpine:3.20",
+		v1.AnnotationBaseImageDigest:   lineageDigest.String(),
 	}
 
-	addPackageManagerAnnotations(result, annotations)
+	addResultAnnotations(result, annotations)
 
 	assert.Equal(t, []byte("ubuntu-24.04"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
 	assert.Equal(t, []byte("v1.4.2"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselVersionAnnotation)])
+	assert.Equal(t, []byte("docker.io/library/alpine:3.20"), result.Metadata[exptypes.AnnotationManifestKey(nil, v1.AnnotationBaseImageName)])
+	assert.Equal(t, []byte(lineageDigest.String()), result.Metadata[exptypes.AnnotationManifestKey(nil, v1.AnnotationBaseImageDigest)])
+}
+
+func TestSourceLineageForPatch(t *testing.T) {
+	dgst := digest.FromString("selected-base")
+	tests := []struct {
+		name   string
+		config *buildkit.Config
+		opts   *Options
+		want   *types.SourceLineage
+	}{
+		{
+			name: "first multi-platform patch uses logical source name",
+			config: &buildkit.Config{SourceLineage: &types.SourceLineage{
+				Name:   "docker.io/library/alpine@" + dgst.String(),
+				Digest: dgst,
+			}},
+			opts: &Options{SourceImageName: "alpine:3.20", ExpectedSourceDigest: dgst, RequireBaseManifest: true},
+			want: &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: dgst},
+		},
+		{
+			name: "unverified first multi-platform patch is omitted",
+			config: &buildkit.Config{SourceLineage: &types.SourceLineage{
+				Name:   "docker.io/library/alpine:3.20",
+				Digest: dgst,
+			}},
+			opts: &Options{SourceImageName: "alpine:3.20", RequireBaseManifest: true},
+		},
+		{
+			name: "validated re-patch retains recorded original name",
+			config: &buildkit.Config{
+				PatchedConfigData:      []byte(`{"config":{}}`),
+				SourceLineageValidated: true,
+				SourceLineage: &types.SourceLineage{
+					Name:   "docker.io/library/alpine:3.20",
+					Digest: dgst,
+				},
+			},
+			opts: &Options{RequireBaseManifest: true},
+			want: &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: dgst},
+		},
+		{
+			name: "unverified old multi-platform re-patch is omitted",
+			config: &buildkit.Config{
+				PatchedConfigData: []byte(`{"config":{}}`),
+				SourceLineage:     &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: dgst},
+			},
+			opts: &Options{RequireBaseManifest: true},
+		},
+		{
+			name:   "incomplete lineage is omitted",
+			config: &buildkit.Config{SourceLineage: &types.SourceLineage{Name: "docker.io/library/alpine:3.20"}},
+			opts:   &Options{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sourceLineageForPatch(tt.config, tt.opts))
+		})
+	}
+}
+
+func TestSourceLineageAnnotationsAreAtomic(t *testing.T) {
+	assert.Nil(t, sourceLineageAnnotations(nil))
+	assert.Nil(t, sourceLineageAnnotations(&types.SourceLineage{Name: "docker.io/library/alpine:3.20"}))
+
+	lineage := &types.SourceLineage{
+		Name:   "docker.io/library/alpine:3.20",
+		Digest: digest.FromString("selected-base"),
+	}
+	assert.Equal(t, map[string]string{
+		v1.AnnotationBaseImageName:   lineage.Name,
+		v1.AnnotationBaseImageDigest: lineage.Digest.String(),
+	}, sourceLineageAnnotations(lineage))
 }
