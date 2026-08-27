@@ -3,14 +3,17 @@ package langmgr
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"testing"
 
 	"github.com/moby/buildkit/client/llb"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
 )
 
 func TestIsValidGoVersion(t *testing.T) {
@@ -1073,6 +1076,7 @@ func TestVerifyGoModUpdates(t *testing.T) {
 	tests := []struct {
 		name      string
 		goMod     string
+		goSum     string
 		updates   unversioned.LangUpdatePackages
 		wantErr   bool
 		errSubstr string
@@ -1163,7 +1167,10 @@ replace github.com/pkg/legacy => golang.org/x/net v0.23.0
 			errSubstr: "not found in go.mod",
 		},
 		{
-			name: "required module resolved through cross-module replace",
+			// A versioned replacement pointing at a different module path cannot
+			// prove the replaced module reached the requested version: the two
+			// paths have unrelated version lines.
+			name: "cross-module replacement cannot prove requested version",
 			goMod: `module example.com/app
 
 go 1.22
@@ -1175,7 +1182,8 @@ replace github.com/pkg/legacy => golang.org/x/net v0.23.0
 			updates: unversioned.LangUpdatePackages{
 				{Name: "github.com/pkg/legacy", FixedVersion: "v0.23.0"},
 			},
-			wantErr: false,
+			wantErr:   true,
+			errSubstr: "different module path",
 		},
 		{
 			name: "replace directive pins version below target",
@@ -1194,9 +1202,9 @@ replace golang.org/x/net => golang.org/x/net v0.17.0
 			errSubstr: "v0.17.0",
 		},
 		{
-			// A filesystem replacement carries no version, so the require entry
-			// stays the effective version instead of failing the patch.
-			name: "filesystem replacement falls back to require version",
+			// The contents behind a filesystem replacement carry no version, so
+			// the require entry cannot prove the local code is patched.
+			name: "filesystem replacement cannot prove requested version",
 			goMod: `module example.com/app
 
 go 1.22
@@ -1208,23 +1216,8 @@ replace golang.org/x/net => ./vendored/net
 			updates: unversioned.LangUpdatePackages{
 				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
 			},
-			wantErr: false,
-		},
-		{
-			name: "filesystem replacement fallback still enforces require version",
-			goMod: `module example.com/app
-
-go 1.22
-
-require golang.org/x/net v0.17.0
-
-replace golang.org/x/net => ./vendored/net
-`,
-			updates: unversioned.LangUpdatePackages{
-				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
-			},
 			wantErr:   true,
-			errSubstr: "v0.17.0",
+			errSubstr: "unversioned",
 		},
 		{
 			// go.mod resolution prefers a replacement that names a version over
@@ -1351,11 +1344,88 @@ require golang.org/x/net v0.23.0
 			wantErr:   true,
 			errSubstr: "golang.org/x/text",
 		},
+		{
+			// Modules before go 1.17 record only direct requirements in go.mod,
+			// so an indirect dependency Trivy reports is proven by the version
+			// go.sum says the build downloads.
+			name: "pre-1.17 go.sum only dependency at target version",
+			goMod: `module example.com/app
+
+go 1.16
+
+require github.com/direct/dep v1.4.0
+`,
+			goSum: `github.com/direct/dep v1.4.0 h1:aaaa=
+github.com/direct/dep v1.4.0/go.mod h1:bbbb=
+golang.org/x/net v0.17.0/go.mod h1:cccc=
+golang.org/x/net v0.23.0 h1:dddd=
+golang.org/x/net v0.23.0/go.mod h1:eeee=
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "pre-1.17 go.sum only dependency below target version",
+			goMod: `module example.com/app
+
+go 1.16
+
+require github.com/direct/dep v1.4.0
+`,
+			goSum: `github.com/direct/dep v1.4.0 h1:aaaa=
+github.com/direct/dep v1.4.0/go.mod h1:bbbb=
+golang.org/x/net v0.17.0 h1:cccc=
+golang.org/x/net v0.17.0/go.mod h1:dddd=
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "v0.17.0",
+		},
+		{
+			// A go.mod-only entry names a version in the module graph whose code
+			// is not downloaded, so it cannot prove the patch landed.
+			name: "go.sum go.mod only entry does not prove the patch",
+			goMod: `module example.com/app
+
+go 1.16
+
+require github.com/direct/dep v1.4.0
+`,
+			goSum: `golang.org/x/net v0.23.0/go.mod h1:aaaa=
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr:   true,
+			errSubstr: "not found in go.mod",
+		},
+		{
+			name: "require entry wins over stale go.sum entry",
+			goMod: `module example.com/app
+
+go 1.16
+
+require golang.org/x/net v0.23.0
+`,
+			goSum: `golang.org/x/net v0.17.0 h1:aaaa=
+golang.org/x/net v0.17.0/go.mod h1:bbbb=
+golang.org/x/net v0.23.0 h1:cccc=
+golang.org/x/net v0.23.0/go.mod h1:dddd=
+`,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := verifyGoModUpdates([]byte(tt.goMod), tt.updates)
+			err := verifyGoModUpdates([]byte(tt.goMod), []byte(tt.goSum), tt.updates)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errSubstr)
@@ -1383,14 +1453,42 @@ require (
 replace github.com/pkg/legacy => github.com/pkg/legacy v1.2.3
 `
 
+	goSum := `github.com/pkg/legacy v1.2.3 h1:aaaa=
+github.com/pkg/legacy v1.2.3/go.mod h1:bbbb=
+gopkg.in/yaml.v2 v2.4.0 h1:cccc=
+gopkg.in/yaml.v2 v2.4.0/go.mod h1:dddd=
+`
+
 	tests := []struct {
 		name      string
 		goMod     string
+		goSum     string
 		updates   unversioned.LangUpdatePackages
 		want      []string
 		wantErr   bool
 		errSubstr string
 	}{
+		{
+			// Before go 1.17 an indirect dependency lives only in go.sum, and
+			// excluding it would leave the update unverified while the VEX
+			// document still claimed it as patched.
+			name:  "keeps pre-1.17 go.sum only dependency",
+			goMod: goMod,
+			goSum: goSum,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "gopkg.in/yaml.v2", FixedVersion: "v2.4.0"},
+			},
+			want: []string{"gopkg.in/yaml.v2"},
+		},
+		{
+			name:  "drops modules absent from go.mod and go.sum",
+			goMod: goMod,
+			goSum: goSum,
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/absent/mod", FixedVersion: "v1.0.0"},
+			},
+			want: []string{},
+		},
 		{
 			name:  "keeps required modules and drops absent ones",
 			goMod: goMod,
@@ -1435,7 +1533,7 @@ replace github.com/pkg/legacy => github.com/pkg/legacy v1.2.3
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := filterUpdatesInGoMod([]byte(tt.goMod), tt.updates)
+			got, err := filterUpdatesInGoMod([]byte(tt.goMod), []byte(tt.goSum), tt.updates)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errSubstr)
@@ -1447,10 +1545,10 @@ replace github.com/pkg/legacy => github.com/pkg/legacy v1.2.3
 	}
 }
 
-// TestGoWorkspaceMemberModPaths asserts that workspace members are resolved from
-// go.work so each member's go.mod can be verified. The workspace root has no
+// TestGoWorkspaceMemberDirs asserts that workspace members are resolved from
+// go.work so each member module can be verified. The workspace root has no
 // authoritative go.mod: requirements land in the member modules.
-func TestGoWorkspaceMemberModPaths(t *testing.T) {
+func TestGoWorkspaceMemberDirs(t *testing.T) {
 	tests := []struct {
 		name      string
 		goWork    string
@@ -1467,7 +1565,7 @@ use ./svc-a
 use ./svc-b
 `,
 			root: "/app",
-			want: []string{"/app/svc-a/go.mod", "/app/svc-b/go.mod"},
+			want: []string{"/app/svc-a", "/app/svc-b"},
 		},
 		{
 			name: "use block with root and parent entries",
@@ -1479,7 +1577,7 @@ use (
 )
 `,
 			root: "/app",
-			want: []string{"/app/go.mod", "/lib/go.mod"},
+			want: []string{"/app", "/lib"},
 		},
 		{
 			name: "absolute use entry",
@@ -1488,7 +1586,7 @@ use (
 use /src/other
 `,
 			root: "/app",
-			want: []string{"/src/other/go.mod"},
+			want: []string{"/src/other"},
 		},
 		{
 			name:      "no use entries",
@@ -1508,7 +1606,7 @@ use /src/other
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := goWorkspaceMemberModPaths([]byte(tt.goWork), tt.root)
+			got, err := goWorkspaceMemberDirs([]byte(tt.goWork), tt.root)
 			if tt.wantErr {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.errSubstr)
@@ -1560,4 +1658,137 @@ func TestUpdateGoModuleReportsFailedPackages(t *testing.T) {
 			assert.Equal(t, tt.want, failed)
 		})
 	}
+}
+
+// TestGoSumBuiltVersions asserts that only full module hashes count as versions
+// the build downloads. A "/go.mod" line names a version in the module graph
+// whose code never enters the image, so it cannot prove a patch landed.
+func TestGoSumBuiltVersions(t *testing.T) {
+	goSum := `golang.org/x/net v0.17.0/go.mod h1:aaaa=
+golang.org/x/net v0.23.0 h1:bbbb=
+golang.org/x/net v0.23.0/go.mod h1:cccc=
+gopkg.in/yaml.v2 v2.4.0 h1:dddd=
+
+malformed line
+`
+
+	got := goSumBuiltVersions([]byte(goSum))
+
+	assert.Equal(t, map[string][]string{
+		"golang.org/x/net": {"v0.23.0"},
+		"gopkg.in/yaml.v2": {"v2.4.0"},
+	}, got)
+	assert.Empty(t, goSumBuiltVersions(nil))
+}
+
+// TestUnverifiedUpdateNames asserts that failure reporting names every update
+// whose patch has not been confirmed, so partial verification cannot leave an
+// unproven package inside the validated set.
+func TestUnverifiedUpdateNames(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+		{Name: "golang.org/x/text", FixedVersion: "v0.21.0"},
+		{Name: "gopkg.in/yaml.v2", FixedVersion: "v2.4.0"},
+	}
+
+	assert.Equal(t,
+		[]string{"golang.org/x/net", "golang.org/x/text", "gopkg.in/yaml.v2"},
+		unverifiedUpdateNames(updates, nil))
+
+	verified := map[string]struct{}{"golang.org/x/text": {}}
+	assert.Equal(t,
+		[]string{"golang.org/x/net", "gopkg.in/yaml.v2"},
+		unverifiedUpdateNames(updates, verified))
+
+	for _, u := range updates {
+		verified[u.Name] = struct{}{}
+	}
+	assert.Empty(t, unverifiedUpdateNames(updates, verified))
+}
+
+// goSumTestReference serves file contents from a map and fails once the read
+// budget is exhausted, standing in for a BuildKit solve that breaks partway
+// through workspace verification.
+type fakeGatewayReference struct {
+	gwclient.Reference
+	files      map[string][]byte
+	reads      *int
+	failAfter  int
+	failedRead error
+}
+
+func (r *fakeGatewayReference) ReadFile(_ context.Context, req gwclient.ReadRequest) ([]byte, error) {
+	*r.reads++
+	if r.failAfter > 0 && *r.reads > r.failAfter {
+		return nil, r.failedRead
+	}
+	content, ok := r.files[req.Filename]
+	if !ok {
+		return nil, fmt.Errorf("%s: no such file or directory", req.Filename)
+	}
+	return content, nil
+}
+
+func (r *fakeGatewayReference) StatFile(_ context.Context, req gwclient.StatRequest) (*fstypes.Stat, error) {
+	content, ok := r.files[req.Path]
+	if !ok {
+		return nil, fmt.Errorf("lstat %s: %w", req.Path, fs.ErrNotExist)
+	}
+	return &fstypes.Stat{Mode: uint32(0o644), Size: int64(len(content))}, nil
+}
+
+type fakeGatewayClient struct {
+	gwclient.Client
+	ref *fakeGatewayReference
+}
+
+func (c *fakeGatewayClient) Solve(context.Context, gwclient.SolveRequest) (*gwclient.Result, error) {
+	result := gwclient.NewResult()
+	result.SetRef(c.ref)
+	return result, nil
+}
+
+// TestUpdateGoModuleWorkspaceFailureReportsAllUnverified asserts that a read
+// failure during workspace verification reports every update still lacking
+// proof, not only the member being read. Reporting one member would let the
+// other members' packages reach the validated set unverified.
+func TestUpdateGoModuleWorkspaceFailureReportsAllUnverified(t *testing.T) {
+	memberGoMod := `module example.com/svc-a
+
+go 1.22
+
+require golang.org/x/net v0.23.0
+`
+	otherGoMod := `module example.com/svc-b
+
+go 1.22
+
+require golang.org/x/text v0.21.0
+`
+	files := map[string][]byte{
+		"/app/go.work":      []byte("go 1.22\n\nuse (\n\t./svc-a\n\t./svc-b\n)\n"),
+		"/app/svc-a/go.mod": []byte(memberGoMod),
+		"/app/svc-b/go.mod": []byte(otherGoMod),
+	}
+
+	reads := 0
+	client := &fakeGatewayClient{ref: &fakeGatewayReference{
+		files:      files,
+		reads:      &reads,
+		failAfter:  3, // go.work plus both pre-update go.mod reads succeed
+		failedRead: fmt.Errorf("failed to solve: exit code 1"),
+	}}
+	gm := &golangManager{config: &buildkit.Config{Client: client}}
+	state := llb.Scratch()
+	updates := unversioned.LangUpdatePackages{
+		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+		{Name: "golang.org/x/text", FixedVersion: "v0.21.0"},
+	}
+
+	_, failed, err := gm.updateGoModule(t.Context(), &state, "/app", updates, true, false)
+
+	require.ErrorContains(t, err, "after update",
+		"the failure must come from post-update verification, not the pre-update capture")
+	assert.Equal(t, []string{"golang.org/x/net", "golang.org/x/text"}, failed,
+		"a workspace verification failure must report every update still lacking verification")
 }
