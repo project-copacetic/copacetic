@@ -1,7 +1,6 @@
 package connhelpers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -15,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/cpuguy83/dockercfg"
 	"github.com/cpuguy83/go-docker"
@@ -36,6 +36,11 @@ type buildxConfig struct {
 	}
 }
 
+var (
+	buildxExecCommand        = exec.Command
+	buildxExecCommandContext = exec.CommandContext
+)
+
 // Buildx returns a buildkit connection helper for connecting to a buildx instance.
 // Only "docker-container" buildkit instances are currently supported.
 // If there are multiple nodes configured, one will be chosen at random.
@@ -49,8 +54,58 @@ func Buildx(u *url.URL) (*connhelper.ConnectionHelper, error) {
 }
 
 func supportsDialStio(ctx context.Context) bool {
-	cmd := exec.CommandContext(ctx, "docker", "buildx", "dial-stdio", "--help")
+	cmd := buildxExecCommandContext(ctx, "docker", "buildx", "dial-stdio", "--help")
 	return cmd.Run() == nil
+}
+
+type buildxProxyWriter struct {
+	io.Writer
+	once  sync.Once
+	ready chan struct{}
+}
+
+func (w *buildxProxyWriter) Write(p []byte) (int, error) {
+	if len(p) != 0 {
+		w.once.Do(func() { close(w.ready) })
+	}
+	return w.Writer.Write(p)
+}
+
+type buildxProgressWriter struct {
+	mu      sync.Mutex
+	output  bytes.Buffer
+	pending string
+	errors  chan string
+}
+
+func (w *buildxProgressWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	_, _ = w.output.Write(p)
+	w.pending += string(p)
+	for {
+		end := strings.IndexByte(w.pending, '\n')
+		if end == -1 {
+			break
+		}
+
+		line := strings.TrimSuffix(w.pending[:end], "\r")
+		w.pending = w.pending[end+1:]
+		if strings.Contains(strings.ToLower(line), "error:") {
+			select {
+			case w.errors <- line:
+			default:
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (w *buildxProgressWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.output.String()
 }
 
 // buildxDialStdio uses the buildx dial-stdio command to connect to a buildx instance.
@@ -60,55 +115,106 @@ func supportsDialStio(ctx context.Context) bool {
 //
 // This allows us to support any buildx instance, even if it is not running in a container.
 func buildxDialStdio(ctx context.Context, builder string) (net.Conn, error) {
-	cmd := exec.CommandContext(ctx, "docker", "buildx", "dial-stdio", "--progress=plain")
+	cmd := buildxExecCommand("docker", "buildx", "dial-stdio", "--progress=plain")
 	if builder != "" {
 		cmd.Args = append(cmd.Args, "--builder", builder)
 	}
-	cmd.Env = os.Environ()
+	cmd.Env = buildxDialStdioEnv(builder)
 
 	c1, c2 := net.Pipe()
 	cmd.Stdin = c1
-	cmd.Stdout = c1
-
-	// Use a pipe to check when the connection is actually complete
-	// Also write all of stderr to an error buffer so we can have more details
-	// in the error message when the command fails.
-	r, w := io.Pipe()
-	errBuf := bytes.NewBuffer(nil)
-	ww := io.MultiWriter(w, errBuf)
-	cmd.Stderr = ww
+	proxyReady := make(chan struct{})
+	cmd.Stdout = &buildxProxyWriter{Writer: c1, ready: proxyReady}
+	progressErrors := make(chan string, 1)
+	progress := &buildxProgressWriter{errors: progressErrors}
+	cmd.Stderr = progress
 
 	if err := cmd.Start(); err != nil {
+		c1.Close()
+		c2.Close()
 		return nil, err
 	}
 
+	var closeProxyOnce sync.Once
+	closeProxy := func() {
+		closeProxyOnce.Do(func() {
+			c1.Close()
+			c2.Close()
+			_ = cmd.Process.Kill()
+		})
+	}
+	stopCancellation := context.AfterFunc(ctx, func() {
+		// cmd.Wait waits for its stdin copy to finish. Close both ends of the
+		// proxy and stop the process so cancellation cannot deadlock with that
+		// copy before the connection is ready.
+		closeProxy()
+	})
+	defer stopCancellation()
+
+	processDone := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
 		c1.Close()
-		// pkgerrors.Wrap will return nil if err is nil, otherwise it will give
-		// us a wrapped error with the buffered stderr from he command.
-		w.CloseWithError(fmt.Errorf("%s: %s", err, errBuf))
+		if err == nil {
+			err = errors.New("buildx dial-stdio exited before connecting")
+		} else if detail := strings.TrimSpace(progress.String()); detail != "" {
+			err = fmt.Errorf("%w: %s", err, detail)
+		}
+		processDone <- err
 	}()
 
-	defer r.Close()
-
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		txt := strings.ToLower(scanner.Text())
-
-		if strings.HasPrefix(txt, "#1 dialing builder") && strings.HasSuffix(txt, "done") {
-			go func() {
-				// Continue draining stderr so the process does not get blocked
-				_, _ = io.Copy(io.Discard, r)
-			}()
-			break
+	for {
+		select {
+		case <-proxyReady:
+			// Buildx reports the Dialing builder sub-progress as done even when
+			// build.Dial returns an error. The first proxy output is the point at
+			// which Buildx has actually connected and started forwarding bytes.
+			select {
+			case line := <-progressErrors:
+				closeProxy()
+				return nil, fmt.Errorf("buildx dial-stdio failed before connecting: %s", line)
+			case err := <-processDone:
+				closeProxy()
+				return nil, fmt.Errorf("buildx dial-stdio failed before connecting: %w", err)
+			default:
+			}
+			if !stopCancellation() {
+				closeProxy()
+				return nil, ctx.Err()
+			}
+			return c2, nil
+		case line := <-progressErrors:
+			closeProxy()
+			return nil, fmt.Errorf("buildx dial-stdio failed before connecting: %s", line)
+		case err := <-processDone:
+			closeProxy()
+			return nil, fmt.Errorf("buildx dial-stdio failed before connecting: %w", err)
+		case <-ctx.Done():
+			closeProxy()
+			return nil, ctx.Err()
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+}
+
+// buildxDialStdioEnv prevents a Docker endpoint override that is needed by a
+// later image loader from changing the context used by an explicitly selected
+// Buildx builder. Context-bound docker driver builders otherwise reject the
+// connection before the gRPC client can start, leaving it waiting until the
+// patch timeout. An unnamed builder continues to honor DOCKER_HOST.
+func buildxDialStdioEnv(builder string) []string {
+	env := os.Environ()
+	if builder == "" {
+		return env
 	}
 
-	return c2, nil
+	filtered := env[:0]
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "DOCKER_HOST=") {
+			continue
+		}
+		filtered = append(filtered, entry)
+	}
+	return filtered
 }
 
 func buildxContextDialer(builder string) func(context.Context, string) (net.Conn, error) {

@@ -2,11 +2,17 @@ package connhelpers
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"slices"
 	"testing"
+	"time"
 
 	"github.com/moby/buildkit/client/connhelper"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBuildx(t *testing.T) {
@@ -83,6 +89,122 @@ func TestBuildxDialStdio(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildxDialStdioIgnoresDockerHostForNamedBuilder(t *testing.T) {
+	originalCommand := buildxExecCommand
+	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	buildxExecCommand = buildxDialHelperCommand
+
+	t.Setenv("DOCKER_HOST", "unix:///docker-loader.sock")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	t.Cleanup(cancel)
+
+	conn, err := buildxDialStdio(ctx, "desktop-linux")
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	require.NoError(t, conn.Close())
+}
+
+func TestBuildxDialStdioReturnsEarlyProgressError(t *testing.T) {
+	originalCommand := buildxExecCommand
+	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	buildxExecCommand = buildxDialHelperCommand
+
+	t.Setenv("BUILDX_DIAL_HELPER_FAIL", "1")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	t.Cleanup(cancel)
+
+	conn, err := buildxDialStdio(ctx, "desktop-linux")
+	require.ErrorContains(t, err, "buildx dial-stdio failed before connecting")
+	assert.Nil(t, conn)
+}
+
+func TestBuildxDialStdioReturnsErrorAfterDialProgressCompletes(t *testing.T) {
+	originalCommand := buildxExecCommand
+	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	buildxExecCommand = buildxDialHelperCommand
+
+	t.Setenv("BUILDX_DIAL_HELPER_LATE_FAIL", "1")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	t.Cleanup(cancel)
+
+	conn, err := buildxDialStdio(ctx, "desktop-linux")
+	require.ErrorContains(t, err, "buildx dial-stdio failed before connecting")
+	assert.Nil(t, conn)
+}
+
+func TestBuildxDialStdioCancellationClosesProxy(t *testing.T) {
+	originalCommand := buildxExecCommand
+	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	buildxExecCommand = buildxDialHelperCommand
+
+	t.Setenv("BUILDX_DIAL_HELPER_SILENT", "1")
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	t.Cleanup(cancel)
+
+	conn, err := buildxDialStdio(ctx, "desktop-linux")
+	require.Error(t, err)
+	assert.Nil(t, conn)
+}
+
+func TestBuildxDialStdioKeepsProxyOpenAfterDialContextEnds(t *testing.T) {
+	originalCommand := buildxExecCommand
+	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	buildxExecCommand = buildxDialHelperCommand
+
+	ctx, cancel := context.WithCancel(t.Context())
+	conn, err := buildxDialStdio(ctx, "desktop-linux")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(time.Second)))
+	ready := make([]byte, len("proxy ready"))
+	_, err = io.ReadFull(conn, ready)
+	require.NoError(t, err)
+	assert.Equal(t, "proxy ready", string(ready))
+
+	cancel()
+	require.NoError(t, conn.SetWriteDeadline(time.Now().Add(time.Second)))
+	_, err = conn.Write([]byte("connection remains open"))
+	require.NoError(t, err)
+}
+
+func buildxDialHelperCommand(_ string, _ ...string) *exec.Cmd {
+	//nolint:gosec // os.Args[0] is the Go test binary, not untrusted input.
+	return exec.Command(os.Args[0], "-test.run=^TestBuildxDialStdioHelperProcess$", "--", "--buildx-dial-helper")
+}
+
+func TestBuildxDialStdioHelperProcess(t *testing.T) {
+	if !slices.Contains(os.Args, "--buildx-dial-helper") {
+		return
+	}
+
+	if os.Getenv("DOCKER_HOST") != "" || os.Getenv("BUILDX_DIAL_HELPER_FAIL") != "" {
+		fmt.Fprintln(os.Stderr, "ERROR: use the builder's Docker context")
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		os.Exit(1)
+	}
+	if os.Getenv("BUILDX_DIAL_HELPER_SILENT") != "" {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		os.Exit(0)
+	}
+
+	// The progress vertex number is deliberately not #1. It is presentation
+	// detail and must not be part of the connection readiness contract.
+	fmt.Fprintln(os.Stderr, "#7 Dialing builder 0.0s done")
+	if os.Getenv("BUILDX_DIAL_HELPER_LATE_FAIL") != "" {
+		fmt.Fprintln(os.Stderr, "#1 ERROR: failed to dial builder: context deadline exceeded")
+		os.Exit(1)
+	}
+	fmt.Fprint(os.Stdout, "proxy ready")
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	os.Exit(0)
+}
+
+func TestBuildxDialStdioEnvPreservesDockerHostForUnnamedBuilder(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "tcp://builder.example:2375")
+
+	assert.Contains(t, buildxDialStdioEnv(""), "DOCKER_HOST=tcp://builder.example:2375")
 }
 
 func TestContainerContextDialer(t *testing.T) {
