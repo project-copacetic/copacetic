@@ -2,6 +2,7 @@ package langmgr
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -28,7 +29,7 @@ type javaManager struct {
 }
 
 // isJavaUpdate returns true when the package type is one of Trivy's Java
-// language types. Used by both the manager and the report parser.
+// language types.
 func isJavaUpdate(t string) bool {
 	return t == utils.JavaJar || t == utils.JavaPom || t == utils.JavaGradle || t == utils.JavaSbt
 }
@@ -53,7 +54,7 @@ func (jm *javaManager) InstallUpdates(
 	_ context.Context,
 	currentState *llb.State,
 	manifest *unversioned.UpdateManifest,
-	_ bool,
+	ignoreErrors bool,
 ) (*llb.State, []string, error) {
 	if manifest == nil || len(manifest.LangUpdates) == 0 {
 		return currentState, nil, nil
@@ -70,6 +71,9 @@ func (jm *javaManager) InstallUpdates(
 		log.Debugf("  Java skipped: %s (installed=%s, fixed=%s, type=%s, path=%s)",
 			u.Name, u.InstalledVersion, u.FixedVersion, u.Type, u.PkgPath)
 		failed = append(failed, u.Name)
+	}
+	if !ignoreErrors {
+		return currentState, failed, fmt.Errorf("Java/JVM library patching is not yet implemented")
 	}
 	return currentState, failed, nil
 }
