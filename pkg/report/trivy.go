@@ -437,17 +437,18 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 		// Process Language packages
 		if r.Class == utils.LangPackages {
-			// Check if this is a Python, Node.js, or Go related target
+			// Check if this language package target is supported by Copa.
 			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary ||
 				r.Type == utils.JavaJar || r.Type == utils.JavaPom || r.Type == utils.JavaGradle || r.Type == utils.JavaSbt {
 				for v := range r.Vulnerabilities {
 					vuln := &r.Vulnerabilities[v]
 					libSummary.Total++
-					// For gobinary results, Trivy puts the binary path in the Result's Target
-					// field but may leave PkgPath empty (especially for stdlib vulns).
-					// Fall back to Target so Copa can locate the binary for rebuilding.
+					// Trivy may put a package's manifest or binary path in the Result's
+					// Target field while leaving PkgPath empty. Preserve that target for
+					// package types whose updates must remain scoped to each manifest.
 					pkgPath := vuln.PkgPath
-					if pkgPath == "" && r.Type == utils.GoBinary {
+					if pkgPath == "" && (r.Type == utils.GoBinary || r.Type == utils.JavaPom ||
+						r.Type == utils.JavaGradle || r.Type == utils.JavaSbt) {
 						pkgPath = string(r.Target)
 					}
 					if vuln.FixedVersion != "" {

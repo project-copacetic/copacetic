@@ -122,7 +122,7 @@ func TestJavaManager_InstallUpdates_Stub(t *testing.T) {
 		assert.Empty(t, failed, "javaManager should not report non-Java updates as failures")
 	})
 
-	t.Run("Java updates are reported as failed packages", func(t *testing.T) {
+	t.Run("Java updates fail when errors are not ignored", func(t *testing.T) {
 		manifest := &unversioned.UpdateManifest{
 			LangUpdates: unversioned.LangUpdatePackages{
 				{Name: "org.apache.logging.log4j:log4j-core", Type: "jar", InstalledVersion: "2.11.1", FixedVersion: "2.17.0"},
@@ -131,11 +131,22 @@ func TestJavaManager_InstallUpdates_Stub(t *testing.T) {
 			},
 		}
 		_, failed, err := jm.InstallUpdates(context.TODO(), nil, manifest, false)
-		assert.NoError(t, err)
-		assert.Len(t, failed, 3, "every Java update should be reported as failed in the scaffold")
+		require.Error(t, err)
+		assert.Len(t, failed, 3, "every unpatched Java update should be reported")
 		assert.Contains(t, failed, "org.apache.logging.log4j:log4j-core")
 		assert.Contains(t, failed, "com.fasterxml.jackson.core:jackson-databind")
 		assert.Contains(t, failed, "io.netty:netty-codec")
+	})
+
+	t.Run("Java updates are reported without error when errors are ignored", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "org.apache.logging.log4j:log4j-core", Type: "jar", FixedVersion: "2.17.0"},
+			},
+		}
+		_, failed, err := jm.InstallUpdates(context.TODO(), nil, manifest, true)
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"org.apache.logging.log4j:log4j-core"}, failed)
 	})
 
 	t.Run("filterJavaUpdates picks only Java types", func(t *testing.T) {

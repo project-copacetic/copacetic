@@ -1189,11 +1189,13 @@ func TestParseTrivyJavaTypes(t *testing.T) {
 		name     string
 		langType string
 		pkgName  string
+		target   string
+		pkgPath  string
 	}{
-		{name: "jar (META-INF detection)", langType: utils.JavaJar, pkgName: "org.apache.logging.log4j:log4j-core"},
-		{name: "pom (build manifest)", langType: utils.JavaPom, pkgName: "com.fasterxml.jackson.core:jackson-databind"},
-		{name: "gradle (lockfile)", langType: utils.JavaGradle, pkgName: "io.netty:netty-codec"},
-		{name: "sbt (lockfile)", langType: utils.JavaSbt, pkgName: "org.scala-lang:scala-library"},
+		{name: "jar (META-INF detection)", langType: utils.JavaJar, pkgName: "org.apache.logging.log4j:log4j-core", target: "app.jar", pkgPath: "app.jar/BOOT-INF/lib/log4j-core-1.0.0.jar"},
+		{name: "pom (build manifest)", langType: utils.JavaPom, pkgName: "com.fasterxml.jackson.core:jackson-databind", target: "pom.xml"},
+		{name: "gradle (lockfile)", langType: utils.JavaGradle, pkgName: "io.netty:netty-codec", target: "gradle.lockfile"},
+		{name: "sbt (lockfile)", langType: utils.JavaSbt, pkgName: "org.scala-lang:scala-library", target: "build.sbt.lock"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1204,15 +1206,16 @@ func TestParseTrivyJavaTypes(t *testing.T) {
 				},
 				Results: []trivyTypes.Result{
 					{
-						Class: utils.LangPackages,
-						Type:  ftypes.LangType(tc.langType),
+						Target: tc.target,
+						Class:  utils.LangPackages,
+						Type:   ftypes.LangType(tc.langType),
 						Vulnerabilities: []trivyTypes.DetectedVulnerability{
 							{
 								VulnerabilityID:  "CVE-2099-9999",
 								PkgName:          tc.pkgName,
 								InstalledVersion: "1.0.0",
 								FixedVersion:     "1.0.1",
-								PkgPath:          "/usr/share/app/lib/" + strings.ReplaceAll(tc.pkgName, ":", "-") + "-1.0.0.jar",
+								PkgPath:          tc.pkgPath,
 							},
 						},
 					},
@@ -1226,6 +1229,51 @@ func TestParseTrivyJavaTypes(t *testing.T) {
 			assert.Equal(t, tc.langType, manifest.LangUpdates[0].Type, "type should be preserved as %q", tc.langType)
 			assert.Equal(t, "1.0.0", manifest.LangUpdates[0].InstalledVersion)
 			assert.Equal(t, "1.0.1", manifest.LangUpdates[0].FixedVersion)
+			expectedPath := tc.pkgPath
+			if expectedPath == "" {
+				expectedPath = tc.target
+			}
+			assert.Equal(t, expectedPath, manifest.LangUpdates[0].PkgPath)
+		})
+	}
+}
+
+func TestParseTrivyJavaManifestTargetsRemainDistinct(t *testing.T) {
+	for _, langType := range []string{utils.JavaPom, utils.JavaGradle, utils.JavaSbt} {
+		t.Run(langType, func(t *testing.T) {
+			const pkgName = "org.example:shared"
+			report := &trivyTypes.Report{
+				SchemaVersion: 2,
+				Metadata:      trivyTypes.Metadata{OS: &ftypes.OS{Family: "debian", Name: "12"}},
+				Results: []trivyTypes.Result{
+					{
+						Target: "service-a/build-manifest",
+						Class:  utils.LangPackages,
+						Type:   ftypes.LangType(langType),
+						Vulnerabilities: []trivyTypes.DetectedVulnerability{{
+							VulnerabilityID: "CVE-2099-0001", PkgName: pkgName,
+							InstalledVersion: "1.0.0", FixedVersion: "1.0.1",
+						}},
+					},
+					{
+						Target: "service-b/build-manifest",
+						Class:  utils.LangPackages,
+						Type:   ftypes.LangType(langType),
+						Vulnerabilities: []trivyTypes.DetectedVulnerability{{
+							VulnerabilityID: "CVE-2099-0001", PkgName: pkgName,
+							InstalledVersion: "1.0.0", FixedVersion: "1.0.1",
+						}},
+					},
+				},
+			}
+
+			manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+			assert.Len(t, manifest.LangUpdates, 2)
+			assert.ElementsMatch(t,
+				[]string{"service-a/build-manifest", "service-b/build-manifest"},
+				[]string{manifest.LangUpdates[0].PkgPath, manifest.LangUpdates[1].PkgPath},
+			)
 		})
 	}
 }
