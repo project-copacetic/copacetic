@@ -715,10 +715,12 @@ func TestWithoutSourceLineageAnnotations(t *testing.T) {
 	assert.Contains(t, original, v1.AnnotationBaseImageName, "source map must not be mutated")
 }
 
-func TestCaptureSinglePlatformSourcePinsOneChildIndex(t *testing.T) {
+func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t *testing.T) {
+	const imageRef = "registry.invalid/project/copa-e2e-local-only:latest"
+
 	childDigest := digest.FromString("source-amd64")
 	index := &buildkit.ImageSource{
-		Name: "registry.example.com/team/app:1.0",
+		Name: imageRef,
 		Index: &v1.Index{Manifests: []v1.Descriptor{{
 			Digest: childDigest,
 			Platform: &v1.Platform{
@@ -733,15 +735,20 @@ func TestCaptureSinglePlatformSourcePinsOneChildIndex(t *testing.T) {
 	resolveImageSource = func(context.Context, string) (*buildkit.ImageSource, error) {
 		return index, nil
 	}
+	buildkitRef, err := reference.ParseNormalizedNamed(imageRef)
+	require.NoError(t, err)
 
-	ref, requireManifest, err := captureSinglePlatformSource(
+	gotBuildkitRef, expectedDigest, requireManifest, err := captureSinglePlatformSource(
 		t.Context(),
 		index.Name,
+		buildkitRef,
 		&v1.Platform{OS: "linux", Architecture: "amd64"},
 	)
 	require.NoError(t, err)
 	assert.True(t, requireManifest)
-	assert.Equal(t, "registry.example.com/team/app@"+childDigest.String(), ref)
+	assert.Equal(t, buildkitRef, gotBuildkitRef)
+	assert.Equal(t, imageRef, gotBuildkitRef.String(), "capturing lineage must not turn a daemon-only tag into a registry digest pull")
+	assert.Equal(t, childDigest, expectedDigest)
 }
 
 func TestAugmentPatchedDescriptorComputedLineageWins(t *testing.T) {

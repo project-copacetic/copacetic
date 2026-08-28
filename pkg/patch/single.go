@@ -296,9 +296,16 @@ func patchSingleArchImageWithSourceAndUpdates(
 	requireBaseManifest := multiPlatform
 	if !multiPlatform && sourceImage == "" {
 		var captureErr error
-		sourceImage, requireBaseManifest, captureErr = captureSinglePlatformSource(ctx, image, &targetPlatform.Platform)
+		buildkitImageRef, expectedSourceDigest, requireBaseManifest, captureErr = captureSinglePlatformSource(
+			ctx,
+			image,
+			imageName,
+			&targetPlatform.Platform,
+		)
 		if captureErr != nil {
 			log.Warnf("Unable to capture source manifest identity for %s; lineage annotations will be omitted: %v", image, captureErr)
+		} else if expectedSourceDigest.Validate() == nil {
+			log.Debugf("Captured platform source digest %s for lineage validation; preserving BuildKit source reference %s", expectedSourceDigest, buildkitImageRef)
 		}
 	}
 	if sourceImage != "" {
@@ -397,20 +404,24 @@ func patchSingleArchImageWithSourceAndUpdates(
 func captureSinglePlatformSource(
 	ctx context.Context,
 	image string,
+	buildkitImageRef reference.Named,
 	platform *ispec.Platform,
-) (string, bool, error) {
+) (reference.Named, digest.Digest, bool, error) {
 	source, err := resolveImageSource(ctx, image)
 	if err != nil {
-		return "", true, err
+		return buildkitImageRef, "", true, err
 	}
 	if source.Index == nil {
-		return "", false, nil
+		return buildkitImageRef, "", false, nil
 	}
-	pinned, err := platformSourceReference(source, platform)
+	descriptor, err := source.PlatformDescriptor(platform)
 	if err != nil {
-		return "", true, err
+		return buildkitImageRef, "", true, err
 	}
-	return pinned, true, nil
+	if err := descriptor.Digest.Validate(); err != nil {
+		return buildkitImageRef, "", true, fmt.Errorf("captured platform source digest is invalid: %w", err)
+	}
+	return buildkitImageRef, descriptor.Digest, true, nil
 }
 
 // selectPatchWaitError preserves the package-manager no-update sentinel when
