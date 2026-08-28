@@ -122,7 +122,12 @@ func buildxDialStdio(ctx context.Context, builder string) (net.Conn, error) {
 	cmd.Env = buildxDialStdioEnv(builder)
 
 	c1, c2 := net.Pipe()
-	cmd.Stdin = c1
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		c1.Close()
+		c2.Close()
+		return nil, fmt.Errorf("create buildx dial-stdio stdin pipe: %w", err)
+	}
 	proxyReady := make(chan struct{})
 	cmd.Stdout = &buildxProxyWriter{Writer: c1, ready: proxyReady}
 	progressErrors := make(chan string, 1)
@@ -130,6 +135,7 @@ func buildxDialStdio(ctx context.Context, builder string) (net.Conn, error) {
 	cmd.Stderr = progress
 
 	if err := cmd.Start(); err != nil {
+		stdin.Close()
 		c1.Close()
 		c2.Close()
 		return nil, err
@@ -138,18 +144,25 @@ func buildxDialStdio(ctx context.Context, builder string) (net.Conn, error) {
 	var closeProxyOnce sync.Once
 	closeProxy := func() {
 		closeProxyOnce.Do(func() {
+			stdin.Close()
 			c1.Close()
 			c2.Close()
 			_ = cmd.Process.Kill()
 		})
 	}
 	stopCancellation := context.AfterFunc(ctx, func() {
-		// cmd.Wait waits for its stdin copy to finish. Close both ends of the
-		// proxy and stop the process so cancellation cannot deadlock with that
-		// copy before the connection is ready.
+		// Close both ends of the proxy and stop the process so cancellation
+		// cannot leave any proxy copy blocked before the connection is ready.
 		closeProxy()
 	})
 	defer stopCancellation()
+
+	go func() {
+		// Keep the stdin copy outside os/exec so cmd.Wait can report an early
+		// process exit even while no client data has arrived on the proxy.
+		_, _ = io.Copy(stdin, c1)
+		_ = stdin.Close()
+	}()
 
 	processDone := make(chan error, 1)
 	go func() {

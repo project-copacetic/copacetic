@@ -134,6 +134,22 @@ func TestBuildxDialStdioReturnsErrorAfterDialProgressCompletes(t *testing.T) {
 	assert.Nil(t, conn)
 }
 
+func TestBuildxDialStdioReturnsWhenProcessExitsBeforeConnecting(t *testing.T) {
+	originalCommand := buildxExecCommand
+	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	buildxExecCommand = buildxDialHelperCommand
+
+	t.Setenv("BUILDX_DIAL_HELPER_EXIT", "1")
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	start := time.Now()
+	conn, err := buildxDialStdio(ctx, "desktop-linux")
+	require.ErrorContains(t, err, "buildx dial-stdio exited before connecting")
+	assert.Less(t, time.Since(start), 3*time.Second)
+	assert.Nil(t, conn)
+}
+
 func TestBuildxDialStdioCancellationClosesProxy(t *testing.T) {
 	originalCommand := buildxExecCommand
 	t.Cleanup(func() { buildxExecCommand = originalCommand })
@@ -183,6 +199,9 @@ func TestBuildxDialStdioHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "ERROR: use the builder's Docker context")
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(1)
+	}
+	if os.Getenv("BUILDX_DIAL_HELPER_EXIT") != "" {
+		os.Exit(0)
 	}
 	if os.Getenv("BUILDX_DIAL_HELPER_SILENT") != "" {
 		_, _ = io.Copy(io.Discard, os.Stdin)
