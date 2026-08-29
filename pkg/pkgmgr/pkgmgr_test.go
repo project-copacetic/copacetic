@@ -1,15 +1,18 @@
 package pkgmgr
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/moby/buildkit/client/llb"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestGetPackageManager tests the GetPackageManager function.
@@ -127,6 +130,56 @@ func TestGetPackageManager(t *testing.T) {
 		assert.Error(t, err)
 		assert.Nil(t, manager)
 	})
+}
+
+func TestGetPackageManagerChiselReleaseOption(t *testing.T) {
+	config := &buildkit.Config{}
+
+	manager, err := GetPackageManagerWithOptions(utils.OSTypeUbuntu, "24.04", config, utils.DefaultTempWorkingFolder, PackageManagerOptions{
+		ChiselRelease: "ubuntu-24.04",
+	})
+	require.NoError(t, err)
+	dpkg, ok := manager.(*dpkgManager)
+	require.True(t, ok)
+	assert.Equal(t, "ubuntu-24.04", dpkg.chiselRelease)
+
+	legacyManager, err := GetPackageManager(utils.OSTypeUbuntu, "24.04", config, utils.DefaultTempWorkingFolder)
+	require.NoError(t, err)
+	legacyDPKG, ok := legacyManager.(*dpkgManager)
+	require.True(t, ok)
+	assert.Empty(t, legacyDPKG.chiselRelease)
+}
+
+type metadataTestManager struct {
+	annotations map[string]string
+}
+
+func (m *metadataTestManager) InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error) {
+	state := llb.Scratch()
+	return &state, nil, nil
+}
+
+func (m *metadataTestManager) GetPackageType() string {
+	return "test"
+}
+
+func (m *metadataTestManager) Annotations() map[string]string {
+	return m.annotations
+}
+
+func TestGetPackageManagerAnnotations(t *testing.T) {
+	source := map[string]string{
+		ChiselReleaseAnnotation: "ubuntu-24.04",
+		ChiselVersionAnnotation: "v1.4.2",
+	}
+	manager := &metadataTestManager{annotations: source}
+
+	annotations := GetPackageManagerAnnotations(manager)
+	assert.Equal(t, source, annotations)
+
+	annotations[ChiselReleaseAnnotation] = "changed"
+	assert.Equal(t, "ubuntu-24.04", source[ChiselReleaseAnnotation], "returned annotations must be a defensive copy")
+	assert.Nil(t, GetPackageManagerAnnotations(&apkManager{}))
 }
 
 func IsValid(version string) bool {

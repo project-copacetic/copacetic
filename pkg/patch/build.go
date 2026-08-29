@@ -18,6 +18,10 @@ import (
 
 const (
 	attrValueTrue = "true"
+
+	// DefaultLocalExportCompression is the BuildKit compression used for newly
+	// created patch layers when loading patched images locally.
+	DefaultLocalExportCompression = "uncompressed"
 )
 
 // BuildConfig holds configuration for building and exporting images.
@@ -25,6 +29,15 @@ type BuildConfig struct {
 	SolveOpt        client.SolveOpt
 	ShouldExportOCI bool
 	PipeWriter      io.WriteCloser
+}
+
+func authenticatedSolveOpt() client.SolveOpt {
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	authConfig := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
+	return client.SolveOpt{
+		Frontend: "",
+		Session:  []session.Attachable{authprovider.NewDockerAuthProvider(authConfig)},
+	}
 }
 
 // createBuildConfig creates the build configuration for patching.
@@ -51,16 +64,11 @@ func createBuildConfig(
 	pipeW io.WriteCloser,
 	originalAnnotations map[string]string,
 	patchedTag string,
+	compression string,
+	forceCompression bool,
 ) (*BuildConfig, error) {
-	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
-
 	// create solve options based on whether we're pushing to registry or loading to docker
-	solveOpt := client.SolveOpt{
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
-	}
+	solveOpt := authenticatedSolveOpt()
 
 	// determine which attributes to set for the export
 	attrs := map[string]string{
@@ -95,10 +103,20 @@ func createBuildConfig(
 			},
 		}
 	} else {
-		// Use uncompressed layers for local export to ensure diff_id == blob digest
-		// This fixes Trivy scanning issues where compressed layers have mismatched hashes
-		attrs["compression"] = "uncompressed"
-		attrs["force-compression"] = attrValueTrue
+		// Local export compresses newly created patch layers with the selected
+		// compression (default: uncompressed). Uncompressed keeps
+		// diff_id == blob digest for the patch layer, which is what local
+		// scanners such as Trivy expect. Without force-compression, BuildKit
+		// applies the selected compression only to Copa's new patch layer and
+		// passes existing base layers through in their original compression;
+		// force-compression re-encodes every layer to the selected compression.
+		if compression == "" {
+			compression = DefaultLocalExportCompression
+		}
+		attrs["compression"] = compression
+		if forceCompression {
+			attrs["force-compression"] = attrValueTrue
+		}
 
 		solveOpt.Exports = []client.ExportEntry{
 			{
@@ -137,13 +155,39 @@ func createBuildConfig(
 // -> "1.0.0-patched") so the patched manifest does not advertise the
 // unpatched version.
 func rewriteVersionAnnotation(originalVersion, patchedTag string) string {
-	if patchedTag == "" {
+	if originalVersion == "" || patchedTag == "" {
 		return originalVersion
 	}
-	if strings.Contains(patchedTag, originalVersion) {
+	if tagContainsVersionComponent(patchedTag, originalVersion) {
 		return patchedTag
 	}
 	return originalVersion + "-" + patchedTag
+}
+
+func tagContainsVersionComponent(tag, version string) bool {
+	for searchFrom := 0; searchFrom <= len(tag)-len(version); {
+		relative := strings.Index(tag[searchFrom:], version)
+		if relative < 0 {
+			return false
+		}
+		start := searchFrom + relative
+		end := start + len(version)
+		beforeBoundary := start == 0 || isVersionTagSeparator(tag[start-1])
+		if !beforeBoundary && (tag[start-1] == 'v' || tag[start-1] == 'V') {
+			versionPrefix := start - 1
+			beforeBoundary = versionPrefix == 0 || isVersionTagSeparator(tag[versionPrefix-1])
+		}
+		afterBoundary := end == len(tag) || isVersionTagSeparator(tag[end])
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		searchFrom = start + 1
+	}
+	return false
+}
+
+func isVersionTagSeparator(character byte) bool {
+	return character == '-' || character == '_' || character == '.' || character == '+'
 }
 
 // validateSourcePolicy validates that the source policy doesn't contain unsupported distributions.

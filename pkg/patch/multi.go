@@ -240,6 +240,7 @@ func patchMultiPlatformImage(
 			if err != nil {
 				if errors.Is(err, types.ErrNoUpdatesFound) {
 					patchResults = append(patchResults, *res)
+					markPlatformPreserved(platforms, platformKey)
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Up-to-date",
@@ -421,13 +422,34 @@ func patchMultiPlatformImage(
 	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
-		if err := buildkit.CreateOCILayoutFromResults(opts.OCIDir, patchResults, platforms); err != nil {
+		compression := opts.Compression
+		if compression == "" {
+			compression = DefaultLocalExportCompression
+		}
+		if err := buildkit.CreateOCILayoutFromResultsWithOptions(
+			opts.OCIDir,
+			patchResults,
+			platforms,
+			buildkit.OCILayoutExportOptions{
+				Compression:      compression,
+				ForceCompression: opts.ForceCompression,
+			},
+		); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)
 		}
 	}
 
 	return nil
+}
+
+func markPlatformPreserved(platforms []types.PatchPlatform, targetKey string) {
+	for i := range platforms {
+		if buildkit.PlatformKey(platforms[i].Platform) == targetKey {
+			platforms[i].ShouldPreserve = true
+			return
+		}
+	}
 }
 
 // buildPatchingPlan creates a PatchingPlan from the options and platforms.

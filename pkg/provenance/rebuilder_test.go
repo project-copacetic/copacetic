@@ -325,6 +325,50 @@ func TestNormalizeVersion(t *testing.T) {
 	}
 }
 
+func TestBuildGoModEditArgs(t *testing.T) {
+	args, err := buildGoModEditArgs("/usr/local/go/bin/go", map[string]string{
+		"google.golang.org/grpc": "v1.57.1",
+		"golang.org/x/sys":       "0.44.0",
+		"golang.org/x/net":       "v0.56.0",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/usr/local/go/bin/go",
+		"mod",
+		"edit",
+		"-require=golang.org/x/net@v0.56.0",
+		"-require=golang.org/x/sys@v0.44.0",
+		"-require=google.golang.org/grpc@v1.57.1",
+	}, args)
+}
+
+func TestBuildGoModEditArgsRejectsUnsafeInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates map[string]string
+		wantErr string
+	}{
+		{
+			name:    "unsafe module",
+			updates: map[string]string{"example.com/mod;true": "v1.0.0"},
+			wantErr: "module name contains unsafe characters",
+		},
+		{
+			name:    "unsafe version",
+			updates: map[string]string{"example.com/mod": "v1.0.0;true"},
+			wantErr: "version contains unsafe characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildGoModEditArgs("go", tt.updates)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
 func TestValidateBinaryPath(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -1010,4 +1054,43 @@ func TestRebuilderUsesGoModTidyDashE(t *testing.T) {
 		"rebuilder.go must invoke 'go mod tidy -e' (not bare tidy) to tolerate broken upstream go.mod")
 	assert.NotContains(t, body, `"%s mod tidy"`,
 		"rebuilder.go must not invoke bare 'go mod tidy' (regression: missing -e flag)")
+}
+
+// TestGenerateGoModDeterministicOrder guards against the require block being
+// emitted in Go map iteration order, which made the synthesized go.mod differ
+// byte-for-byte between runs and broke build reproducibility.
+func TestGenerateGoModDeterministicOrder(t *testing.T) {
+	buildInfo := &BuildInfo{
+		ModulePath: "github.com/example/app",
+		GoVersion:  "go1.22.0",
+		Dependencies: map[string]string{
+			"github.com/zzz/last":  "v1.0.0",
+			"github.com/aaa/first": "v2.0.0",
+			"golang.org/x/term":    "v0.20.0",
+		},
+	}
+	updates := map[string]string{
+		"golang.org/x/net":  "0.56.0",
+		"golang.org/x/sys":  "0.44.0",
+		"golang.org/x/text": "0.39.0",
+	}
+
+	rebuilder := NewRebuilder()
+	want := rebuilder.generateGoMod(buildInfo, updates)
+
+	// Existing dependencies sort before the updated modules, and each group is
+	// ordered by module path.
+	requireBlock := []string{
+		"\tgithub.com/aaa/first v2.0.0\n",
+		"\tgithub.com/zzz/last v1.0.0\n",
+		"\tgolang.org/x/term v0.20.0\n",
+		"\tgolang.org/x/net v0.56.0\n",
+		"\tgolang.org/x/sys v0.44.0\n",
+		"\tgolang.org/x/text v0.39.0\n",
+	}
+	assert.Contains(t, want, strings.Join(requireBlock, ""))
+
+	for i := 0; i < 20; i++ {
+		assert.Equal(t, want, rebuilder.generateGoMod(buildInfo, updates))
+	}
 }

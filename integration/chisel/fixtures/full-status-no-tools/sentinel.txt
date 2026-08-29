@@ -1,0 +1,1 @@
+This path is not package-manager-owned and must survive patching unchanged.

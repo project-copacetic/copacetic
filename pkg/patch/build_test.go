@@ -1,10 +1,13 @@
 package patch
 
 import (
+	"io"
 	"testing"
 
+	"github.com/moby/buildkit/client"
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestValidateSourcePolicy tests the validateSourcePolicy function.
@@ -177,6 +180,35 @@ func TestRewriteVersionAnnotation(t *testing.T) {
 			want:            "1.0.0-patched",
 		},
 		{
+			name:            "coincidental substring is not a version component",
+			originalVersion: "1.0.0",
+			patchedTag:      "11.0.0-patched",
+			want:            "1.0.0-11.0.0-patched",
+		},
+		{
+			name:            "version component may appear after a separator",
+			originalVersion: "1.0.0",
+			patchedTag:      "release-1.0.0-patched",
+			want:            "release-1.0.0-patched",
+		},
+		{
+			name:            "v-prefixed version is a complete component",
+			originalVersion: "1.0.0",
+			patchedTag:      "v1.0.0-patched",
+			want:            "v1.0.0-patched",
+		},
+		{
+			name:            "v-prefixed version after separator is a complete component",
+			originalVersion: "1.0.0",
+			patchedTag:      "release-v1.0.0-patched",
+			want:            "release-v1.0.0-patched",
+		},
+		{
+			name:       "empty original version remains empty",
+			patchedTag: "patched",
+			want:       "",
+		},
+		{
 			name:            "patched tag identical to original version",
 			originalVersion: "1.0.0",
 			patchedTag:      "1.0.0",
@@ -196,4 +228,77 @@ func TestRewriteVersionAnnotation(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
+}
+
+func TestCreateBuildConfigLocalExportCompression(t *testing.T) {
+	tests := []struct {
+		name                 string
+		compression          string
+		forceCompression     bool
+		wantCompression      string
+		wantForceCompression bool
+	}{
+		{
+			name:            "default compression without force compression",
+			wantCompression: DefaultLocalExportCompression,
+		},
+		{
+			name:                 "custom compression with force compression",
+			compression:          "gzip",
+			forceCompression:     true,
+			wantCompression:      "gzip",
+			wantForceCompression: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeR, pipeW := io.Pipe()
+			defer pipeR.Close()
+			defer pipeW.Close()
+
+			buildConfig, err := createBuildConfig(
+				"example.com/app:patched",
+				false,
+				false,
+				pipeW,
+				nil,
+				"patched",
+				tc.compression,
+				tc.forceCompression,
+			)
+			require.NoError(t, err)
+			require.Len(t, buildConfig.SolveOpt.Exports, 1)
+
+			export := buildConfig.SolveOpt.Exports[0]
+			assert.Equal(t, client.ExporterDocker, export.Type)
+			assert.Equal(t, tc.wantCompression, export.Attrs["compression"])
+			_, hasForceCompression := export.Attrs["force-compression"]
+			assert.Equal(t, tc.wantForceCompression, hasForceCompression)
+		})
+	}
+}
+
+func TestCreateBuildConfigPushDoesNotSetLocalCompressionAttrs(t *testing.T) {
+	pipeR, pipeW := io.Pipe()
+	defer pipeR.Close()
+	defer pipeW.Close()
+
+	buildConfig, err := createBuildConfig(
+		"example.com/app:patched",
+		false,
+		true,
+		pipeW,
+		nil,
+		"patched",
+		"gzip",
+		true,
+	)
+	require.NoError(t, err)
+	require.Len(t, buildConfig.SolveOpt.Exports, 1)
+
+	export := buildConfig.SolveOpt.Exports[0]
+	assert.Equal(t, client.ExporterImage, export.Type)
+	assert.NotContains(t, export.Attrs, "compression")
+	assert.NotContains(t, export.Attrs, "force-compression")
 }

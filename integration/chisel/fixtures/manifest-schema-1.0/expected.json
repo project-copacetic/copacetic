@@ -1,0 +1,13 @@
+{
+  "jsonwall": "1.0",
+  "schema": "1.0",
+  "recordsIncludingHeader": 8,
+  "packages": 1,
+  "slices": 2,
+  "contents": 2,
+  "paths": 2,
+  "ownedPaths": [
+    "/opt/copa-fixture/data.txt",
+    "/var/lib/chisel/manifest.wall"
+  ]
+}

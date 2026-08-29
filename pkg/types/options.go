@@ -9,10 +9,11 @@ import (
 // Options contains common copacetic options.
 type Options struct {
 	// Core single image patch configuration
-	Image      string
-	Report     string
-	PatchedTag string
-	Suffix     string
+	Image         string
+	Report        string
+	PatchedTag    string
+	Suffix        string
+	ChiselRelease string
 
 	// Bulk image patch configuration
 	ConfigFile string
@@ -37,10 +38,12 @@ type Options struct {
 	BkKeyPath    string
 
 	// Platform and push
-	Push      bool
-	Platforms []string
-	Loader    string
-	OCIDir    string
+	Push             bool
+	Platforms        []string
+	Loader           string
+	OCIDir           string
+	Compression      string
+	ForceCompression bool
 
 	// Package types and library patch level
 	PkgTypes          string
@@ -56,4 +59,10 @@ type Options struct {
 	// EOL configuration
 	EOLAPIBaseURL string
 	ExitOnEOL     bool
+
+	// Chart patching
+	ChartName     string
+	ChartVersion  string
+	ChartRepo     string
+	ChartRegistry string
 }

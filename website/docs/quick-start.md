@@ -104,7 +104,18 @@ Update only packages with known vulnerabilities:
    copa patch -r nginx-report.json -i $IMAGE
    ```
 
+:::note Ubuntu Chiseled images
+
+Apt-less images with `/var/lib/dpkg/status` support both strategies. Native
+images with `/var/lib/chisel/manifest.wall` support comprehensive patching only
+and reject `--report`. See [Ubuntu Chiseled Images](./chiseled-images.md) before
+patching either layout.
+
+:::
+
 Both methods create a new image tagged `nginx:1.21.6-patched` in your local registry.
+
+For local exports, Copa stores newly created patch layers with `--compression=uncompressed` by default so scanners can read the patched image reliably. Existing base layers are preserved in their original compression unless you use `--force-compression` to re-encode layers exported for patched platforms to the selected compression. Platforms preserved unchanged in a multi-platform OCI layout keep their original layer blobs and compression.
 
 :::tip
 
@@ -127,6 +138,17 @@ nginx:1.21.6-patched (debian 11.10)
 ===================================
 Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
 ```
+
+:::note Ubuntu Chiseled verification
+
+This Trivy verification works for apt-less Chiseled images that retain
+`/var/lib/dpkg/status`. For native images that contain
+`/var/lib/chisel/manifest.wall`, a zero-package or zero-vulnerability Trivy
+result is not evidence that the image is current. Copa validates the replacement
+manifest and managed filesystem; also run the patched application's normal
+startup or smoke test before deployment.
+
+:::
 
 ### Step 5: Test the Patched Image
 
@@ -172,15 +194,17 @@ You've successfully:
 
 1. ✅ Scanned a container image for vulnerabilities
 2. ✅ Applied security patches using Copa
-3. ✅ Verified the patched image is secure and functional
+3. ✅ Reviewed scanner results and tested the patched application
 4. ✅ Learned about different patching strategies
 
-The patched image `nginx:1.21.6-patched` is now ready for use with all known OS vulnerabilities resolved.
+The selected fixable package updates have been applied to
+`nginx:1.21.6-patched`. Review the scanner results appropriate to the image
+layout and complete application testing before deployment.
 
 ## Next Steps
 
 - Learn about [scanner plugins](./scanner-plugins.md) for custom vulnerability sources
 - Explore [custom BuildKit configurations](./custom-address.md)
 - Read [best practices](./best-practices.md) for production use
-- Check out the [Copa Action](./copa-action.md) for GitHub Action integration
+- Check out the [Copa Action](./github-action.md) for GitHub Action integration
 - Check out the [Docker Extension](./docker-extension.md) for GUI-based patching

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
@@ -40,6 +41,13 @@ VERSION_ID="3.18.0"`,
 VERSION_ID="11"`,
 			wantType:    utils.OSTypeDebian,
 			wantVersion: "11",
+		},
+		{
+			name: "Debian ID fallback",
+			osRelease: `ID=debian
+VERSION_ID=13`,
+			wantType:    utils.OSTypeDebian,
+			wantVersion: "13",
 		},
 		{
 			name: "Amazon Linux",
@@ -333,6 +341,20 @@ DOCUMENTATION_URL="https://documentation.suse.com/"`,
 			wantVersion: "15.7",
 		},
 		{
+			name: "SLES 16 and BCI",
+			osRelease: `NAME="SUSE Linux Enterprise Server"
+VERSION="16.0"
+VERSION_ID="16.0"
+PRETTY_NAME="SUSE Linux Enterprise Server 16.0"
+ID="sles"
+ID_LIKE="suse"
+ANSI_COLOR="0;32"
+CPE_NAME="cpe:/o:suse:sles:16.0"
+DOCUMENTATION_URL="https://documentation.suse.com/"`,
+			wantType:    utils.OSTypeSLES,
+			wantVersion: "16.0",
+		},
+		{
 			name: "opensuse Leap",
 			osRelease: `NAME="openSUSE Leap"
 VERSION="15.6"
@@ -456,6 +478,247 @@ ID=debian`,
 				assert.Equal(t, tt.wantType, osInfo.Type)
 				assert.Equal(t, tt.wantVersion, osInfo.Version)
 			}
+		})
+	}
+}
+
+func TestGetOSInfoHonorsContext(t *testing.T) {
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	t.Cleanup(deadlineCancel)
+
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		wantErr error
+	}{
+		{name: "canceled", ctx: canceledCtx, wantErr: context.Canceled},
+		{name: "deadline exceeded", ctx: deadlineCtx, wantErr: context.DeadlineExceeded},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			osInfo, err := GetOSInfo(tt.ctx, []byte("NAME=Debian\nVERSION_ID=13"))
+			assert.Nil(t, osInfo)
+			assert.ErrorIs(t, err, tt.wantErr)
+		})
+	}
+}
+
+func TestValidOSReleaseKey(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{name: "canonical name", key: "NAME", want: true},
+		{name: "canonical version ID", key: "VERSION_ID", want: true},
+		{name: "canonical ID like", key: "ID_LIKE", want: true},
+		{name: "lowercase extension", key: "x_vendor_feature", want: true},
+		{name: "leading underscore", key: "_VENDOR_EXTENSION", want: true},
+		{name: "non-ASCII uppercase", key: "NÄME", want: false},
+		{name: "non-ASCII digit", key: "NAME١", want: false},
+		{name: "leading digit", key: "1NAME", want: false},
+		{name: "leading punctuation", key: ".NAME", want: false},
+		{name: "embedded punctuation", key: "NAME-DASH", want: false},
+		{name: "empty", key: "", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, validOSReleaseKey(tt.key))
+		})
+	}
+}
+
+func TestParseOSReleaseAcceptsLowercaseExtensionKey(t *testing.T) {
+	values, err := parseOSRelease(context.Background(), []byte("NAME=Ubuntu\nVERSION_ID=24.04\nx_vendor_feature=enabled\n"))
+	assert.NoError(t, err)
+	assert.Equal(t, "enabled", values["x_vendor_feature"])
+}
+
+func TestParseOSReleaseShellEscapes(t *testing.T) {
+	values, err := parseOSRelease(context.Background(), []byte("NAME=Amazon\\ Linux\nVERSION_ID=2023\\ \n"))
+	assert.NoError(t, err)
+	assert.Equal(t, "Amazon Linux", values["NAME"])
+	assert.Equal(t, "2023 ", values["VERSION_ID"])
+}
+
+func TestParseOSReleaseRejectsOversizedInput(t *testing.T) {
+	values, err := parseOSRelease(context.Background(), make([]byte, maxOSReleaseSize+1))
+	assert.Nil(t, values)
+	assert.ErrorContains(t, err, "exceeds")
+}
+
+func TestParseOSReleaseValue(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:  "empty",
+			value: "",
+			want:  "",
+		},
+		{
+			name:  "plain value",
+			value: "3.7.3",
+			want:  "3.7.3",
+		},
+		{
+			name:  "unquoted escaped whitespace",
+			value: `Amazon\ Linux`,
+			want:  "Amazon Linux",
+		},
+		{
+			name:  "unquoted escaped trailing whitespace",
+			value: `Amazon\ `,
+			want:  "Amazon ",
+		},
+		{
+			name:  "unquoted escaped shell characters",
+			value: `price=\$5\;stable`,
+			want:  "price=$5;stable",
+		},
+		{
+			name:  "double quoted value",
+			value: `"Amazon Linux"`,
+			want:  "Amazon Linux",
+		},
+		{
+			name:  "double quoted shell escapes",
+			value: "\"quote=\\\" dollar=\\$ backtick=\\` slash=\\\\\"",
+			want:  "quote=\" dollar=$ backtick=` slash=\\",
+		},
+		{
+			name:  "double quoted non-special escape remains literal",
+			value: `"literal\n"`,
+			want:  `literal\n`,
+		},
+		{
+			name:  "single quoted value is literal",
+			value: `'Amazon $Linux \path'`,
+			want:  `Amazon $Linux \path`,
+		},
+		{
+			name:  "surrounding whitespace remains accepted",
+			value: "  \"Amazon Linux\"   ",
+			want:  "Amazon Linux",
+		},
+		{
+			name:  "trailing unquoted whitespace remains ignored",
+			value: "Amazon   ",
+			want:  "Amazon",
+		},
+		{
+			name:    "unescaped whitespace",
+			value:   "Amazon Linux",
+			wantErr: true,
+		},
+		{
+			name:    "trailing escape",
+			value:   `Amazon\`,
+			wantErr: true,
+		},
+		{
+			name:    "lone double quote",
+			value:   `"`,
+			wantErr: true,
+		},
+		{
+			name:    "unterminated double quote",
+			value:   `"Amazon`,
+			wantErr: true,
+		},
+		{
+			name:    "unterminated single quote",
+			value:   `'Amazon`,
+			wantErr: true,
+		},
+		{
+			name:    "escaped closing double quote without terminator",
+			value:   `"Amazon\"`,
+			wantErr: true,
+		},
+		{
+			name:    "quoted concatenation",
+			value:   `"Amazon"Linux`,
+			wantErr: true,
+		},
+		{
+			name:    "quote in unquoted value",
+			value:   `Amazon"Linux"`,
+			wantErr: true,
+		},
+		{
+			name:    "unescaped variable expansion",
+			value:   `Amazon$Linux`,
+			wantErr: true,
+		},
+		{
+			name:    "unescaped command substitution",
+			value:   "Amazon`Linux`",
+			wantErr: true,
+		},
+		{
+			name:    "unescaped shell separator",
+			value:   `Amazon;Linux`,
+			wantErr: true,
+		},
+		{
+			name:    "unescaped expansion in double quotes",
+			value:   `"Amazon $Linux"`,
+			wantErr: true,
+		},
+		{
+			name:    "double-quoted invalid UTF-8",
+			value:   string([]byte{'"', 'U', 0xff, '"'}),
+			wantErr: true,
+		},
+		{
+			name:    "unquoted invalid UTF-8",
+			value:   string([]byte{'U', 0xff}),
+			wantErr: true,
+		},
+		{
+			name:    "escaped invalid UTF-8",
+			value:   string([]byte{'U', '\\', 0xff}),
+			wantErr: true,
+		},
+		{
+			name:    "double-quoted control character",
+			value:   "\"Ubuntu\x00\"",
+			wantErr: true,
+		},
+		{
+			name:    "single-quoted control character",
+			value:   "'Ubuntu\x00'",
+			wantErr: true,
+		},
+		{
+			name:    "unquoted control character",
+			value:   "Ubuntu\x1b",
+			wantErr: true,
+		},
+		{
+			name:    "escaped control character",
+			value:   "Ubuntu\\\x00",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseOSReleaseValue(tt.value)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

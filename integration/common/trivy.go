@@ -151,10 +151,12 @@ func (s *ScannerCmd) Scan(t *testing.T, ref string, ignoreErrors bool, envVars .
 
 // isTransientScanError returns true for network/IO errors that may succeed on retry.
 func isTransientScanError(output string) bool {
+	http2StreamCanceled := strings.Contains(output, "stream error:") && strings.Contains(output, "CANCEL; received from peer")
 	return strings.Contains(output, "unexpected EOF") ||
 		strings.Contains(output, "connection reset") ||
 		strings.Contains(output, "deadline exceeded") ||
-		strings.Contains(output, "cache may be in use")
+		strings.Contains(output, "cache may be in use") ||
+		http2StreamCanceled
 }
 
 func DownloadDB(t *testing.T, envVars ...string) {
