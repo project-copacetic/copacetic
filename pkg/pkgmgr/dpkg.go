@@ -322,7 +322,7 @@ func (dm *dpkgManager) probeDPKGStatus(ctx context.Context, toolImage string, pl
 func (dm *dpkgManager) probeAptGet(ctx context.Context, imageState llb.State) bool {
 	const aptGetMarker = "/apt_get_found"
 	state := imageState.Run(
-		llb.Shlex(fmt.Sprintf(`sh -c 'command -v apt-get > /dev/null && touch %s'`, aptGetMarker)),
+		llb.Shlex(fmt.Sprintf(`sh -c 'command -v apt-get > /dev/null 2>&1 && touch %s || true'`, aptGetMarker)),
 		llb.WithCustomName("Probing for apt-get"),
 	).Root()
 	_, err := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &state, aptGetMarker)
