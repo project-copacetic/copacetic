@@ -73,6 +73,9 @@ type OCILayoutExportOptions struct {
 	Compression      string
 	ForceCompression bool
 	IndexAnnotations map[string]string
+	// PreservedSourceRef identifies the immutable current index whose
+	// descriptors and blobs must be copied for untouched platforms.
+	PreservedSourceRef reference.Canonical
 }
 
 type platformExportMetadata struct {
@@ -291,6 +294,7 @@ func InitializeBuildkitConfig(
 		configData,
 		userImage,
 		userImageDigest,
+		platform,
 	)
 	if err != nil {
 		return nil, err
@@ -790,6 +794,7 @@ func updateImageConfigData(
 	configData []byte,
 	image string,
 	imageDigest digest.Digest,
+	platform *specs.Platform,
 ) ([]byte, []byte, string, *types.SourceLineage, bool, error) {
 	baseImage, userImageConfig, err := setupLabels(image, configData)
 	if err != nil {
@@ -800,11 +805,15 @@ func updateImageConfigData(
 		configData = userImageConfig
 	} else {
 		patchedImageConfig := userImageConfig
-		_, baseImageDigest, baseImageConfig, err := c.ResolveImageConfig(ctx, baseImage, sourceresolver.Opt{
+		resolveOpt := sourceresolver.Opt{
 			ImageOpt: &sourceresolver.ResolveImageOpt{
 				ResolveMode: llb.ResolveModePreferLocal.String(),
 			},
-		})
+		}
+		if platform != nil {
+			resolveOpt.ImageOpt.Platform = platform
+		}
+		_, baseImageDigest, baseImageConfig, err := c.ResolveImageConfig(ctx, baseImage, resolveOpt)
 		if err != nil {
 			log.Warnf("Failed to resolve BaseImage %s: %v. Falling back to using current image %s as base", baseImage, err, image)
 			// Fallback: Create a new config with the BaseImage label set to current image
@@ -1457,7 +1466,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 		log.Infof("Creating OCI layout from %d patched platforms only", len(platformStates))
 	case hasPreservedPlatforms:
 		log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
-		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms, exportOpts.IndexAnnotations)
+		return createPreservedOnlyOCILayout(outputDir, results, preservedPlatforms, exportOpts)
 	}
 
 	log.Infof("Creating OCI layout from %d BuildKit states", len(platformStates))
@@ -2033,25 +2042,17 @@ func createMixedOCILayout(
 	// Step 2: Export preserved platforms from original image
 	var preservedManifests []map[string]interface{}
 	if len(preservedPlatforms) > 0 {
-		// Find original image reference from results
-		var originalRef reference.Named
-		for _, result := range results {
-			if result.OriginalRef != nil {
-				originalRef = result.OriginalRef
-				break
-			}
-		}
-
-		if originalRef == nil {
+		preservedSourceRef := preservedPlatformsSourceRef(results, exportOpts)
+		if preservedSourceRef == nil {
 			log.Warn("Could not determine original image reference for preserved platforms, skipping preserved platforms export")
 		} else {
 			// Preserved platforms intentionally keep their original descriptors and
 			// layer blobs, even when compression options are set for patched platforms.
-			var err error
-			preservedManifests, err = exportPreservedPlatformsToOutput(outputDir, originalRef, preservedPlatforms, allBlobs)
+			exportedManifests, err := exportPreservedPlatformsToOutput(outputDir, preservedSourceRef, preservedPlatforms, allBlobs)
 			if err != nil {
 				return fmt.Errorf("failed to export preserved platforms: %w", err)
 			}
+			preservedManifests = exportedManifests
 		}
 	}
 
@@ -2559,26 +2560,18 @@ func createPreservedOnlyOCILayout(
 	outputDir string,
 	results []types.PatchResult,
 	preservedPlatforms []types.PatchPlatform,
-	indexAnnotations map[string]string,
+	exportOpts OCILayoutExportOptions,
 ) error {
 	log.Infof("Creating OCI layout from %d preserved platforms only", len(preservedPlatforms))
 
-	// Find the original image reference from results
-	var originalRef reference.Named
-	for _, result := range results {
-		if result.OriginalRef != nil {
-			originalRef = result.OriginalRef
-			break
-		}
-	}
-
-	if originalRef == nil {
+	preservedSourceRef := preservedPlatformsSourceRef(results, exportOpts)
+	if preservedSourceRef == nil {
 		return fmt.Errorf("no original reference found for preserved-only layout")
 	}
 
 	preservedManifests, err := exportPreservedPlatformsToOutput(
 		outputDir,
-		originalRef,
+		preservedSourceRef,
 		preservedPlatforms,
 		make(map[string]bool),
 	)
@@ -2588,5 +2581,18 @@ func createPreservedOnlyOCILayout(
 	if len(preservedManifests) == 0 {
 		return fmt.Errorf("no manifests to include in preserved-only OCI layout")
 	}
-	return createFinalOCILayout(outputDir, preservedManifests, indexAnnotations)
+	return createFinalOCILayout(outputDir, preservedManifests, exportOpts.IndexAnnotations)
+}
+
+func preservedPlatformsSourceRef(results []types.PatchResult, exportOpts OCILayoutExportOptions) reference.Named {
+	if exportOpts.PreservedSourceRef != nil {
+		return exportOpts.PreservedSourceRef
+	}
+
+	for _, result := range results {
+		if result.OriginalRef != nil {
+			return result.OriginalRef
+		}
+	}
+	return nil
 }

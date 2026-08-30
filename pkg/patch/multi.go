@@ -457,14 +457,19 @@ func patchMultiPlatformImage(
 		if compression == "" {
 			compression = DefaultLocalExportCompression
 		}
+		preservedSourceRef, err := immutableCurrentIndexReference(source)
+		if err != nil {
+			return fmt.Errorf("failed to identify immutable source for preserved platforms: %w", err)
+		}
 		if err := buildkit.CreateOCILayoutFromResultsWithOptions(
 			opts.OCIDir,
 			patchResults,
 			platforms,
 			buildkit.OCILayoutExportOptions{
-				Compression:      compression,
-				ForceCompression: opts.ForceCompression,
-				IndexAnnotations: multiPlatformIndexAnnotations(patchedImageName, originalIndexAnnotations, indexLineage, time.Now().UTC()),
+				Compression:        compression,
+				ForceCompression:   opts.ForceCompression,
+				IndexAnnotations:   multiPlatformIndexAnnotations(patchedImageName, originalIndexAnnotations, indexLineage, time.Now().UTC()),
+				PreservedSourceRef: preservedSourceRef,
 			},
 		); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
@@ -542,6 +547,24 @@ func immutableLineageReference(lineage *types.SourceLineage) (string, error) {
 		return "", err
 	}
 	return pinned.String(), nil
+}
+
+func immutableCurrentIndexReference(source *multiPlatformSource) (reference.Canonical, error) {
+	if source == nil || source.Current == nil {
+		return nil, nil
+	}
+	if err := source.Current.Descriptor.Digest.Validate(); err != nil {
+		return nil, fmt.Errorf("current index digest is invalid: %w", err)
+	}
+	name, err := reference.ParseNormalizedNamed(source.Current.Name)
+	if err != nil {
+		return nil, err
+	}
+	pinned, err := reference.WithDigest(reference.TrimNamed(name), source.Current.Descriptor.Digest)
+	if err != nil {
+		return nil, err
+	}
+	return pinned, nil
 }
 
 func platformSourceReference(source *buildkit.ImageSource, platform *ispec.Platform) (string, error) {

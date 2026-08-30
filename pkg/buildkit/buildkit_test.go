@@ -29,6 +29,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/client/llb/sourceresolver"
 	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
@@ -228,6 +229,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			configData,
 			"alpine:3.20",
 			imageDigest,
+			nil,
 		)
 		require.NoError(t, err)
 		assert.Nil(t, patched)
@@ -236,10 +238,17 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 		assert.False(t, validated)
 	})
 
-	t.Run("re-patch validated recorded base", func(t *testing.T) {
+	t.Run("re-patch validates recorded base on requested non-default platform", func(t *testing.T) {
 		baseDigest := digest.FromString("original-base")
+		platform := &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
 		client := &mocks.MockGWClient{}
 		client.On("ResolveImageConfig", mock.Anything, "docker.io/library/alpine@"+baseDigest.String(), mock.Anything).
+			Run(func(args mock.Arguments) {
+				resolveOpt, ok := args.Get(2).(sourceresolver.Opt)
+				require.True(t, ok)
+				require.NotNil(t, resolveOpt.ImageOpt)
+				assert.Equal(t, platform, resolveOpt.ImageOpt.Platform)
+			}).
 			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"config":{"labels":{}}}`), nil).
 			Once()
 		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
@@ -249,7 +258,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			baseDigest,
 		))
 
-		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, "registry.example.com/app:patched", digest.FromString("patched"))
+		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, "registry.example.com/app:patched", digest.FromString("patched"), platform)
 		require.NoError(t, err)
 		require.NotNil(t, patched)
 		assert.Equal(t, &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: baseDigest}, lineage)
@@ -532,7 +541,7 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 		outputDir,
 		[]types.PatchResult{{OriginalRef: originalRef}},
 		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}},
-		nil,
+		OCILayoutExportOptions{},
 	)
 	require.NoError(t, err)
 
@@ -555,6 +564,23 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, compressed.Close()) })
 	_, err = io.Copy(io.Discard, compressed)
 	require.NoError(t, err)
+}
+
+func TestPreservedPlatformsSourceRefKeepsCapturedDigestAfterTagMoves(t *testing.T) {
+	mutableRef, err := reference.ParseNormalizedNamed("registry.example.com/team/app:latest")
+	require.NoError(t, err)
+	capturedDigest := digest.FromString("captured-current-index")
+	capturedRef, err := reference.WithDigest(reference.TrimNamed(mutableRef), capturedDigest)
+	require.NoError(t, err)
+	movedRef, err := reference.WithDigest(reference.TrimNamed(mutableRef), digest.FromString("moved-current-index"))
+	require.NoError(t, err)
+
+	got := preservedPlatformsSourceRef(
+		[]types.PatchResult{{OriginalRef: mutableRef}},
+		OCILayoutExportOptions{PreservedSourceRef: capturedRef},
+	)
+	assert.Equal(t, capturedRef.String(), got.String())
+	assert.NotEqual(t, movedRef.String(), got.String(), "a moved mutable tag must not change the preservation source")
 }
 
 func TestDiscoverPlatformsMutableTagKeepsLocalPlatform(t *testing.T) {
@@ -1244,7 +1270,7 @@ func TestUpdateImageConfigData(t *testing.T) {
 		expectedData := []byte(`{"config": {"labels": {"com.example.label": "value"}, {"BaseImage": "myimage:latest"}}}`)
 		image := "myimage:latest"
 
-		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image))
+		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image), nil)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1271,7 +1297,7 @@ func TestUpdateImageConfigData(t *testing.T) {
 		configData := []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`)
 		image := "rockylinux:latest"
 
-		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image))
+		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image), nil)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}

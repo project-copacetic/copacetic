@@ -330,6 +330,29 @@ func TestPlatformSourceReferencePinsSelectedChild(t *testing.T) {
 	assert.Equal(t, "registry.example.com/team/app@"+childDigest.String(), got)
 }
 
+func TestImmutableCurrentIndexReferenceUsesCurrentSnapshotOnRepatch(t *testing.T) {
+	currentDigest := digest.FromString("current-patched-index")
+	baseDigest := digest.FromString("older-original-index")
+	source := &multiPlatformSource{
+		Current: &buildkit.ImageSource{
+			Name:       "registry.example.com/team/app:patched",
+			Descriptor: v1.Descriptor{Digest: currentDigest, MediaType: v1.MediaTypeImageIndex},
+			Index:      &v1.Index{},
+		},
+		Base: &buildkit.ImageSource{
+			Name:       "registry.example.com/team/app:1.0",
+			Descriptor: v1.Descriptor{Digest: baseDigest, MediaType: v1.MediaTypeImageIndex},
+			Index:      &v1.Index{},
+		},
+		IndexLineage: &types.SourceLineage{Name: "registry.example.com/team/app:1.0", Digest: baseDigest},
+	}
+
+	got, err := immutableCurrentIndexReference(source)
+	require.NoError(t, err)
+	assert.Equal(t, "registry.example.com/team/app@"+currentDigest.String(), got.String())
+	assert.NotContains(t, got.String(), baseDigest.String(), "preserved bytes come from the current snapshot, not its older lineage base")
+}
+
 func platformSpec(os, arch, variant string) v1.Platform {
 	return v1.Platform{OS: os, Architecture: arch, Variant: variant}
 }
