@@ -468,34 +468,6 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 			return nil, fmt.Errorf("error getting manifest: %w", err)
 		}
 
-		for i := range manifest.Manifests {
-			m := &manifest.Manifests[i]
-
-			// Skip manifests with unknown platforms
-			if m.Platform == nil || m.Platform.OS == "unknown" || m.Platform.Architecture == "unknown" {
-				log.Debugf("Skipping manifest with unknown platform")
-				continue
-			}
-
-			patchPlatform := types.PatchPlatform{
-				Platform: specs.Platform{
-					OS:           m.Platform.OS,
-					Architecture: m.Platform.Architecture,
-					Variant:      m.Platform.Variant,
-					OSVersion:    m.Platform.OSVersion,
-					OSFeatures:   m.Platform.OSFeatures,
-				},
-				ReportFile:     "",    // No report file for platforms discovered from reference
-				ShouldPreserve: false, // Default to false, will be set appropriately later
-			}
-			if m.Platform.Architecture == arm64 && m.Platform.Variant == "v8" {
-				// some scanners may not add v8 to arm64 reports, so we
-				// need to remove it here to maintain consistency
-				patchPlatform.Variant = ""
-			}
-			platforms = append(platforms, patchPlatform)
-		}
-		return platforms, nil
 		return platformsFromIndexManifest(manifest), nil
 	}
 
