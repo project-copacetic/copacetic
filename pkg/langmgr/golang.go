@@ -222,10 +222,13 @@ func buildGoUpdateCmd(modPath, allGetCmd string) string {
 // successful `go get` can be silently reverted and the package still reported as
 // patched. Modules before go 1.17 record only direct requirements in go.mod, so
 // an indirect dependency falls back to the version go.sum says the build
-// downloads. A replacement that hides the module behind unversioned local
-// contents or a different module path leaves the requested version unprovable
-// and is reported as a failure rather than assumed patched.
-func verifyGoModUpdates(goModContent, goSumContent []byte, updates unversioned.LangUpdatePackages) error {
+// downloads. workReplaces carries the replace directives of the go.work file
+// governing this module, if any: a workspace replacement overrides the member
+// module's own metadata, so it decides what the build compiles. A replacement
+// that hides the module behind unversioned local contents or a different module
+// path leaves the requested version unprovable and is reported as a failure
+// rather than assumed patched.
+func verifyGoModUpdates(goModContent, goSumContent []byte, workReplaces []*modfile.Replace, updates unversioned.LangUpdatePackages) error {
 	hasTargets := false
 	for _, u := range updates {
 		if u.FixedVersion != "" {
@@ -256,6 +259,16 @@ func verifyGoModUpdates(goModContent, goSumContent []byte, updates unversioned.L
 		}
 
 		requiredVersion, inGoMod := required[u.Name]
+
+		// A go.work replace overrides every member module, so it governs what
+		// the workspace build compiles no matter what the member's go.mod says.
+		if rep := governingReplacement(workReplaces, u.Name, requiredVersion); rep != nil {
+			if err := verifyReplacementVersion(rep, "go.work", u.Name, u.FixedVersion); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if !inGoMod {
 			if err := verifyGoSumVersions(builtVersions[u.Name], u.Name, u.FixedVersion); err != nil {
 				return err
@@ -263,21 +276,34 @@ func verifyGoModUpdates(goModContent, goSumContent []byte, updates unversioned.L
 			continue
 		}
 
-		landedVersion := requiredVersion
 		if rep := governingReplacement(f.Replace, u.Name, requiredVersion); rep != nil {
-			switch {
-			case rep.New.Version == "":
-				return fmt.Errorf("module %s is replaced by %s, whose contents are unversioned; cannot verify that requested version %s was applied", u.Name, rep.New.Path, u.FixedVersion)
-			case rep.New.Path != u.Name:
-				return fmt.Errorf("module %s is replaced by %s@%s; a different module path cannot prove that requested version %s was applied", u.Name, rep.New.Path, rep.New.Version, u.FixedVersion)
+			if err := verifyReplacementVersion(rep, "go.mod", u.Name, u.FixedVersion); err != nil {
+				return err
 			}
-			landedVersion = rep.New.Version
+			continue
 		}
-		if isLessThanGoVersion(landedVersion, u.FixedVersion) {
-			return fmt.Errorf("module %s is at %s in go.mod after update, expected %s or newer", u.Name, landedVersion, u.FixedVersion)
+		if isLessThanGoVersion(requiredVersion, u.FixedVersion) {
+			return fmt.Errorf("module %s is at %s in go.mod after update, expected %s or newer", u.Name, requiredVersion, u.FixedVersion)
 		}
 	}
 
+	return nil
+}
+
+// verifyReplacementVersion confirms that the code a replacement substitutes can
+// be shown to carry the fix. Unversioned local contents and a different module
+// path both leave the requested version unprovable, so they are reported as
+// failures instead of assumed patched. file names the file the directive came
+// from so the failure points at the metadata that has to change.
+func verifyReplacementVersion(rep *modfile.Replace, file, modPath, fixedVersion string) error {
+	switch {
+	case rep.New.Version == "":
+		return fmt.Errorf("module %s is replaced in %s by %s, whose contents are unversioned; cannot verify that requested version %s was applied", modPath, file, rep.New.Path, fixedVersion)
+	case rep.New.Path != modPath:
+		return fmt.Errorf("module %s is replaced in %s by %s@%s; a different module path cannot prove that requested version %s was applied", modPath, file, rep.New.Path, rep.New.Version, fixedVersion)
+	case isLessThanGoVersion(rep.New.Version, fixedVersion):
+		return fmt.Errorf("module %s is replaced in %s by %s@%s after update, expected %s or newer", modPath, file, rep.New.Path, rep.New.Version, fixedVersion)
+	}
 	return nil
 }
 
@@ -348,11 +374,11 @@ func goSumBuiltVersions(goSumContent []byte) map[string][]string {
 // filterUpdatesInGoMod narrows updates to the modules the given module already
 // referenced. The update step runs the same `go get` list against every module
 // in the image, so verifying all of them against one module would fail modules
-// that never depended on the vulnerable package. go.sum is consulted as well
-// because a module before go 1.17 keeps indirect dependencies out of go.mod, and
-// dropping those would leave them unverified while still reported as patched.
-// Callers pass the pre-update files so that requirements removed by the update
-// are still verified rather than silently excused.
+// that never depended on the vulnerable package. Modules before go 1.17 keep
+// indirect dependencies out of go.mod, so those fall back to go.sum: dropping
+// them would leave them unverified while still reported as patched. Callers pass
+// the pre-update files so that requirements removed by the update are still
+// verified rather than silently excused.
 func filterUpdatesInGoMod(goModContent, goSumContent []byte, updates unversioned.LangUpdatePackages) (unversioned.LangUpdatePackages, error) {
 	f, err := modfile.Parse("go.mod", goModContent, nil)
 	if err != nil {
@@ -370,8 +396,14 @@ func filterUpdatesInGoMod(goModContent, goSumContent []byte, updates unversioned
 			present[rep.Old.Path] = struct{}{}
 		}
 	}
-	for modPath := range goSumBuiltVersions(goSumContent) {
-		present[modPath] = struct{}{}
+	// From go 1.17 on go.mod records every dependency of the build, so a go.sum
+	// entry that go.mod never mentions is a stale checksum rather than a
+	// dependency. Counting it would demand a version bump from a module that
+	// does not use the package.
+	if !goModListsAllDependencies(f) {
+		for modPath := range goSumBuiltVersions(goSumContent) {
+			present[modPath] = struct{}{}
+		}
 	}
 
 	var applicable unversioned.LangUpdatePackages
@@ -383,14 +415,27 @@ func filterUpdatesInGoMod(goModContent, goSumContent []byte, updates unversioned
 	return applicable, nil
 }
 
-// unverifiedUpdateNames returns the names of every requested update that has not
-// been confirmed yet. A verification step that cannot finish must report all of
-// them, since an unproven package left out of the failure list is reported as
-// remediated.
-func unverifiedUpdateNames(updates unversioned.LangUpdatePackages, verified map[string]struct{}) []string {
+// goModListsAllDependencies reports whether the module's go directive selects
+// the module graph pruning added in go 1.17, from which go.mod records every
+// dependency of the build, direct and indirect. Before that only direct
+// requirements appear, leaving go.sum as the sole record of the rest.
+func goModListsAllDependencies(f *modfile.File) bool {
+	if f == nil || f.Go == nil || f.Go.Version == "" {
+		return false
+	}
+	return !isLessThanGoVersion(f.Go.Version, "1.17")
+}
+
+// unverifiedUpdateNames returns the names of every requested update that is not
+// proven yet. pendingProofs holds, per package, the number of modules
+// accountable for it that still have to be checked; a package missing from the
+// map was never observed in any module and is unproven as well. A verification
+// step that cannot finish must report all of them, since an unproven package
+// left out of the failure list is reported as remediated.
+func unverifiedUpdateNames(updates unversioned.LangUpdatePackages, pendingProofs map[string]int) []string {
 	names := make([]string, 0, len(updates))
 	for _, u := range updates {
-		if _, ok := verified[u.Name]; ok {
+		if remaining, tracked := pendingProofs[u.Name]; tracked && remaining <= 0 {
 			continue
 		}
 		names = append(names, u.Name)
@@ -398,17 +443,28 @@ func unverifiedUpdateNames(updates unversioned.LangUpdatePackages, verified map[
 	return names
 }
 
-// goWorkspaceMemberDirs resolves the directory of every module listed by a
-// go.work file, relative to the workspace root. A workspace root has no
-// authoritative go.mod of its own: requirements land in the member modules, so
-// those are the modules to verify.
-func goWorkspaceMemberDirs(goWorkContent []byte, workRoot string) ([]string, error) {
+// goWorkspace holds the parts of a go.work file that decide what a workspace
+// build compiles: the member modules and the replacements the workspace forces
+// on all of them.
+type goWorkspace struct {
+	memberDirs   []string
+	replacements []*modfile.Replace
+}
+
+// parseGoWorkspace resolves the directory of every module listed by a go.work
+// file, relative to the workspace root, along with the workspace-wide replace
+// directives. A workspace root has no authoritative go.mod of its own:
+// requirements land in the member modules, so those are the modules to verify.
+// The replacements travel with them because a go.work replace overrides the
+// member modules and decides which code the build uses, so a module redirected
+// there cannot be proven patched from a member's go.mod alone.
+func parseGoWorkspace(goWorkContent []byte, workRoot string) (*goWorkspace, error) {
 	f, err := modfile.ParseWork("go.work", goWorkContent, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.work: %w", err)
 	}
 
-	var modDirs []string
+	ws := &goWorkspace{replacements: f.Replace}
 	for _, use := range f.Use {
 		if use == nil || use.Path == "" {
 			continue
@@ -417,12 +473,12 @@ func goWorkspaceMemberDirs(goWorkContent []byte, workRoot string) ([]string, err
 		if !path.IsAbs(dir) {
 			dir = path.Join(workRoot, dir)
 		}
-		modDirs = append(modDirs, path.Clean(dir))
+		ws.memberDirs = append(ws.memberDirs, path.Clean(dir))
 	}
-	if len(modDirs) == 0 {
+	if len(ws.memberDirs) == 0 {
 		return nil, fmt.Errorf("go.work at %s lists no module directories; cannot verify Go module updates", workRoot)
 	}
-	return modDirs, nil
+	return ws, nil
 }
 
 // filterGoPackages filters for Go module and binary packages.
@@ -1161,11 +1217,13 @@ func (gm *golangManager) attemptBinaryRebuild(
 
 // goVerifyTarget pairs a module's metadata files with the subset of requested
 // updates that module is accountable for, captured before the update step
-// mutates them.
+// mutates them. workReplaces holds the replace directives of the go.work file
+// governing the module, if any, because they override the module's own metadata.
 type goVerifyTarget struct {
-	goModPath string
-	goSumPath string
-	updates   unversioned.LangUpdatePackages
+	goModPath    string
+	goSumPath    string
+	workReplaces []*modfile.Replace
+	updates      unversioned.LangUpdatePackages
 }
 
 // readOptionalGoSum returns the contents of goSumPath, or nil when the module
@@ -1184,7 +1242,8 @@ func (gm *golangManager) readOptionalGoSum(ctx context.Context, state *llb.State
 
 // collectGoVerifyTargets records which modules to verify after the update and,
 // for each, the updates it already referenced. For a workspace the go.work root
-// has no authoritative go.mod, so every member module is collected instead.
+// has no authoritative go.mod, so every member module is collected instead,
+// carrying the workspace replacements that override them.
 // Reading the pre-update files matters twice over: it scopes verification to
 // modules that actually depended on the vulnerable package, and it still catches
 // requirements that the update step dropped.
@@ -1196,15 +1255,17 @@ func (gm *golangManager) collectGoVerifyTargets(
 	updates unversioned.LangUpdatePackages,
 ) ([]goVerifyTarget, error) {
 	modDirs := []string{modPath}
+	var workReplaces []*modfile.Replace
 	if isWorkspace {
 		goWorkBytes, err := buildkit.ExtractFileFromState(ctx, gm.config.Client, state, modPath+"/go.work")
 		if err != nil {
 			return nil, fmt.Errorf("failed to read %s/go.work: %w", modPath, err)
 		}
-		modDirs, err = goWorkspaceMemberDirs(goWorkBytes, modPath)
+		ws, err := parseGoWorkspace(goWorkBytes, modPath)
 		if err != nil {
 			return nil, err
 		}
+		modDirs, workReplaces = ws.memberDirs, ws.replacements
 	}
 
 	targets := make([]goVerifyTarget, 0, len(modDirs))
@@ -1226,7 +1287,12 @@ func (gm *golangManager) collectGoVerifyTargets(
 			log.Debugf("No requested Go updates apply to %s, skipping verification", goModPath)
 			continue
 		}
-		targets = append(targets, goVerifyTarget{goModPath: goModPath, goSumPath: goSumPath, updates: applicable})
+		targets = append(targets, goVerifyTarget{
+			goModPath:    goModPath,
+			goSumPath:    goSumPath,
+			workReplaces: workReplaces,
+			updates:      applicable,
+		})
 	}
 	return targets, nil
 }
@@ -1303,24 +1369,32 @@ func (gm *golangManager) updateGoModule(
 	).Root()
 
 	// Confirm the bumps survived 'go mod tidy -e' instead of trusting the exit
-	// code. Any failure reports every update still lacking proof, since a
-	// workspace aborts with later members unread and an unreported package is
-	// treated as remediated.
-	verified := make(map[string]struct{}, len(updates))
+	// code. A workspace runs the same `go get` list in every member module, so a
+	// package is proven only once every member accountable for it has been
+	// checked: proving it in one member says nothing about another member that
+	// still requires the vulnerable version. Any failure reports every update
+	// still lacking proof, since a workspace aborts with later members unread and
+	// an unreported package is treated as remediated.
+	pendingProofs := make(map[string]int, len(updates))
+	for _, target := range verifyTargets {
+		for _, u := range target.updates {
+			pendingProofs[u.Name]++
+		}
+	}
 	for _, target := range verifyTargets {
 		goModBytes, extractErr := buildkit.ExtractFileFromState(ctx, gm.config.Client, &state, target.goModPath)
 		if extractErr != nil {
-			return state, unverifiedUpdateNames(updates, verified), fmt.Errorf("failed to read %s after update: %w", target.goModPath, extractErr)
+			return state, unverifiedUpdateNames(updates, pendingProofs), fmt.Errorf("failed to read %s after update: %w", target.goModPath, extractErr)
 		}
 		goSumBytes, goSumErr := gm.readOptionalGoSum(ctx, &state, target.goSumPath)
 		if goSumErr != nil {
-			return state, unverifiedUpdateNames(updates, verified), fmt.Errorf("failed to read %s after update: %w", target.goSumPath, goSumErr)
+			return state, unverifiedUpdateNames(updates, pendingProofs), fmt.Errorf("failed to read %s after update: %w", target.goSumPath, goSumErr)
 		}
-		if verifyErr := verifyGoModUpdates(goModBytes, goSumBytes, target.updates); verifyErr != nil {
-			return state, unverifiedUpdateNames(updates, verified), fmt.Errorf("go module update verification failed for %s: %w", target.goModPath, verifyErr)
+		if verifyErr := verifyGoModUpdates(goModBytes, goSumBytes, target.workReplaces, target.updates); verifyErr != nil {
+			return state, unverifiedUpdateNames(updates, pendingProofs), fmt.Errorf("go module update verification failed for %s: %w", target.goModPath, verifyErr)
 		}
 		for _, u := range target.updates {
-			verified[u.Name] = struct{}{}
+			pendingProofs[u.Name]--
 		}
 	}
 
@@ -1376,11 +1450,38 @@ func (gm *golangManager) upgradePackagesWithTooling(
 
 	state := *currentState
 
-	// Process each module path
+	// Validate every module path before one of them is interpolated into a shell
+	// command further down.
 	for _, modPath := range goModPaths {
 		if strings.ContainsAny(modPath, shellUnsafeChars) {
-			return currentState, nil, fmt.Errorf("go.mod path contains unsafe characters: %s", modPath)
+			return currentState, getPackageNames(updates), fmt.Errorf("go.mod path contains unsafe characters: %s", modPath)
 		}
+	}
+
+	// Record which updates each module is accountable for before any module is
+	// touched. The same `go get` list runs against every module in the image, so
+	// verifying all of them against one module would fail a module that never
+	// depended on the vulnerable package. Collecting up front also keeps
+	// reporting honest: a failure partway through leaves the remaining modules
+	// unprocessed, and the packages they carry must still be reported as
+	// unpatched instead of assumed remediated.
+	accountableUpdates := make(map[string]unversioned.LangUpdatePackages, len(goModPaths))
+	pendingProofs := make(map[string]int, len(updates))
+	for _, modPath := range goModPaths {
+		targets, targetErr := gm.collectGoVerifyTargets(ctx, currentState, modPath, false, updates)
+		if targetErr != nil {
+			return currentState, getPackageNames(updates), targetErr
+		}
+		for _, target := range targets {
+			accountableUpdates[modPath] = target.updates
+			for _, u := range target.updates {
+				pendingProofs[u.Name]++
+			}
+		}
+	}
+
+	// Process each module path
+	for _, modPath := range goModPaths {
 		log.Debugf("Updating Go module at %s using tooling container", modPath)
 
 		// Create tooling container state with target platform
@@ -1410,13 +1511,13 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		for _, u := range updates {
 			if u.FixedVersion != "" {
 				if strings.ContainsAny(u.Name, shellUnsafeChars) {
-					return currentState, nil, fmt.Errorf("package name contains unsafe characters: %s", u.Name)
+					return currentState, getPackageNames(updates), fmt.Errorf("package name contains unsafe characters: %s", u.Name)
 				}
 				if strings.HasPrefix(u.Name, "-") {
-					return currentState, nil, fmt.Errorf("package name cannot start with '-': %s", u.Name)
+					return currentState, getPackageNames(updates), fmt.Errorf("package name cannot start with '-': %s", u.Name)
 				}
 				if strings.ContainsAny(u.FixedVersion, shellUnsafeChars) {
-					return currentState, nil, fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
+					return currentState, getPackageNames(updates), fmt.Errorf("version contains unsafe characters: %s for package %s", u.FixedVersion, u.Name)
 				}
 				version := u.FixedVersion
 				if !strings.HasPrefix(version, "v") {
@@ -1432,22 +1533,7 @@ func (gm *golangManager) upgradePackagesWithTooling(
 			continue
 		}
 
-		// Record which updates this module is accountable for while its
-		// pre-update metadata is still intact. The same `go get` list runs
-		// against every module in the image, so verifying all of them here would
-		// fail a module that never depended on the vulnerable package.
-		originalGoMod, origErr := buildkit.ExtractFileFromState(ctx, gm.config.Client, &state, modPath+"/go.mod")
-		if origErr != nil {
-			return currentState, getPackageNames(updates), fmt.Errorf("failed to read %s/go.mod before update: %w", modPath, origErr)
-		}
-		originalGoSum, sumErr := gm.readOptionalGoSum(ctx, &state, modPath+"/go.sum")
-		if sumErr != nil {
-			return currentState, getPackageNames(updates), fmt.Errorf("failed to read %s/go.sum before update: %w", modPath, sumErr)
-		}
-		moduleUpdates, filterErr := filterUpdatesInGoMod(originalGoMod, originalGoSum, updates)
-		if filterErr != nil {
-			return currentState, getPackageNames(updates), fmt.Errorf("%s/go.mod: %w", modPath, filterErr)
-		}
+		moduleUpdates := accountableUpdates[modPath]
 
 		allGetCmd := strings.Join(getCommands, " && ")
 		// -e tolerates broken upstream go.mod files; see comment in the
@@ -1462,19 +1548,24 @@ func (gm *golangManager) upgradePackagesWithTooling(
 		).Root()
 
 		// Confirm the bumps survived 'go mod tidy -e' instead of trusting the
-		// exit code. Failures name the affected packages so they are reported as
-		// unpatched rather than claimed as remediated.
+		// exit code. A failure reports every update still lacking proof: the
+		// modules queued behind this one are never processed, so their packages
+		// must not be claimed as remediated. The tooling container is handed only
+		// this module's go.mod and go.sum, so no workspace replacements apply.
 		if len(moduleUpdates) > 0 {
 			goModBytes, extractErr := buildkit.ExtractFileFromState(ctx, gm.config.Client, &toolingState, "/workspace/go.mod")
 			if extractErr != nil {
-				return currentState, getPackageNames(moduleUpdates), fmt.Errorf("failed to read go.mod after update at %s: %w", modPath, extractErr)
+				return currentState, unverifiedUpdateNames(updates, pendingProofs), fmt.Errorf("failed to read go.mod after update at %s: %w", modPath, extractErr)
 			}
 			goSumBytes, goSumErr := gm.readOptionalGoSum(ctx, &toolingState, "/workspace/go.sum")
 			if goSumErr != nil {
-				return currentState, getPackageNames(moduleUpdates), fmt.Errorf("failed to read go.sum after update at %s: %w", modPath, goSumErr)
+				return currentState, unverifiedUpdateNames(updates, pendingProofs), fmt.Errorf("failed to read go.sum after update at %s: %w", modPath, goSumErr)
 			}
-			if verifyErr := verifyGoModUpdates(goModBytes, goSumBytes, moduleUpdates); verifyErr != nil {
-				return currentState, getPackageNames(moduleUpdates), fmt.Errorf("go module update verification failed at %s: %w", modPath, verifyErr)
+			if verifyErr := verifyGoModUpdates(goModBytes, goSumBytes, nil, moduleUpdates); verifyErr != nil {
+				return currentState, unverifiedUpdateNames(updates, pendingProofs), fmt.Errorf("go module update verification failed at %s: %w", modPath, verifyErr)
+			}
+			for _, u := range moduleUpdates {
+				pendingProofs[u.Name]--
 			}
 		}
 
