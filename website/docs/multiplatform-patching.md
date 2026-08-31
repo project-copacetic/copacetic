@@ -82,6 +82,29 @@ Update all platforms with the latest patches:
 copa patch --image $IMAGE --tag nginx:1.25.0-patched
 ```
 
+### OCI Image Layout Input
+
+Copa can patch an image directly from a local [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) without importing it into Docker or Podman and without publishing it to a temporary registry:
+
+```bash
+copa patch \
+  --image example.com/acme/app:1.0 \
+  --input-oci-layout ./input-layout \
+  --oci-dir ./patched-layout
+```
+
+`--image` remains the logical image identity used for the patched tag, VEX, and provenance. It also selects the top-level descriptor in `index.json`: Copa matches a full image name (`io.containerd.image.name`), a tag (`org.opencontainers.image.ref.name`), or a digest. A layout with exactly one top-level descriptor can use any logical image name. If a layout has multiple top-level descriptors, the name, tag, or digest must identify exactly one; the error lists the available selectors when it does not.
+
+For a selected multi-platform index, omit `--platform` to patch every supported image platform, or pass one or more platforms to patch only those and copy the other selected-image platform descriptors and blobs unchanged. A single report with `--platform` preserves the other platforms, and a report directory follows the same preservation behavior for platforms without reports.
+
+OCI layout input has these restrictions:
+
+- `--oci-dir` is required and must name a new directory that does not overlap the input layout.
+- `--push` and `--loader` are not supported with `--input-oci-layout`; the source is never resolved through Docker, Podman, or a registry.
+- Local and remote BuildKit addresses are supported because Copa transfers the client-side content store through the BuildKit session; the remote daemon does not need filesystem access to the input path.
+- The input layout is read-only. Invalid layout metadata, missing blobs, size mismatches, digest mismatches, and unsupported image media types fail before patching.
+- In-place updates, `copa generate`/BuildKit frontend input parity, direct registry push, and additional signature, attestation, or referrer preservation are not included. Tooling images and package repositories may still require network access, so this option does not by itself make patching fully air-gapped.
+
 ## Multi-Platform Command Reference
 
 ### Platform-Specific Flags
@@ -94,7 +117,8 @@ These flags are essential for multi-platform patching:
 | `--report`        | One report file or a directory of platform-specific reports      | `--report ./platform-reports/`       |
 | `--ignore-errors` | Continue patching other platforms if one fails                  | `--ignore-errors`                    |
 | `--push`          | Push all manifests and index/manifest list to registry          | `--push`                             |
-| `--oci-dir`       | Export multi-platform index/manifest as OCI layout directory    | `--oci-dir ./output-directory`       |
+| `--input-oci-layout` | Read the source image from a local OCI Image Layout          | `--input-oci-layout ./input-layout`  |
+| `--oci-dir`       | Export a single- or multi-platform OCI Image Layout              | `--oci-dir ./output-directory`       |
 
 ## Multi-Platform Behavior
 

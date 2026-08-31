@@ -402,11 +402,13 @@ func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T)
 	require.NoError(t, err)
 
 	result, err := createPatchResultWithStates(
+		context.Background(),
 		imageName,
 		"Not A Valid Image Reference",
 		&types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},
 		nil,
 		imageloader.Docker,
+		nil,
 		nil,
 	)
 
@@ -644,6 +646,7 @@ func TestEmptyReportPreflightUsesNativeSuppliedPatchedImage(t *testing.T) {
 		bkClient,
 		testNativeSuppliedImage,
 		platform,
+		nil,
 	)
 
 	require.ErrorIs(t, err, errNativeChiselTargetedPatch)

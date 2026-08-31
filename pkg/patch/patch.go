@@ -16,6 +16,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -99,6 +100,23 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	targetPlatforms := opts.Platforms
 	pkgTypes := opts.PkgTypes
 
+	if opts.InputOCILayout != "" {
+		if opts.OCIDir == "" {
+			return fmt.Errorf("--input-oci-layout requires --oci-dir")
+		}
+		if opts.Push {
+			return fmt.Errorf("--input-oci-layout cannot be used with --push")
+		}
+		if opts.Loader != "" {
+			return fmt.Errorf("--input-oci-layout cannot be used with --loader")
+		}
+		source, err := ocilayout.Open(ctx, opts.InputOCILayout, opts.OCIDir, image)
+		if err != nil {
+			return err
+		}
+		opts.OCISource = source
+	}
+
 	// Parse and validate package types early
 	pkgTypesList, err := parsePkgTypes(pkgTypes)
 	if err != nil {
@@ -114,8 +132,11 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	// Handle empty report path - check if image is manifest list or single platform
 	if reportPath == "" {
 		// Discover platforms from the image reference to determine if it's multi-platform
-		discoveredPlatforms, err := buildkit.DiscoverPlatformsFromReference(image)
+		discoveredPlatforms, err := discoverPlatformsForOptions(ctx, opts)
 		if err != nil {
+			if opts.OCISource != nil {
+				return fmt.Errorf("discover platforms in OCI layout input: %w", err)
+			}
 			// Failed to discover platforms - treat as single-platform image
 			log.Warnf("Failed to discover platforms for image %s (treating as single-platform): %v", image, err)
 			if len(targetPlatforms) > 0 {
@@ -137,6 +158,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+			}
+			if err == nil {
+				err = exportSinglePlatformOCI(ctx, opts, result, &patchPlatform)
 			}
 			return err
 		}
@@ -170,6 +194,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+			}
+			if err == nil {
+				err = exportSinglePlatformOCI(ctx, opts, result, &patchPlatform)
 			}
 			return err
 		}
@@ -216,6 +243,19 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	if err != nil {
 		return err
 	}
+	if opts.OCISource != nil {
+		discoveredPlatforms, discoverErr := discoverPlatformsForOptions(ctx, opts)
+		if discoverErr != nil {
+			return fmt.Errorf("discover platforms in OCI layout input: %w", discoverErr)
+		}
+		if len(discoveredPlatforms) > 1 {
+			platforms, prepareErr := platformsForSingleReport(discoveredPlatforms, &patchPlatform, reportPath)
+			if prepareErr != nil {
+				return prepareErr
+			}
+			return patchPreparedMultiPlatformImage(ctx, opts, platforms)
+		}
+	}
 	displaySingleArchPlan(opts, &patchPlatform)
 	result, err := patchSingleArchImageWithUpdates(ctx, opts, patchPlatform, false, nil, parsedUpdates)
 	if result != nil {
@@ -224,7 +264,55 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	if err == nil && result != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
 	}
+	if err == nil {
+		err = exportSinglePlatformOCI(ctx, opts, result, &patchPlatform)
+	}
 	return err
+}
+
+func discoverPlatformsForOptions(ctx context.Context, opts *types.Options) ([]types.PatchPlatform, error) {
+	if opts.OCISource == nil {
+		return buildkit.DiscoverPlatformsFromReference(opts.Image)
+	}
+	discovered, err := opts.OCISource.Platforms(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]types.PatchPlatform, 0, len(discovered))
+	for _, platform := range discovered {
+		result = append(result, types.PatchPlatform{Platform: platform})
+	}
+	return result, nil
+}
+
+func exportSinglePlatformOCI(ctx context.Context, opts *types.Options, result *types.PatchResult, platform *types.PatchPlatform) error {
+	if opts.OCIDir == "" || opts.Push || result == nil {
+		return nil
+	}
+	compression := opts.Compression
+	if compression == "" {
+		compression = DefaultLocalExportCompression
+	}
+	if err := buildkit.CreateOCILayoutFromResultsWithOptions(
+		opts.OCIDir,
+		[]types.PatchResult{*result},
+		[]types.PatchPlatform{*platform},
+		buildkit.OCILayoutExportOptions{
+			Compression:      compression,
+			ForceCompression: opts.ForceCompression,
+			OutputReference:  result.PatchedRef.String(),
+			BuildkitOpts: &buildkit.Opts{
+				Addr:       opts.BkAddr,
+				CACertPath: opts.BkCACertPath,
+				CertPath:   opts.BkCertPath,
+				KeyPath:    opts.BkKeyPath,
+			},
+			Atomic: opts.OCISource != nil,
+		}.WithContext(ctx),
+	); err != nil {
+		return fmt.Errorf("failed to create OCI layout: %w", err)
+	}
+	return nil
 }
 
 func resolveSingleReportPlatform(targetPlatforms []string) (types.PatchPlatform, error) {

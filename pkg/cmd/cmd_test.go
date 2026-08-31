@@ -49,6 +49,30 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			args:                  []string{"--config", "config.yaml"},
 			expectValidationError: false, // This combination of flags is valid.
 		},
+		{
+			name:                  "FAIL: OCI input requires image mode",
+			args:                  []string{"--config", "config.yaml", "--input-oci-layout", "./input", "--oci-dir", "./output"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout requires --image",
+		},
+		{
+			name:                  "FAIL: OCI input requires OCI output",
+			args:                  []string{"--image", "example.com/acme/app:1.0", "--input-oci-layout", "./input"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout requires --oci-dir",
+		},
+		{
+			name:                  "FAIL: OCI input rejects push",
+			args:                  []string{"--image", "example.com/acme/app:1.0", "--input-oci-layout", "./input", "--oci-dir", "./output", "--push"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout cannot be used with --push",
+		},
+		{
+			name:                  "FAIL: OCI input rejects daemon loader",
+			args:                  []string{"--image", "example.com/acme/app:1.0", "--input-oci-layout", "./input", "--oci-dir", "./output", "--loader", "docker"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout cannot be used with --loader",
+		},
 	}
 
 	// Run test cases
@@ -76,6 +100,16 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewPatchCmdOCILayoutFlags(t *testing.T) {
+	cmd := NewPatchCmd()
+	input := cmd.Flags().Lookup("input-oci-layout")
+	require.NotNil(t, input)
+	assert.Contains(t, input.Usage, "requires --oci-dir")
+	output := cmd.Flags().Lookup("oci-dir")
+	require.NotNil(t, output)
+	assert.NotContains(t, output.Usage, "multi-platform")
 }
 
 func TestNewPatchCmdChiselReleaseFlag(t *testing.T) {

@@ -28,6 +28,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -36,6 +37,7 @@ import (
 	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 
@@ -401,6 +403,7 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 		outputDir,
 		[]types.PatchResult{{OriginalRef: originalRef}},
 		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}},
+		OCILayoutExportOptions{},
 	)
 	require.NoError(t, err)
 
@@ -1153,6 +1156,120 @@ func TestUpdateImageConfigData(t *testing.T) {
 
 		mockClient.AssertExpectations(t)
 	})
+}
+
+func writeOCIInputTestBlob(t *testing.T, root, mediaType string, data []byte) ispec.Descriptor {
+	t.Helper()
+	dgst := digest.FromBytes(data)
+	path := filepath.Join(root, "blobs", dgst.Algorithm().String(), dgst.Encoded())
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return ispec.Descriptor{MediaType: mediaType, Digest: dgst, Size: int64(len(data))}
+}
+
+func newOCIInputTestSource(t *testing.T) (*ocilayout.Source, ispec.Descriptor, []byte) {
+	t.Helper()
+	root := t.TempDir()
+	configData := []byte(`{"architecture":"amd64","os":"linux","config":{"Labels":{"BaseImage":"registry.invalid/base:latest","existing":"kept"}},"rootfs":{"type":"layers","diff_ids":[]}}`)
+	configDesc := writeOCIInputTestBlob(t, root, ispec.MediaTypeImageConfig, configData)
+	manifestData, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     ispec.MediaTypeImageManifest,
+		"config":        configDesc,
+		"layers":        []ispec.Descriptor{},
+	})
+	require.NoError(t, err)
+	manifestDesc := writeOCIInputTestBlob(t, root, ispec.MediaTypeImageManifest, manifestData)
+	manifestDesc.Platform = &ispec.Platform{OS: "linux", Architecture: "amd64"}
+	indexData, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     ispec.MediaTypeImageIndex,
+		"manifests":     []ispec.Descriptor{manifestDesc},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, ispec.ImageLayoutFile), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ispec.ImageIndexFile), indexData, 0o600))
+
+	source, err := ocilayout.Open(t.Context(), root, filepath.Join(t.TempDir(), "output"), "example.com/acme/app:latest")
+	require.NoError(t, err)
+	return source, manifestDesc, configData
+}
+
+func TestInitializeBuildkitConfigWithSourceKeepsResolutionLocal(t *testing.T) {
+	source, manifestDesc, configData := newOCIInputTestSource(t)
+	resolvedRef, err := source.ResolveReference()
+	require.NoError(t, err)
+
+	mockClient := &mocks.MockGWClient{}
+	mockClient.On("ResolveImageConfig", mock.Anything, resolvedRef, mock.Anything).
+		Return(resolvedRef, manifestDesc.Digest, configData, nil).
+		Once()
+	config, err := InitializeBuildkitConfigWithSource(t.Context(), mockClient, "example.com/acme/app:latest", manifestDesc.Platform, source)
+	require.NoError(t, err)
+	assert.Nil(t, config.PatchedConfigData)
+	var image ispec.Image
+	require.NoError(t, json.Unmarshal(config.ConfigData, &image))
+	assert.Equal(t, "registry.invalid/base:latest", image.Config.Labels["BaseImage"])
+	assert.Equal(t, "kept", image.Config.Labels["existing"])
+	mockClient.AssertExpectations(t)
+
+	solveOpt := client.SolveOpt{}
+	addOCIStores(&solveOpt, OCILayoutExportOptions{state: &ociLayoutExportState{sources: []*ocilayout.Source{source}}})
+	assert.NotNil(t, solveOpt.OCIStores[source.StoreID])
+}
+
+func TestCreatePreservedOnlyOCILayoutFromSourceIsAtomic(t *testing.T) {
+	source, _, _ := newOCIInputTestSource(t)
+	output := filepath.Join(t.TempDir(), "output")
+	platform := types.PatchPlatform{
+		Platform:       ispec.Platform{OS: "linux", Architecture: "amd64"},
+		ShouldPreserve: true,
+	}
+	result := types.PatchResult{
+		OriginalRef: source.Reference,
+		PatchedRef:  source.Reference,
+		PatchedDesc: &source.Descriptor,
+		OCISource:   source,
+	}
+	require.NoError(t, CreateOCILayoutFromResultsWithOptions(
+		output,
+		[]types.PatchResult{result},
+		[]types.PatchPlatform{platform},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "example.com/acme/app:patched"},
+	))
+
+	var index ispec.Index
+	data, err := os.ReadFile(filepath.Join(output, ispec.ImageIndexFile))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &index))
+	require.Len(t, index.Manifests, 1)
+	assert.Equal(t, ispec.MediaTypeImageIndex, index.Manifests[0].MediaType)
+	assert.Equal(t, "patched", index.Manifests[0].Annotations[ispec.AnnotationRefName])
+	selectedIndexData, err := os.ReadFile(filepath.Join(output, "blobs", index.Manifests[0].Digest.Algorithm().String(), index.Manifests[0].Digest.Encoded()))
+	require.NoError(t, err)
+	var selectedIndex ispec.Index
+	require.NoError(t, json.Unmarshal(selectedIndexData, &selectedIndex))
+	require.Len(t, selectedIndex.Manifests, 1)
+	assert.Equal(t, source.Descriptor.Digest, selectedIndex.Manifests[0].Digest)
+	assert.NotEmpty(t, selectedIndex.Annotations["org.opencontainers.image.created"])
+	assert.NotEmpty(t, selectedIndex.Annotations["sh.copa.patched"])
+	_, err = os.Stat(filepath.Join(output, "blobs", source.Descriptor.Digest.Algorithm().String(), source.Descriptor.Digest.Encoded()))
+	require.NoError(t, err)
+	reopened, err := ocilayout.Open(t.Context(), output, filepath.Join(t.TempDir(), "next-output"), "example.com/acme/app:patched")
+	require.NoError(t, err)
+	platforms, err := reopened.Platforms(t.Context())
+	require.NoError(t, err)
+	require.Len(t, platforms, 1)
+	assert.Equal(t, "amd64", platforms[0].Architecture)
+
+	existingOutput := t.TempDir()
+	err = CreateOCILayoutFromResultsWithOptions(
+		existingOutput,
+		[]types.PatchResult{result},
+		[]types.PatchPlatform{platform},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "example.com/acme/app:patched"},
+	)
+	require.ErrorContains(t, err, "already exists")
 }
 
 func TestMapGoArch(t *testing.T) {
