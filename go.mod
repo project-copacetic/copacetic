@@ -4,7 +4,7 @@ go 1.25.13
 
 require (
 	github.com/Masterminds/semver v1.5.0
-	github.com/Masterminds/semver/v3 v3.4.0
+	github.com/Masterminds/semver/v3 v3.5.0
 	github.com/aquasecurity/go-pep440-version v0.0.1
 	github.com/aquasecurity/trivy v0.69.3
 	github.com/canonical/chisel-manifest v1.2.0
