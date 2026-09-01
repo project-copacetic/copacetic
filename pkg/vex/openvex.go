@@ -131,7 +131,7 @@ func (o *OpenVex) createVEXDocument(
 		product := imageProduct
 		product.Subcomponents = []vex.Subcomponent{subComponent}
 		doc.Statements = append(doc.Statements, vex.Statement{
-			Vulnerability: vex.Vulnerability{ID: u.VulnerabilityID},
+			Vulnerability: vex.Vulnerability{ID: u.VulnerabilityID, Name: u.VulnerabilityID},
 			Products:      []vex.Product{product},
 			Status:        "fixed",
 		})
