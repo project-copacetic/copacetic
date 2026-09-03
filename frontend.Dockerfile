@@ -5,7 +5,7 @@
 # The release workflow passes this automatically via --build-arg
 # GO_VERSION=$(awk '/^go /{print $2; exit}' go.mod). This default is a fallback
 # for local builds and should match go.mod.
-ARG GO_VERSION=1.25.13
+ARG GO_VERSION=1.26.6
 ARG ALPINE_VERSION=3.23
 
 FROM golang:${GO_VERSION}-alpine${ALPINE_VERSION} AS builder
