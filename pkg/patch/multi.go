@@ -12,6 +12,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/tui"
@@ -28,16 +29,35 @@ func patchMultiPlatformImage(
 ) error {
 	image := opts.Image
 	reportDir := opts.Report
-	ignoreError := opts.IgnoreError
-	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
 
 	var platforms []types.PatchPlatform
 	if reportDir != "" {
-		// Using report directory - discover platforms from reports
-		var err error
-		platforms, err = buildkit.DiscoverPlatforms(image, reportDir, opts.Scanner)
-		if err != nil {
-			return err
+		// Using report directory - discover platforms from the selected image
+		// source, then mark only platforms with reports for patching.
+		if opts.OCISource == nil {
+			var err error
+			platforms, err = buildkit.DiscoverPlatforms(image, reportDir, opts.Scanner)
+			if err != nil {
+				return err
+			}
+		} else {
+			var err error
+			platforms, err = discoverPlatformsForOptions(ctx, opts)
+			if err != nil {
+				return err
+			}
+			reportPlatforms, err := buildkit.DiscoverPlatformsFromReport(reportDir, opts.Scanner)
+			if err != nil {
+				return err
+			}
+			reportFiles := make(map[string]string, len(reportPlatforms))
+			for _, platform := range reportPlatforms {
+				reportFiles[buildkit.PlatformKey(platform.Platform)] = platform.ReportFile
+			}
+			for i := range platforms {
+				platforms[i].ReportFile = reportFiles[buildkit.PlatformKey(platforms[i].Platform)]
+				platforms[i].ShouldPreserve = platforms[i].ReportFile == ""
+			}
 		}
 		if len(platforms) == 0 {
 			return fmt.Errorf("no patchable platforms found for image %s", image)
@@ -87,6 +107,22 @@ func patchMultiPlatformImage(
 			log.Infof("Patching all available platforms")
 		}
 	}
+
+	return patchPreparedMultiPlatformImage(ctx, opts, platforms)
+}
+
+// patchPreparedMultiPlatformImage patches and preserves the already classified
+// platforms. Keeping orchestration separate from discovery lets a single scan
+// report target one platform in an OCI layout without dropping its siblings.
+func patchPreparedMultiPlatformImage(
+	ctx context.Context,
+	opts *types.Options,
+	platforms []types.PatchPlatform,
+) error {
+	image := opts.Image
+	reportDir := opts.Report
+	ignoreError := opts.IgnoreError
+	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
 
 	// Display styled patching plan before starting
 	plan := buildPatchingPlan(opts, platforms)
@@ -159,7 +195,7 @@ func patchMultiPlatformImage(
 				}
 
 				// Handle Windows platform without push enabled
-				if !opts.Push && p.OS == "windows" {
+				if opts.OCISource == nil && !opts.Push && p.OS == "windows" {
 					mu.Lock()
 					defer mu.Unlock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -173,7 +209,12 @@ func patchMultiPlatformImage(
 				}
 
 				// Get the original platform descriptor from the manifest
-				originalDesc, err := getPlatformDescriptorFromManifest(image, &p)
+				var originalDesc *ispec.Descriptor
+				if opts.OCISource != nil {
+					originalDesc, err = opts.OCISource.PlatformDescriptor(gctx, &p.Platform)
+				} else {
+					originalDesc, err = getPlatformDescriptorFromManifest(image, &p)
+				}
 				if err != nil {
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -193,6 +234,7 @@ func patchMultiPlatformImage(
 					OriginalRef: originalRef,
 					PatchedRef:  originalRef,
 					PatchedDesc: originalDesc,
+					OCISource:   opts.OCISource,
 				}
 
 				mu.Lock()
@@ -433,7 +475,15 @@ func patchMultiPlatformImage(
 			buildkit.OCILayoutExportOptions{
 				Compression:      compression,
 				ForceCompression: opts.ForceCompression,
-			},
+				OutputReference:  patchedImageName.String(),
+				BuildkitOpts: &buildkit.Opts{
+					Addr:       opts.BkAddr,
+					CACertPath: opts.BkCACertPath,
+					CertPath:   opts.BkCertPath,
+					KeyPath:    opts.BkKeyPath,
+				},
+				Atomic: opts.OCISource != nil,
+			}.WithContext(ctx),
 		); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)
@@ -441,6 +491,39 @@ func patchMultiPlatformImage(
 	}
 
 	return nil
+}
+
+func platformsForSingleReport(
+	discovered []types.PatchPlatform,
+	target *types.PatchPlatform,
+	reportFile string,
+) ([]types.PatchPlatform, error) {
+	targetKey := buildkit.PlatformKey(target.Platform)
+	available := make([]string, 0, len(discovered))
+	platforms := make([]types.PatchPlatform, 0, len(discovered))
+	matched := false
+	for _, platform := range discovered {
+		platformCopy := platform
+		key := buildkit.PlatformKey(platform.Platform)
+		available = append(available, key)
+		if key == targetKey {
+			platformCopy.ReportFile = reportFile
+			platformCopy.ShouldPreserve = false
+			matched = true
+		} else {
+			platformCopy.ReportFile = ""
+			platformCopy.ShouldPreserve = true
+		}
+		platforms = append(platforms, platformCopy)
+	}
+	if !matched {
+		return nil, fmt.Errorf(
+			"report target platform %s is not available in the selected OCI image; available platforms: %s",
+			targetKey,
+			strings.Join(available, ", "),
+		)
+	}
+	return platforms, nil
 }
 
 func markPlatformPreserved(platforms []types.PatchPlatform, targetKey string) {

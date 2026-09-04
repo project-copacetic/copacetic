@@ -47,6 +47,7 @@ type patchArgs struct {
 	toolchainPatchLevel string
 	goVCSURL            string
 	progress            string
+	inputOCILayout      string
 	ociDir              string
 	compression         string
 	forceCompression    bool
@@ -66,6 +67,7 @@ func NewPatchCmd() *cobra.Command {
 		Use:   "patch",
 		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
 		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
+copa patch -i example.com/acme/app:1.0 --input-oci-layout ./input-layout --oci-dir ./patched-layout (OCI Layout Input)
 copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)
 copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/stakater/charts --chart-registry oci://ghcr.io/myorg/charts --push (Single Chart Patching)`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -114,6 +116,7 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 				ToolchainPatchLevel: ua.toolchainPatchLevel,
 				GoVCSURL:            ua.goVCSURL,
 				Progress:            progressui.DisplayMode(ua.progress),
+				InputOCILayout:      ua.inputOCILayout,
 				OCIDir:              ua.ociDir,
 				Compression:         ua.compression,
 				ForceCompression:    ua.forceCompression,
@@ -147,6 +150,20 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 			}
 			if modeCount > 1 {
 				return errors.New("--image, --config, and --chart are mutually exclusive")
+			}
+			if ua.inputOCILayout != "" {
+				if !hasImage {
+					return errors.New("--input-oci-layout requires --image")
+				}
+				if ua.ociDir == "" {
+					return errors.New("--input-oci-layout requires --oci-dir")
+				}
+				if ua.push {
+					return errors.New("--input-oci-layout cannot be used with --push")
+				}
+				if cmd.Flags().Changed("loader") {
+					return errors.New("--input-oci-layout cannot be used with --loader")
+				}
 			}
 
 			if hasConfig {
@@ -197,7 +214,8 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
 	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
 	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
-	flags.StringVar(&ua.ociDir, "oci-dir", "", "Create OCI layout at specified directory for multi-platform images (only used when --push is not specified)")
+	flags.StringVar(&ua.inputOCILayout, "input-oci-layout", "", "Read the source image from an OCI Image Layout directory (requires --oci-dir; incompatible with --push and --loader)")
+	flags.StringVar(&ua.ociDir, "oci-dir", "", "Create an OCI Image Layout at the specified directory (only used when --push is not specified)")
 	flags.StringSliceVar(&ua.platform, "platform", nil,
 		"Target platform(s) for multi-arch images when no report directory is provided (e.g., linux/amd64,linux/arm64). "+
 			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+

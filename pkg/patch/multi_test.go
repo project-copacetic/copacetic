@@ -176,6 +176,36 @@ func TestMarkPlatformPreserved(t *testing.T) {
 	assert.True(t, platforms[1].ShouldPreserve)
 }
 
+func TestPlatformsForSingleReport(t *testing.T) {
+	t.Parallel()
+
+	discovered := []types.PatchPlatform{
+		{Platform: platformSpec("linux", "amd64", "")},
+		{Platform: platformSpec("linux", "arm64", "v8")},
+	}
+
+	platforms, err := platformsForSingleReport(
+		discovered,
+		&types.PatchPlatform{Platform: platformSpec("linux", "amd64", "")},
+		"trivy-amd64.json",
+	)
+	require.NoError(t, err)
+	require.Len(t, platforms, 2)
+	assert.Equal(t, "trivy-amd64.json", platforms[0].ReportFile)
+	assert.False(t, platforms[0].ShouldPreserve)
+	assert.Empty(t, platforms[1].ReportFile)
+	assert.True(t, platforms[1].ShouldPreserve)
+
+	_, err = platformsForSingleReport(
+		discovered,
+		&types.PatchPlatform{Platform: platformSpec("linux", "s390x", "")},
+		"trivy-s390x.json",
+	)
+	require.ErrorContains(t, err, "report target platform linux/s390x is not available")
+	assert.ErrorContains(t, err, "linux/amd64")
+	assert.ErrorContains(t, err, "linux/arm64/v8")
+}
+
 func platformSpec(os, arch, variant string) v1.Platform {
 	return v1.Platform{OS: os, Architecture: arch, Variant: variant}
 }
