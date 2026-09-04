@@ -15,6 +15,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
@@ -67,6 +68,18 @@ func patchSingleArchImage(
 	return patchSingleArchImageWithUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil)
 }
 
+func patchSingleArchImageWithSource(
+	ctx context.Context,
+	opts *types.Options,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
+	sourceImage string,
+) (*types.PatchResult, error) {
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil, sourceImage)
+}
+
 func patchSingleArchImageWithUpdates(
 	ctx context.Context,
 	opts *types.Options,
@@ -75,6 +88,19 @@ func patchSingleArchImageWithUpdates(
 	multiPlatform bool,
 	sharedProgressCh chan<- *client.SolveStatus,
 	updates *unversioned.UpdateManifest,
+) (*types.PatchResult, error) {
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, updates, "")
+}
+
+func patchSingleArchImageWithSourceAndUpdates(
+	ctx context.Context,
+	opts *types.Options,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
+	updates *unversioned.UpdateManifest,
+	sourceImage string,
 ) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
@@ -238,6 +264,7 @@ func patchSingleArchImageWithUpdates(
 		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
 		originalAnnotations = map[string]string{}
 	}
+	originalAnnotations = withoutSourceLineageAnnotations(originalAnnotations)
 
 	// Create build configuration
 	buildConfig, err := createBuildConfig(
@@ -265,7 +292,35 @@ func patchSingleArchImageWithUpdates(
 	// Resolve image reference for BuildKit operations
 	// For multi-platform images with local manifests, use platform-specific reference
 	buildkitImageRef := imageName
-	if multiPlatform {
+	var expectedSourceDigest digest.Digest
+	requireBaseManifest := multiPlatform
+	if !multiPlatform && sourceImage == "" {
+		var captureErr error
+		buildkitImageRef, expectedSourceDigest, requireBaseManifest, captureErr = captureSinglePlatformSource(
+			ctx,
+			image,
+			imageName,
+			&targetPlatform.Platform,
+		)
+		if captureErr != nil {
+			log.Warnf("Unable to capture source manifest identity for %s; lineage annotations will be omitted: %v", image, captureErr)
+		} else if expectedSourceDigest.Validate() == nil {
+			log.Debugf("Captured platform source digest %s for lineage validation; preserving BuildKit source reference %s", expectedSourceDigest, buildkitImageRef)
+		}
+	}
+	if sourceImage != "" {
+		buildkitImageRefNamed, err := reference.ParseNormalizedNamed(sourceImage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse immutable platform source %q: %w", sourceImage, err)
+		}
+		digested, ok := buildkitImageRefNamed.(reference.Digested)
+		if !ok || digested.Digest().Validate() != nil {
+			return nil, fmt.Errorf("captured platform source %q is not an immutable digest reference", sourceImage)
+		}
+		expectedSourceDigest = digested.Digest()
+		buildkitImageRef = buildkitImageRefNamed
+		log.Debugf("Using captured platform source reference for BuildKit: %s", sourceImage)
+	} else if multiPlatform {
 		platformImageRef, err := buildkit.GetPlatformImageReference(image, &targetPlatform.Platform)
 		if err == nil {
 			// Successfully resolved platform-specific reference for local manifest
@@ -285,7 +340,8 @@ func patchSingleArchImageWithUpdates(
 	eg.Go(func() error {
 		defer pipeW.Close()
 		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease,
+			resolveImageReference(imageName), expectedSourceDigest, requireBaseManifest)
 		patchBuildErr = err
 		if err != nil {
 			return err
@@ -343,6 +399,29 @@ func patchSingleArchImageWithUpdates(
 		result.Summary = updates.CombinedSummary()
 	}
 	return result, nil
+}
+
+func captureSinglePlatformSource(
+	ctx context.Context,
+	image string,
+	buildkitImageRef reference.Named,
+	platform *ispec.Platform,
+) (reference.Named, digest.Digest, bool, error) {
+	source, err := resolveImageSource(ctx, image)
+	if err != nil {
+		return buildkitImageRef, "", true, err
+	}
+	if source.Index == nil {
+		return buildkitImageRef, "", false, nil
+	}
+	descriptor, err := source.PlatformDescriptor(platform)
+	if err != nil {
+		return buildkitImageRef, "", true, err
+	}
+	if err := descriptor.Digest.Validate(); err != nil {
+		return buildkitImageRef, "", true, fmt.Errorf("captured platform source digest is invalid: %w", err)
+	}
+	return buildkitImageRef, descriptor.Digest, true, nil
 }
 
 // selectPatchWaitError preserves the package-manager no-update sentinel when
@@ -581,6 +660,7 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		managerAnnotations = patchResult.Annotations
 	}
 	patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	patchedDesc = attachDescriptorPlatform(patchedDesc, &targetPlatform.Platform)
 	if patchedDesc != nil {
 		log.Debugf("Added %d original and %d package-manager manifest annotations for platform %s", len(originalAnnotations), len(managerAnnotations), targetPlatform.Platform)
 	}
@@ -592,13 +672,15 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	}
 
 	result := &types.PatchResult{
-		OriginalRef: imageName,
-		PatchedRef:  patchedRef,
-		PatchedDesc: patchedDesc,
+		OriginalRef:   imageName,
+		PatchedRef:    patchedRef,
+		PatchedDesc:   patchedDesc,
+		SourceLineage: nil,
 	}
 
 	// Include preserved BuildKit states if available
 	if patchResult != nil {
+		result.SourceLineage = patchResult.SourceLineage
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
 	}
@@ -625,6 +707,27 @@ func augmentPatchedDescriptor(descriptor *ispec.Descriptor, originalAnnotations,
 	return &augmented
 }
 
+func attachDescriptorPlatform(descriptor *ispec.Descriptor, platform *ispec.Platform) *ispec.Descriptor {
+	if descriptor == nil || descriptor.Platform != nil || platform == nil {
+		return descriptor
+	}
+
+	augmented := *descriptor
+	target := *platform
+	augmented.Platform = &target
+	return &augmented
+}
+
+func withoutSourceLineageAnnotations(annotations map[string]string) map[string]string {
+	clean := maps.Clone(annotations)
+	if clean == nil {
+		clean = make(map[string]string)
+	}
+	delete(clean, ispec.AnnotationBaseImageName)
+	delete(clean, ispec.AnnotationBaseImageDigest)
+	return clean
+}
+
 // executePatchBuild executes the actual patch build process.
 func executePatchBuild(
 	ctx context.Context,
@@ -641,6 +744,9 @@ func executePatchBuild(
 	toolchainPatchLevel string,
 	goVCSURL string,
 	chiselRelease string,
+	sourceImageName string,
+	expectedSourceDigest digest.Digest,
+	requireBaseManifest bool,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -671,17 +777,20 @@ func executePatchBuild(
 		}
 
 		patchOpts := &Options{
-			ImageName:           imageName.String(),
-			TargetPlatform:      targetPlatform,
-			Updates:             updates,
-			ValidatedUpdates:    validatedManifest,
-			WorkingFolder:       workingFolder,
-			IgnoreError:         ignoreError,
-			ReturnState:         false, // Always solve for Docker export
-			ExitOnEOL:           exitOnEOL,
-			ToolchainPatchLevel: toolchainPatchLevel,
-			GoVCSURL:            goVCSURL,
-			ChiselRelease:       chiselRelease,
+			ImageName:            imageName.String(),
+			TargetPlatform:       targetPlatform,
+			SourceImageName:      sourceImageName,
+			ExpectedSourceDigest: expectedSourceDigest,
+			RequireBaseManifest:  requireBaseManifest,
+			Updates:              updates,
+			ValidatedUpdates:     validatedManifest,
+			WorkingFolder:        workingFolder,
+			IgnoreError:          ignoreError,
+			ReturnState:          false, // Always solve for Docker export
+			ExitOnEOL:            exitOnEOL,
+			ToolchainPatchLevel:  toolchainPatchLevel,
+			GoVCSURL:             goVCSURL,
+			ChiselRelease:        chiselRelease,
 		}
 
 		// Execute the core patching logic

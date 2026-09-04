@@ -13,6 +13,7 @@ import (
 	"github.com/distribution/reference"
 	buildkitclient "github.com/moby/buildkit/client"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
@@ -675,4 +676,96 @@ func TestAugmentPatchedDescriptorIncludesManagerAnnotations(t *testing.T) {
 	assert.NotEmpty(t, augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"])
 
 	assert.Equal(t, map[string]string{"runtime": "preserved"}, originalDescriptor.Annotations, "the source descriptor must not be mutated")
+}
+
+func TestAttachDescriptorPlatformAddsMissingTarget(t *testing.T) {
+	original := &v1.Descriptor{Digest: digest.FromString("patched")}
+	target := &v1.Platform{OS: "linux", Architecture: "arm64"}
+
+	got := attachDescriptorPlatform(original, target)
+
+	require.NotNil(t, got)
+	assert.Equal(t, target, got.Platform)
+	assert.Nil(t, original.Platform, "the source descriptor must not be mutated")
+	assert.NotSame(t, target, got.Platform, "the target platform must be copied")
+}
+
+func TestAttachDescriptorPlatformPreservesExistingPlatform(t *testing.T) {
+	existing := &v1.Platform{OS: "linux", Architecture: "amd64"}
+	descriptor := &v1.Descriptor{Platform: existing}
+
+	got := attachDescriptorPlatform(descriptor, &v1.Platform{OS: "linux", Architecture: "arm64"})
+
+	assert.Same(t, descriptor, got)
+	assert.Same(t, existing, got.Platform)
+}
+
+func TestWithoutSourceLineageAnnotations(t *testing.T) {
+	original := map[string]string{
+		v1.AnnotationBaseImageName:   "docker.io/library/stale:latest",
+		v1.AnnotationBaseImageDigest: digest.FromString("stale").String(),
+		"com.example.preserved":      "value",
+	}
+
+	clean := withoutSourceLineageAnnotations(original)
+
+	assert.NotContains(t, clean, v1.AnnotationBaseImageName)
+	assert.NotContains(t, clean, v1.AnnotationBaseImageDigest)
+	assert.Equal(t, "value", clean["com.example.preserved"])
+	assert.Contains(t, original, v1.AnnotationBaseImageName, "source map must not be mutated")
+}
+
+func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t *testing.T) {
+	const imageRef = "registry.invalid/project/copa-e2e-local-only:latest"
+
+	childDigest := digest.FromString("source-amd64")
+	index := &buildkit.ImageSource{
+		Name: imageRef,
+		Index: &v1.Index{Manifests: []v1.Descriptor{{
+			Digest: childDigest,
+			Platform: &v1.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			},
+		}}},
+	}
+
+	originalResolver := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = originalResolver })
+	resolveImageSource = func(context.Context, string) (*buildkit.ImageSource, error) {
+		return index, nil
+	}
+	buildkitRef, err := reference.ParseNormalizedNamed(imageRef)
+	require.NoError(t, err)
+
+	gotBuildkitRef, expectedDigest, requireManifest, err := captureSinglePlatformSource(
+		t.Context(),
+		index.Name,
+		buildkitRef,
+		&v1.Platform{OS: "linux", Architecture: "amd64"},
+	)
+	require.NoError(t, err)
+	assert.True(t, requireManifest)
+	assert.Equal(t, buildkitRef, gotBuildkitRef)
+	assert.Equal(t, imageRef, gotBuildkitRef.String(), "capturing lineage must not turn a daemon-only tag into a registry digest pull")
+	assert.Equal(t, childDigest, expectedDigest)
+}
+
+func TestAugmentPatchedDescriptorComputedLineageWins(t *testing.T) {
+	lineage := &types.SourceLineage{
+		Name:   "docker.io/library/alpine:3.20",
+		Digest: digest.FromString("selected-manifest"),
+	}
+	augmented := augmentPatchedDescriptor(
+		&v1.Descriptor{},
+		map[string]string{
+			v1.AnnotationBaseImageName:   "docker.io/library/stale:latest",
+			v1.AnnotationBaseImageDigest: digest.FromString("stale").String(),
+		},
+		sourceLineageAnnotations(lineage),
+	)
+
+	require.NotNil(t, augmented)
+	assert.Equal(t, lineage.Name, augmented.Annotations[v1.AnnotationBaseImageName])
+	assert.Equal(t, lineage.Digest.String(), augmented.Annotations[v1.AnnotationBaseImageDigest])
 }

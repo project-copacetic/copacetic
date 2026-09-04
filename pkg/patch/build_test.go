@@ -299,6 +299,34 @@ func TestCreateBuildConfigPushDoesNotSetLocalCompressionAttrs(t *testing.T) {
 
 	export := buildConfig.SolveOpt.Exports[0]
 	assert.Equal(t, client.ExporterImage, export.Type)
+	assert.NotContains(t, export.Attrs, "oci-mediatypes", "Docker-format output must not be silently converted to carry annotations")
 	assert.NotContains(t, export.Attrs, "compression")
 	assert.NotContains(t, export.Attrs, "force-compression")
+}
+
+func TestCreateBuildConfigDoesNotCopyStaleSourceLineage(t *testing.T) {
+	pipeR, pipeW := io.Pipe()
+	defer pipeR.Close()
+	defer pipeW.Close()
+
+	buildConfig, err := createBuildConfig(
+		"example.com/app:patched",
+		true,
+		true,
+		pipeW,
+		map[string]string{
+			"org.opencontainers.image.source":      "https://example.com/source",
+			"org.opencontainers.image.base.name":   "example.com/stale:latest",
+			"org.opencontainers.image.base.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		"patched",
+		"",
+		false,
+	)
+	require.NoError(t, err)
+
+	attrs := buildConfig.SolveOpt.Exports[0].Attrs
+	assert.Equal(t, "https://example.com/source", attrs["annotation.org.opencontainers.image.source"])
+	assert.NotContains(t, attrs, "annotation.org.opencontainers.image.base.name")
+	assert.NotContains(t, attrs, "annotation.org.opencontainers.image.base.digest")
 }

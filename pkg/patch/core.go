@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
@@ -27,6 +31,16 @@ type Options struct {
 	// Image and platform information
 	ImageName      string
 	TargetPlatform *types.PatchPlatform
+	// SourceImageName retains the user's normalized image reference when a
+	// multi-platform child is pinned by digest for BuildKit resolution.
+	SourceImageName string
+	// ExpectedSourceDigest is the captured child-manifest digest that the
+	// BuildKit resolution must match on a first multi-platform patch.
+	ExpectedSourceDigest digest.Digest
+	// RequireBaseManifest omits unverified lineage on older re-patched
+	// multi-platform children rather than publishing a top-level index digest as
+	// though it were the selected child-manifest digest.
+	RequireBaseManifest bool
 
 	// Update information
 	Updates          *unversioned.UpdateManifest
@@ -61,6 +75,7 @@ type Result struct {
 	ErroredPackages  []string
 	ValidatedUpdates []unversioned.UpdatePackage
 	Annotations      map[string]string
+	SourceLineage    *types.SourceLineage
 
 	// BuildKit state and config (only set if ReturnState is true)
 	PatchedState *llb.State
@@ -140,6 +155,8 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
+	sourceLineage := sourceLineageForPatch(config, opts)
+	config.SourceLineage = sourceLineage
 
 	if err := preflightReportForNativeChisel(ctx, c, config, opts.TargetPlatform, updates); err != nil {
 		trySendError(opts.ErrorChannel, err)
@@ -234,11 +251,16 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Collect optional package-manager metadata after installation, when values
 	// such as resolved release and tool versions are available.
 	managerAnnotations := pkgmgr.GetPackageManagerAnnotations(manager)
+	resultAnnotations := maps.Clone(managerAnnotations)
+	if resultAnnotations == nil {
+		resultAnnotations = make(map[string]string)
+	}
+	maps.Copy(resultAnnotations, sourceLineageAnnotations(sourceLineage))
 
 	// Preserve the state and config for potential OCI export use. Mirror the
 	// annotations into image-config labels as well as manifest annotations so
 	// frontends and exporters that consume config metadata retain the provenance.
-	preservedConfig, err := imageConfigWithAnnotations(config, managerAnnotations)
+	preservedConfig, err := imageConfigWithAnnotations(config, resultAnnotations)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
@@ -256,7 +278,8 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 			PackageType:      packageType(manager),
 			ErroredPackages:  errPkgs,
 			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
-			Annotations:      managerAnnotations,
+			Annotations:      resultAnnotations,
+			SourceLineage:    sourceLineage,
 			PatchedState:     preservedState,
 			ConfigData:       preservedConfig,
 		}, nil
@@ -287,7 +310,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
-	addPackageManagerAnnotations(res, managerAnnotations)
+	addResultAnnotations(res, resultAnnotations)
 
 	// Return result with BOTH the solved result AND preserved states
 	// This enables Docker export (from result) AND OCI layout (from states)
@@ -296,10 +319,45 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		PackageType:      packageType(manager),
 		ErroredPackages:  errPkgs,
 		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
-		Annotations:      managerAnnotations,
+		Annotations:      resultAnnotations,
+		SourceLineage:    sourceLineage,
 		PatchedState:     preservedState,  // Always preserve for OCI export
 		ConfigData:       preservedConfig, // Always preserve for OCI export
 	}, nil
+}
+
+func sourceLineageForPatch(config *buildkit.Config, opts *Options) *types.SourceLineage {
+	if config == nil || !config.SourceLineage.Valid() {
+		return nil
+	}
+	if opts.RequireBaseManifest && config.PatchedConfigData != nil && !config.SourceLineageValidated {
+		return nil
+	}
+	if opts.RequireBaseManifest && config.PatchedConfigData == nil &&
+		(opts.ExpectedSourceDigest.Validate() != nil || config.SourceLineage.Digest != opts.ExpectedSourceDigest) {
+		return nil
+	}
+
+	lineage := *config.SourceLineage
+	if config.PatchedConfigData == nil && opts.SourceImageName != "" {
+		if sourceName, err := reference.ParseNormalizedNamed(opts.SourceImageName); err == nil {
+			if reference.IsNameOnly(sourceName) {
+				sourceName = reference.TagNameOnly(sourceName)
+			}
+			lineage.Name = sourceName.String()
+		}
+	}
+	return &lineage
+}
+
+func sourceLineageAnnotations(lineage *types.SourceLineage) map[string]string {
+	if !lineage.Valid() {
+		return nil
+	}
+	return map[string]string{
+		ispec.AnnotationBaseImageName:   lineage.Name,
+		ispec.AnnotationBaseImageDigest: lineage.Digest.String(),
+	}
 }
 
 func preservedImageState(state *llb.State, config []byte) (*llb.State, error) {
@@ -322,11 +380,20 @@ func imageConfigWithAnnotations(config *buildkit.Config, annotations map[string]
 		}
 		configData = merged
 	}
+	var err error
+	configData, err = buildkit.RemoveImageConfigLabels(
+		configData,
+		ispec.AnnotationBaseImageName,
+		ispec.AnnotationBaseImageDigest,
+	)
+	if err != nil {
+		return nil, err
+	}
 	return common.AddImageConfigLabels(configData, annotations)
 }
 
-// addPackageManagerAnnotations exposes manager-provided OCI annotations to the exporter.
-func addPackageManagerAnnotations(result *gwclient.Result, annotations map[string]string) {
+// addResultAnnotations exposes patch metadata as OCI manifest annotations to the exporter.
+func addResultAnnotations(result *gwclient.Result, annotations map[string]string) {
 	if result == nil {
 		return
 	}

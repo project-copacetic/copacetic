@@ -3,10 +3,24 @@ package types
 import (
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client/llb"
+	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
+
+// SourceLineage identifies the exact source image content used for a patch.
+// Name provides repository/reference context while Digest is the authoritative
+// content identity. Callers must emit the two values as a pair.
+type SourceLineage struct {
+	Name   string
+	Digest digest.Digest
+}
+
+// Valid reports whether both halves of the lineage pair are usable.
+func (lineage *SourceLineage) Valid() bool {
+	return lineage != nil && lineage.Name != "" && lineage.Digest.Validate() == nil
+}
 
 type UpdatePackage struct {
 	Name             string `json:"name"`
@@ -46,12 +60,13 @@ func (p PatchPlatform) String() string {
 
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalRef  reference.Named
-	PatchedDesc  *ispec.Descriptor
-	PatchedRef   reference.Named
-	PatchedState *llb.State                // BuildKit state for OCI export
-	ConfigData   []byte                    // Image config data
-	Summary      *unversioned.PatchSummary // Patch summary, nil if unavailable
+	OriginalRef   reference.Named
+	PatchedDesc   *ispec.Descriptor
+	PatchedRef    reference.Named
+	SourceLineage *SourceLineage            // Exact base manifest selected for this patch
+	PatchedState  *llb.State                // BuildKit state for OCI export
+	ConfigData    []byte                    // Image config data
+	Summary       *unversioned.PatchSummary // Patch summary, nil if unavailable
 }
 
 type MultiPlatformSummary struct {

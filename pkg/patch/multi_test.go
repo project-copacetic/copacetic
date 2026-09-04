@@ -2,9 +2,13 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"testing"
 
+	"github.com/distribution/reference"
+	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -174,6 +178,179 @@ func TestMarkPlatformPreserved(t *testing.T) {
 
 	assert.False(t, platforms[0].ShouldPreserve)
 	assert.True(t, platforms[1].ShouldPreserve)
+}
+
+func TestCaptureMultiPlatformSourceSnapshotsMutableTag(t *testing.T) {
+	const image = "registry.example.com/team/app:latest"
+	indexDigest := digest.FromString("source-before-output")
+	current := &buildkit.ImageSource{
+		Name:       image,
+		Descriptor: v1.Descriptor{Digest: indexDigest, MediaType: v1.MediaTypeImageIndex},
+		Index:      &v1.Index{},
+	}
+
+	originalResolver := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = originalResolver })
+	resolveCalls := 0
+	resolveImageSource = func(_ context.Context, got string) (*buildkit.ImageSource, error) {
+		resolveCalls++
+		assert.Equal(t, image, got)
+		return current, nil
+	}
+
+	source, err := captureMultiPlatformSource(t.Context(), image)
+	require.NoError(t, err)
+	assert.Equal(t, 1, resolveCalls, "the mutable tag must be captured once before output")
+	assert.Equal(t, indexDigest, source.IndexLineage.Digest)
+}
+
+func TestCaptureMultiPlatformSourceUsesRecordedOriginalBase(t *testing.T) {
+	const currentName = "registry.example.com/team/app:patched"
+	baseDigest := digest.FromString("original-index")
+	current := &buildkit.ImageSource{
+		Name: currentName,
+		Index: &v1.Index{Annotations: map[string]string{
+			copaAnnotationKeyPrefix + ".patched": "2026-08-26T00:00:00Z",
+			v1.AnnotationBaseImageName:           "registry.example.com/team/app:1.0",
+			v1.AnnotationBaseImageDigest:         baseDigest.String(),
+		}},
+	}
+	base := &buildkit.ImageSource{
+		Name:       "registry.example.com/team/app@" + baseDigest.String(),
+		Descriptor: v1.Descriptor{Digest: baseDigest, MediaType: v1.MediaTypeImageIndex},
+		Index:      &v1.Index{},
+	}
+
+	originalResolver := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = originalResolver })
+	resolveImageSource = func(_ context.Context, image string) (*buildkit.ImageSource, error) {
+		switch image {
+		case currentName:
+			return current, nil
+		case base.Name:
+			return base, nil
+		default:
+			return nil, errors.New("unexpected source reference: " + image)
+		}
+	}
+
+	source, err := captureMultiPlatformSource(t.Context(), currentName)
+	require.NoError(t, err)
+	assert.Same(t, current, source.Current)
+	assert.Same(t, base, source.Base)
+	assert.Equal(t, &types.SourceLineage{Name: "registry.example.com/team/app:1.0", Digest: baseDigest}, source.IndexLineage)
+}
+
+func TestCommonBaseIndexLineage(t *testing.T) {
+	indexDigest := digest.FromString("source-index")
+	amdDigest := digest.FromString("source-amd64")
+	armDigest := digest.FromString("source-arm64")
+	base := &buildkit.ImageSource{
+		Name:       "registry.example.com/team/app:1.0",
+		Descriptor: v1.Descriptor{Digest: indexDigest, MediaType: v1.MediaTypeImageIndex},
+		Index: &v1.Index{Manifests: []v1.Descriptor{
+			{Digest: amdDigest, Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}},
+			{Digest: armDigest, Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}},
+		}},
+	}
+	lineage := &types.SourceLineage{Name: base.Name, Digest: indexDigest}
+	source := &multiPlatformSource{Current: base, Base: base, IndexLineage: lineage}
+	originalRef, err := reference.ParseNormalizedNamed(base.Name)
+	require.NoError(t, err)
+	patchedRef, err := reference.ParseNormalizedNamed("registry.example.com/team/app:patched-amd64")
+	require.NoError(t, err)
+
+	items := []types.PatchResult{
+		{
+			OriginalRef:   originalRef,
+			PatchedRef:    patchedRef,
+			PatchedDesc:   &v1.Descriptor{Digest: digest.FromString("patched-amd64"), Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}},
+			SourceLineage: &types.SourceLineage{Name: base.Name, Digest: amdDigest},
+		},
+		{
+			OriginalRef: originalRef,
+			PatchedRef:  originalRef,
+			PatchedDesc: &v1.Descriptor{Digest: armDigest, Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}},
+		},
+	}
+
+	assert.Equal(t, lineage, commonBaseIndexLineage(source, items))
+
+	items[0].SourceLineage.Digest = digest.FromString("different-base")
+	assert.Nil(t, commonBaseIndexLineage(source, items), "a child mismatch must omit index lineage")
+
+	items[0].SourceLineage.Digest = amdDigest
+	items[0].SourceLineage.Name = "registry.example.com/different/app:1.0"
+	assert.Nil(t, commonBaseIndexLineage(source, items), "a base-name mismatch must omit index lineage")
+}
+
+func TestCommonBaseIndexLineageAcceptsPreservedPatchedChild(t *testing.T) {
+	indexDigest := digest.FromString("source-index")
+	childDigest := digest.FromString("source-amd64")
+	base := &buildkit.ImageSource{
+		Name:       "registry.example.com/team/app:1.0",
+		Descriptor: v1.Descriptor{Digest: indexDigest, MediaType: v1.MediaTypeImageIndex},
+		Index: &v1.Index{Manifests: []v1.Descriptor{{
+			Digest: childDigest, Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
+		}}},
+	}
+	lineage := &types.SourceLineage{Name: base.Name, Digest: indexDigest}
+	originalRef, err := reference.ParseNormalizedNamed("registry.example.com/team/app:patched")
+	require.NoError(t, err)
+	item := types.PatchResult{
+		OriginalRef: originalRef,
+		PatchedRef:  originalRef,
+		PatchedDesc: &v1.Descriptor{
+			Digest:   digest.FromString("previously-patched-amd64"),
+			Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
+			Annotations: map[string]string{
+				v1.AnnotationBaseImageName:   base.Name,
+				v1.AnnotationBaseImageDigest: childDigest.String(),
+			},
+		},
+	}
+
+	assert.Equal(t, lineage, commonBaseIndexLineage(
+		&multiPlatformSource{Current: base, Base: base, IndexLineage: lineage},
+		[]types.PatchResult{item},
+	))
+}
+
+func TestPlatformSourceReferencePinsSelectedChild(t *testing.T) {
+	childDigest := digest.FromString("source-amd64")
+	source := &buildkit.ImageSource{
+		Name: "registry.example.com/team/app:1.0",
+		Index: &v1.Index{Manifests: []v1.Descriptor{{
+			Digest: childDigest, Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
+		}}},
+	}
+
+	got, err := platformSourceReference(source, &v1.Platform{OS: "linux", Architecture: "amd64"})
+	require.NoError(t, err)
+	assert.Equal(t, "registry.example.com/team/app@"+childDigest.String(), got)
+}
+
+func TestImmutableCurrentIndexReferenceUsesCurrentSnapshotOnRepatch(t *testing.T) {
+	currentDigest := digest.FromString("current-patched-index")
+	baseDigest := digest.FromString("older-original-index")
+	source := &multiPlatformSource{
+		Current: &buildkit.ImageSource{
+			Name:       "registry.example.com/team/app:patched",
+			Descriptor: v1.Descriptor{Digest: currentDigest, MediaType: v1.MediaTypeImageIndex},
+			Index:      &v1.Index{},
+		},
+		Base: &buildkit.ImageSource{
+			Name:       "registry.example.com/team/app:1.0",
+			Descriptor: v1.Descriptor{Digest: baseDigest, MediaType: v1.MediaTypeImageIndex},
+			Index:      &v1.Index{},
+		},
+		IndexLineage: &types.SourceLineage{Name: "registry.example.com/team/app:1.0", Digest: baseDigest},
+	}
+
+	got, err := immutableCurrentIndexReference(source)
+	require.NoError(t, err)
+	assert.Equal(t, "registry.example.com/team/app@"+currentDigest.String(), got.String())
+	assert.NotContains(t, got.String(), baseDigest.String(), "preserved bytes come from the current snapshot, not its older lineage base")
 }
 
 func platformSpec(os, arch, variant string) v1.Platform {

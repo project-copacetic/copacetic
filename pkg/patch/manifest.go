@@ -3,6 +3,7 @@ package patch
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"time"
 
@@ -11,10 +12,10 @@ import (
 	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/session/auth/authprovider"
+	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/project-copacetic/copacetic/pkg/types"
-	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 const (
@@ -28,87 +29,18 @@ func createMultiPlatformManifest(
 	ctx context.Context,
 	imageName reference.NamedTagged,
 	items []types.PatchResult,
-	originalImage string,
+	originalAnnotations map[string]string,
+	indexLineage *types.SourceLineage,
 ) error {
 	resolver := imagetools.New(imagetools.Opt{
 		Auth: authprovider.LoadAuthConfig(config.LoadDefaultConfigFile(os.Stderr)),
 	})
 
-	// fetch annotations from the original image
-	annotations := make(map[exptypes.AnnotationKey]string)
-
-	// Get the original image index manifest annotations.
-	//
-	// This lookup is safe to perform here (after per-platform patches have built
-	// and been pushed) because per-platform pushes go to architecture-suffixed
-	// tags such as `image:tag-amd64` (see archTag in pkg/patch/single.go:107),
-	// not to the source `originalImage` tag. The source ref is not overwritten
-	// until resolver.Push at the bottom of this function, by which point we have
-	// already read the annotations.
-	originalAnnotations, err := utils.GetIndexManifestAnnotations(ctx, originalImage)
-	if err != nil {
-		log.Warnf("Failed to get original image annotations: %v", err)
-		// Even if we fail to get original annotations, we should add Copa annotations
-		createdKey := exptypes.AnnotationKey{
-			Type: exptypes.AnnotationIndex,
-			Key:  "org.opencontainers.image.created",
-		}
-		annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
-
-		// Add Copa-specific annotation at index level
-		copaKey := exptypes.AnnotationKey{
-			Type: exptypes.AnnotationIndex,
-			Key:  copaAnnotationKeyPrefix + ".patched",
-		}
-		annotations[copaKey] = time.Now().UTC().Format(time.RFC3339)
-	} else {
-		log.Infof("Retrieved %d annotations from original image %s", len(originalAnnotations), originalImage)
-		if len(originalAnnotations) > 0 {
-			// copy all annotations from the original image
-			for k, v := range originalAnnotations {
-				// create an AnnotationKey for index level annotations
-				ak := exptypes.AnnotationKey{
-					Type: exptypes.AnnotationIndex,
-					Key:  k,
-				}
-				annotations[ak] = v
-			}
-
-			// update annotations that should reflect the patched state
-			// update the created timestamp to reflect when the patch was applied
-			createdKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  "org.opencontainers.image.created",
-			}
-			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
-
-			// if theres a version annotation, update it to reflect the patched tag
-			versionKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  "org.opencontainers.image.version",
-			}
-			if version, ok := annotations[versionKey]; ok {
-				annotations[versionKey] = rewriteVersionAnnotation(version, imageName.Tag())
-			}
-
-			log.Debugf("Preserving %d annotations from original image", len(annotations))
-		} else {
-			log.Info("No annotations found in original image, adding Copa annotations only")
-			// add Copa-specific annotations even if there are no original annotations
-			createdKey := exptypes.AnnotationKey{
-				Type: exptypes.AnnotationIndex,
-				Key:  "org.opencontainers.image.created",
-			}
-			annotations[createdKey] = time.Now().UTC().Format(time.RFC3339)
-		}
+	indexAnnotations := multiPlatformIndexAnnotations(imageName, originalAnnotations, indexLineage, time.Now().UTC())
+	annotations := make(map[exptypes.AnnotationKey]string, len(indexAnnotations))
+	for key, value := range indexAnnotations {
+		annotations[exptypes.AnnotationKey{Type: exptypes.AnnotationIndex, Key: key}] = value
 	}
-
-	// Always ensure we have Copa-specific annotation at index level
-	copaKey := exptypes.AnnotationKey{
-		Type: exptypes.AnnotationIndex,
-		Key:  copaAnnotationKeyPrefix + ".patched",
-	}
-	annotations[copaKey] = time.Now().UTC().Format(time.RFC3339)
 
 	// add manifest descriptor level annotations for each platform
 	for _, it := range items {
@@ -172,4 +104,33 @@ func createMultiPlatformManifest(
 
 	log.Infof("Successfully pushed multi-platform manifest list to %s", imageName.String())
 	return nil
+}
+
+func multiPlatformIndexAnnotations(
+	imageName reference.NamedTagged,
+	originalAnnotations map[string]string,
+	indexLineage *types.SourceLineage,
+	created time.Time,
+) map[string]string {
+	annotations := maps.Clone(originalAnnotations)
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	// A copied pair may describe an ancestor of the current source. Newly
+	// computed lineage wins, and an unknown pair is omitted rather than stale.
+	delete(annotations, ispec.AnnotationBaseImageName)
+	delete(annotations, ispec.AnnotationBaseImageDigest)
+	if indexLineage.Valid() {
+		annotations[ispec.AnnotationBaseImageName] = indexLineage.Name
+		annotations[ispec.AnnotationBaseImageDigest] = indexLineage.Digest.String()
+	}
+
+	now := created.UTC().Format(time.RFC3339)
+	annotations[ispec.AnnotationCreated] = now
+	annotations[copaAnnotationKeyPrefix+".patched"] = now
+	if version, ok := annotations[ispec.AnnotationVersion]; ok {
+		annotations[ispec.AnnotationVersion] = rewriteVersionAnnotation(version, imageName.Tag())
+	}
+	return annotations
 }
