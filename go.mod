@@ -16,17 +16,17 @@ require (
 	github.com/cpuguy83/go-docker v0.4.0
 	github.com/distribution/reference v0.6.0
 	github.com/docker/buildx v0.32.1
-	github.com/docker/cli v29.5.3+incompatible
+	github.com/docker/cli v29.7.2+incompatible
 	github.com/docker/docker v28.5.2+incompatible
-	github.com/google/go-containerregistry v0.21.6
+	github.com/google/go-containerregistry v0.22.1
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/klauspost/compress v1.18.7
+	github.com/klauspost/compress v1.19.2
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
 	github.com/moby/buildkit v0.31.1
 	github.com/moby/moby/api v1.55.0
-	github.com/moby/moby/client v0.5.0
+	github.com/moby/moby/client v0.5.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/openvex/go-vex v0.2.7
@@ -40,7 +40,7 @@ require (
 	github.com/tonistiigi/fsutil v0.0.0-20260609091201-0257b3308df4
 	github.com/vito/progrock v0.10.1
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b
-	golang.org/x/mod v0.37.0
+	golang.org/x/mod v0.39.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/term v0.45.0
 	google.golang.org/grpc v1.83.1
