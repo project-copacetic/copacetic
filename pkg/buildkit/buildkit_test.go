@@ -28,9 +28,12 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/session"
+	"github.com/moby/buildkit/session/auth/authprovider"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	fstypes "github.com/tonistiigi/fsutil/types"
@@ -1470,4 +1473,31 @@ func TestPlatformsFromIndexManifest(t *testing.T) {
 		{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}, // v8 variant stripped
 	}
 	assert.Equal(t, want, got)
+}
+
+func TestEnsureAuthSessionAttachesDockerCredentials(t *testing.T) {
+	t.Run("attaches a session when none is set", func(t *testing.T) {
+		solveOpt := &client.SolveOpt{
+			Exports: []client.ExportEntry{{Type: client.ExporterOCI}},
+		}
+
+		ensureAuthSession(solveOpt)
+
+		assert.Len(t, solveOpt.Session, 1,
+			"an OCI export solve must carry Docker credentials, or BuildKit re-resolves the source image anonymously and a private registry rejects it")
+	})
+
+	t.Run("leaves a caller-supplied session alone", func(t *testing.T) {
+		supplied := authprovider.NewDockerAuthProvider(authprovider.DockerAuthProviderConfig{})
+		solveOpt := &client.SolveOpt{Session: []session.Attachable{supplied}}
+
+		ensureAuthSession(solveOpt)
+
+		require.Len(t, solveOpt.Session, 1)
+		assert.Same(t, supplied, solveOpt.Session[0], "the caller's session must not be replaced")
+	})
+
+	t.Run("tolerates a nil solveOpt", func(t *testing.T) {
+		assert.NotPanics(t, func() { ensureAuthSession(nil) })
+	})
 }
