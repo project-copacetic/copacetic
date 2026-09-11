@@ -35,6 +35,8 @@ When opening an issue, please select the most appropriate template for what you'
 
 Follow the instructions to set up your dev environment to build Copacetic.
 
+Building the current development branch requires Go 1.26.8 or newer, as declared in `go.mod`. Release binaries do not require a local Go installation.
+
 For an overview of the project components, refer to the [Copa design](./design.md) document.
 
 ### IDE Setup
