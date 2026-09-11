@@ -948,7 +948,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	if ignoreErrors {
 		zypperCmd = `
                 if ! { [[ -e "${COPA_RPM_DB_DIR}/Packages.db" ]] || [[ -e "${COPA_RPM_DB_DIR}/rpmdb.sqlite" ]] || [[ -e "${COPA_RPM_DB_DIR}/Packages" ]]; }; then echo "RPM DB not found"; exit 1; fi
-                zypper --non-interactive refresh
+                zypper --non-interactive refresh || exit $?
                 output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1) || true
                 echo "$output"
                 if ! echo "$output" | grep -q "Nothing to do."; then
@@ -1092,8 +1092,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	var dnfCmd string
 	if ignoreErrors {
 		dnfCmd = `
-                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
-                output=$(dnf --refresh --installroot="${COPA_CHROOT_DIR}" \
+                output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
                     --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
@@ -1110,8 +1109,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	`
 	} else {
 		dnfCmd = `
-                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
-                output=$(dnf --refresh --installroot="${COPA_CHROOT_DIR}" \
+                output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
                     --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
@@ -1129,7 +1127,14 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
 	`
 	}
+	// Repository refresh must succeed even when package failures are tolerated.
 	dnfCmd = `rm -f "${COPA_UPDATES_MARKER}" || exit $?
+                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
+                dnf --refresh --installroot="${COPA_CHROOT_DIR}" \
+                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --releasever="${COPA_RELEASE_VER}" \
+                    --nogpgcheck \
+                    makecache -y || exit $?
 ` + fmt.Sprintf(dnfCmd, pkgs, pkgs)
 
 	// Derive the release version (major.minor) for dnf --releasever

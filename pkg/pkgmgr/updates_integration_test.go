@@ -269,7 +269,7 @@ func TestRPMExternalChecksRunForEachBuildWithBuildKit(t *testing.T) {
 
 	for _, manager := range []string{testRPMDistroless, "zypper", "dnf"} {
 		t.Run(manager, func(t *testing.T) {
-			op, ignoreCache := rpmExternalCheckOperation(t, manager)
+			op, ignoreCache := rpmExternalCheckOperation(t, manager, false)
 			// Replay the generated command and cache policy with controlled tools.
 			// Keeping the inputs identical exposes cache reuse across builds.
 			state := llb.Image("docker.io/library/bash:5.2", llb.ResolveModePreferLocal).

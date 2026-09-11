@@ -327,68 +327,97 @@ func TestRPMUpdateCheckStopsAfterSetupFailure(t *testing.T) {
 	}
 }
 
-func TestZypperRefreshFailureStopsUpdate(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is required to exercise the zypper tooling script")
-	}
-	client := new(mocks.MockGWClient)
-	client.On("Solve", mock.Anything, mock.Anything).Return(&gwclient.Result{}, nil).Once()
-	stop := errors.New("stop after recording the install script")
-	var script string
-	client.On("Solve", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		req, ok := args.Get(1).(gwclient.SolveRequest)
-		require.True(t, ok)
-		for _, data := range req.Definition.Def {
-			var op pb.Op
-			require.NoError(t, op.UnmarshalVT(data))
-			if command := op.GetExec(); command != nil && len(command.Meta.Args) == 3 {
-				if strings.Contains(command.Meta.Args[2], "zypper --non-interactive refresh") {
-					script = command.Meta.Args[2]
-				}
-			}
-		}
-	}).Return((*gwclient.Result)(nil), stop).Once()
-	rm := &rpmManager{config: &buildkit.Config{Client: client, ImageState: llb.Scratch()}}
-	_, _, err = rm.zypperChrootInstallUpdates(t.Context(), nil, "tooling:latest", nil, false)
-	require.ErrorIs(t, err, stop)
-	require.NotEmpty(t, script)
-	client.AssertExpectations(t)
-
-	workDir := t.TempDir()
-	binDir := t.TempDir()
-	callLog := filepath.Join(workDir, "calls.txt")
-	require.NoError(t, os.WriteFile(filepath.Join(workDir, "Packages.db"), nil, 0o600))
-	writeTestExecutable(t, binDir, "zypper", `#!/bin/sh
-printf '%s\n' "$*" >> "$ZYPPER_CALLS"
-if [ "$2" = refresh ]; then
-    printf '%s\n' 'repository certificate verification failed' >&2
+const rpmChrootFailureTestTool = `#!/bin/sh
+printf '%s\n' "$*" >> "$CHECK_CALLS"
+refresh=false
+upgrade=false
+for arg in "$@"; do
+    case "$arg" in
+        --refresh|refresh|makecache) refresh=true ;;
+        up|upgrade) upgrade=true ;;
+    esac
+done
+if [ "$refresh" = true ] && [ "$CHECK_FAIL_STAGE" = refresh ]; then
+    printf '%s\n' 'repository refresh failed'
+    printf '%s\n' 'repository unreachable' >&2
     exit 42
 fi
-exit 99
-`)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bash, "-c", script)
-	cmd.Env = append(os.Environ(),
-		"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
-		"COPA_RPM_DB_DIR="+workDir,
-		"COPA_CHROOT_DIR="+workDir,
-		"COPA_UPDATES_MARKER="+filepath.Join(workDir, "updates.txt"),
-		"COPA_MANIFEST_FILE="+filepath.Join(workDir, "manifest"),
-		"ZYPPER_CALLS="+callLog,
-	)
-	output, err := cmd.CombinedOutput()
-	var exitErr *exec.ExitError
-	require.ErrorAs(t, err, &exitErr, "script output: %s", output)
-	assert.Equal(t, 42, exitErr.ExitCode())
-	assert.Contains(t, string(output), "repository certificate verification failed")
-	assertFileContent(t, callLog, "--non-interactive refresh\n")
+if [ "$upgrade" = true ]; then
+    if [ "$CHECK_FAIL_STAGE" = upgrade ]; then
+        printf '%s\n' 'package upgrade failed'
+        printf '%s\n' 'package unavailable' >&2
+        exit 43
+    fi
+    printf '%s\n' 'Nothing to do.'
+fi
+`
+
+func TestRPMChrootErrorHandling(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is required to exercise external RPM tooling scripts")
+	}
+	for _, manager := range []string{"zypper", "dnf"} {
+		for _, ignoreErrors := range []bool{false, true} {
+			for _, stage := range []string{"refresh", "upgrade"} {
+				t.Run(fmt.Sprintf("%s/ignore=%t/%s", manager, ignoreErrors, stage), func(t *testing.T) {
+					op, _ := rpmExternalCheckOperation(t, manager, ignoreErrors)
+					workDir, binDir := t.TempDir(), t.TempDir()
+					callLog := filepath.Join(workDir, "calls.txt")
+					marker := filepath.Join(workDir, "updates.txt")
+					rpmDB := filepath.Join(workDir, "var", "lib", "rpm")
+					require.NoError(t, os.MkdirAll(rpmDB, 0o700))
+					require.NoError(t, os.WriteFile(filepath.Join(rpmDB, "Packages.db"), nil, 0o600))
+					require.NoError(t, os.WriteFile(marker, []byte("stale marker"), 0o600))
+					writeTestExecutable(t, binDir, manager, rpmChrootFailureTestTool)
+					writeTestExecutable(t, binDir, "rpm", "#!/bin/sh\nprintf 'example\\t1.0\\tx86_64\\n'\n")
+					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					defer cancel()
+					// #nosec G204 -- Exercise Copa-generated scripts with fixed synthetic inputs.
+					cmd := exec.CommandContext(ctx, bash, "-c", op.Meta.Args[2])
+					cmd.Dir = workDir
+					cmd.Env = append(os.Environ(),
+						"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+						"COPA_RPM_DB_DIR="+rpmDB,
+						"COPA_CHROOT_DIR="+workDir,
+						"COPA_UPDATES_MARKER="+marker,
+						"COPA_MANIFEST_FILE="+filepath.Join(workDir, "manifest"),
+						"COPA_RELEASE_VER=1.0",
+						"CHECK_CALLS="+callLog,
+						"CHECK_FAIL_STAGE="+stage,
+					)
+					output, err := cmd.CombinedOutput()
+					if stage == "upgrade" && ignoreErrors {
+						require.NoError(t, err, "package failures remain optional: %s", output)
+					} else {
+						var exitErr *exec.ExitError
+						require.ErrorAs(t, err, &exitErr, "script output: %s", output)
+						wantStatus := 43
+						if stage == "refresh" {
+							wantStatus = 42
+						}
+						assert.Equal(t, wantStatus, exitErr.ExitCode(), "script output: %s", output)
+						assert.NoFileExists(t, marker, "failed setup or upgrade must not leave a success marker")
+					}
+					if stage == "refresh" {
+						assert.Contains(t, string(output), "repository refresh failed")
+						assert.Contains(t, string(output), "repository unreachable")
+						calls, err := os.ReadFile(callLog)
+						require.NoError(t, err)
+						assert.Len(t, strings.Split(strings.TrimSpace(string(calls)), "\n"), 1, "stop immediately after the failed refresh")
+					} else {
+						assert.Contains(t, string(output), "package upgrade failed")
+						assert.Contains(t, string(output), "package unavailable")
+					}
+				})
+			}
+		}
+	}
 }
 
 // Capture the actual update-check command and cache policy generated by each
 // external RPM path. The tests replace only its tooling and target filesystem.
-func rpmExternalCheckOperation(t *testing.T, manager string) (*pb.ExecOp, bool) {
+func rpmExternalCheckOperation(t *testing.T, manager string, ignoreErrors bool) (*pb.ExecOp, bool) {
 	t.Helper()
 	client := new(mocks.MockGWClient)
 	ref := new(mocks.MockReference)
@@ -432,11 +461,11 @@ func rpmExternalCheckOperation(t *testing.T, manager string) (*pb.ExecOp, bool) 
 	var err error
 	switch manager {
 	case testRPMDistroless, "distroless-install":
-		_, _, err = rm.unpackAndMergeUpdates(t.Context(), nil, "tooling:latest", nil, false)
+		_, _, err = rm.unpackAndMergeUpdates(t.Context(), nil, "tooling:latest", nil, ignoreErrors)
 	case "zypper":
-		_, _, err = rm.zypperChrootInstallUpdates(t.Context(), nil, "tooling:latest", nil, false)
+		_, _, err = rm.zypperChrootInstallUpdates(t.Context(), nil, "tooling:latest", nil, ignoreErrors)
 	case "dnf":
-		_, _, err = rm.dnfChrootInstallUpdates(t.Context(), nil, "tooling:latest", nil, false)
+		_, _, err = rm.dnfChrootInstallUpdates(t.Context(), nil, "tooling:latest", nil, ignoreErrors)
 	default:
 		t.Fatalf("unexpected external RPM manager %q", manager)
 	}
@@ -469,7 +498,7 @@ func TestRPMExternalUpdateScripts(t *testing.T) {
 	}
 	for _, manager := range []string{testRPMDistroless, "zypper", "dnf"} {
 		t.Run(manager, func(t *testing.T) {
-			op, _ := rpmExternalCheckOperation(t, manager)
+			op, _ := rpmExternalCheckOperation(t, manager, false)
 			for _, fail := range []bool{false, true} {
 				t.Run(fmt.Sprintf("failure=%t", fail), func(t *testing.T) {
 					workDir, binDir := t.TempDir(), t.TempDir()
@@ -530,7 +559,7 @@ func TestRPMDistrolessInstallPreservesFailure(t *testing.T) {
 	if err != nil {
 		t.Skip("bash is required to exercise the RPM distroless install script")
 	}
-	op, _ := rpmExternalCheckOperation(t, "distroless-install")
+	op, _ := rpmExternalCheckOperation(t, "distroless-install", false)
 	workDir, binDir := t.TempDir(), t.TempDir()
 	rootfs := filepath.Join(workDir, "rootfs")
 	rpmDB := filepath.Join(workDir, "rpmdb")
