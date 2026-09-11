@@ -445,7 +445,7 @@ func TestPatchDaemonOnlyImage(t *testing.T) {
 	// Use a small, stable image from the existing fixtures so we don't pull
 	// anything new. The digest pins the content to make the test reproducible.
 	const (
-		source     = "docker.io/library/nginx:1.21.6@sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514"
+		source     = "docker.io/library/nginx:1.25.3-bookworm@sha256:c7a6ad68be85142c7fe1089e48faa1e7c7166a194caa9180ddea66345876b9d2"
 		daemonOnly = "127.0.0.1:1/copa-daemon-only:original"
 		bogusHost  = "127.0.0.1:1"
 	)
