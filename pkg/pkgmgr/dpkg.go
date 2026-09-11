@@ -1709,16 +1709,8 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	// Only check for upgradable packages when updating all (no specific updates list).
 	if updates == nil {
-		const updatesAvailableMarker = "/updates.txt"
-		checkUpgradable := fmt.Sprintf(`sh -c 'if apt-get -s upgrade 2>/dev/null | grep -q "^Inst"; then touch %s; fi'`, updatesAvailableMarker)
-		aptGetUpdated = aptGetUpdated.Run(
-			llb.Shlex(checkUpgradable),
-			llb.WithCustomName("Checking for upgradable packages"),
-		).Root()
-
-		_, err := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
-		if err != nil {
-			if !isMarkerMissingErr(err, updatesAvailableMarker) {
+		if err := checkAvailableUpdates(ctx, dm.config.Client, &aptGetUpdated, "apt", "apt-get"); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
 				return nil, nil, fmt.Errorf("failed while checking for available apt updates: %w", err)
 			}
 			log.Info("No upgradable packages found for this image.")

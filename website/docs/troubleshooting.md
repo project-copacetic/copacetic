@@ -2,6 +2,12 @@
 title: Troubleshooting
 ---
 
+## Package update checks fail
+
+When patching without a scanner report, Copa checks whether package updates are available. A failed check is an error; it does not establish that the image is up to date. Errors such as `failed while checking for available rpm updates` retain the package manager's diagnostics in the build output.
+
+Check that output for the underlying cause, such as TLS certificate validation, unreachable repositories, or a damaged package database. For certificate failures, check the CA trust and repository configuration in the image that runs the package manager. Repair those inputs and retry with certificate verification enabled. `--ignore-errors` does not turn a failed update check into an up-to-date result.
+
 ## Bulk Patching: Images Not Being Skipped
 
 When using [bulk image patching](./bulk-image-patching.md) with `--push` and `-r`, Copa checks vulnerability reports to avoid unnecessary re-patching. If images are not being skipped as expected:
