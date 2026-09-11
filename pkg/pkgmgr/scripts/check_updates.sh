@@ -6,6 +6,16 @@ manager=$1
 tool=$2
 marker=$3
 
+# Query stdout can contain diagnostics even when the command fails.
+fail_with_output() {
+    status=$1
+    output=$2
+    if [ -n "$output" ]; then
+        printf '%s\n' "$output"
+    fi
+    exit "$status"
+}
+
 # A previous check or input image must not supply this check's result.
 rm -f "$marker"
 
@@ -29,21 +39,21 @@ case "$manager" in
         updates=$("$tool" -q check-update) || status=$?
         case "$status" in
             0|100) ;;
-            *) exit "$status" ;;
+            *) fail_with_output "$status" "$updates" ;;
         esac
         if [ "$status" -eq 100 ] || [ -n "$updates" ]; then
             : > "$marker"
         fi
         ;;
     apk)
-        updates=$("$tool" list -u)
+        updates=$("$tool" list -u) || fail_with_output "$?" "$updates"
         if [ -n "$updates" ]; then
             : > "$marker"
         fi
         ;;
     apt)
         # APT's exit 100 is an error, unlike Yum/DNF's check-update status.
-        updates=$("$tool" -s upgrade)
+        updates=$("$tool" -s upgrade) || fail_with_output "$?" "$updates"
         status=0
         printf '%s\n' "$updates" | grep '^Inst' > /dev/null || status=$?
         case "$status" in
@@ -68,10 +78,10 @@ case "$manager" in
                 ;;
             1)
                 if [ -n "$updates" ] || [ -s "$diagnostics" ]; then
-                    exit "$status"
+                    fail_with_output "$status" "$updates"
                 fi
                 ;;
-            *) exit "$status" ;;
+            *) fail_with_output "$status" "$updates" ;;
         esac
         ;;
     *)

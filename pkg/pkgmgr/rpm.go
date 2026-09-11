@@ -697,7 +697,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 			llb.Args([]string{
 				`bash`, `-c`, `
                                 rm -f "${COPA_UPDATES_MARKER}" packages.txt || exit $?
-                                yum clean all || exit $?
+                                # Both supported tooling bases provide tdnf; yum is not guaranteed.
+                                tdnf clean all || exit $?
                                 json_str=$PACKAGES_PRESENT
                                 update_packages=""
 
@@ -705,7 +706,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
                                     pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
                                     pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-                                    available=$(yum list available "$pkg_name") || exit $?
+                                    available=$(tdnf list available "$pkg_name") || {
+                                        status=$?
+                                        if [ -n "$available" ]; then
+                                            printf '%s\n' "$available"
+                                        fi
+                                        exit "$status"
+                                    }
                                     latest_version=$(echo "$available" | grep "$pkg_name" | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
 
                                     if [ "$latest_version" != "$pkg_version" ]; then

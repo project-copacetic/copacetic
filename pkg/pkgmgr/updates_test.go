@@ -210,6 +210,9 @@ func runUpdateCheckScript(t *testing.T, tc *updateScriptCase) string {
 		var exitErr *exec.ExitError
 		require.ErrorAs(t, err, &exitErr, "script output: %s", output)
 		assert.Equal(t, tc.wantStatus, exitErr.ExitCode(), "script output: %s", output)
+		if tc.failStage == "" && tc.output != "" {
+			assert.Contains(t, string(output), strings.TrimRight(tc.output, "\n"), "failed queries must preserve stdout")
+		}
 	}
 	if tc.wantUpdates {
 		assert.FileExists(t, marker)
@@ -250,6 +253,11 @@ func TestUpdateCheckScript(t *testing.T) {
 			t.Run("updates available", func(t *testing.T) {
 				runUpdateCheckScript(t, &updateScriptCase{
 					manager: manager, status: updatesStatus, output: updatesOutput, wantUpdates: true,
+				})
+			})
+			t.Run("failure with stdout only", func(t *testing.T) {
+				runUpdateCheckScript(t, &updateScriptCase{
+					manager: manager, status: 42, output: "repository lookup failed on stdout\n", wantStatus: 42,
 				})
 			})
 			t.Run("repository failure", func(t *testing.T) {
@@ -470,9 +478,11 @@ func TestRPMExternalUpdateScripts(t *testing.T) {
 					rpmDB := filepath.Join(workDir, "var", "lib", "rpm")
 					require.NoError(t, os.MkdirAll(rpmDB, 0o700))
 					require.NoError(t, os.WriteFile(filepath.Join(rpmDB, "Packages.db"), nil, 0o600))
-					for _, tool := range []string{"yum", "dnf", "zypper"} {
+					for _, tool := range []string{"tdnf", "dnf", "zypper"} {
 						writeTestExecutable(t, binDir, tool, rpmExternalCheckTestTool)
 					}
+					// Tooling may provide tdnf without the yum compatibility command.
+					writeTestExecutable(t, binDir, "yum", "#!/bin/sh\nexit 127\n")
 					writeTestExecutable(t, binDir, "rpm", "#!/bin/sh\nprintf 'example\\t1.0\\tx86_64\\n'\n")
 					output := "Nothing to do.\n"
 					if manager == testRPMDistroless {
@@ -504,6 +514,7 @@ func TestRPMExternalUpdateScripts(t *testing.T) {
 						require.ErrorAs(t, err, &exitErr, "script output: %s", actual)
 						assert.Equal(t, 42, exitErr.ExitCode())
 						assert.Contains(t, string(actual), diagnostics)
+						assert.Contains(t, string(actual), strings.TrimRight(output, "\n"), "failed external checks must preserve stdout")
 					} else {
 						require.NoError(t, err, "script output: %s", actual)
 					}

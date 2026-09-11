@@ -33,6 +33,20 @@ func TestUpdateChecksWithBuildKit(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
 
+	progress := make(chan *bkclient.SolveStatus)
+	var stdout strings.Builder
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		for status := range progress {
+			for _, entry := range status.Logs {
+				if entry.Stream == 1 {
+					stdout.Write(entry.Data)
+				}
+			}
+		}
+	}()
+
 	_, err = client.Build(ctx, bkclient.SolveOpt{}, "copa-update-check-test", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
 		const tool = "/usr/local/bin/copa-check-test-tool"
 		base := llb.Image("docker.io/library/alpine:3.20", llb.ResolveModePreferLocal).
@@ -65,6 +79,7 @@ func TestUpdateChecksWithBuildKit(t *testing.T) {
 				{"no updates", noUpdatesStatus, "", "", true, 0},
 				{"updates available", updatesStatus, updatesOutput, "", false, 0},
 				{"repository failure", 1, "", "SSL certificate verification failed\n", false, 1},
+				{"stdout-only failure", 42, "stdout failure from " + manager + "\n", "", false, 42},
 				{"partial failure", 1, updatesOutput, "failed to synchronize one repository\n", false, 1},
 			}
 			if manager == testAPT {
@@ -94,8 +109,12 @@ func TestUpdateChecksWithBuildKit(t *testing.T) {
 			}
 		}
 		return &gwclient.Result{}, nil
-	}, nil)
+	}, progress)
+	<-progressDone
 	require.NoError(t, err)
+	for _, manager := range []string{testYUM, testDNF, testTDNF, testMicroDNF, testAPK, testAPT, testPacman} {
+		require.Contains(t, stdout.String(), "stdout failure from "+manager, "BuildKit must receive failed query stdout")
+	}
 }
 
 type updateCheckResultClient struct {
@@ -260,7 +279,7 @@ func TestRPMExternalChecksRunForEachBuildWithBuildKit(t *testing.T) {
 				AddEnv("CHECK_STATUS", "0").
 				AddEnv("CHECK_DIAGNOSTICS", "").
 				AddEnv("CHECK_EXECUTION_FILE", "/copa-check-execution")
-			for _, tool := range []string{"yum", "dnf", "zypper"} {
+			for _, tool := range []string{"tdnf", "dnf", "zypper"} {
 				state = state.File(llb.Mkfile("/usr/local/bin/"+tool, 0o755, []byte(rpmExternalCheckTestTool)))
 			}
 			state = state.File(llb.Mkfile("/usr/local/bin/rpm", 0o755, []byte("#!/bin/sh\nprintf 'example\\t1.0\\tx86_64\\n'\n")))
