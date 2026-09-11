@@ -36,7 +36,7 @@ case "$manager" in
         fi
         ;;
     apk)
-        updates=$("$tool" list --upgradable)
+        updates=$("$tool" list -u)
         if [ -n "$updates" ]; then
             : > "$marker"
         fi

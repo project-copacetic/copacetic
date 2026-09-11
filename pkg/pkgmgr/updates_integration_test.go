@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,4 +154,190 @@ fi
 		require.NoError(t, err)
 	}
 	require.NotEqual(t, executions[0], executions[1], "a previous no-update result must not bypass a new repository check")
+}
+
+func TestRPMInstallRunsForEachBuildWithBuildKit(t *testing.T) {
+	addr := os.Getenv("COPA_BUILDKIT_ADDR")
+	if addr == "" {
+		t.Skip("COPA_BUILDKIT_ADDR is required for BuildKit integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	client, err := buildkit.NewClient(ctx, buildkit.Opts{Addr: addr})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	// Model metadata inherited from the image separately from the metadata
+	// refreshed by the detached update check. The install must refresh its own
+	// metadata and execute again even when its image and command are unchanged.
+	const script = `#!/bin/sh
+set -eu
+case "$1" in
+    install) ;;
+    clean) rm -f /copa-repository-cache ;;
+    makecache) cat /proc/sys/kernel/random/uuid > /copa-repository-cache ;;
+    -q) exit 100 ;;
+    upgrade|update)
+        if [ "${2:-}" = --refresh ]; then
+            rm -f /copa-repository-cache
+        fi
+        if [ ! -f /copa-repository-cache ]; then
+            cat /proc/sys/kernel/random/uuid > /copa-repository-cache
+        fi
+        cp /copa-repository-cache /copa-metadata-used
+        cat /proc/sys/kernel/random/uuid > /copa-install-execution
+        ;;
+    *) exit 42 ;;
+esac
+`
+	base := llb.Image("docker.io/library/alpine:3.20", llb.ResolveModePreferLocal).
+		Network(llb.NetModeNone).
+		File(llb.Mkfile("/copa-repository-cache", 0o644, []byte("stale metadata")))
+	for _, manager := range []string{testYUM, testDNF, testTDNF, testMicroDNF} {
+		base = base.File(llb.Mkfile("/usr/bin/"+manager, 0o755, []byte(script)))
+	}
+
+	for _, manager := range []string{testYUM, testDNF, testTDNF, testMicroDNF} {
+		t.Run(manager, func(t *testing.T) {
+			var executions, metadata []string
+			for range 2 {
+				_, err := client.Build(ctx, bkclient.SolveOpt{}, "copa-rpm-install-cache-test", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+					rm := &rpmManager{
+						config:   &buildkit.Config{Client: client, ImageState: base},
+						rpmTools: rpmToolPaths{manager: "/usr/bin/" + manager},
+					}
+					patched, _, err := rm.installUpdates(ctx, nil, false)
+					require.NoError(t, err)
+					require.NotNil(t, patched)
+					definition, err := patched.Marshal(ctx)
+					require.NoError(t, err)
+					result, err := client.Solve(ctx, gwclient.SolveRequest{Definition: definition.ToPB(), Evaluate: true})
+					require.NoError(t, err)
+					ref, err := result.SingleRef()
+					require.NoError(t, err)
+					require.NotNil(t, ref)
+					execution, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/copa-install-execution"})
+					require.NoError(t, err)
+					require.NotEmpty(t, execution)
+					executions = append(executions, string(execution))
+					used, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/copa-metadata-used"})
+					require.NoError(t, err)
+					require.NotEmpty(t, used)
+					require.NotEqual(t, "stale metadata", string(used), "the install must not use metadata inherited from the image")
+					metadata = append(metadata, string(used))
+					_, err = ref.ReadFile(ctx, gwclient.ReadRequest{Filename: updatesAvailableMarker})
+					require.ErrorContains(t, err, "no such file or directory", "the update-check marker must not enter the patched image")
+					return &gwclient.Result{}, nil
+				}, nil)
+				require.NoError(t, err)
+			}
+			require.NotEqual(t, executions[0], executions[1], "each patch request must execute the upgrade")
+			require.NotEqual(t, metadata[0], metadata[1], "each upgrade must refresh repository metadata")
+		})
+	}
+}
+
+func TestRPMExternalChecksRunForEachBuildWithBuildKit(t *testing.T) {
+	addr := os.Getenv("COPA_BUILDKIT_ADDR")
+	if addr == "" {
+		t.Skip("COPA_BUILDKIT_ADDR is required for BuildKit integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	client, err := buildkit.NewClient(ctx, buildkit.Opts{Addr: addr})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	for _, manager := range []string{testRPMDistroless, "zypper", "dnf"} {
+		t.Run(manager, func(t *testing.T) {
+			op, ignoreCache := rpmExternalCheckOperation(t, manager)
+			// Replay the generated command and cache policy with controlled tools.
+			// Keeping the inputs identical exposes cache reuse across builds.
+			state := llb.Image("docker.io/library/bash:5.2", llb.ResolveModePreferLocal).
+				Network(llb.NetModeNone).
+				Dir(op.Meta.Cwd).
+				File(llb.Mkdir(op.Meta.Cwd, 0o755, llb.WithParents(true))).
+				AddEnv("CHECK_STATUS", "0").
+				AddEnv("CHECK_DIAGNOSTICS", "").
+				AddEnv("CHECK_EXECUTION_FILE", "/copa-check-execution")
+			for _, tool := range []string{"yum", "dnf", "zypper"} {
+				state = state.File(llb.Mkfile("/usr/local/bin/"+tool, 0o755, []byte(rpmExternalCheckTestTool)))
+			}
+			state = state.File(llb.Mkfile("/usr/local/bin/rpm", 0o755, []byte("#!/bin/sh\nprintf 'example\\t1.0\\tx86_64\\n'\n")))
+			output := "Nothing to do.\n"
+			if manager == testRPMDistroless {
+				output = "example.x86_64 1.0 repository\n"
+			}
+			state = state.AddEnv("CHECK_OUTPUT", output)
+			var marker string
+			for _, env := range op.Meta.Env {
+				key, value, ok := strings.Cut(env, "=")
+				require.True(t, ok)
+				state = state.AddEnv(key, value)
+				if key == "COPA_UPDATES_MARKER" {
+					marker = value
+				}
+			}
+			require.NotEmpty(t, marker)
+			state = state.File(llb.Mkfile(marker, 0o644, []byte("stale marker")))
+			opts := []llb.RunOption{llb.Args(op.Meta.Args)}
+			if ignoreCache {
+				opts = append(opts, llb.IgnoreCache)
+			}
+			run := state.Run(opts...)
+			for _, mount := range op.Mounts {
+				if mount.Dest == rpmChrootDir {
+					target := llb.Scratch().
+						File(llb.Mkdir("/tmp", 0o755)).
+						File(llb.Mkdir("/var/lib/rpm", 0o755, llb.WithParents(true))).
+						File(llb.Mkfile("/var/lib/rpm/Packages.db", 0o644, nil))
+					run.AddMount(mount.Dest, target)
+				}
+			}
+			checked := run.Root()
+			var executions []string
+			for range 2 {
+				_, err := client.Build(ctx, bkclient.SolveOpt{}, "copa-rpm-external-cache-test", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+					recorder := &updateCheckResultClient{Client: client}
+					err := checkUpdatesMarker(ctx, recorder, &checked, marker)
+					require.ErrorIs(t, err, types.ErrNoUpdatesFound)
+					require.NotNil(t, recorder.result)
+					ref, err := recorder.result.SingleRef()
+					require.NoError(t, err)
+					require.NotNil(t, ref)
+					execution, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: "/copa-check-execution"})
+					require.NoError(t, err)
+					require.NotEmpty(t, execution)
+					executions = append(executions, string(execution))
+					return &gwclient.Result{}, nil
+				}, nil)
+				require.NoError(t, err)
+			}
+			require.NotEqual(t, executions[0], executions[1], "external RPM checks must observe each build's repository state")
+		})
+	}
+}
+
+// Use a real older APK executable: synthetic tools cannot detect unsupported
+// options. No repository access is needed to prove a valid no-update result.
+func TestAPKUpdateCheckWithBuildKit(t *testing.T) {
+	addr := os.Getenv("COPA_BUILDKIT_ADDR")
+	if addr == "" {
+		t.Skip("COPA_BUILDKIT_ADDR is required for BuildKit integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	client, err := buildkit.NewClient(ctx, buildkit.Opts{Addr: addr})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	_, err = client.Build(ctx, bkclient.SolveOpt{}, "copa-apk-compatibility-test", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+		state := llb.Image("docker.io/library/alpine:3.15.4", llb.ResolveModePreferLocal).
+			Network(llb.NetModeNone).
+			File(llb.Mkfile(updatesAvailableMarker, 0o644, []byte("stale marker")))
+		err := checkAvailableUpdates(ctx, client, &state, testAPK, "/sbin/apk")
+		require.ErrorIs(t, err, types.ErrNoUpdatesFound)
+		return &gwclient.Result{}, nil
+	}, nil)
+	require.NoError(t, err)
 }

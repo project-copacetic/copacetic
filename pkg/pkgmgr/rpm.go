@@ -28,6 +28,7 @@ const (
 	rpmToolsFile        = "rpmTools"
 	rpmDBFile           = "rpmDB"
 	rpmLibPath          = "/var/lib/rpm"
+	rpmChrootDir        = "/tmp/rootfs"
 	rpmSQLLiteDB        = "rpmdb.sqlite"
 	rpmNDB              = "Packages.db"
 	rpmBDB              = "Packages"
@@ -568,11 +569,11 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		installCmd = fmt.Sprintf(dnfInstallTemplate, toolPath, pkgs)
 	case rm.rpmTools["yum"] != "":
 		manager, toolPath = "yum", rm.rpmTools["yum"]
-		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
+		const yumInstallTemplate = `sh -c '%[1]s clean all && %[1]s upgrade %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(yumInstallTemplate, toolPath, pkgs)
 	case rm.rpmTools["microdnf"] != "":
 		manager, toolPath = "microdnf", rm.rpmTools["microdnf"]
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
+		const microdnfInstallTemplate = `sh -c '%[1]s clean all && %[1]s update %[2]s -y && %[1]s clean all'`
 		installCmd = fmt.Sprintf(microdnfInstallTemplate, toolPath, pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
@@ -595,6 +596,8 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	installed := imageStateCurrent.Run(
 		llb.Shlex(installCmd),
 		llb.WithProxy(utils.GetProxy()),
+		// The update check is separate from this state; refresh the install too.
+		llb.IgnoreCache,
 		llb.WithCustomName(customName),
 	).Root()
 
@@ -687,9 +690,14 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
 	if updates == nil {
 		busyboxCopied = busyboxCopied.Run(
+			llb.IgnoreCache,
+			llb.WithProxy(utils.GetProxy()),
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
+			llb.AddEnv("COPA_UPDATES_MARKER", updatesAvailableMarker),
 			llb.Args([]string{
 				`bash`, `-c`, `
+                                rm -f "${COPA_UPDATES_MARKER}" packages.txt || exit $?
+                                yum clean all || exit $?
                                 json_str=$PACKAGES_PRESENT
                                 update_packages=""
 
@@ -697,7 +705,8 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
                                     pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
                                     pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-                                    latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
+                                    available=$(yum list available "$pkg_name") || exit $?
+                                    latest_version=$(echo "$available" | grep "$pkg_name" | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
 
                                     if [ "$latest_version" != "$pkg_version" ]; then
                                         update_packages="$update_packages $pkg_name"
@@ -706,7 +715,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
                                 if [ -n "$update_packages" ]; then
                                     echo "$update_packages" > packages.txt
-                                    touch /updates.txt
+                                    touch "${COPA_UPDATES_MARKER}"
                                 fi
                         `,
 			})).Root()
@@ -722,6 +731,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
 	rpmdb := busyboxCopied.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		llb.Args([]string{
@@ -741,7 +751,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 								OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
 
 								tdnf makecache
-								tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
+								tdnf install --refresh -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
 
 								ls /tmp/rootfs/var/lib/rpm
 						`,
@@ -769,10 +779,12 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 			# Convert OS_VERSION from X.Y.Z to X.Y format
 			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
 
-			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
+			output=$(tdnf install --refresh -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
+			status=$?
+			printf '%%s\n' "$output"
+			if [ "$IGNORE_ERRORS" = "false" ] && [ "$status" -ne 0 ]; then
+				exit "$status"
 			fi
 		done
 
@@ -808,10 +820,12 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			output=$(tdnf install --refresh -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
 
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
+			status=$?
+			printf '%s\n' "$output"
+			if [ "$IGNORE_ERRORS" = "false" ] && [ "$status" -ne 0 ]; then
+				exit "$status"
 			fi
 		done
 
@@ -836,12 +850,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	}
 
 	downloaded := busyboxCopied.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
 		llb.AddMount("/tmp/rpmdb", rpmdb),
-	).AddMount("/tmp/rootfs", rm.config.ImageState)
+	).AddMount(rpmChrootDir, rm.config.ImageState)
 
 	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &downloaded, "/manifest")
 	if err != nil {
@@ -905,7 +920,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
 	}
 
-	chrootDir := "/tmp/rootfs"
+	chrootDir := rpmChrootDir
 	manifestFile := "/tmp/manifest"
 
 	// If specific updates provided, parse into pkg names, else will update all
@@ -954,9 +969,11 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
 	`
 	}
-	zypperCmd = fmt.Sprintf(zypperCmd, pkgs, pkgs)
+	zypperCmd = `rm -f "${COPA_UPDATES_MARKER}" || exit $?
+` + fmt.Sprintf(zypperCmd, pkgs, pkgs)
 
 	run := toolingBase.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
 		llb.AddEnv("COPA_RPM_DB_DIR", chrootDir+rpmLibPath),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
@@ -1044,7 +1061,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
 	}
 
-	chrootDir := "/tmp/rootfs"
+	chrootDir := rpmChrootDir
 	manifestFile := "/tmp/manifest"
 
 	// If specific updates provided, parse into pkg names, else will update all
@@ -1069,7 +1086,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	if ignoreErrors {
 		dnfCmd = `
                 if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
-                output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
+                output=$(dnf --refresh --installroot="${COPA_CHROOT_DIR}" \
                     --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
@@ -1087,7 +1104,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	} else {
 		dnfCmd = `
                 if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
-                output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
+                output=$(dnf --refresh --installroot="${COPA_CHROOT_DIR}" \
                     --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
@@ -1105,7 +1122,8 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
 	`
 	}
-	dnfCmd = fmt.Sprintf(dnfCmd, pkgs, pkgs)
+	dnfCmd = `rm -f "${COPA_UPDATES_MARKER}" || exit $?
+` + fmt.Sprintf(dnfCmd, pkgs, pkgs)
 
 	// Derive the release version (major.minor) for dnf --releasever
 	releaseVer := rm.osVersion
@@ -1115,6 +1133,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	}
 
 	run := toolingBase.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
 		llb.AddEnv("COPA_RELEASE_VER", releaseVer),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
