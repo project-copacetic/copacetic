@@ -20,6 +20,8 @@ func checkAvailableUpdates(ctx context.Context, client gwclient.Client, state *l
 	checked := state.Run(
 		llb.Args([]string{"/bin/sh", "-c", checkUpdatesScript, "copa-check-updates", manager, tool, updatesAvailableMarker}),
 		llb.WithProxy(utils.GetProxy()),
+		// Repository contents can change without changing this image or command.
+		llb.IgnoreCache,
 		llb.WithCustomName("Checking for available updates"),
 	).Root()
 	return checkUpdatesMarker(ctx, client, &checked, updatesAvailableMarker)

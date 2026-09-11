@@ -96,3 +96,61 @@ func TestUpdateChecksWithBuildKit(t *testing.T) {
 	}, nil)
 	require.NoError(t, err)
 }
+
+type updateCheckResultClient struct {
+	gwclient.Client
+	result *gwclient.Result
+}
+
+//nolint:gocritic // gwclient.Client requires SolveRequest to be passed by value.
+func (c *updateCheckResultClient) Solve(ctx context.Context, req gwclient.SolveRequest) (*gwclient.Result, error) {
+	result, err := c.Client.Solve(ctx, req)
+	c.result = result
+	return result, err
+}
+
+func TestUpdateCheckRunsForEachBuildWithBuildKit(t *testing.T) {
+	addr := os.Getenv("COPA_BUILDKIT_ADDR")
+	if addr == "" {
+		t.Skip("COPA_BUILDKIT_ADDR is required for BuildKit integration tests")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	defer cancel()
+	client, err := buildkit.NewClient(ctx, buildkit.Opts{Addr: addr})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+
+	const tool = "/usr/local/bin/copa-check-test-tool"
+	const executionFile = "/copa-check-execution"
+	// The fixture always reports no updates, but records each actual execution.
+	// Its inputs remain identical across builds, as they do when only remote
+	// repository contents change between two patch requests for the same image.
+	const script = `#!/bin/sh
+if [ "$1" = -q ]; then
+    cat /proc/sys/kernel/random/uuid > /copa-check-execution
+fi
+`
+	base := llb.Image("docker.io/library/alpine:3.20", llb.ResolveModePreferLocal).
+		Network(llb.NetModeNone).
+		File(llb.Mkfile(tool, 0o755, []byte(script)))
+
+	var executions []string
+	for range 2 {
+		_, err := client.Build(ctx, bkclient.SolveOpt{}, "copa-update-check-cache-test", func(ctx context.Context, client gwclient.Client) (*gwclient.Result, error) {
+			recorder := &updateCheckResultClient{Client: client}
+			err := checkAvailableUpdates(ctx, recorder, &base, testYUM, tool)
+			require.ErrorIs(t, err, types.ErrNoUpdatesFound)
+			require.NotNil(t, recorder.result)
+			ref, err := recorder.result.SingleRef()
+			require.NoError(t, err)
+			require.NotNil(t, ref)
+			execution, err := ref.ReadFile(ctx, gwclient.ReadRequest{Filename: executionFile})
+			require.NoError(t, err)
+			require.NotEmpty(t, execution)
+			executions = append(executions, string(execution))
+			return &gwclient.Result{}, nil
+		}, nil)
+		require.NoError(t, err)
+	}
+	require.NotEqual(t, executions[0], executions[1], "a previous no-update result must not bypass a new repository check")
+}
