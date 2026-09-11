@@ -19,6 +19,7 @@ import (
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,8 @@ import (
 
 const (
 	testRPMDistroless = "distroless"
+	testStageInstall  = "install"
+	testStageRefresh  = "refresh"
 	testAPK           = "apk"
 	testAPT           = "apt"
 	testYUM           = "yum"
@@ -311,7 +314,7 @@ func TestRPMUpdateCheckStopsAfterSetupFailure(t *testing.T) {
 	for _, manager := range []string{testYUM, testDNF, testTDNF, testMicroDNF} {
 		stages := []string{"clean", "makecache"}
 		if manager == testMicroDNF {
-			stages = append(stages, "install")
+			stages = append(stages, testStageInstall)
 		}
 		for _, stage := range stages {
 			t.Run(manager+"/"+stage, func(t *testing.T) {
@@ -319,7 +322,7 @@ func TestRPMUpdateCheckStopsAfterSetupFailure(t *testing.T) {
 					manager: manager, failStage: stage, status: 100, output: "example 1.2.3\n", wantStatus: 42,
 				})
 				assert.NotContains(t, calls, "check-update", "must not use stale metadata after setup fails")
-				if stage == "install" {
+				if stage == testStageInstall {
 					assert.Equal(t, "install dnf -y", strings.TrimSpace(calls))
 				}
 			})
@@ -359,7 +362,7 @@ func TestRPMChrootErrorHandling(t *testing.T) {
 	}
 	for _, manager := range []string{"zypper", "dnf"} {
 		for _, ignoreErrors := range []bool{false, true} {
-			for _, stage := range []string{"refresh", "upgrade"} {
+			for _, stage := range []string{testStageRefresh, "upgrade"} {
 				t.Run(fmt.Sprintf("%s/ignore=%t/%s", manager, ignoreErrors, stage), func(t *testing.T) {
 					op, _ := rpmExternalCheckOperation(t, manager, ignoreErrors)
 					workDir, binDir := t.TempDir(), t.TempDir()
@@ -393,13 +396,13 @@ func TestRPMChrootErrorHandling(t *testing.T) {
 						var exitErr *exec.ExitError
 						require.ErrorAs(t, err, &exitErr, "script output: %s", output)
 						wantStatus := 43
-						if stage == "refresh" {
+						if stage == testStageRefresh {
 							wantStatus = 42
 						}
 						assert.Equal(t, wantStatus, exitErr.ExitCode(), "script output: %s", output)
 						assert.NoFileExists(t, marker, "failed setup or upgrade must not leave a success marker")
 					}
-					if stage == "refresh" {
+					if stage == testStageRefresh {
 						assert.Contains(t, string(output), "repository refresh failed")
 						assert.Contains(t, string(output), "repository unreachable")
 						calls, err := os.ReadFile(callLog)
@@ -430,9 +433,11 @@ func rpmExternalCheckOperation(t *testing.T, manager string, ignoreErrors bool) 
 			Return([]byte("yum\nrpm\ncpio\nbusybox\n"), nil).Once()
 	}
 	matchEnv := "COPA_UPDATES_MARKER="
-	if manager == "distroless-install" {
-		client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
-		ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{Filename: updatesAvailableMarker}).Return([]byte{}, nil).Once()
+	if strings.HasPrefix(manager, "distroless-install") {
+		if manager == "distroless-install" {
+			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
+			ref.On("ReadFile", mock.Anything, gwclient.ReadRequest{Filename: updatesAvailableMarker}).Return([]byte{}, nil).Once()
+		}
 		matchEnv = "IGNORE_ERRORS="
 	}
 	stop := errors.New("stop after recording the update check")
@@ -462,6 +467,9 @@ func rpmExternalCheckOperation(t *testing.T, manager string, ignoreErrors bool) 
 	switch manager {
 	case testRPMDistroless, "distroless-install":
 		_, _, err = rm.unpackAndMergeUpdates(t.Context(), nil, "tooling:latest", nil, ignoreErrors)
+	case "distroless-install-report":
+		updates := unversioned.UpdatePackages{{Name: "first"}, {Name: "second"}, {Name: "third"}}
+		_, _, err = rm.unpackAndMergeUpdates(t.Context(), updates, "tooling:latest", nil, ignoreErrors)
 	case "zypper":
 		_, _, err = rm.zypperChrootInstallUpdates(t.Context(), nil, "tooling:latest", nil, ignoreErrors)
 	case "dnf":
@@ -554,28 +562,101 @@ func TestRPMExternalUpdateScripts(t *testing.T) {
 	}
 }
 
-func TestRPMDistrolessInstallPreservesFailure(t *testing.T) {
+const rpmDistrolessInstallTestTool = `#!/bin/sh
+printf '%s\n' "$*" >> "$CHECK_CALLS"
+refresh=false
+package=""
+for arg in "$@"; do
+    if [ "$arg" = --refresh ]; then refresh=true; fi
+    package=$arg
+done
+if [ "$refresh" = true ]; then
+    printf 'refresh\n' >> "$CHECK_EVENTS"
+    if [ "$CHECK_FAIL_STAGE" = refresh ]; then
+        printf 'repository refresh failed\n'
+        printf 'repository unreachable\n' >&2
+        exit 42
+    fi
+fi
+if [ "$1" = install ]; then
+    printf 'install:%s\n' "$package" >> "$CHECK_EVENTS"
+    if [ "$CHECK_FAIL_STAGE" = install ]; then
+        printf 'package download failed\n'
+        printf 'package unavailable\n' >&2
+        exit 43
+    fi
+fi
+exit 0
+`
+
+func TestRPMDistrolessInstallRefresh(t *testing.T) {
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is required to exercise the RPM distroless install script")
 	}
-	op, _ := rpmExternalCheckOperation(t, "distroless-install", false)
-	workDir, binDir := t.TempDir(), t.TempDir()
-	rootfs := filepath.Join(workDir, "rootfs")
-	rpmDB := filepath.Join(workDir, "rpmdb")
-	require.NoError(t, os.WriteFile(filepath.Join(workDir, "packages.txt"), []byte("example"), 0o600))
-	writeTestExecutable(t, binDir, "rpm", "#!/bin/sh\nexit 0\n")
-	writeTestExecutable(t, binDir, "tdnf", "#!/bin/sh\nprintf 'package download failed\\n' >&2\nexit 42\n")
-	// Relocate only the script's fixed scratch paths for safe host execution.
-	script := strings.NewReplacer(rpmChrootDir, rootfs, "/tmp/rpmdb", rpmDB).Replace(op.Meta.Args[2])
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, bash, "-c", script)
-	cmd.Dir = workDir
-	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"), "IGNORE_ERRORS=false", "OS_VERSION=1.0")
-	output, err := cmd.CombinedOutput()
-	var exitErr *exec.ExitError
-	require.ErrorAs(t, err, &exitErr, "script output: %s", output)
-	assert.Equal(t, 42, exitErr.ExitCode())
-	assert.Contains(t, string(output), "package download failed")
+	for _, mode := range []string{"distroless-install", "distroless-install-report"} {
+		for _, ignoreErrors := range []bool{false, true} {
+			for _, stage := range []string{"success", testStageRefresh, testStageInstall} {
+				t.Run(fmt.Sprintf("%s/ignore=%t/%s", mode, ignoreErrors, stage), func(t *testing.T) {
+					op, ignoreCache := rpmExternalCheckOperation(t, mode, ignoreErrors)
+					require.True(t, ignoreCache, "each patch must refresh its repository metadata")
+					workDir, binDir := t.TempDir(), t.TempDir()
+					rootfs, rpmDB := filepath.Join(workDir, "rootfs"), filepath.Join(workDir, "rpmdb")
+					calls, events := filepath.Join(workDir, "calls"), filepath.Join(workDir, "events")
+					require.NoError(t, os.MkdirAll(rpmDB, 0o700))
+					require.NoError(t, os.WriteFile(filepath.Join(workDir, "packages.txt"), []byte("first second third"), 0o600))
+					writeTestExecutable(t, binDir, "rpm", "#!/bin/sh\nexit 0\n")
+					writeTestExecutable(t, binDir, "tdnf", rpmDistrolessInstallTestTool)
+					// Relocate only fixed scratch paths for safe host execution.
+					script := strings.NewReplacer(rpmChrootDir, rootfs, "/tmp/rpmdb", rpmDB).Replace(op.Meta.Args[2])
+					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					defer cancel()
+					// #nosec G204 -- Exercise Copa-generated scripts with fixed synthetic inputs.
+					cmd := exec.CommandContext(ctx, bash, "-c", script)
+					cmd.Dir = workDir
+					cmd.Env = append(os.Environ(),
+						"PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+						"IGNORE_ERRORS="+strconv.FormatBool(ignoreErrors), "OS_VERSION=1.0.2",
+						"CHECK_CALLS="+calls, "CHECK_EVENTS="+events, "CHECK_FAIL_STAGE="+stage,
+					)
+					output, err := cmd.CombinedOutput()
+					wantEvents := "refresh\ninstall:first\ninstall:second\ninstall:third\n"
+					if stage == testStageRefresh || (stage == testStageInstall && !ignoreErrors) {
+						var exitErr *exec.ExitError
+						require.ErrorAs(t, err, &exitErr, "script output: %s", output)
+						wantStatus := 43
+						wantEvents = "refresh\ninstall:first\n"
+						if stage == testStageRefresh {
+							wantStatus = 42
+							wantEvents = "refresh\n"
+						}
+						assert.Equal(t, wantStatus, exitErr.ExitCode(), "script output: %s", output)
+						assert.NoFileExists(t, filepath.Join(rootfs, "manifest"))
+					} else {
+						require.NoError(t, err, "script output: %s", output)
+						assert.FileExists(t, filepath.Join(rootfs, "manifest"))
+					}
+					assertFileContent(t, events, wantEvents)
+					callData, err := os.ReadFile(calls)
+					require.NoError(t, err)
+					release := "1.0.2"
+					if mode == "distroless-install-report" {
+						release = "1.0"
+					}
+					for _, call := range strings.Split(strings.TrimSpace(string(callData)), "\n") {
+						assert.Contains(t, strings.Fields(call), "--releasever="+release)
+						assert.Contains(t, strings.Fields(call), "--installroot="+rootfs)
+					}
+					switch stage {
+					case testStageRefresh:
+						assert.Contains(t, string(output), "repository refresh failed")
+						assert.Contains(t, string(output), "repository unreachable")
+					case testStageInstall:
+						assert.Contains(t, string(output), "package download failed")
+						assert.Contains(t, string(output), "package unavailable")
+					}
+				})
+			}
+		}
+	}
 }

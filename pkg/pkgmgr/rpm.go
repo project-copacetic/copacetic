@@ -781,12 +781,14 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 
+		# Refresh once before package failures can be ignored.
+		# Convert OS_VERSION from X.Y.Z to X.Y format
+		OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+		tdnf makecache --refresh -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs || exit $?
+
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			# Convert OS_VERSION from X.Y.Z to X.Y format
-			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
-
-			output=$(tdnf install --refresh -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
+			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
 			status=$?
 			printf '%%s\n' "$output"
@@ -825,9 +827,11 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
+		# Refresh once before package failures can be ignored.
+		tdnf makecache --refresh -y --releasever=$OS_VERSION --installroot=/tmp/rootfs || exit $?
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			output=$(tdnf install --refresh -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
+			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
 
 			status=$?
 			printf '%s\n' "$output"
