@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -178,16 +179,8 @@ func (am *apkManager) upgradePackages(ctx context.Context, updates unversioned.U
 
 	// If updating all packages, check for upgrades before proceeding with patch
 	if updates == nil {
-		const updatesAvailableMarker = "/updates.txt"
-		checkUpgradable := fmt.Sprintf(`sh -c 'if apk list 2>/dev/null | grep -q "upgradable"; then touch %s; fi'`, updatesAvailableMarker)
-		stateWithCheck := apkUpdated.Run(
-			llb.Shlex(checkUpgradable),
-			llb.WithCustomName("Checking for available updates"),
-		).Root()
-
-		_, err := buildkit.TryExtractFileFromState(ctx, am.config.Client, &stateWithCheck, updatesAvailableMarker)
-		if err != nil {
-			if !isMarkerMissingErr(err, updatesAvailableMarker) {
+		if err := checkAvailableUpdates(ctx, am.config.Client, &apkUpdated, "apk", "apk"); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
 				return nil, nil, fmt.Errorf("failed while checking for available apk updates: %w", err)
 			}
 			log.Info("No upgradable packages found for this image.")

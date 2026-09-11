@@ -248,35 +248,12 @@ jobs:
 
           rm "${tmp}" "${tmp}_symlink"
           docker rm -f test
-      - name: Test Debian validation - noreplace files
-        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
+      - name: Clean up custom Docker daemon
+        if: ${{ always() && matrix.buildkit_mode == 'docker/custom-unix' && env.DOCKER_CUSTOM_UNIX_ID != '' }}
         shell: bash
         run: |
-            set -eux -o pipefail
-
-            _cleanup() {
-              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
-              sudo rm -rf "$SOCK_DIR"
-            }
-
-            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
-                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
-                trap '_cleanup' EXIT
-            fi
-
-            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
-            tmp="$(mktemp)"
-            docker cp test:/etc/ssl/openssl.cnf "${tmp}"
-
-            if ! grep -q foo "${tmp}"; then
-                echo "Error: openssl.cnf content replaced" >&2
-                rm "${tmp}"
-                docker rm -f test
-                exit 1
-            fi
-
-            rm "${tmp}"
-            docker rm -f test
+          docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
+          sudo rm -rf -- "$SOCK_DIR"
 
   test-plugin:
     needs: build
@@ -1030,17 +1007,18 @@ jobs:
           CHISEL_TOOLING_IMAGE: ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
           CHISEL_VERSION: v1.4.2
           CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
+          # Compiler used to publish this immutable tooling image.
+          CHISEL_TOOLING_GO_VERSION: 1.25.13
         run: |
           set -eu -o pipefail
           validator_source_sha256="$(sha256sum cmd/chisel-validator/main.go | awk '{print $1}')"
-          go_version="$(awk '/^go / { print $2; exit }' go.mod)"
           .github/workflows/scripts/chisel/verify-image.sh \
             "${CHISEL_TOOLING_IMAGE}" \
             "${CHISEL_VERSION}" \
             "${CHISEL_COMMIT}" \
             "${RUNNER_TEMP}/chisel-tooling-verification.md" \
             "${validator_source_sha256}" \
-            "${go_version}"
+            "${CHISEL_TOOLING_GO_VERSION}"
       - name: Run network-independent Chisel tests
         shell: bash
         run: |

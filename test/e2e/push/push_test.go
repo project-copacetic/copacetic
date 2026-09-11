@@ -31,7 +31,7 @@ func TestPushToRegistry(t *testing.T) {
 	defer stopLocalRegistry(t)
 
 	// pull a small test image
-	testImage := "docker.io/library/nginx:1.21.6"
+	testImage := "docker.io/library/nginx:1.25.3-bookworm"
 	localImage := "localhost:5000/nginx:test"
 
 	pushCmd := exec.Command("oras", "cp", testImage, localImage)
@@ -47,25 +47,25 @@ func TestPushToRegistry(t *testing.T) {
 	reportFile := filepath.Join(tempDir, "report.json")
 	reportContent := `{
 		"SchemaVersion": 2,
-		"ArtifactName": "docker.io/library/nginx:1.21.6",
+		"ArtifactName": "docker.io/library/nginx:1.25.3-bookworm",
 		"ArtifactType": "container_image",
 		"Metadata": {
 			"OS": {
 				"Family": "debian",
-				"Name": "11.3"
+				"Name": "12.5"
 			}
 		},
 		"Results": [
 			{
-				"Target": "docker.io/library/nginx:1.21.6 (debian 11.3)",
+				"Target": "docker.io/library/nginx:1.25.3-bookworm (debian 12.5)",
 				"Class": "os-pkgs",
 				"Type": "debian",
 				"Vulnerabilities": [
 					{
 						"VulnerabilityID": "CVE-2024-28085",
 						"PkgName": "bsdutils",
-						"InstalledVersion": "1:2.36.1-8+deb11u1",
-						"FixedVersion": "2.36.1-8+deb11u2",
+						"InstalledVersion": "1:2.38.1-5+b1",
+						"FixedVersion": "2.38.1-5+deb12u1",
 						"Severity": "MEDIUM"
 					}
 				]

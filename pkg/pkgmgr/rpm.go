@@ -28,6 +28,7 @@ const (
 	rpmToolsFile        = "rpmTools"
 	rpmDBFile           = "rpmDB"
 	rpmLibPath          = "/var/lib/rpm"
+	rpmChrootDir        = "/tmp/rootfs"
 	rpmSQLLiteDB        = "rpmdb.sqlite"
 	rpmNDB              = "Packages.db"
 	rpmBDB              = "Packages"
@@ -556,54 +557,35 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	}
 
 	// Install patches using available rpm managers in order of preference
-	var installCmd string
+	var installCmd, manager, toolPath string
 	switch {
 	case rm.rpmTools["tdnf"] != "" || rm.rpmTools["dnf"] != "":
-		dnfTooling := rm.rpmTools["tdnf"]
-		if dnfTooling == "" {
-			dnfTooling = rm.rpmTools["dnf"]
-		}
-		if updates == nil {
-			checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-			if err := rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate); err != nil {
-				if !errors.Is(err, types.ErrNoUpdatesFound) {
-					return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
-				}
-				return nil, nil, types.ErrNoUpdatesFound
-			}
+		manager, toolPath = "tdnf", rm.rpmTools["tdnf"]
+		if toolPath == "" {
+			manager, toolPath = "dnf", rm.rpmTools["dnf"]
 		}
 
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(dnfInstallTemplate, dnfTooling, pkgs)
+		installCmd = fmt.Sprintf(dnfInstallTemplate, toolPath, pkgs)
 	case rm.rpmTools["yum"] != "":
-		if updates == nil {
-			checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-			if err := rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate); err != nil {
-				if !errors.Is(err, types.ErrNoUpdatesFound) {
-					return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
-				}
-				return nil, nil, types.ErrNoUpdatesFound
-			}
-		}
-
-		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(yumInstallTemplate, rm.rpmTools["yum"], pkgs)
+		manager, toolPath = "yum", rm.rpmTools["yum"]
+		const yumInstallTemplate = `sh -c '%[1]s clean all && %[1]s upgrade %[2]s -y && %[1]s clean all'`
+		installCmd = fmt.Sprintf(yumInstallTemplate, toolPath, pkgs)
 	case rm.rpmTools["microdnf"] != "":
-		if updates == nil {
-			checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
-			if err := rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate); err != nil {
-				if !errors.Is(err, types.ErrNoUpdatesFound) {
-					return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
-				}
-				return nil, nil, types.ErrNoUpdatesFound
-			}
-		}
-
-		const microdnfInstallTemplate = `sh -c '%[1]s update %[2]s -y && %[1]s clean all'`
-		installCmd = fmt.Sprintf(microdnfInstallTemplate, rm.rpmTools["microdnf"], pkgs)
+		manager, toolPath = "microdnf", rm.rpmTools["microdnf"]
+		const microdnfInstallTemplate = `sh -c '%[1]s clean all && %[1]s update %[2]s -y && %[1]s clean all'`
+		installCmd = fmt.Sprintf(microdnfInstallTemplate, toolPath, pkgs)
 	default:
 		err := errors.New("unexpected: no package manager tools were found for patching")
 		return nil, nil, err
+	}
+	if updates == nil {
+		if err := checkAvailableUpdates(ctx, rm.config.Client, &imageStateCurrent, manager, toolPath); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
+				return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
+			}
+			return nil, nil, types.ErrNoUpdatesFound
+		}
 	}
 	// Determine the custom name based on whether we're updating specific packages or all
 	customName := "Installing security updates"
@@ -614,6 +596,8 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	installed := imageStateCurrent.Run(
 		llb.Shlex(installCmd),
 		llb.WithProxy(utils.GetProxy()),
+		// The update check is separate from this state; refresh the install too.
+		llb.IgnoreCache,
 		llb.WithCustomName(customName),
 	).Root()
 
@@ -664,29 +648,6 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) error {
-	imageStateCurrent := rm.config.ImageState
-	if rm.config.PatchedConfigData != nil {
-		imageStateCurrent = rm.config.PatchedImageState
-	}
-
-	checkUpdate := fmt.Sprintf(checkUpdateTemplate, toolPath)
-	stateWithCheck := imageStateCurrent.Run(
-		llb.Shlex(checkUpdate),
-		llb.WithCustomName("Checking for available updates")).Root()
-
-	const updatesAvailableMarker = "/updates.txt"
-	_, err := buildkit.TryExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, updatesAvailableMarker)
-	if err != nil {
-		if isMarkerMissingErr(err, updatesAvailableMarker) {
-			return types.ErrNoUpdatesFound
-		}
-		return err
-	}
-
-	return nil
-}
-
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
 	if updates != nil {
 		if err := ValidateOSPackageNames(updates); err != nil {
@@ -729,9 +690,15 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// In the case of update all packages, only update packages that are not latest version. Store these packages in packages.txt.
 	if updates == nil {
 		busyboxCopied = busyboxCopied.Run(
+			llb.IgnoreCache,
+			llb.WithProxy(utils.GetProxy()),
 			llb.AddEnv("PACKAGES_PRESENT", string(jsonPackageData)),
+			llb.AddEnv("COPA_UPDATES_MARKER", updatesAvailableMarker),
 			llb.Args([]string{
 				`bash`, `-c`, `
+                                rm -f "${COPA_UPDATES_MARKER}" packages.txt || exit $?
+                                # Both supported tooling bases provide tdnf; yum is not guaranteed.
+                                tdnf clean all || exit $?
                                 json_str=$PACKAGES_PRESENT
                                 update_packages=""
 
@@ -739,7 +706,14 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
                                     pkg_name=$(echo "$package" | sed 's/^"\(.*\)"$/\1/')
 
                                     pkg_version=$(echo "$version" | sed 's/^"\(.*\)"$/\1/')
-                                    latest_version=$(yum list available $pkg_name 2>/dev/null | grep $pkg_name | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
+                                    available=$(tdnf list available "$pkg_name") || {
+                                        status=$?
+                                        if [ -n "$available" ]; then
+                                            printf '%s\n' "$available"
+                                        fi
+                                        exit "$status"
+                                    }
+                                    latest_version=$(echo "$available" | grep "$pkg_name" | tail -n 1 | tr -s ' ' | cut -d ' ' -f 2)
 
                                     if [ "$latest_version" != "$pkg_version" ]; then
                                         update_packages="$update_packages $pkg_name"
@@ -748,11 +722,14 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
                                 if [ -n "$update_packages" ]; then
                                     echo "$update_packages" > packages.txt
-                                    touch /updates.txt
+                                    touch "${COPA_UPDATES_MARKER}"
                                 fi
                         `,
 			})).Root()
-		if _, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &busyboxCopied, "/updates.txt"); err != nil {
+		if err := checkUpdatesMarker(ctx, rm.config.Client, &busyboxCopied, updatesAvailableMarker); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
+				return nil, nil, fmt.Errorf("failed while checking for available rpm updates with external tooling: %w", err)
+			}
 			log.Info("No upgradable packages found for this image (RPM distroless path).")
 			return nil, nil, types.ErrNoUpdatesFound
 		}
@@ -761,6 +738,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	// Create a new state for tooling image with all the packages from the image we are trying to patch
 	// this will ensure the rpm database is generate for us to use
 	rpmdb := busyboxCopied.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("PACKAGES_PRESENT_ALL", string(jsonPackageData)),
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		llb.Args([]string{
@@ -780,7 +758,7 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 								OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
 
 								tdnf makecache
-								tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
+								tdnf install --refresh -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs $packages_formatted
 
 								ls /tmp/rootfs/var/lib/rpm
 						`,
@@ -803,15 +781,19 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
 
+		# Refresh once before package failures can be ignored.
+		# Convert OS_VERSION from X.Y.Z to X.Y format
+		OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
+		tdnf makecache --refresh -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs || exit $?
+
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
-			# Convert OS_VERSION from X.Y.Z to X.Y format
-			OS_VERSION_XY=$(echo "$OS_VERSION" | cut -d'.' -f1-2)
-
 			output=$(tdnf install -y --releasever=$OS_VERSION_XY --installroot=/tmp/rootfs ${package} 2>&1)
 
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
+			status=$?
+			printf '%%s\n' "$output"
+			if [ "$IGNORE_ERRORS" = "false" ] && [ "$status" -ne 0 ]; then
+				exit "$status"
 			fi
 		done
 
@@ -845,12 +827,16 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 		ln -s /tmp/rpmdb /tmp/rootfs/var/lib/rpm
 
 		rpm --dbpath=/tmp/rootfs/var/lib/rpm -qa
+		# Refresh once before package failures can be ignored.
+		tdnf makecache --refresh -y --releasever=$OS_VERSION --installroot=/tmp/rootfs || exit $?
 		for package in $packages; do
 			package="${package%%.*}" # trim anything after the first "."
 			output=$(tdnf install -y --releasever=$OS_VERSION --installroot=/tmp/rootfs ${package} 2>&1)
 
-			if [ "$IGNORE_ERRORS" = "false" ] && [ $? -ne 0 ]; then
-				exit $?
+			status=$?
+			printf '%s\n' "$output"
+			if [ "$IGNORE_ERRORS" = "false" ] && [ "$status" -ne 0 ]; then
+				exit "$status"
 			fi
 		done
 
@@ -875,12 +861,13 @@ func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversi
 	}
 
 	downloaded := busyboxCopied.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("OS_VERSION", rm.osVersion),
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		buildkit.Sh(downloadCmd),
 		llb.WithProxy(utils.GetProxy()),
 		llb.AddMount("/tmp/rpmdb", rpmdb),
-	).AddMount("/tmp/rootfs", rm.config.ImageState)
+	).AddMount(rpmChrootDir, rm.config.ImageState)
 
 	resultBytes, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &downloaded, "/manifest")
 	if err != nil {
@@ -944,7 +931,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
 	}
 
-	chrootDir := "/tmp/rootfs"
+	chrootDir := rpmChrootDir
 	manifestFile := "/tmp/manifest"
 
 	// If specific updates provided, parse into pkg names, else will update all
@@ -965,7 +952,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	if ignoreErrors {
 		zypperCmd = `
                 if ! { [[ -e "${COPA_RPM_DB_DIR}/Packages.db" ]] || [[ -e "${COPA_RPM_DB_DIR}/rpmdb.sqlite" ]] || [[ -e "${COPA_RPM_DB_DIR}/Packages" ]]; }; then echo "RPM DB not found"; exit 1; fi
-                zypper --non-interactive refresh
+                zypper --non-interactive refresh || exit $?
                 output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1) || true
                 echo "$output"
                 if ! echo "$output" | grep -q "Nothing to do."; then
@@ -979,7 +966,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	} else {
 		zypperCmd = `
                 if ! { [[ -e "${COPA_RPM_DB_DIR}/Packages.db" ]] || [[ -e "${COPA_RPM_DB_DIR}/rpmdb.sqlite" ]] || [[ -e "${COPA_RPM_DB_DIR}/Packages" ]]; }; then echo "RPM DB not found"; exit 1; fi
-                zypper --non-interactive refresh
+                zypper --non-interactive refresh || exit $?
                 output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1)
                 zypper_exit=$?
                 echo "$output"
@@ -993,9 +980,11 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
 	`
 	}
-	zypperCmd = fmt.Sprintf(zypperCmd, pkgs, pkgs)
+	zypperCmd = `rm -f "${COPA_UPDATES_MARKER}" || exit $?
+` + fmt.Sprintf(zypperCmd, pkgs, pkgs)
 
 	run := toolingBase.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
 		llb.AddEnv("COPA_RPM_DB_DIR", chrootDir+rpmLibPath),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
@@ -1009,8 +998,10 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 
 	// For no-report mode, check if any updates were actually applied
 	if updates == nil {
-		_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile)
-		if err != nil {
+		if err := checkUpdatesMarker(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
+				return nil, nil, fmt.Errorf("failed while applying zypper updates: %w", err)
+			}
 			log.Info("No upgradable packages found for this image (zypper path).")
 			return nil, nil, types.ErrNoUpdatesFound
 		}
@@ -1081,7 +1072,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		log.Debugf("Successfully resolved tooling image %s using host platform", toolImage)
 	}
 
-	chrootDir := "/tmp/rootfs"
+	chrootDir := rpmChrootDir
 	manifestFile := "/tmp/manifest"
 
 	// If specific updates provided, parse into pkg names, else will update all
@@ -1105,7 +1096,6 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	var dnfCmd string
 	if ignoreErrors {
 		dnfCmd = `
-                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
                 output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
                     --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
                     --releasever="${COPA_RELEASE_VER}" \
@@ -1123,7 +1113,6 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	`
 	} else {
 		dnfCmd = `
-                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
                 output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
                     --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
                     --releasever="${COPA_RELEASE_VER}" \
@@ -1142,7 +1131,15 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
 	`
 	}
-	dnfCmd = fmt.Sprintf(dnfCmd, pkgs, pkgs)
+	// Repository refresh must succeed even when package failures are tolerated.
+	dnfCmd = `rm -f "${COPA_UPDATES_MARKER}" || exit $?
+                if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
+                dnf --refresh --installroot="${COPA_CHROOT_DIR}" \
+                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --releasever="${COPA_RELEASE_VER}" \
+                    --nogpgcheck \
+                    makecache -y || exit $?
+` + fmt.Sprintf(dnfCmd, pkgs, pkgs)
 
 	// Derive the release version (major.minor) for dnf --releasever
 	releaseVer := rm.osVersion
@@ -1152,6 +1149,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 	}
 
 	run := toolingBase.Run(
+		llb.IgnoreCache,
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
 		llb.AddEnv("COPA_RELEASE_VER", releaseVer),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
@@ -1165,8 +1163,10 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 
 	// For no-report mode, check if any updates were actually applied
 	if updates == nil {
-		_, err := buildkit.ExtractFileFromState(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile)
-		if err != nil {
+		if err := checkUpdatesMarker(ctx, rm.config.Client, &toolingRoot, updatesMarkerFile); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
+				return nil, nil, fmt.Errorf("failed while applying dnf updates with external tooling: %w", err)
+			}
 			log.Info("No upgradable packages found for this image (dnf chroot path).")
 			return nil, nil, types.ErrNoUpdatesFound
 		}

@@ -160,20 +160,10 @@ func (pm *pacmanManager) upgradePackages(ctx context.Context, updates unversione
 	).Root()
 
 	if updates == nil {
-		const updatesAvailableMarker = "/updates.txt"
-		// 1. Define the shell script properly with valid 2>&1 syntax
-		// Note: We use pacman -Sy to ensure the DB is synced before checking
-		shellScript := fmt.Sprintf("if /usr/bin/pacman -Qu > /dev/null 2>&1; then touch %s; fi", updatesAvailableMarker)
-
-		// 2. Explicitly construct the command args (safer than Shlex for complex scripts)
-		// We use /bin/sh because it is the universal shell path (even on Arch)
-		stateWithCheck := pacmanUpdated.Run(
-			llb.Args([]string{"/bin/sh", "-c", shellScript}),
-			llb.WithCustomName("Checking for available updates"),
-		).Root()
-
-		_, err := buildkit.ExtractFileFromState(ctx, pm.config.Client, &stateWithCheck, updatesAvailableMarker)
-		if err != nil {
+		if err := checkAvailableUpdates(ctx, pm.config.Client, &pacmanUpdated, "pacman", "/usr/bin/pacman"); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
+				return nil, nil, fmt.Errorf("failed while checking for available pacman updates: %w", err)
+			}
 			log.Info("No upgradable packages found for this image.")
 			return nil, nil, types.ErrNoUpdatesFound
 		}

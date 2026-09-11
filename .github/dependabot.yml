@@ -34,11 +34,6 @@ updates:
         - "*"
 
   - package-ecosystem: docker
-    directory: /integration/singlearch/fixtures/openssl-test-img-debian
-    schedule:
-      interval: daily
-
-  - package-ecosystem: docker
     directory: /integration/singlearch/fixtures/openssl-test-img-rpm
     schedule:
       interval: daily

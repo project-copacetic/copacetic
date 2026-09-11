@@ -1707,7 +1707,7 @@ func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error 
 		}
 
 		// Copy the blob file
-		srcFile, err := os.Open(path)
+		srcFile, err := os.OpenInRoot(srcBlobsDir, relPath)
 		if err != nil {
 			return fmt.Errorf("failed to open source blob %s: %w", path, err)
 		}

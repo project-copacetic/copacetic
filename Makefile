@@ -145,7 +145,7 @@ clean:
 .PHONY: setup
 setup:
 	$(info $(INFOMARK) Installing Makefile go binary dependencies $(ROOTMARK) ...)
-	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1
+	go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 	go install mvdan.cc/gofumpt@v0.9.2
 
 ################################################################################

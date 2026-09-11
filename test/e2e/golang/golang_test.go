@@ -521,7 +521,7 @@ func copyCacheDir(t *testing.T, src string) string {
 		if info.IsDir() {
 			return os.MkdirAll(dstPath, info.Mode())
 		}
-		srcFile, err := os.Open(path)
+		srcFile, err := os.OpenInRoot(src, relPath)
 		if err != nil {
 			return err
 		}

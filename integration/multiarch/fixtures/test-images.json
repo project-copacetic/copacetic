@@ -30,9 +30,10 @@
   },
   {
     "originalImage": "mcr.microsoft.com/dotnet/runtime",
+    "digest": "sha256:ba6e1cd3c6a6f4664c7b95e89748158a3e01bdba0f5d31f61f931289f77c2898",
     "localImage": "localhost:5000/dotnet-runtime",
-    "tag": "6.0",
-    "description": "Multi-platform .NET 6.0 runtime, with push",
+    "tag": "8.0.0-bookworm-slim",
+    "description": "Multi-platform .NET 8.0 runtime on Debian 12, with push",
     "ignoreErrors": false,
     "push": true,
     "skipAnnotations": true,

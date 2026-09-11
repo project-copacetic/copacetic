@@ -1709,16 +1709,8 @@ func (dm *dpkgManager) installUpdates(ctx context.Context, updates unversioned.U
 
 	// Only check for upgradable packages when updating all (no specific updates list).
 	if updates == nil {
-		const updatesAvailableMarker = "/updates.txt"
-		checkUpgradable := fmt.Sprintf(`sh -c 'if apt-get -s upgrade 2>/dev/null | grep -q "^Inst"; then touch %s; fi'`, updatesAvailableMarker)
-		aptGetUpdated = aptGetUpdated.Run(
-			llb.Shlex(checkUpgradable),
-			llb.WithCustomName("Checking for upgradable packages"),
-		).Root()
-
-		_, err := buildkit.TryExtractFileFromState(ctx, dm.config.Client, &aptGetUpdated, updatesAvailableMarker)
-		if err != nil {
-			if !isMarkerMissingErr(err, updatesAvailableMarker) {
+		if err := checkAvailableUpdates(ctx, dm.config.Client, &aptGetUpdated, "apt", "apt-get"); err != nil {
+			if !errors.Is(err, types.ErrNoUpdatesFound) {
 				return nil, nil, fmt.Errorf("failed while checking for available apt updates: %w", err)
 			}
 			log.Info("No upgradable packages found for this image.")
@@ -2013,7 +2005,12 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 	} else {
 		downloadCustomName = "Downloading and installing all package updates"
 	}
-	downloaded := updated.Run(
+	const (
+		debconfConfigPath = "/etc/debconf.conf"
+		debconfCachePath  = "/var/cache/debconf"
+		rootfsPath        = "/tmp/debian-rootfs"
+	)
+	downloadOpts := []llb.RunOption{
 		llb.AddEnv("IGNORE_ERRORS", errorValidation),
 		llb.AddEnv("UPDATE_ALL", updateAll),
 		llb.AddEnv("DOWNLOAD_DIR", dpkgDownloadPath),
@@ -2030,7 +2027,24 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		buildkit.Sh(`/download.sh`),
 		llb.WithProxy(utils.GetProxy()),
 		llb.WithCustomName(downloadCustomName),
-	).AddMount("/tmp/debian-rootfs", withDPkgStatus)
+	}
+	if dm.installationMode == dpkgInstallationModeExternalStatusDirectory {
+		// Maintainer scripts use the tooling container's Debconf, which looks
+		// under DPKG_ROOT. Keep its configuration and database out of the image.
+		downloadOpts = append(downloadOpts,
+			llb.AddMount(rootfsPath+debconfConfigPath, updated, llb.SourcePath(debconfConfigPath), llb.Readonly),
+			llb.AddMount(rootfsPath+debconfCachePath, llb.Scratch()),
+		)
+	}
+	downloaded := updated.Run(downloadOpts...).AddMount(rootfsPath, withDPkgStatus)
+	if dm.installationMode == dpkgInstallationModeExternalStatusDirectory {
+		// Nested mounts can leave empty mountpoints. Restore only the original
+		// Debconf paths, preserving other files changed by package installation.
+		removeDebconf := llb.Rm(debconfConfigPath, llb.WithAllowNotFound(true)).
+			Rm(debconfCachePath, llb.WithAllowNotFound(true))
+		originalDebconf := llb.Diff(imageStateCurrent.File(removeDebconf), imageStateCurrent)
+		downloaded = downloaded.File(removeDebconf).File(llb.Copy(originalDebconf, "/", "/"))
+	}
 
 	resultBytes, err := buildkit.ExtractFileFromState(ctx, dm.config.Client, &downloaded, "/manifest")
 	if err != nil {

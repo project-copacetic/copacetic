@@ -1471,3 +1471,37 @@ func TestPlatformsFromIndexManifest(t *testing.T) {
 	}
 	assert.Equal(t, want, got)
 }
+
+func TestCopyBlobs(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	relative := filepath.Join("sha256", "example")
+	require.NoError(t, os.MkdirAll(filepath.Join(source, "sha256"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(source, relative), []byte("blob data"), 0o600))
+	copied := map[string]bool{}
+	require.NoError(t, copyBlobs(source, destination, copied))
+	contents, err := os.ReadFile(filepath.Join(destination, relative))
+	require.NoError(t, err)
+	assert.Equal(t, "blob data", string(contents))
+	assert.True(t, copied[relative])
+
+	// Repeated platform exports share blobs without replacing a copied file.
+	require.NoError(t, os.WriteFile(filepath.Join(source, relative), []byte("duplicate"), 0o600))
+	require.NoError(t, copyBlobs(source, destination, copied))
+	contents, err = os.ReadFile(filepath.Join(destination, relative))
+	require.NoError(t, err)
+	assert.Equal(t, "blob data", string(contents))
+
+	require.NoError(t, copyBlobs(filepath.Join(source, "missing"), destination, copied))
+}
+
+func TestCopyBlobsKeepsReadsInSourceDirectory(t *testing.T) {
+	source, destination := t.TempDir(), t.TempDir()
+	outside := filepath.Join(t.TempDir(), "unrelated")
+	require.NoError(t, os.WriteFile(outside, []byte("unrelated data"), 0o600))
+	require.NoError(t, os.Symlink(outside, filepath.Join(source, "link")))
+	copied := map[string]bool{}
+	err := copyBlobs(source, destination, copied)
+	require.ErrorContains(t, err, "failed to open source blob")
+	assert.Empty(t, copied)
+	assert.NoFileExists(t, filepath.Join(destination, "link"))
+}
