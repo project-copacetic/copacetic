@@ -25,6 +25,7 @@ flow. Network-independent Chisel fixture tests live in `integration/chisel`.
 | `TestAptlessFullStatusComprehensiveFromBaselineARMv7` | Pinned Ubuntu 24.04 GA apt-less fixture, arm/v7 | The same baseline comprehensive flow under emulation, including package upgrades without downgrades, cleanup, config/content preservation, and no-update repatching |
 | `TestDistrolessStatusDirectoryPreservesEncodedFilenames` | Google distroless Debian 12, amd64 | A digest-pinned real `status.d` root with an injected unmanaged sentinel and encoded status filename; validates exact filename preservation, absence of `/var/lib/dpkg/status`, package upgrades, sentinel preservation, and tooling cleanup |
 | `TestDistrolessComprehensiveUpdateConfiguresTZData` | Stakater Reloader v1.2.1, amd64 | Comprehensive patching of a Distroless image without Debconf configuration; validates `tzdata` upgrades, temporary Debconf cleanup, status filenames, image configuration, and the application binary |
+| `TestDistrolessUpdatePreservesCustomDebconfConfiguration` | Stakater Reloader derivative, amd64 | Patches an image whose `DEBCONF_SYSTEMRC` selects a custom configuration; validates use of its saved timezone answers and databases, package upgrades, and configuration and application preservation |
 | `TestNativeChiselPartialPlatformOCI` | Canonical multi-platform Ubuntu .NET Chiseled index | Patches amd64 while preserving complete arm64, ppc64le, and s390x descriptors and every referenced OCI blob |
 | `TestNativeChiselRejectsTargetedReportBeforeOutput` | Canonical Ubuntu .NET Chiseled | Exact comprehensive-only report error and strict absence of Docker or OCI output |
 | `TestNativeChiselRejectsARMv6BeforeOutput` | Canonical rootfs relabeled as linux/arm/v6 | Exact unsupported-platform error and strict absence of Docker or OCI output |
@@ -36,8 +37,8 @@ The exact registry references are stored in
 digest with a mutable tag. The apt-less full-status images are built locally
 from the pinned Ubuntu GA base using
 [`integration/chisel/fixtures/full-status-no-tools`](../../../integration/chisel/fixtures/full-status-no-tools);
-other synthetic derivatives use the pinned references and Copa Chisel tooling
-image.
+other synthetic derivatives use the pinned source references with Ubuntu or
+Copa Chisel tooling images.
 
 ## Prerequisites
 

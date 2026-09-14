@@ -51,7 +51,9 @@ For Distroless images with `/var/lib/dpkg/status.d`, Copa uses the tooling image
 to run package maintainer scripts. If the target has no Debconf configuration,
 Copa supplies temporary configuration and databases so packages such as `tzdata`
 can finish installing. This temporary state is removed before exporting the
-patched image. Existing Debconf configuration is preserved.
+patched image. Existing Debconf configuration is preserved, including a custom
+path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
+Package configuration continues to use that configuration's saved answers.
 
 #### Ubuntu
 
