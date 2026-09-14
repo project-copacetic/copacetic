@@ -374,6 +374,48 @@ COPY manifest.wall /var/lib/chisel/manifest.wall
 	assertNoPatchOutput(t, outputTag, outputDir)
 }
 
+func TestDistrolessComprehensiveUpdateConfiguresTZData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-image distroless e2e test in short mode")
+	}
+	requireTool(t, "docker")
+	fixture := loadFixture(t, "distroless-reloader-tzdata")
+	pullImage(t, fixture.Reference, fixture.Platform)
+	before := captureImage(t, fixture.Reference, fixture.Platform)
+	assertStatusDirectoryLayout(t, &before)
+	require.NotContains(t, before.Paths, "etc/debconf.conf")
+	require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
+	beforePackages, beforeFilenames := parseStatusDirectory(t, before.StatusDirectory)
+	require.Contains(t, before.Paths, fixture.PreserveTree)
+
+	patched := uniqueImage("distroless-tzdata")
+	t.Cleanup(func() { removeImage(patched) })
+	patchImage(t,
+		"patch",
+		"--image", fixture.Reference,
+		"--tag", patched,
+		"--platform", fixture.Platform,
+	)
+
+	after := captureImage(t, patched, fixture.Platform)
+	assertStatusDirectoryLayout(t, &after)
+	assertImageConfigPreserved(t, &before.Config, &after.Config)
+	afterPackages, afterFilenames := parseStatusDirectory(t, after.StatusDirectory)
+	assertNoDPKGDowngrades(t, beforePackages, afterPackages)
+	assert.Equal(t, beforeFilenames, afterFilenames)
+	for _, name := range fixture.ExpectedUpgradePackages {
+		requireVersionGreater(t, afterPackages[name].Version, beforePackages[name].Version, name)
+	}
+	for name := range after.Paths {
+		name = strings.TrimSuffix(name, "/")
+		if strings.HasPrefix(name, "var/lib/dpkg/") {
+			assert.True(t, name == "var/lib/dpkg/status.d" || strings.HasPrefix(name, "var/lib/dpkg/status.d/"), "temporary dpkg state leaked: %s", name)
+		}
+		assert.False(t, strings.Contains(name, "debconf"), "Debconf tooling or temporary configuration leaked: %s", name)
+	}
+	assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree), canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "application binary changed")
+}
+
 func TestDistrolessStatusDirectoryPreservesEncodedFilenames(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real-image Chisel e2e test in short mode")

@@ -47,6 +47,12 @@ All images being passed into Copa have their versioning data carefully extracted
 
 All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `ghcr.io/project-copacetic/copacetic/debian:11-slim` is used as the tooling image.
 
+For Distroless images with `/var/lib/dpkg/status.d`, Copa uses the tooling image
+to run package maintainer scripts. If the target has no Debconf configuration,
+Copa supplies temporary configuration and databases so packages such as `tzdata`
+can finish installing. This temporary state is removed before exporting the
+patched image. Existing Debconf configuration is preserved.
+
 #### Ubuntu
 
 Copa selects DPKG tooling from the target's detected Ubuntu version. For

@@ -1288,6 +1288,35 @@ else
     set -- ./*.deb
     if [ ! -f "$1" ]; then set --; fi
     if [ "$#" -gt 0 ]; then
+        if [ "$DPKG_INSTALLATION_MODE" = "external-status-directory" ]; then
+            debconf_config_found=false
+            for debconf_config in "${DEBCONF_SYSTEMRC:-/root/.debconfrc}" /etc/debconf.conf /usr/share/debconf/debconf.conf; do
+                if [ -e "$DPKG_ROOT$debconf_config" ]; then
+                    debconf_config_found=true
+                    break
+                fi
+            done
+            if [ "$debconf_config_found" = false ]; then
+                # Chrootless maintainer scripts use the tooling Debconf, which
+                # looks for configuration and databases under DPKG_ROOT. Keep
+                # this temporary state in the reconstructed dpkg database so
+                # status.d finalization removes it without adding Debconf to
+                # the patched image or importing the tooling image's answers.
+                export DEBCONF_SYSTEMRC=/var/lib/dpkg/copa-debconf.conf
+                cat > "$DPKG_ROOT$DEBCONF_SYSTEMRC" <<'EOF'
+Config: config
+Templates: templates
+
+Name: config
+Driver: File
+Filename: /var/lib/dpkg/copa-debconf-config.dat
+
+Name: templates
+Driver: File
+Filename: /var/lib/dpkg/copa-debconf-templates.dat
+EOF
+            fi
+        fi
         "$DPKG_TOOL" --root="$DPKG_ROOT" --admindir="$DPKG_ROOT/var/lib/dpkg" --force-all --force-confold --install "$@"
         "$DPKG_TOOL" --root="$DPKG_ROOT" --configure -a
     fi

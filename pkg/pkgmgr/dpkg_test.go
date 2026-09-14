@@ -2592,6 +2592,19 @@ esac
 }
 
 func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
+	for _, configPath := range []string{"", "/etc/debconf.conf", "/usr/share/debconf/debconf.conf", "/root/.debconfrc", "/custom/debconf.conf"} {
+		name := configPath
+		if name == "" {
+			name = "missing Debconf configuration"
+		}
+		t.Run(name, func(t *testing.T) {
+			testStatusDirectoryDownload(t, configPath)
+		})
+	}
+}
+
+func testStatusDirectoryDownload(t *testing.T, existingConfigPath string) {
+	t.Helper()
 	binDir := t.TempDir()
 	workDir := t.TempDir()
 	downloadDir := filepath.Join(workDir, "downloads")
@@ -2601,7 +2614,17 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 	finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
 	aptLog := filepath.Join(workDir, "apt.log")
 	installLog := filepath.Join(workDir, "install.log")
+	debconfLog := filepath.Join(workDir, "debconf.log")
 	status := []byte("Package: safe\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
+	systemRC := ""
+	if existingConfigPath != "" {
+		configPath := filepath.Join(dpkgRoot, existingConfigPath)
+		require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0o755))
+		require.NoError(t, os.WriteFile(configPath, []byte("application-owned configuration\n"), 0o600))
+		if existingConfigPath == "/custom/debconf.conf" {
+			systemRC = existingConfigPath
+		}
+	}
 
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "bin"), 0o755))
@@ -2646,6 +2669,7 @@ case "$1" in
 esac
 `)
 	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+set -e
 if [ "$1" = '--compare-versions' ]; then
     case "$2|$3|$4" in
         '2.0|ge|1.0'|'2.0|ge|2.0') exit 0 ;;
@@ -2653,6 +2677,24 @@ if [ "$1" = '--compare-versions' ]; then
     esac
 fi
 printf '%s\n' "$*" >> "$INSTALL_LOG"
+if [ -n "$EXISTING_DEBCONF_CONFIG" ]; then
+    [ "${DEBCONF_SYSTEMRC:-}" = "$EXPECTED_DEBCONF_SYSTEMRC" ] || exit 92
+else
+    # Model Debconf's DPKG_ROOT-relative configuration and file databases for
+    # both installation and configuration. The real-image test runs Debconf.
+    [ -n "$DEBCONF_SYSTEMRC" ] && [ -s "$DPKG_ROOT$DEBCONF_SYSTEMRC" ] || {
+        echo 'No config file found' >&2
+        exit 93
+    }
+    awk '/^Filename: / { print $2 }' "$DPKG_ROOT$DEBCONF_SYSTEMRC" > "$DEBCONF_LOG"
+    while IFS= read -r database; do
+        case "$database" in
+            /var/lib/dpkg/*) ;;
+            *) echo 'Debconf database must be temporary' >&2; exit 94 ;;
+        esac
+        printf 'temporary Debconf data\n' > "$DPKG_ROOT$database"
+    done < "$DEBCONF_LOG"
+fi
 case " $* " in
     *" --install "*)
         cat >> "$DPKG_ROOT/var/lib/dpkg/status" <<'EOF'
@@ -2679,6 +2721,10 @@ esac
 		"STATUSD_FILE_MAP":            "safe\tencoded-safe\n",
 		"APT_LOG":                     aptLog,
 		"INSTALL_LOG":                 installLog,
+		"DEBCONF_LOG":                 debconfLog,
+		"EXISTING_DEBCONF_CONFIG":     existingConfigPath,
+		"EXPECTED_DEBCONF_SYSTEMRC":   systemRC,
+		"DEBCONF_SYSTEMRC":            systemRC,
 	})
 
 	aptCalls, err := os.ReadFile(aptLog)
@@ -2690,6 +2736,19 @@ esac
 	require.NoError(t, err)
 	assert.Contains(t, string(updatedStatus), "Version: 2.0")
 	assert.FileExists(t, filepath.Join(dpkgRoot, "bin", "sh"), "status.d behavior must not apply full-status tooling cleanup")
+	entries, err := os.ReadDir(filepath.Join(dpkgRoot, "var", "lib", "dpkg"))
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "temporary Debconf configuration and databases must be removed")
+	assert.Equal(t, "status.d", entries[0].Name())
+	if existingConfigPath == "" {
+		databases, readErr := os.ReadFile(debconfLog)
+		require.NoError(t, readErr)
+		assert.Len(t, strings.Fields(string(databases)), 2, "Debconf needs persistent configuration and template databases during installation")
+		assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "cache", "debconf"))
+	} else {
+		assertFileContent(t, filepath.Join(dpkgRoot, existingConfigPath), "application-owned configuration\n")
+		assert.NoFileExists(t, debconfLog, "existing Debconf configuration must not be replaced")
+	}
 }
 
 func TestDPKGProbeScriptDoesNotExecuteTargetTools(t *testing.T) {
