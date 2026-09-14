@@ -122,14 +122,14 @@ func TestPatchDebian(t *testing.T) {
 	testCases := []patchTestCase{
 		{
 			name:      "bash update",
-			image:     "debian:11",
+			image:     "debian:12.6-slim",
 			osType:    "debian",
-			osVersion: "11",
+			osVersion: "12",
 			packages: []testenv.PackageUpdate{
 				{
 					Name:             "bash",
-					InstalledVersion: "5.1-2",
-					FixedVersion:     "5.1-2+deb11u1",
+					InstalledVersion: "5.2.15-2+b7",
+					FixedVersion:     "5.2.15-2+b13",
 					VulnerabilityID:  "CVE-2023-TEST",
 				},
 			},
@@ -138,24 +138,24 @@ func TestPatchDebian(t *testing.T) {
 		},
 		{
 			name:           "update all",
-			image:          "debian:11",
+			image:          "debian:12.6-slim",
 			osType:         "debian",
-			osVersion:      "11",
+			osVersion:      "12",
 			packages:       nil,
 			expectedPkgMgr: []string{"deb"},
 			osReleaseMatch: "Debian",
 		},
 		{
 			name:      "nginx image",
-			image:     "docker.io/library/nginx:1.21.6",
+			image:     "docker.io/library/nginx:1.27.0-bookworm",
 			osType:    "debian",
-			osVersion: "11",
+			osVersion: "12",
 			packages: []testenv.PackageUpdate{
 				{
-					Name:             "zlib1g",
-					InstalledVersion: "1:1.2.11.dfsg-2",
-					FixedVersion:     "1:1.2.11.dfsg-2+deb11u2",
-					VulnerabilityID:  "CVE-2023-TEST",
+					Name:             "libssl3",
+					InstalledVersion: "3.0.13-1~deb12u1",
+					FixedVersion:     "3.0.14-1~deb12u2",
+					VulnerabilityID:  "CVE-2024-6119",
 				},
 			},
 			expectedPkgMgr: []string{"deb"},

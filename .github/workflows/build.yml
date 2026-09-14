@@ -264,7 +264,7 @@ jobs:
                 trap '_cleanup' EXIT
             fi
 
-            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
+            docker create --name test docker.io/sozercan/copa-test-openssl:test-debian12-patched /bin/sh
             tmp="$(mktemp)"
             docker cp test:/etc/ssl/openssl.cnf "${tmp}"
 
