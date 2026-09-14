@@ -632,6 +632,40 @@ assert_target_path_safe() {
     esac
 }
 
+validate_debconf_path() {
+    debconf_path=$1
+    case "$debconf_path" in
+        /*) ;;
+        *) echo "Debconf path must be absolute: $debconf_path" >&2; exit 1 ;;
+    esac
+    case "$debconf_path/" in
+        *//*|*/./*|*/../*) echo "Debconf path must be canonical: $debconf_path" >&2; exit 1 ;;
+    esac
+    case "$debconf_path" in
+        /var/lib/dpkg|/var/lib/dpkg/*)
+            echo "Debconf state under /var/lib/dpkg is not supported for status.d images: $debconf_path" >&2
+            exit 1
+            ;;
+    esac
+
+    assert_target_path_safe "$DPKG_ROOT$debconf_path"
+    resolved_debconf_path=$resolved_parent
+    if [ -e "$DPKG_ROOT$debconf_path" ] || [ -L "$DPKG_ROOT$debconf_path" ]; then
+        resolved_debconf_path=$(readlink -f "$DPKG_ROOT$debconf_path") || {
+            echo "cannot resolve target Debconf path: $debconf_path" >&2
+            exit 1
+        }
+    fi
+    case "$resolved_debconf_path" in
+        "$dpkg_root_real/var/lib/dpkg"|"$dpkg_root_real/var/lib/dpkg"/*)
+            echo "Debconf state under /var/lib/dpkg is not supported for status.d images: $debconf_path" >&2
+            exit 1
+            ;;
+        "$dpkg_root_real"|"$dpkg_root_real"/*) ;;
+        *) echo "Debconf path escapes the mounted root: $debconf_path" >&2; exit 1 ;;
+    esac
+}
+
 # Resolve symlinks in the target namespace without letting absolute targets
 # escape into the tooling container's root filesystem.
 resolve_target_path() {
@@ -1288,15 +1322,37 @@ else
     set -- ./*.deb
     if [ ! -f "$1" ]; then set --; fi
     if [ "$#" -gt 0 ]; then
+        localtime_backup=""
         if [ "$DPKG_INSTALLATION_MODE" = "external-status-directory" ]; then
+            dpkg_root_real=$(readlink -f "$DPKG_ROOT")
             debconf_config_found=false
             for debconf_config in "${DEBCONF_SYSTEMRC:-/root/.debconfrc}" /etc/debconf.conf /usr/share/debconf/debconf.conf; do
+                validate_debconf_path "$debconf_config"
                 if [ -e "$DPKG_ROOT$debconf_config" ]; then
                     debconf_config_found=true
                     break
                 fi
             done
-            if [ "$debconf_config_found" = false ]; then
+            if [ "$debconf_config_found" = true ]; then
+                # Match Debconf's environment substitution before checking its
+                # file database paths. The reconstructed dpkg tree is temporary.
+                DPKG_ROOT="$DPKG_ROOT" perl -0777 -ne '
+                    s/\$\{([^}]+)\}/$ENV{$1} \/\/ ""/eg;
+                    for (split /\n/) {
+                        print "$1\n" if /^\s*(?:Filename|Directory)\s*:\s*(.*?)\s*$/i;
+                    }
+                ' "$DPKG_ROOT$debconf_config" > "$DOWNLOAD_DIR/debconf-paths"
+                while IFS= read -r debconf_database; do
+                    validate_debconf_path "$debconf_database"
+                done < "$DOWNLOAD_DIR/debconf-paths"
+            else
+                # Without saved answers or a timezone name, tzdata replaces a
+                # regular localtime file with UTC. Preserve that configuration.
+                if [ -f "$DPKG_ROOT/etc/localtime" ] && [ ! -L "$DPKG_ROOT/etc/localtime" ] &&
+                    [ ! -e "$DPKG_ROOT/etc/timezone" ] && [ ! -L "$DPKG_ROOT/etc/timezone" ]; then
+                    localtime_backup=$DOWNLOAD_DIR/localtime
+                    cp -a "$DPKG_ROOT/etc/localtime" "$localtime_backup"
+                fi
                 # Chrootless maintainer scripts use the tooling Debconf, which
                 # looks for configuration and databases under DPKG_ROOT. Keep
                 # this temporary state in the reconstructed dpkg database so
@@ -1319,6 +1375,10 @@ EOF
         fi
         "$DPKG_TOOL" --root="$DPKG_ROOT" --admindir="$DPKG_ROOT/var/lib/dpkg" --force-all --force-confold --install "$@"
         "$DPKG_TOOL" --root="$DPKG_ROOT" --configure -a
+        if [ -n "$localtime_backup" ]; then
+            rm -f "$DPKG_ROOT/etc/localtime" "$DPKG_ROOT/etc/timezone"
+            cp -a "$localtime_backup" "$DPKG_ROOT/etc/localtime"
+        fi
     fi
 fi
 

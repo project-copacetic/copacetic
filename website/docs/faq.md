@@ -54,6 +54,11 @@ can finish installing. This temporary state is removed before exporting the
 patched image. Existing Debconf configuration is preserved, including a custom
 path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
 Package configuration continues to use that configuration's saved answers.
+Configuration and database paths must be absolute, contain no `.` or `..`
+components, and resolve inside the target image. Debconf state under
+`/var/lib/dpkg` is rejected because that directory is rebuilt temporarily during
+patching. Without Debconf state, Copa preserves an existing regular
+`/etc/localtime` file when `/etc/timezone` is absent.
 
 #### Ubuntu
 
