@@ -96,20 +96,20 @@ copa patch --image "$IMAGE"
 
 ## Tested image layouts
 
-The shared dpkg end-to-end suite covers native Chisel manifests, apt-less full
-dpkg status files, and Distroless status directories. Google Distroless and
-Stakater Reloader v1.2.1 are Debian Distroless fixtures for the external
-status-directory flow. Source references are pinned by digest in the
-[dpkg e2e fixtures](https://github.com/project-copacetic/copacetic/blob/main/test/e2e/dpkg/fixtures/test-images.json).
+Copa's real-image end-to-end suite exercises both first-party and community
+images across the native-manifest and apt-less full-status layouts. It also
+keeps a Google distroless `status.d` regression case to ensure the Chiseled
+changes do not break the existing external status-directory flow. The source
+references are pinned by digest in the
+[Chiseled e2e fixtures](https://github.com/project-copacetic/copacetic/blob/main/test/e2e/chisel/fixtures/test-images.json).
 
 | Image family | Layout and platforms | Validation performed |
 | --- | --- | --- |
 | Canonical `ubuntu/dotnet-runtime:8.0-24.04_stable_145` | Native Chisel manifest; amd64 and arm64 | Real single-platform re-cuts with release inference, complete slice retention, package upgrades without downgrades, independent manifest-to-rootfs checks, runtime and image-configuration preservation, and no-update repatching |
 | Canonical multi-platform .NET index | Native Chisel manifest; amd64, arm64, ppc64le, and s390x | Independent amd64 and arm64 updates in one OCI output; opt-in ppc64le and s390x re-cuts under emulation; and partial amd64 patching that preserves the unselected arm64, ppc64le, and s390x descriptors, attestations, and referenced OCI blobs |
 | Community `ghcr.io/hadrienpatte/sonarr` | Native Chisel manifest; amd64 | Explicit release override, preservation of the `/Sonarr` application tree and image configuration, isolated application startup, and no-update repatching |
-| Generated fixture from pinned Ubuntu 24.04 GA | Apt-less full dpkg status; amd64, arm64, and arm/v7 | Trivy OS-only report patching on amd64 plus comprehensive baseline patching on arm64 and opt-in arm/v7 under emulation; validates fixed package versions, no downgrades, full-status preservation, cleanup, preservation of unmanaged content and image configuration, and no-update repatching |
+| Microsoft `mcr.microsoft.com/dotnet/runtime:8.0.0-jammy-chiseled` | Apt-less full dpkg status; amd64, arm64, and arm/v7 | Trivy OS-only report patching on amd64 plus comprehensive baseline patching on arm64 and opt-in arm/v7 under emulation; validates fixed package versions, no downgrades, full-status preservation, cleanup, runtime and image-configuration preservation, and no-update repatching |
 | Google `gcr.io/distroless/base-debian12` derivative | External dpkg `status.d`; amd64 | Regression coverage for encoded status filenames, package upgrades without downgrades, absence of a synthesized full status file, preservation of unmanaged content, and tooling cleanup |
-| Stakater `ghcr.io/stakater/reloader:v1.2.1` | External dpkg `status.d`; amd64 | Comprehensive `tzdata` updates without existing Debconf configuration, cleanup of temporary Debconf state, and preservation of status filenames, the application binary, and image configuration |
 
 The Chisel tooling image and Copa architecture mapping are also exercised for
 `linux/386` and `linux/riscv64`. The current real-image patch matrix does not
@@ -118,14 +118,14 @@ fixture for them yet.
 
 These images are regression fixtures, not an allowlist. Other images are
 supported when they match one of the documented metadata layouts and their
-packages are available from the appropriate public Ubuntu or Debian archives.
-Native Chisel images must also have every selected slice available in the
-resolved Chisel release.
+packages are available from the appropriate public Ubuntu archives. Native
+images must also have every selected slice available in the resolved Chisel
+release.
 
 The suite also verifies that patched images preserve the original user,
 entrypoint, command, environment, and working directory, and that apt, dpkg,
 BusyBox, and a shell do not leak into the result. See
-[Development and Testing Tips](./development-tips.md#run-debian-and-ubuntu-real-image-tests)
+[Development and Testing Tips](./development-tips.md#run-ubuntu-chiseled-real-image-tests)
 for contributor instructions.
 
 ## Selecting a Chisel release

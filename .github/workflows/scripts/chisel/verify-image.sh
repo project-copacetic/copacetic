@@ -74,7 +74,7 @@ if ! platform_diff="$(diff -u "${expected_platforms_file}" "${actual_platforms_f
 fi
 
 # Keep the immutable parent index reference in the local content store. The
-# dpkg e2e suite inspects this exact digest before BuildKit consumes it.
+# Chisel e2e suite inspects this exact digest before BuildKit consumes it.
 docker pull --platform linux/amd64 "${image_ref}" >/dev/null
 
 {

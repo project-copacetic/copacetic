@@ -1,15 +1,9 @@
-# Debian and Ubuntu image patching end-to-end tests
+# Ubuntu Chiseled real-image end-to-end tests
 
-This package tests the Debian and Ubuntu image layouts handled by Copa's dpkg
-package manager. It uses immutable, digest-pinned fixtures for:
-
-- Native Chisel images with `/var/lib/chisel/manifest.wall`.
-- Apt-less images with a full `/var/lib/dpkg/status` file.
-- Distroless images with `/var/lib/dpkg/status.d`, including Google Distroless
-  and Stakater Reloader v1.2.1.
-
-Reloader is a Debian Distroless image and exercises the external status-directory
-flow. Network-independent Chisel fixture tests live in `integration/chisel`.
+This package validates Copa against immutable, digest-pinned examples of all
+three supported Debian metadata layouts used by Chiseled and distroless images.
+It is intentionally separate from the network-independent fixture tests in
+`integration/chisel`.
 
 ## Coverage
 
@@ -68,7 +62,7 @@ Run the complete package:
 ```bash
 COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
 
-go test ./test/e2e/dpkg \
+go test ./test/e2e/chisel \
   --addr=docker:// \
   --copa="$COPA_BIN" \
   -timeout 115m \
@@ -78,7 +72,7 @@ go test ./test/e2e/dpkg \
 Run one case while iterating:
 
 ```bash
-go test ./test/e2e/dpkg \
+go test ./test/e2e/chisel \
   -run '^TestNativeChiselRealImageARM64$' \
   --addr=docker:// \
   --copa="$COPA_BIN" \
@@ -89,8 +83,8 @@ go test ./test/e2e/dpkg \
 Run the slower secondary-architecture cases explicitly:
 
 ```bash
-COPA_DPKG_SECONDARY_ARCHES=1 COPA_DPKG_PATCH_TIMEOUT=75m \
-  go test ./test/e2e/dpkg \
+COPA_CHISEL_SECONDARY_ARCHES=1 COPA_CHISEL_PATCH_TIMEOUT=75m \
+  go test ./test/e2e/chisel \
   -run '^(TestNativeChiselSecondaryArchitecturesOCI|TestAptlessFullStatusComprehensiveFromBaselineARMv7)$' \
   --addr=docker:// \
   --copa="$COPA_BIN" \
@@ -111,12 +105,12 @@ tagged tooling image.
 
 ## CI
 
-The `test-dpkg` job in `.github/workflows/build.yml` pulls
+The `test-chisel` job in `.github/workflows/build.yml` pulls
 `ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c`
-and runs the default package on an amd64 runner, including native Chisel cases
-for amd64 and arm64, generated apt-less full-status fixtures, and Google
-Distroless and Reloader status-directory cases. The
-`test-dpkg-secondary-architectures` job executes the Chisel tooling image for 386,
+and runs the default package on an amd64 runner, including the real arm64
+Canonical and community-image cases plus generated apt-less full-status
+fixtures. The
+`test-chisel-secondary-architectures` job executes the tooling image for 386,
 arm/v7, ppc64le, riscv64, and s390x, then runs native patch tests for ppc64le and
 s390x plus apt-less full-status patching for arm/v7. The 386 and riscv64 coverage
 is currently limited to tooling-image execution plus Copa's architecture-mapping

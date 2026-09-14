@@ -1,4 +1,4 @@
-package dpkg
+package chisel
 
 import (
 	"bytes"
@@ -499,7 +499,7 @@ Flags: seen
 
 func TestDistrolessStatusDirectoryPreservesEncodedFilenames(t *testing.T) {
 	if testing.Short() {
-		t.Skip("skipping real-image distroless e2e test in short mode")
+		t.Skip("skipping real-image Chisel e2e test in short mode")
 	}
 	requireTool(t, "docker")
 	requireLocalImage(t, chiselToolingImage)
@@ -575,8 +575,8 @@ func ensurePlatformExecution(t *testing.T, platform, binfmtArchitecture string) 
 
 func requireSecondaryArchitectureTests(t *testing.T) {
 	t.Helper()
-	if os.Getenv("COPA_DPKG_SECONDARY_ARCHES") != "1" {
-		t.Skip("set COPA_DPKG_SECONDARY_ARCHES=1 to run ppc64le, s390x, and arm/v7 patch validation")
+	if os.Getenv("COPA_CHISEL_SECONDARY_ARCHES") != "1" {
+		t.Skip("set COPA_CHISEL_SECONDARY_ARCHES=1 to run ppc64le, s390x, and arm/v7 patch validation")
 	}
 }
 
@@ -659,7 +659,7 @@ func writeSyntheticOSPackageReport(t *testing.T, filename, osFamily, osVersion, 
 
 func patchImageExpectError(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", patchTimeout())
+	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", chiselPatchTimeout())
 	if buildkitAddr != "" {
 		args = append(args, "--addr", buildkitAddr)
 	}

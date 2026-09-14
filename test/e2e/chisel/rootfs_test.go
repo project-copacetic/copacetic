@@ -1,4 +1,4 @@
-package dpkg
+package chisel
 
 import (
 	"archive/tar"
