@@ -40,5 +40,5 @@ jobs:
         go-version-file: go.mod
         check-latest: true
     - name: Run govulncheck
-      # Keep the scanner compatible with the repository's Go 1.25 toolchain.
-      run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      # Pin the scanner so its toolchain requirements stay stable between runs.
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
