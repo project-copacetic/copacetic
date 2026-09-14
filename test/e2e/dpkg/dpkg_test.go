@@ -1,4 +1,4 @@
-package chisel
+package dpkg
 
 import (
 	"archive/tar"
@@ -372,7 +372,7 @@ func loadFixture(t *testing.T, id string) realImageFixture {
 }
 
 func uniqueImage(prefix string) string {
-	return fmt.Sprintf("copa-e2e-chisel-%s:%d-%d", prefix, time.Now().UnixNano(), tagCounter.Add(1))
+	return fmt.Sprintf("copa-e2e-dpkg-%s:%d-%d", prefix, time.Now().UnixNano(), tagCounter.Add(1))
 }
 
 func cleanupImageTags(t *testing.T, image string, platforms ...string) {
@@ -447,15 +447,15 @@ func assertNoUpdates(t *testing.T, args ...string) {
 	require.False(t, patchImageOrNoUpdates(t, args...), "expected no-updates result")
 }
 
-func chiselPatchTimeout() string {
-	if value := os.Getenv("COPA_CHISEL_PATCH_TIMEOUT"); value != "" {
+func patchTimeout() string {
+	if value := os.Getenv("COPA_DPKG_PATCH_TIMEOUT"); value != "" {
 		return value
 	}
 	return defaultPatchTimeout
 }
 
 func runPatchImage(args ...string) (string, error) {
-	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", chiselPatchTimeout())
+	args = append(args, "--loader", "docker", "--progress", "plain", "--timeout", patchTimeout())
 	if buildkitAddr != "" {
 		args = append(args, "--addr", buildkitAddr)
 	}

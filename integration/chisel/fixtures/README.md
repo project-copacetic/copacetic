@@ -3,8 +3,8 @@
 This directory is isolated scaffolding for the two Ubuntu Chiseled filesystem
 layouts. It does not modify or depend on the existing single-arch integration
 suite. The package tests and synthetic fixtures remain network-independent;
-registry inspection is opt-in, while executable patch validation lives in the
-dedicated `test/e2e/chisel` suite.
+registry inspection is opt-in. Executable patch validation shares the
+`test/e2e/dpkg` suite with apt-less and Distroless image tests.
 
 ## Contents
 
@@ -91,8 +91,9 @@ with `jq` and `zstd`:
 integration/chisel/fixtures/manifest-schema-1.0/verify.sh
 ```
 
-Executable patch validation uses digest-pinned Canonical, Microsoft, and
-community images from `test/e2e/chisel/fixtures/test-images.json`:
+Executable patch validation uses digest-pinned native Chisel and Distroless
+images plus generated apt-less Ubuntu fixtures. The source references are in
+`test/e2e/dpkg/fixtures/test-images.json`:
 
 ```bash
 make build
@@ -101,14 +102,14 @@ docker pull --platform linux/amd64 \
   ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
 
 COPA_BIN="$(pwd)/dist/$(go env GOOS)_$(go env GOARCH)/release/copa"
-go test ./test/e2e/chisel \
+go test ./test/e2e/dpkg \
   --addr=docker:// \
   --copa="$COPA_BIN" \
   -timeout 115m \
   -v
 ```
 
-See `test/e2e/chisel/README.md` for the test matrix, prerequisites, and focused
+See `test/e2e/dpkg/README.md` for the test matrix, prerequisites, and focused
 `-run` commands.
 
 ## Manual registry inspection commands
@@ -198,12 +199,13 @@ uses no Ubuntu Pro, ESM, FIPS, private-archive, or package-manager credentials.
 
 ## Executable real-image patch validation
 
-The previous blocker to executable native patch smoke tests has been removed.
-The `test/e2e/chisel` suite now validates:
+The shared `test/e2e/dpkg` suite validates:
 
 - comprehensive native re-cuts for Canonical and community images;
 - report-driven and comprehensive updates for a locally built apt-less
   full-status layout based on the pinned Ubuntu GA image;
+- Distroless status-directory updates, including encoded status filenames and
+  Reloader's `tzdata` configuration and cleanup;
 - runtime and image-configuration preservation;
 - absence of apt, dpkg, BusyBox, and shell tooling in patched outputs;
 - no package downgrades and complete native manifest package metadata;
@@ -212,6 +214,6 @@ The `test/e2e/chisel` suite now validates:
 
 CI pulls the published tooling image by immutable manifest-list digest (`ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c`). The publication workflow verifies all supported platforms, SBOM and provenance attestations, Chisel commit and Go compiler labels, the validator source checksum, and amd64/arm64 runtime behavior before assigning the versioned tag.
 
-Trivy remains applicable to the full-status layout only. Native
-`manifest.wall` coverage is comprehensive-update-only until a scanner can
+Trivy reports apply to the full-status and Distroless status-directory layouts.
+Native `manifest.wall` coverage is comprehensive-update-only until a scanner can
 inventory that metadata format.

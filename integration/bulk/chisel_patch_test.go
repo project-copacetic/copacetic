@@ -52,7 +52,7 @@ type bulkChiselImageState struct {
 // Both source fixtures are immutable native-Chisel images that are old enough
 // to require a comprehensive re-cut. This test intentionally lives with the
 // bulk integration suite because its subject is bulk configuration precedence
-// and propagation; the Chisel e2e suite separately covers image patch behavior.
+// and propagation; the dpkg e2e suite separately covers image patch behavior.
 func TestBulkChiselReleaseDefaultAndPerImageOverride(t *testing.T) {
 	t.Setenv("GODEBUG", "netdns=go+netgo")
 	ctx := context.Background()
