@@ -1333,26 +1333,25 @@ else
                     break
                 fi
             done
+            # Preserve the image's file-only timezone independently of Debconf
+            # answers, which may be absent even when a configuration exists.
+            if [ -f "$DPKG_ROOT/etc/localtime" ] && [ ! -L "$DPKG_ROOT/etc/localtime" ] &&
+                [ ! -e "$DPKG_ROOT/etc/timezone" ] && [ ! -L "$DPKG_ROOT/etc/timezone" ]; then
+                assert_target_path_safe "$DPKG_ROOT/etc/localtime"
+                localtime_backup=$DOWNLOAD_DIR/localtime
+                cp -a "$DPKG_ROOT/etc/localtime" "$localtime_backup"
+            fi
             if [ "$debconf_config_found" = true ]; then
-                # Match Debconf's environment substitution before checking its
-                # file database paths. The reconstructed dpkg tree is temporary.
-                DPKG_ROOT="$DPKG_ROOT" perl -0777 -ne '
-                    s/\$\{([^}]+)\}/$ENV{$1} \/\/ ""/eg;
-                    for (split /\n/) {
-                        print "$1\n" if /^\s*(?:Filename|Directory)\s*:\s*(.*?)\s*$/i;
-                    }
+                # Substitutions would use the tooling environment, not the
+                # target's saved values. Require literal configuration instead.
+                perl -ne '
+                    die "Debconf environment substitutions are not supported for status.d images\n" if /\$\{/;
+                    print "$1\n" if /^\s*(?:Filename|Directory)\s*:\s*(.*?)\s*$/i;
                 ' "$DPKG_ROOT$debconf_config" > "$DOWNLOAD_DIR/debconf-paths"
                 while IFS= read -r debconf_database; do
                     validate_debconf_path "$debconf_database"
                 done < "$DOWNLOAD_DIR/debconf-paths"
             else
-                # Without saved answers or a timezone name, tzdata replaces a
-                # regular localtime file with UTC. Preserve that configuration.
-                if [ -f "$DPKG_ROOT/etc/localtime" ] && [ ! -L "$DPKG_ROOT/etc/localtime" ] &&
-                    [ ! -e "$DPKG_ROOT/etc/timezone" ] && [ ! -L "$DPKG_ROOT/etc/timezone" ]; then
-                    localtime_backup=$DOWNLOAD_DIR/localtime
-                    cp -a "$DPKG_ROOT/etc/localtime" "$localtime_backup"
-                fi
                 # Chrootless maintainer scripts use the tooling Debconf, which
                 # looks for configuration and databases under DPKG_ROOT. Keep
                 # this temporary state in the reconstructed dpkg database so

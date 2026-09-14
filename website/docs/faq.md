@@ -55,10 +55,13 @@ patched image. Existing Debconf configuration is preserved, including a custom
 path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
 Package configuration continues to use that configuration's saved answers.
 Configuration and database paths must be absolute, contain no `.` or `..`
-components, and resolve inside the target image. Debconf state under
+components, and resolve inside the target image. Environment substitutions such
+as `${DEBCONF_DB_DIR}` in Debconf configuration are not supported. Debconf state under
 `/var/lib/dpkg` is rejected because that directory is rebuilt temporarily during
-patching. Without Debconf state, Copa preserves an existing regular
-`/etc/localtime` file when `/etc/timezone` is absent.
+patching. Absolute symlinks in configuration or database paths are also rejected;
+relative links must stay within the mounted target root. Copa preserves an
+existing regular `/etc/localtime` file when `/etc/timezone` is absent, including
+when a Debconf configuration exists but has no saved timezone answers.
 
 #### Ubuntu
 

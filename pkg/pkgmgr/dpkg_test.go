@@ -2592,6 +2592,7 @@ esac
 }
 
 func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
+	const proxySentinel = "https://copa-test-proxy.invalid"
 	for _, tc := range []struct {
 		name         string
 		configPath   string
@@ -2608,6 +2609,11 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 		{name: "parent traversal", configPath: "/../../etc/debconf.conf", wantError: "Debconf path must be canonical"},
 		{name: "configuration under dpkg", configPath: "/var/lib/dpkg/debconf.conf", wantError: "Debconf state under /var/lib/dpkg is not supported"},
 		{name: "database under dpkg", configPath: "/custom/debconf.conf", databasePath: "/var/lib/dpkg/config.dat", wantError: "Debconf state under /var/lib/dpkg is not supported"},
+		{name: "tooling environment substitution", configPath: "/custom/debconf.conf", databasePath: "${HTTPS_PROXY}", wantError: "Debconf environment substitutions are not supported"},
+		{
+			name: "multiline environment substitution", configPath: "/custom/debconf.conf",
+			databasePath: "/var/lib/dpkg${\nmissing\n}/config.dat", wantError: "Debconf environment substitutions are not supported",
+		},
 		{
 			name: "escaping parent symlink", configPath: "/custom/debconf.conf", wantError: "escapes the mounted root",
 			setup: func(t *testing.T, root string) {
@@ -2762,8 +2768,10 @@ esac
 				"EXISTING_DEBCONF_CONFIG":     tc.configPath,
 				"EXPECTED_DEBCONF_SYSTEMRC":   systemRC,
 				"DEBCONF_SYSTEMRC":            systemRC,
+				"HTTPS_PROXY":                 proxySentinel,
 			})
 
+			assert.NotContains(t, string(output), proxySentinel, "tooling environment values must not appear in Debconf diagnostics")
 			if tc.wantError != "" {
 				require.Error(t, err)
 				assert.Contains(t, string(output), tc.wantError)
