@@ -2592,27 +2592,93 @@ esac
 }
 
 func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
-	binDir := t.TempDir()
-	workDir := t.TempDir()
-	downloadDir := filepath.Join(workDir, "downloads")
-	dpkgRoot := filepath.Join(workDir, "rootfs")
-	packagesPath := filepath.Join(workDir, "packages.txt")
-	floorsPath := filepath.Join(workDir, "version-floors")
-	finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
-	aptLog := filepath.Join(workDir, "apt.log")
-	installLog := filepath.Join(workDir, "install.log")
-	status := []byte("Package: safe\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
+	const proxySentinel = "https://copa-test-proxy.invalid"
+	for _, tc := range []struct {
+		name         string
+		configPath   string
+		databasePath string
+		setup        func(*testing.T, string)
+		wantError    string
+	}{
+		{name: "missing Debconf configuration"},
+		{name: "system configuration", configPath: "/etc/debconf.conf"},
+		{name: "shared configuration", configPath: "/usr/share/debconf/debconf.conf"},
+		{name: "home configuration", configPath: "/root/.debconfrc"},
+		{name: "custom configuration", configPath: "/custom/debconf.conf", databasePath: "/custom/config.dat"},
+		{name: "relative override", configPath: "custom/debconf.conf", wantError: "Debconf path must be absolute"},
+		{name: "parent traversal", configPath: "/../../etc/debconf.conf", wantError: "Debconf path must be canonical"},
+		{name: "configuration under dpkg", configPath: "/var/lib/dpkg/debconf.conf", wantError: "Debconf state under /var/lib/dpkg is not supported"},
+		{name: "database under dpkg", configPath: "/custom/debconf.conf", databasePath: "/var/lib/dpkg/config.dat", wantError: "Debconf state under /var/lib/dpkg is not supported"},
+		{name: "tooling environment substitution", configPath: "/custom/debconf.conf", databasePath: "${HTTPS_PROXY}", wantError: "Debconf environment substitutions are not supported"},
+		{
+			name: "multiline environment substitution", configPath: "/custom/debconf.conf",
+			databasePath: "/var/lib/dpkg${\nmissing\n}/config.dat", wantError: "Debconf environment substitutions are not supported",
+		},
+		{
+			name: "escaping parent symlink", configPath: "/custom/debconf.conf", wantError: "escapes the mounted root",
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.MkdirAll(root, 0o755))
+				require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(root, "custom")))
+			},
+		},
+		{
+			name: "escaping configuration symlink", configPath: "/custom/debconf.conf", wantError: "escapes the mounted root",
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "custom"), 0o755))
+				require.NoError(t, os.Symlink(filepath.Join(t.TempDir(), "debconf.conf"), filepath.Join(root, "custom", "debconf.conf")))
+			},
+		},
+		{
+			name: "configuration symlink within target", configPath: "/custom/debconf.conf",
+			setup: func(t *testing.T, root string) {
+				require.NoError(t, os.MkdirAll(filepath.Join(root, "custom"), 0o755))
+				require.NoError(t, os.Symlink("saved.conf", filepath.Join(root, "custom", "debconf.conf")))
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			workDir := t.TempDir()
+			downloadDir := filepath.Join(workDir, "downloads")
+			dpkgRoot := filepath.Join(workDir, "rootfs")
+			packagesPath := filepath.Join(workDir, "packages.txt")
+			floorsPath := filepath.Join(workDir, "version-floors")
+			finalizePath := filepath.Join(workDir, "finalize_dpkg_status.sh")
+			aptLog := filepath.Join(workDir, "apt.log")
+			installLog := filepath.Join(workDir, "install.log")
+			debconfLog := filepath.Join(workDir, "debconf.log")
+			status := []byte("Package: safe\nStatus: install ok installed\nVersion: 1.0\nArchitecture: amd64\n")
+			systemRC := ""
+			if tc.configPath != "" {
+				switch tc.configPath {
+				case "/etc/debconf.conf", "/usr/share/debconf/debconf.conf", "/root/.debconfrc":
+				default:
+					systemRC = tc.configPath
+				}
+			}
+			if tc.setup != nil {
+				tc.setup(t, dpkgRoot)
+			}
+			configContents := "application-owned configuration\n"
+			if tc.databasePath != "" {
+				configContents = "Filename: " + tc.databasePath + "\n"
+			}
+			if tc.configPath != "" && filepath.IsAbs(tc.configPath) && filepath.Clean(tc.configPath) == tc.configPath {
+				configPath := filepath.Join(dpkgRoot, tc.configPath)
+				require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0o755))
+				require.NoError(t, os.WriteFile(configPath, []byte(configContents), 0o600))
+			}
 
-	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
-	require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "bin"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), status, 0o600))
-	writeTestExecutable(t, filepath.Join(dpkgRoot, "bin"), "sh", "application-owned")
-	require.NoError(t, os.WriteFile(packagesPath, []byte("safe\n"), 0o600))
-	require.NoError(t, os.WriteFile(floorsPath, []byte("safe|1.0|2.0\n"), 0o600))
-	require.NoError(t, os.WriteFile(finalizePath, finalizeDPKGStatusScript, 0o600))
-	require.NoError(t, os.Chmod(finalizePath, 0o700))
+			require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "info"), 0o755))
+			require.NoError(t, os.MkdirAll(filepath.Join(dpkgRoot, "bin"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"), status, 0o600))
+			writeTestExecutable(t, filepath.Join(dpkgRoot, "bin"), "sh", "application-owned")
+			require.NoError(t, os.WriteFile(packagesPath, []byte("safe\n"), 0o600))
+			require.NoError(t, os.WriteFile(floorsPath, []byte("safe|1.0|2.0\n"), 0o600))
+			require.NoError(t, os.WriteFile(finalizePath, finalizeDPKGStatusScript, 0o600))
+			require.NoError(t, os.Chmod(finalizePath, 0o700))
 
-	writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
+			writeTestExecutable(t, binDir, "apt-get", `#!/bin/sh
 printf '%s\n' "$*" >> "$APT_LOG"
 command=''
 after_separator=false
@@ -2633,7 +2699,7 @@ case "$command" in
     *) exit 91 ;;
 esac
 `)
-	writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
+			writeTestExecutable(t, binDir, "dpkg-deb", `#!/bin/sh
 case "$1" in
     -f)
         case "$3" in
@@ -2645,7 +2711,8 @@ case "$1" in
     *) exit 2 ;;
 esac
 `)
-	writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+			writeTestExecutable(t, binDir, "dpkg", `#!/bin/sh
+set -e
 if [ "$1" = '--compare-versions' ]; then
     case "$2|$3|$4" in
         '2.0|ge|1.0'|'2.0|ge|2.0') exit 0 ;;
@@ -2653,6 +2720,24 @@ if [ "$1" = '--compare-versions' ]; then
     esac
 fi
 printf '%s\n' "$*" >> "$INSTALL_LOG"
+if [ -n "$EXISTING_DEBCONF_CONFIG" ]; then
+    [ "${DEBCONF_SYSTEMRC:-}" = "$EXPECTED_DEBCONF_SYSTEMRC" ] || exit 92
+else
+    # Model Debconf's DPKG_ROOT-relative configuration and file databases for
+    # both installation and configuration. The real-image test runs Debconf.
+    [ -n "$DEBCONF_SYSTEMRC" ] && [ -s "$DPKG_ROOT$DEBCONF_SYSTEMRC" ] || {
+        echo 'No config file found' >&2
+        exit 93
+    }
+    awk '/^Filename: / { print $2 }' "$DPKG_ROOT$DEBCONF_SYSTEMRC" > "$DEBCONF_LOG"
+    while IFS= read -r database; do
+        case "$database" in
+            /var/lib/dpkg/*) ;;
+            *) echo 'Debconf database must be temporary' >&2; exit 94 ;;
+        esac
+        printf 'temporary Debconf data\n' > "$DPKG_ROOT$database"
+    done < "$DEBCONF_LOG"
+fi
 case " $* " in
     *" --install "*)
         cat >> "$DPKG_ROOT/var/lib/dpkg/status" <<'EOF'
@@ -2666,30 +2751,60 @@ EOF
 esac
 `)
 
-	runEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
-		"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
-		"IGNORE_ERRORS":               "false",
-		"UPDATE_ALL":                  "false",
-		"DPKG_ROOT":                   dpkgRoot,
-		"DOWNLOAD_DIR":                downloadDir,
-		"PACKAGES_FILE":               packagesPath,
-		"VERSION_FLOORS_FILE":         floorsPath,
-		"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
-		"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalStatusDirectory.String(),
-		"STATUSD_FILE_MAP":            "safe\tencoded-safe\n",
-		"APT_LOG":                     aptLog,
-		"INSTALL_LOG":                 installLog,
-	})
+			output, err := executeEmbeddedShellScript(t, aptGetDownloadScript, map[string]string{
+				"PATH":                        binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"IGNORE_ERRORS":               "false",
+				"UPDATE_ALL":                  "false",
+				"DPKG_ROOT":                   dpkgRoot,
+				"DOWNLOAD_DIR":                downloadDir,
+				"PACKAGES_FILE":               packagesPath,
+				"VERSION_FLOORS_FILE":         floorsPath,
+				"FINALIZE_DPKG_STATUS_SCRIPT": finalizePath,
+				"DPKG_INSTALLATION_MODE":      dpkgInstallationModeExternalStatusDirectory.String(),
+				"STATUSD_FILE_MAP":            "safe\tencoded-safe\n",
+				"APT_LOG":                     aptLog,
+				"INSTALL_LOG":                 installLog,
+				"DEBCONF_LOG":                 debconfLog,
+				"EXISTING_DEBCONF_CONFIG":     tc.configPath,
+				"EXPECTED_DEBCONF_SYSTEMRC":   systemRC,
+				"DEBCONF_SYSTEMRC":            systemRC,
+				"HTTPS_PROXY":                 proxySentinel,
+			})
 
-	aptCalls, err := os.ReadFile(aptLog)
-	require.NoError(t, err)
-	assert.Contains(t, string(aptCalls), "download --no-install-recommends -- safe")
-	assert.NotContains(t, string(aptCalls), " install ")
-	assert.NoFileExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
-	updatedStatus, err := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d", "encoded-safe"))
-	require.NoError(t, err)
-	assert.Contains(t, string(updatedStatus), "Version: 2.0")
-	assert.FileExists(t, filepath.Join(dpkgRoot, "bin", "sh"), "status.d behavior must not apply full-status tooling cleanup")
+			assert.NotContains(t, string(output), proxySentinel, "tooling environment values must not appear in Debconf diagnostics")
+			if tc.wantError != "" {
+				require.Error(t, err)
+				assert.Contains(t, string(output), tc.wantError)
+				assert.NoFileExists(t, installLog, "invalid Debconf state must be rejected before package installation")
+				assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d"))
+				return
+			}
+			require.NoError(t, err, "%s", output)
+
+			aptCalls, err := os.ReadFile(aptLog)
+			require.NoError(t, err)
+			assert.Contains(t, string(aptCalls), "download --no-install-recommends -- safe")
+			assert.NotContains(t, string(aptCalls), " install ")
+			assert.NoFileExists(t, filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status"))
+			updatedStatus, err := os.ReadFile(filepath.Join(dpkgRoot, "var", "lib", "dpkg", "status.d", "encoded-safe"))
+			require.NoError(t, err)
+			assert.Contains(t, string(updatedStatus), "Version: 2.0")
+			assert.FileExists(t, filepath.Join(dpkgRoot, "bin", "sh"), "status.d behavior must not apply full-status tooling cleanup")
+			entries, err := os.ReadDir(filepath.Join(dpkgRoot, "var", "lib", "dpkg"))
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "temporary Debconf configuration and databases must be removed")
+			assert.Equal(t, "status.d", entries[0].Name())
+			if tc.configPath == "" {
+				databases, readErr := os.ReadFile(debconfLog)
+				require.NoError(t, readErr)
+				assert.Len(t, strings.Fields(string(databases)), 2, "Debconf needs persistent configuration and template databases during installation")
+				assert.NoDirExists(t, filepath.Join(dpkgRoot, "var", "cache", "debconf"))
+			} else {
+				assertFileContent(t, filepath.Join(dpkgRoot, tc.configPath), configContents)
+				assert.NoFileExists(t, debconfLog, "existing Debconf configuration must not be replaced")
+			}
+		})
+	}
 }
 
 func TestDPKGProbeScriptDoesNotExecuteTargetTools(t *testing.T) {

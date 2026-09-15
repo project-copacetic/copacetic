@@ -632,6 +632,40 @@ assert_target_path_safe() {
     esac
 }
 
+validate_debconf_path() {
+    debconf_path=$1
+    case "$debconf_path" in
+        /*) ;;
+        *) echo "Debconf path must be absolute: $debconf_path" >&2; exit 1 ;;
+    esac
+    case "$debconf_path/" in
+        *//*|*/./*|*/../*) echo "Debconf path must be canonical: $debconf_path" >&2; exit 1 ;;
+    esac
+    case "$debconf_path" in
+        /var/lib/dpkg|/var/lib/dpkg/*)
+            echo "Debconf state under /var/lib/dpkg is not supported for status.d images: $debconf_path" >&2
+            exit 1
+            ;;
+    esac
+
+    assert_target_path_safe "$DPKG_ROOT$debconf_path"
+    resolved_debconf_path=$resolved_parent
+    if [ -e "$DPKG_ROOT$debconf_path" ] || [ -L "$DPKG_ROOT$debconf_path" ]; then
+        resolved_debconf_path=$(readlink -f "$DPKG_ROOT$debconf_path") || {
+            echo "cannot resolve target Debconf path: $debconf_path" >&2
+            exit 1
+        }
+    fi
+    case "$resolved_debconf_path" in
+        "$dpkg_root_real/var/lib/dpkg"|"$dpkg_root_real/var/lib/dpkg"/*)
+            echo "Debconf state under /var/lib/dpkg is not supported for status.d images: $debconf_path" >&2
+            exit 1
+            ;;
+        "$dpkg_root_real"|"$dpkg_root_real"/*) ;;
+        *) echo "Debconf path escapes the mounted root: $debconf_path" >&2; exit 1 ;;
+    esac
+}
+
 # Resolve symlinks in the target namespace without letting absolute targets
 # escape into the tooling container's root filesystem.
 resolve_target_path() {
@@ -1288,8 +1322,62 @@ else
     set -- ./*.deb
     if [ ! -f "$1" ]; then set --; fi
     if [ "$#" -gt 0 ]; then
+        localtime_backup=""
+        if [ "$DPKG_INSTALLATION_MODE" = "external-status-directory" ]; then
+            dpkg_root_real=$(readlink -f "$DPKG_ROOT")
+            debconf_config_found=false
+            for debconf_config in "${DEBCONF_SYSTEMRC:-/root/.debconfrc}" /etc/debconf.conf /usr/share/debconf/debconf.conf; do
+                validate_debconf_path "$debconf_config"
+                if [ -e "$DPKG_ROOT$debconf_config" ]; then
+                    debconf_config_found=true
+                    break
+                fi
+            done
+            # Preserve the image's file-only timezone independently of Debconf
+            # answers, which may be absent even when a configuration exists.
+            if [ -f "$DPKG_ROOT/etc/localtime" ] && [ ! -L "$DPKG_ROOT/etc/localtime" ] &&
+                [ ! -e "$DPKG_ROOT/etc/timezone" ] && [ ! -L "$DPKG_ROOT/etc/timezone" ]; then
+                assert_target_path_safe "$DPKG_ROOT/etc/localtime"
+                localtime_backup=$DOWNLOAD_DIR/localtime
+                cp -a "$DPKG_ROOT/etc/localtime" "$localtime_backup"
+            fi
+            if [ "$debconf_config_found" = true ]; then
+                # Substitutions would use the tooling environment, not the
+                # target's saved values. Require literal configuration instead.
+                perl -ne '
+                    die "Debconf environment substitutions are not supported for status.d images\n" if /\$\{/;
+                    print "$1\n" if /^\s*(?:Filename|Directory)\s*:\s*(.*?)\s*$/i;
+                ' "$DPKG_ROOT$debconf_config" > "$DOWNLOAD_DIR/debconf-paths"
+                while IFS= read -r debconf_database; do
+                    validate_debconf_path "$debconf_database"
+                done < "$DOWNLOAD_DIR/debconf-paths"
+            else
+                # Chrootless maintainer scripts use the tooling Debconf, which
+                # looks for configuration and databases under DPKG_ROOT. Keep
+                # this temporary state in the reconstructed dpkg database so
+                # status.d finalization removes it without adding Debconf to
+                # the patched image or importing the tooling image's answers.
+                export DEBCONF_SYSTEMRC=/var/lib/dpkg/copa-debconf.conf
+                cat > "$DPKG_ROOT$DEBCONF_SYSTEMRC" <<'EOF'
+Config: config
+Templates: templates
+
+Name: config
+Driver: File
+Filename: /var/lib/dpkg/copa-debconf-config.dat
+
+Name: templates
+Driver: File
+Filename: /var/lib/dpkg/copa-debconf-templates.dat
+EOF
+            fi
+        fi
         "$DPKG_TOOL" --root="$DPKG_ROOT" --admindir="$DPKG_ROOT/var/lib/dpkg" --force-all --force-confold --install "$@"
         "$DPKG_TOOL" --root="$DPKG_ROOT" --configure -a
+        if [ -n "$localtime_backup" ]; then
+            rm -f "$DPKG_ROOT/etc/localtime" "$DPKG_ROOT/etc/timezone"
+            cp -a "$localtime_backup" "$DPKG_ROOT/etc/localtime"
+        fi
     fi
 fi
 

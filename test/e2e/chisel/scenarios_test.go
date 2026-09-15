@@ -374,6 +374,219 @@ COPY manifest.wall /var/lib/chisel/manifest.wall
 	assertNoPatchOutput(t, outputTag, outputDir)
 }
 
+func TestDistrolessComprehensiveUpdateConfiguresTZData(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-image distroless e2e test in short mode")
+	}
+	requireTool(t, "docker")
+	fixture := loadFixture(t, "distroless-reloader-tzdata")
+	pullImage(t, fixture.Reference, fixture.Platform)
+	before := captureImage(t, fixture.Reference, fixture.Platform)
+	assertStatusDirectoryLayout(t, &before)
+	require.NotContains(t, before.Paths, "etc/debconf.conf")
+	require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
+	beforePackages, beforeFilenames := parseStatusDirectory(t, before.StatusDirectory)
+	require.Contains(t, before.Paths, fixture.PreserveTree)
+
+	patched := uniqueImage("distroless-tzdata")
+	t.Cleanup(func() { removeImage(patched) })
+	patchImage(t,
+		"patch",
+		"--image", fixture.Reference,
+		"--tag", patched,
+		"--platform", fixture.Platform,
+	)
+
+	after := captureImage(t, patched, fixture.Platform)
+	assertStatusDirectoryLayout(t, &after)
+	assertImageConfigPreserved(t, &before.Config, &after.Config)
+	afterPackages, afterFilenames := parseStatusDirectory(t, after.StatusDirectory)
+	assertNoDPKGDowngrades(t, beforePackages, afterPackages)
+	assert.Equal(t, beforeFilenames, afterFilenames)
+	for _, name := range fixture.ExpectedUpgradePackages {
+		requireVersionGreater(t, afterPackages[name].Version, beforePackages[name].Version, name)
+	}
+	for name := range after.Paths {
+		name = strings.TrimSuffix(name, "/")
+		if strings.HasPrefix(name, "var/lib/dpkg/") {
+			assert.True(t, name == "var/lib/dpkg/status.d" || strings.HasPrefix(name, "var/lib/dpkg/status.d/"), "temporary dpkg state leaked: %s", name)
+		}
+		assert.False(t, strings.Contains(name, "debconf"), "Debconf tooling or temporary configuration leaked: %s", name)
+	}
+	assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree), canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "application binary changed")
+}
+
+func TestDistrolessUpdatePreservesCustomDebconfConfiguration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-image distroless e2e test in short mode")
+	}
+	requireTool(t, "docker")
+	fixture := loadFixture(t, "distroless-reloader-tzdata")
+	prepare := loadFixture(t, "ubuntu-full-status-base")
+	for _, tc := range []struct {
+		name              string
+		configDir         string
+		databaseDir       string
+		databaseConfigDir string
+		emptyAnswers      bool
+		wantError         string
+	}{
+		{name: "custom directory", configDir: "/custom", databaseDir: "/custom"},
+		{name: "empty Debconf database", configDir: "/custom", databaseDir: "/custom", emptyAnswers: true},
+		{name: "configuration under dpkg", configDir: "/var/lib/dpkg", databaseDir: "/custom", wantError: "Debconf state under /var/lib/dpkg is not supported"},
+		{name: "databases under dpkg", configDir: "/custom", databaseDir: "/var/lib/dpkg", wantError: "Debconf state under /var/lib/dpkg is not supported"},
+		{
+			name: "target environment substitution", configDir: "/custom", databaseDir: "/custom",
+			databaseConfigDir: "${DEBCONF_DB_DIR}", wantError: "Debconf environment substitutions are not supported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			databaseConfigDir := tc.databaseDir
+			if tc.databaseConfigDir != "" {
+				databaseConfigDir = tc.databaseConfigDir
+			}
+			answers := []byte(`Name: tzdata/Areas
+Template: tzdata/Areas
+Value: Europe
+Owners: tzdata
+Flags: seen
+
+Name: tzdata/Zones/Europe
+Template: tzdata/Zones/Europe
+Value: Berlin
+Owners: tzdata
+Flags: seen
+
+`)
+			if tc.emptyAnswers {
+				answers = nil
+			}
+			// A regular localtime file without /etc/timezone must survive even
+			// when the existing Debconf database has no saved timezone answers.
+			target := buildImageFromDockerfile(t, "distroless-custom-debconf", fixture.Platform, fmt.Sprintf(`
+FROM %s AS source
+FROM %s AS prepare
+COPY --from=source / /rootfs
+RUN rm -f /rootfs/etc/localtime /rootfs/etc/timezone \
+    && cp /rootfs/usr/share/zoneinfo/Europe/Berlin /rootfs/etc/localtime
+COPY debconf.conf /rootfs%s/debconf.conf
+COPY config.dat templates.dat /rootfs%s/
+FROM scratch
+COPY --from=prepare /rootfs /
+ENV DEBCONF_SYSTEMRC=%s/debconf.conf
+ENV DEBCONF_DB_DIR=/custom
+USER 65532:65532
+ENTRYPOINT ["/manager"]
+`, fixture.Reference, prepare.Reference, tc.configDir, tc.databaseDir, tc.configDir), map[string][]byte{
+				"debconf.conf": []byte(fmt.Sprintf(`Config: config
+Templates: templates
+
+Name: config
+Driver: File
+Filename: %s/config.dat
+
+Name: templates
+Driver: File
+Filename: %s/templates.dat
+`, databaseConfigDir, databaseConfigDir)),
+				"config.dat":    answers,
+				"templates.dat": nil,
+			})
+
+			before := captureImage(t, target, fixture.Platform)
+			assertStatusDirectoryLayout(t, &before)
+			require.Contains(t, before.Config.Config.Env, "DEBCONF_SYSTEMRC="+tc.configDir+"/debconf.conf")
+			require.NotContains(t, before.Paths, "etc/debconf.conf")
+			require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
+			require.NotContains(t, before.Paths, "etc/timezone")
+			require.Contains(t, before.Paths, "etc/localtime")
+			require.Empty(t, before.Paths["etc/localtime"].Linkname)
+			beforePackages, beforeFilenames := parseStatusDirectory(t, before.StatusDirectory)
+
+			patched := uniqueImage("distroless-custom-debconf-patched")
+			t.Cleanup(func() { removeImage(patched) })
+			if tc.wantError != "" {
+				outputDir := filepath.Join(t.TempDir(), "must-not-exist")
+				output, err := patchImageExpectError(t,
+					"patch", "--image", target, "--tag", patched, "--platform", fixture.Platform,
+					"--oci-dir", outputDir,
+				)
+				require.Error(t, err)
+				require.Contains(t, output, tc.wantError)
+				assertNoPatchOutput(t, patched, outputDir)
+				return
+			}
+			patchImage(t,
+				"patch",
+				"--image", target,
+				"--tag", patched,
+				"--platform", fixture.Platform,
+			)
+
+			after := captureImage(t, patched, fixture.Platform)
+			assertStatusDirectoryLayout(t, &after)
+			assertImageConfigPreserved(t, &before.Config, &after.Config)
+			afterPackages, afterFilenames := parseStatusDirectory(t, after.StatusDirectory)
+			assertNoDPKGDowngrades(t, beforePackages, afterPackages)
+			assert.Equal(t, beforeFilenames, afterFilenames)
+			requireVersionGreater(t, afterPackages["tzdata"].Version, beforePackages["tzdata"].Version, "tzdata")
+			assert.NotContains(t, after.Paths, "etc/timezone")
+			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, "etc/localtime"), canonicalTreeHash(t, after.RootFSTar, "etc/localtime"), "file-only timezone configuration changed")
+			assert.Positive(t, after.Paths[strings.TrimPrefix(tc.databaseDir, "/")+"/templates.dat"].Size, "target Debconf databases were not used")
+			configFile := strings.TrimPrefix(tc.configDir, "/") + "/debconf.conf"
+			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, configFile), canonicalTreeHash(t, after.RootFSTar, configFile), "custom Debconf configuration changed")
+			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree), canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "application binary changed")
+		})
+	}
+}
+
+func TestDistrolessUpdatePreservesFileTimezone(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping real-image distroless e2e test in short mode")
+	}
+
+	requireTool(t, "docker")
+	fixture := loadFixture(t, "distroless-reloader-tzdata")
+	prepare := loadFixture(t, "ubuntu-full-status-base")
+	target := buildImageFromDockerfile(t, "distroless-file-timezone", fixture.Platform, fmt.Sprintf(`
+FROM %s AS source
+FROM %s AS prepare
+COPY --from=source / /rootfs
+RUN rm -f /rootfs/etc/localtime /rootfs/etc/timezone \
+    && cp /rootfs/usr/share/zoneinfo/Europe/Berlin /rootfs/etc/localtime
+FROM scratch
+COPY --from=prepare /rootfs /
+USER 65532:65532
+ENTRYPOINT ["/manager"]
+`, fixture.Reference, prepare.Reference), nil)
+
+	before := captureImage(t, target, fixture.Platform)
+	assertStatusDirectoryLayout(t, &before)
+	require.NotContains(t, before.Paths, "etc/debconf.conf")
+	require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
+	require.NotContains(t, before.Paths, "etc/timezone")
+	require.Contains(t, before.Paths, "etc/localtime")
+	require.Empty(t, before.Paths["etc/localtime"].Linkname)
+	beforePackages, beforeFilenames := parseStatusDirectory(t, before.StatusDirectory)
+
+	patched := uniqueImage("distroless-file-timezone-patched")
+	t.Cleanup(func() { removeImage(patched) })
+	patchImage(t,
+		"patch", "--image", target, "--tag", patched, "--platform", fixture.Platform,
+	)
+
+	after := captureImage(t, patched, fixture.Platform)
+	assertStatusDirectoryLayout(t, &after)
+	assertImageConfigPreserved(t, &before.Config, &after.Config)
+	afterPackages, afterFilenames := parseStatusDirectory(t, after.StatusDirectory)
+	assertNoDPKGDowngrades(t, beforePackages, afterPackages)
+	assert.Equal(t, beforeFilenames, afterFilenames)
+	requireVersionGreater(t, afterPackages["tzdata"].Version, beforePackages["tzdata"].Version, "tzdata")
+	assert.NotContains(t, after.Paths, "etc/timezone")
+	assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, "etc/localtime"), canonicalTreeHash(t, after.RootFSTar, "etc/localtime"), "file-only timezone configuration changed")
+	assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree), canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "application binary changed")
+}
+
 func TestDistrolessStatusDirectoryPreservesEncodedFilenames(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping real-image Chisel e2e test in short mode")

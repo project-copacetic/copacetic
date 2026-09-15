@@ -47,6 +47,22 @@ All images being passed into Copa have their versioning data carefully extracted
 
 All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `ghcr.io/project-copacetic/copacetic/debian:11-slim` is used as the tooling image.
 
+For Distroless images with `/var/lib/dpkg/status.d`, Copa uses the tooling image
+to run package maintainer scripts. If the target has no Debconf configuration,
+Copa supplies temporary configuration and databases so packages such as `tzdata`
+can finish installing. This temporary state is removed before exporting the
+patched image. Existing Debconf configuration is preserved, including a custom
+path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
+Package configuration continues to use that configuration's saved answers.
+Configuration and database paths must be absolute, contain no `.` or `..`
+components, and resolve inside the target image. Environment substitutions such
+as `${DEBCONF_DB_DIR}` in Debconf configuration are not supported. Debconf state under
+`/var/lib/dpkg` is rejected because that directory is rebuilt temporarily during
+patching. Absolute symlinks in configuration or database paths are also rejected;
+relative links must stay within the mounted target root. Copa preserves an
+existing regular `/etc/localtime` file when `/etc/timezone` is absent, including
+when a Debconf configuration exists but has no saved timezone answers.
+
 #### Ubuntu
 
 Copa selects DPKG tooling from the target's detected Ubuntu version. For
