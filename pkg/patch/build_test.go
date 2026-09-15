@@ -315,9 +315,9 @@ func TestCreateBuildConfigDoesNotCopyStaleSourceLineage(t *testing.T) {
 		true,
 		pipeW,
 		map[string]string{
-			"org.opencontainers.image.source":      "https://example.com/source",
-			"org.opencontainers.image.base.name":   "example.com/stale:latest",
-			"org.opencontainers.image.base.digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"org.opencontainers.image.source": "https://example.com/source",
+			"sh.copa.patch.origin.name":       "example.com/stale:latest",
+			"sh.copa.patch.origin.digest":     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		},
 		"patched",
 		"",
@@ -327,6 +327,6 @@ func TestCreateBuildConfigDoesNotCopyStaleSourceLineage(t *testing.T) {
 
 	attrs := buildConfig.SolveOpt.Exports[0].Attrs
 	assert.Equal(t, "https://example.com/source", attrs["annotation.org.opencontainers.image.source"])
-	assert.NotContains(t, attrs, "annotation.org.opencontainers.image.base.name")
-	assert.NotContains(t, attrs, "annotation.org.opencontainers.image.base.digest")
+	assert.NotContains(t, attrs, "annotation.sh.copa.patch.origin.name")
+	assert.NotContains(t, attrs, "annotation.sh.copa.patch.origin.digest")
 }

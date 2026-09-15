@@ -106,7 +106,7 @@ These flags are essential for multi-platform patching:
 
 - **OCI layout export**: The `--oci-dir` flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. `--push` and `--oci-dir` cannot be used together.
 
-- **Source lineage**: Newly patched OCI manifests record `org.opencontainers.image.base.name` and `org.opencontainers.image.base.digest` for the exact source manifest Copa patched. A patched OCI index records the source index digest while each patched child records its matching source manifest digest. Unchanged platform descriptors are preserved without adding new annotations. When re-patching, Copa follows its recorded original base; if it cannot establish one truthful common base for an index, it omits the index-level pair.
+- **Patch origin**: Newly patched OCI manifests record `sh.copa.patch.origin.kind`, `sh.copa.patch.origin.name`, and `sh.copa.patch.origin.digest` for the original non-Copa image selected for patching. Image references use kind `image-ref`; the digest identifies the exact original platform manifest. When re-patching, both generations point directly to that original image. Application-owned `org.opencontainers.image.base.*` metadata is preserved. A patched index records its common original index only when every output platform can be matched to it; otherwise the index origin is omitted. Unchanged platform descriptors and blobs are preserved without adding annotations. The `oci-layout` kind allows a digest without a portable name; local paths never belong in origin metadata. These fields describe content identity and do not authenticate provenance. If a recorded origin cannot be recovered by its exact digest, re-patching fails; restore the original before retrying. Older images carrying only `BaseImage` retain best-effort re-patching with a warning and no verified-origin tuple.
 
 - **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
 
@@ -126,9 +126,9 @@ These flags are essential for multi-platform patching:
 :::
 
 :::warning
-Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
+Copa does not transfer source signatures or attestations to newly patched subjects or copy registry referrers to the new output. OCI layout export retains embedded attestation-manifest descriptors associated with unchanged platform manifests and their referenced blobs; it does not verify or renew those attestations.
 
-Docker schema 2 manifests and manifest lists do not support OCI annotations. Source-lineage annotations are therefore guaranteed only for OCI manifests, OCI indexes, and OCI layouts; Copa does not silently convert Docker-format output to OCI.
+Docker schema 2 manifests and manifest lists do not define OCI annotations; consumers may discard nonstandard annotation fields even if an exporter includes them. Patch-origin annotations are therefore guaranteed only for OCI manifests, OCI indexes, and OCI layouts; Copa does not silently convert Docker-format output to OCI.
 :::
 
 ## Understanding the Results

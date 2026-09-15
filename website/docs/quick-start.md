@@ -117,7 +117,7 @@ Both methods create a new image tagged `nginx:1.21.6-patched` in your local regi
 
 For local exports, Copa stores newly created patch layers with `--compression=uncompressed` by default so scanners can read the patched image reliably. Existing base layers are preserved in their original compression unless you use `--force-compression` to re-encode layers exported for patched platforms to the selected compression. Platforms preserved unchanged in a multi-platform OCI layout keep their original layer blobs and compression.
 
-Patched OCI manifests and indexes also record the standard `org.opencontainers.image.base.name` and `org.opencontainers.image.base.digest` lineage pair. The digest identifies the exact source content Copa patched; Docker schema 2 output cannot carry these OCI annotations and is not automatically converted.
+Patched OCI manifests also record `sh.copa.patch.origin.{kind,name,digest}` for the original non-Copa image selected for patching; indexes record a common original index when it can be established. Re-patching points to the same original image, and application-owned `org.opencontainers.image.base.*` metadata is preserved. Docker schema 2 does not define portable manifest annotations. Copa guarantees them only for OCI output and does not automatically convert Docker output; the origin tuple is also recorded in image-config labels.
 
 :::tip
 

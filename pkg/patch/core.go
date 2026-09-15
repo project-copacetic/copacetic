@@ -12,7 +12,6 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
-	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
@@ -75,7 +74,6 @@ type Result struct {
 	ErroredPackages  []string
 	ValidatedUpdates []unversioned.UpdatePackage
 	Annotations      map[string]string
-	SourceLineage    *types.SourceLineage
 
 	// BuildKit state and config (only set if ReturnState is true)
 	PatchedState *llb.State
@@ -279,7 +277,6 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 			ErroredPackages:  errPkgs,
 			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
 			Annotations:      resultAnnotations,
-			SourceLineage:    sourceLineage,
 			PatchedState:     preservedState,
 			ConfigData:       preservedConfig,
 		}, nil
@@ -320,7 +317,6 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		ErroredPackages:  errPkgs,
 		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
 		Annotations:      resultAnnotations,
-		SourceLineage:    sourceLineage,
 		PatchedState:     preservedState,  // Always preserve for OCI export
 		ConfigData:       preservedConfig, // Always preserve for OCI export
 	}, nil
@@ -344,6 +340,12 @@ func sourceLineageForPatch(config *buildkit.Config, opts *Options) *types.Source
 			if reference.IsNameOnly(sourceName) {
 				sourceName = reference.TagNameOnly(sourceName)
 			}
+			if pinned, ok := sourceName.(reference.Digested); ok && pinned.Digest() != lineage.Digest {
+				sourceName, err = reference.WithDigest(reference.TrimNamed(sourceName), lineage.Digest)
+				if err != nil {
+					return nil
+				}
+			}
 			lineage.Name = sourceName.String()
 		}
 	}
@@ -351,13 +353,7 @@ func sourceLineageForPatch(config *buildkit.Config, opts *Options) *types.Source
 }
 
 func sourceLineageAnnotations(lineage *types.SourceLineage) map[string]string {
-	if !lineage.Valid() {
-		return nil
-	}
-	return map[string]string{
-		ispec.AnnotationBaseImageName:   lineage.Name,
-		ispec.AnnotationBaseImageDigest: lineage.Digest.String(),
-	}
+	return lineage.Annotations()
 }
 
 func preservedImageState(state *llb.State, config []byte) (*llb.State, error) {
@@ -383,8 +379,9 @@ func imageConfigWithAnnotations(config *buildkit.Config, annotations map[string]
 	var err error
 	configData, err = buildkit.RemoveImageConfigLabels(
 		configData,
-		ispec.AnnotationBaseImageName,
-		ispec.AnnotationBaseImageDigest,
+		types.AnnotationPatchOriginKind,
+		types.AnnotationPatchOriginName,
+		types.AnnotationPatchOriginDigest,
 	)
 	if err != nil {
 		return nil, err

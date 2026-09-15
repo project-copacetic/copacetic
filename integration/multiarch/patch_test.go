@@ -17,6 +17,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/integration/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -530,16 +531,18 @@ func verifyAnnotations(t *testing.T, patchedRef string, platforms []string, repo
 			annotationsThatChange := map[string]bool{
 				ocispec.AnnotationCreated:         true,
 				ocispec.AnnotationVersion:         true,
-				ocispec.AnnotationBaseImageName:   true,
-				ocispec.AnnotationBaseImageDigest: true,
+				types.AnnotationPatchOriginKind:   true,
+				types.AnnotationPatchOriginName:   true,
+				types.AnnotationPatchOriginDigest: true,
 			}
-			assert.Equal(t, originalRef, manifestEntry.Annotations[ocispec.AnnotationBaseImageName],
+			assert.Equal(t, types.PatchOriginImage, manifestEntry.Annotations[types.AnnotationPatchOriginKind])
+			assert.Equal(t, originalRef, manifestEntry.Annotations[types.AnnotationPatchOriginName],
 				"patched platform %s should identify the image Copa actually patched", platformStr)
-			lineageDigest, exists := manifestEntry.Annotations[ocispec.AnnotationBaseImageDigest]
-			assert.True(t, exists, "patched platform %s should have a computed base digest", platformStr)
+			lineageDigest, exists := manifestEntry.Annotations[types.AnnotationPatchOriginDigest]
+			assert.True(t, exists, "patched platform %s should have a computed origin digest", platformStr)
 			if exists {
 				_, parseErr := digest.Parse(lineageDigest)
-				assert.NoError(t, parseErr, "patched platform %s should have a valid base digest", platformStr)
+				assert.NoError(t, parseErr, "patched platform %s should have a valid origin digest", platformStr)
 			}
 
 			for key, originalValue := range originalAnnotations {

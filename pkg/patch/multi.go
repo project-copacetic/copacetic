@@ -13,7 +13,6 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
-	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
@@ -498,7 +497,7 @@ func captureMultiPlatformSource(ctx context.Context, image string) (*multiPlatfo
 	source := &multiPlatformSource{Current: current}
 	if _, repatch := current.Index.Annotations[copaAnnotationKeyPrefix+".patched"]; !repatch {
 		source.Base = current
-		source.IndexLineage = &types.SourceLineage{Name: current.Name, Digest: current.Descriptor.Digest}
+		source.IndexLineage = &types.SourceLineage{Kind: types.PatchOriginImage, Name: current.Name, Digest: current.Descriptor.Digest}
 		return source, nil
 	}
 
@@ -520,22 +519,11 @@ func captureMultiPlatformSource(ctx context.Context, image string) (*multiPlatfo
 }
 
 func sourceLineageFromAnnotations(annotations map[string]string) *types.SourceLineage {
-	lineageDigest, err := digest.Parse(annotations[ispec.AnnotationBaseImageDigest])
-	if err != nil {
-		return nil
-	}
-	lineageName, err := reference.ParseNormalizedNamed(annotations[ispec.AnnotationBaseImageName])
-	if err != nil {
-		return nil
-	}
-	if reference.IsNameOnly(lineageName) {
-		lineageName = reference.TagNameOnly(lineageName)
-	}
-	return &types.SourceLineage{Name: lineageName.String(), Digest: lineageDigest}
+	return types.SourceLineageFromAnnotations(annotations)
 }
 
 func immutableLineageReference(lineage *types.SourceLineage) (string, error) {
-	if !lineage.Valid() {
+	if !lineage.Valid() || lineage.Kind != types.PatchOriginImage {
 		return "", errors.New("source lineage is incomplete")
 	}
 	name, err := reference.ParseNormalizedNamed(lineage.Name)
@@ -603,11 +591,12 @@ func commonBaseIndexLineage(source *multiPlatformSource, items []types.PatchResu
 			return nil
 		}
 
-		patched := item.PatchedRef != nil && item.OriginalRef != nil && item.PatchedRef.String() != item.OriginalRef.String()
+		patched := item.PatchedState != nil || (item.PatchedRef != nil && item.OriginalRef != nil && item.PatchedRef.String() != item.OriginalRef.String())
 		if patched {
-			if !item.SourceLineage.Valid() ||
-				item.SourceLineage.Name != source.IndexLineage.Name ||
-				item.SourceLineage.Digest != expected.Digest {
+			lineage := sourceLineageFromAnnotations(item.PatchedDesc.Annotations)
+			if !lineage.Valid() || lineage.Kind != source.IndexLineage.Kind ||
+				!sameOriginRepository(lineage.Name, source.IndexLineage.Name) ||
+				lineage.Digest != expected.Digest {
 				log.Debugf("Omitting index source lineage: patched platform %s does not map to source descriptor %s", buildkit.PlatformKey(*item.PatchedDesc.Platform), expected.Digest)
 				return nil
 			}
@@ -616,13 +605,10 @@ func commonBaseIndexLineage(source *multiPlatformSource, items []types.PatchResu
 		if item.PatchedDesc.Digest == expected.Digest {
 			continue
 		}
-		preservedLineage := sourceLineageFromAnnotations(item.PatchedDesc.Annotations)
-		if !preservedLineage.Valid() ||
-			preservedLineage.Name != source.IndexLineage.Name ||
-			preservedLineage.Digest != expected.Digest {
-			log.Debugf("Omitting index source lineage: preserved platform %s does not map to source descriptor %s", buildkit.PlatformKey(*item.PatchedDesc.Platform), expected.Digest)
-			return nil
-		}
+		// Preserved descriptor annotations are unverified ancestry assertions.
+		// Only unchanged original bytes establish this child's common origin.
+		log.Debugf("Omitting index source lineage: preserved platform %s differs from original descriptor %s", buildkit.PlatformKey(*item.PatchedDesc.Platform), expected.Digest)
+		return nil
 	}
 	lineage := *source.IndexLineage
 	return &lineage
@@ -669,4 +655,13 @@ func buildPatchingPlan(opts *types.Options, platforms []types.PatchPlatform) tui
 		PatchedImageName:   patchedName,
 		PreservedPlatforms: preservedPlatforms,
 	}
+}
+
+func sameOriginRepository(left, right string) bool {
+	a, err := reference.ParseNormalizedNamed(left)
+	if err != nil {
+		return false
+	}
+	b, err := reference.ParseNormalizedNamed(right)
+	return err == nil && a.Name() == b.Name()
 }

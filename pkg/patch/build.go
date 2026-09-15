@@ -52,10 +52,10 @@ func authenticatedSolveOpt() client.SolveOpt {
 // the unpatched version (matches the index-level rewrite in
 // pkg/patch/manifest.go).
 //
-// Note: BuildKit's Docker exporter (--load and Docker schema 2 push) writes a
-// manifest format that has no `annotations` field; the annotation.* attrs are
-// silently dropped there. Annotations are preserved end-to-end only on OCI
-// exports. This matches the pre-existing behavior of the
+// Note: BuildKit's Docker exporter (--load and Docker schema 2 push) uses a
+// format that does not standardize `annotations`; consumers may discard them
+// even when an exporter includes them. Portable manifest annotations are
+// guaranteed only on OCI exports, including the existing
 // sh.copa.image.patched annotation.
 func createBuildConfig(
 	patchedImageName string,

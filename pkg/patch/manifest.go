@@ -117,14 +117,9 @@ func multiPlatformIndexAnnotations(
 		annotations = make(map[string]string)
 	}
 
-	// A copied pair may describe an ancestor of the current source. Newly
-	// computed lineage wins, and an unknown pair is omitted rather than stale.
-	delete(annotations, ispec.AnnotationBaseImageName)
-	delete(annotations, ispec.AnnotationBaseImageDigest)
-	if indexLineage.Valid() {
-		annotations[ispec.AnnotationBaseImageName] = indexLineage.Name
-		annotations[ispec.AnnotationBaseImageDigest] = indexLineage.Digest.String()
-	}
+	// Replace only Copa-owned origin metadata; preserve application base.*.
+	annotations = withoutSourceLineageAnnotations(annotations)
+	maps.Copy(annotations, sourceLineageAnnotations(indexLineage))
 
 	now := created.UTC().Format(time.RFC3339)
 	annotations[ispec.AnnotationCreated] = now

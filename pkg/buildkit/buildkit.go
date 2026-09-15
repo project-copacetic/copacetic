@@ -48,7 +48,7 @@ type Config struct {
 	PatchedConfigData []byte
 	SourceLineage     *types.SourceLineage
 	// SourceLineageValidated is true when a supplied patched image carried a
-	// base lineage pair whose digest matches the base BuildKit actually selected.
+	// patch origin tuple whose digest matches the original BuildKit actually selected.
 	// Multi-platform callers use this to avoid treating an index digest as a
 	// child-manifest digest when re-patching older Copa images.
 	SourceLineageValidated bool
@@ -273,6 +273,9 @@ func InitializeBuildkitConfig(
 		Platform:  platform,
 	}
 
+	// Use the source metadata API so resolve mode survives gateway transport.
+	// BuildKit's legacy ResolveImageConfig adapter can drop prefer-local mode.
+	resolver := sourceresolver.NewImageMetaResolver(c)
 	// Resolve and pull the config for the target image
 	resolveOpt := sourceresolver.Opt{
 		ImageOpt: &sourceresolver.ResolveImageOpt{
@@ -282,7 +285,7 @@ func InitializeBuildkitConfig(
 	if platform != nil {
 		resolveOpt.ImageOpt.Platform = platform
 	}
-	_, userImageDigest, configData, err := c.ResolveImageConfig(ctx, userImage, resolveOpt)
+	_, userImageDigest, configData, err := resolver.ResolveImageConfig(ctx, userImage, resolveOpt)
 	if err != nil {
 		return nil, err
 	}
@@ -290,7 +293,7 @@ func InitializeBuildkitConfig(
 	var baseImage string
 	config.ConfigData, config.PatchedConfigData, baseImage, config.SourceLineage, config.SourceLineageValidated, err = updateImageConfigData(
 		ctx,
-		c,
+		resolver,
 		configData,
 		userImage,
 		userImageDigest,
@@ -304,7 +307,7 @@ func InitializeBuildkitConfig(
 	// are necessary for running apps in the target image for updates
 	imageOpts := []llb.ImageOption{
 		llb.ResolveModePreferLocal,
-		llb.WithMetaResolver(c),
+		llb.WithMetaResolver(resolver),
 	}
 	if platform != nil {
 		imageOpts = append(imageOpts, llb.Platform(*platform))
@@ -315,12 +318,12 @@ func InitializeBuildkitConfig(
 	}
 
 	// Only set PatchedImageState if the user supplied a patched image
-	// An image is deemed to be a patched image if it contains one of two metadata values
-	// BaseImage or specs.AnnotationBaseImageName
+	// BaseImage identifies a Copa patch. Application-owned OCI base annotations
+	// do not identify Copa patches.
 	if config.PatchedConfigData != nil {
 		patchedImageOpts := []llb.ImageOption{
 			llb.ResolveModePreferLocal,
-			llb.WithMetaResolver(c),
+			llb.WithMetaResolver(resolver),
 		}
 		if platform != nil {
 			patchedImageOpts = append(patchedImageOpts, llb.Platform(*platform))
@@ -790,74 +793,100 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *specs.Platfor
 
 func updateImageConfigData(
 	ctx context.Context,
-	c gwclient.Client,
+	c sourceresolver.ImageMetaResolver,
 	configData []byte,
 	image string,
 	imageDigest digest.Digest,
 	platform *specs.Platform,
 ) ([]byte, []byte, string, *types.SourceLineage, bool, error) {
+	document, err := parseImageConfigLabels(configData)
+	if err != nil {
+		return nil, nil, "", nil, false, err
+	}
 	baseImage, userImageConfig, err := setupLabels(image, configData)
 	if err != nil {
 		return nil, nil, "", nil, false, err
 	}
-
-	if baseImage == "" {
-		configData = userImageConfig
-	} else {
-		patchedImageConfig := userImageConfig
-		resolveOpt := sourceresolver.Opt{
-			ImageOpt: &sourceresolver.ResolveImageOpt{
-				ResolveMode: llb.ResolveModePreferLocal.String(),
-			},
-		}
-		if platform != nil {
-			resolveOpt.ImageOpt.Platform = platform
-		}
-		_, baseImageDigest, baseImageConfig, err := c.ResolveImageConfig(ctx, baseImage, resolveOpt)
-		if err != nil {
-			log.Warnf("Failed to resolve BaseImage %s: %v. Falling back to using current image %s as base", baseImage, err, image)
-			// Fallback: Create a new config with the BaseImage label set to current image
-			imageConfig := make(map[string]interface{})
-			if err := json.Unmarshal(configData, &imageConfig); err != nil {
-				log.Warnf("Failed to unmarshal image config: %v", err)
-				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
-			}
-			configMap, ok := imageConfig["config"].(map[string]interface{})
-			if !ok {
-				log.Warnf("Invalid config structure in image config")
-				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
-			}
-			if configMap["labels"] == nil {
-				configMap["labels"] = make(map[string]interface{})
-			}
-			labelsMap, ok := configMap["labels"].(map[string]interface{})
-			if !ok {
-				log.Warnf("Invalid labels structure in image config")
-				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
-			}
-			labelsMap["BaseImage"] = image
-			updatedConfigData, err := json.Marshal(imageConfig)
-			if err != nil {
-				log.Warnf("Failed to marshal updated image config: %v", err)
-				return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
-			}
-			return updatedConfigData, nil, image, newSourceLineage(image, imageDigest), false, nil
-		}
-
-		_, baseImageWithLabels, _ := setupLabels(baseImage, baseImageConfig)
-		configData = baseImageWithLabels
-
-		lineage := newSourceLineage(baseImage, baseImageDigest)
-		validated := false
-		if recorded := sourceLineageFromConfig(patchedImageConfig); recorded.Valid() && recorded.Digest == baseImageDigest {
-			lineage = recorded
-			validated = true
-		}
-
-		return configData, patchedImageConfig, baseImage, lineage, validated, nil
+	_, hasKind := document.labels[types.AnnotationPatchOriginKind]
+	_, hasName := document.labels[types.AnnotationPatchOriginName]
+	_, hasDigest := document.labels[types.AnnotationPatchOriginDigest]
+	hasOrigin := hasKind || hasName || hasDigest
+	recorded := sourceLineageFromConfig(configData)
+	if hasOrigin && (!recorded.Valid() || baseImage == "") {
+		return nil, nil, "", nil, false, errors.New("invalid patch origin metadata: a complete origin and BaseImage locator are required")
 	}
+	if baseImage == "" {
+		return userImageConfig, nil, image, newSourceLineage(image, imageDigest), false, nil
+	}
+	resolveOpt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{
+		ResolveMode: llb.ResolveModePreferLocal.String(), Platform: platform,
+	}}
+	var baseConfig []byte
+	if hasOrigin {
+		baseImage, _, baseConfig, err = resolveRecordedOrigin(ctx, c, baseImage, recorded, resolveOpt)
+		if err != nil {
+			return nil, nil, "", nil, false, fmt.Errorf("cannot recover recorded patch origin; restore the original image before re-patching: %w", err)
+		}
+		baseDocument, parseErr := parseImageConfigLabels(baseConfig)
+		if parseErr != nil {
+			return nil, nil, "", nil, false, parseErr
+		}
+		if baseDocument.labels["BaseImage"] != "" {
+			return nil, nil, "", nil, false, errors.New("recorded patch origin is itself a Copa-patched image")
+		}
+	} else {
+		// Legacy images have only a mutable BaseImage locator. Preserve their
+		// existing best-effort behavior without asserting verified original identity.
+		_, _, baseConfig, err = c.ResolveImageConfig(ctx, baseImage, resolveOpt)
+		if err != nil {
+			log.Warnf("Failed to resolve legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, err, image)
+			document.labels["BaseImage"] = image
+			fallback, marshalErr := document.marshal()
+			return fallback, nil, image, nil, false, marshalErr
+		}
+		log.Warn("Re-patching a legacy BaseImage-only image without verified patch origin")
+	}
+	_, baseWithLabels, err := setupLabels(baseImage, baseConfig)
+	if err != nil {
+		return nil, nil, "", nil, false, err
+	}
+	return baseWithLabels, userImageConfig, baseImage, recorded, hasOrigin, nil
+}
 
-	return configData, nil, image, newSourceLineage(image, imageDigest), false, nil
+// resolveRecordedOrigin preserves a matching local locator, but recovers a
+// moved/missing tag through its recorded immutable identity. Metadata may not
+// redirect recovery into a different repository than the BaseImage locator.
+func resolveRecordedOrigin(ctx context.Context, c sourceresolver.ImageMetaResolver, baseImage string, recorded *types.SourceLineage, opt sourceresolver.Opt) (string, digest.Digest, []byte, error) {
+	if !recorded.Valid() || recorded.Kind != types.PatchOriginImage {
+		return "", "", nil, errors.New("recorded patch origin cannot be resolved as an image reference")
+	}
+	base, err := reference.ParseNormalizedNamed(baseImage)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("parse BaseImage: %w", err)
+	}
+	origin, err := reference.ParseNormalizedNamed(recorded.Name)
+	if err != nil || base.Name() != origin.Name() {
+		return "", "", nil, errors.New("recorded patch origin repository does not match BaseImage")
+	}
+	if pinned, ok := base.(reference.Digested); ok && pinned.Digest() != recorded.Digest {
+		return "", "", nil, errors.New("recorded patch origin digest does not match immutable BaseImage")
+	}
+	_, selected, config, err := c.ResolveImageConfig(ctx, baseImage, opt)
+	if err == nil && selected == recorded.Digest {
+		return baseImage, selected, config, nil
+	}
+	pinned, err := reference.WithDigest(reference.TrimNamed(base), recorded.Digest)
+	if err != nil {
+		return "", "", nil, err
+	}
+	_, selected, config, err = c.ResolveImageConfig(ctx, pinned.String(), opt)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("recover patch origin %s: %w", pinned, err)
+	}
+	if selected != recorded.Digest {
+		return "", "", nil, fmt.Errorf("recovered patch origin %s resolved to unexpected digest %s", pinned, selected)
+	}
+	return pinned.String(), selected, config, nil
 }
 
 func newSourceLineage(image string, imageDigest digest.Digest) *types.SourceLineage {
@@ -871,7 +900,13 @@ func newSourceLineage(image string, imageDigest digest.Digest) *types.SourceLine
 	if reference.IsNameOnly(imageName) {
 		imageName = reference.TagNameOnly(imageName)
 	}
-	return &types.SourceLineage{Name: imageName.String(), Digest: imageDigest}
+	if pinned, ok := imageName.(reference.Digested); ok && pinned.Digest() != imageDigest {
+		imageName, err = reference.WithDigest(reference.TrimNamed(imageName), imageDigest)
+		if err != nil {
+			return nil
+		}
+	}
+	return &types.SourceLineage{Kind: types.PatchOriginImage, Name: imageName.String(), Digest: imageDigest}
 }
 
 func sourceLineageFromConfig(configData []byte) *types.SourceLineage {
@@ -879,11 +914,7 @@ func sourceLineageFromConfig(configData []byte) *types.SourceLineage {
 	if err != nil {
 		return nil
 	}
-	lineageDigest, err := digest.Parse(document.labels[specs.AnnotationBaseImageDigest])
-	if err != nil {
-		return nil
-	}
-	return newSourceLineage(document.labels[specs.AnnotationBaseImageName], lineageDigest)
+	return types.SourceLineageFromAnnotations(document.labels)
 }
 
 type imageConfigLabelsDocument struct {
@@ -986,7 +1017,7 @@ func AddImageConfigLabels(imageConfig []byte, labels map[string]string) ([]byte,
 }
 
 // RemoveImageConfigLabels returns imageConfig without the named labels. This
-// keeps an unverified lineage pair from surviving a re-patch through copied
+// keeps an unverified origin tuple from surviving a re-patch through copied
 // runtime configuration.
 func RemoveImageConfigLabels(imageConfig []byte, labels ...string) ([]byte, error) {
 	if len(labels) == 0 {

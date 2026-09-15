@@ -32,6 +32,7 @@ import (
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	fstypes "github.com/tonistiigi/fsutil/types"
@@ -234,7 +235,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 		require.NoError(t, err)
 		assert.Nil(t, patched)
 		assert.Equal(t, "alpine:3.20", baseImage)
-		assert.Equal(t, &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: imageDigest}, lineage)
+		assert.Equal(t, &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: imageDigest}, lineage)
 		assert.False(t, validated)
 	})
 
@@ -251,17 +252,17 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			}).
 			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"config":{"labels":{}}}`), nil).
 			Once()
-		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
+		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"sh.copa.patch.origin.kind":"image-ref","BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
 			baseDigest,
-			ispec.AnnotationBaseImageName,
-			ispec.AnnotationBaseImageDigest,
+			types.AnnotationPatchOriginName,
+			types.AnnotationPatchOriginDigest,
 			baseDigest,
 		))
 
 		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, "registry.example.com/app:patched", digest.FromString("patched"), platform)
 		require.NoError(t, err)
 		require.NotNil(t, patched)
-		assert.Equal(t, &types.SourceLineage{Name: "docker.io/library/alpine:3.20", Digest: baseDigest}, lineage)
+		assert.Equal(t, &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: baseDigest}, lineage)
 		assert.True(t, validated)
 		client.AssertExpectations(t)
 	})
@@ -270,8 +271,9 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 func TestCreateFinalOCILayoutIncludesIndexAnnotations(t *testing.T) {
 	outputDir := t.TempDir()
 	annotations := map[string]string{
-		ispec.AnnotationBaseImageName:   "registry.example.com/team/app:1.0",
-		ispec.AnnotationBaseImageDigest: digest.FromString("source-index").String(),
+		types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+		types.AnnotationPatchOriginName:   "registry.example.com/team/app:1.0",
+		types.AnnotationPatchOriginDigest: digest.FromString("source-index").String(),
 	}
 
 	require.NoError(t, createFinalOCILayout(outputDir, nil, annotations))
@@ -897,10 +899,11 @@ func TestAddOCIExportMetadata(t *testing.T) {
 	metadata := platformExportMetadata{
 		Config: []byte(`{"architecture":"arm64","os":"linux","config":{"User":"101"}}`),
 		Annotations: map[string]string{
-			"sh.copa.chisel.release":        "ubuntu-24.04",
-			"sh.copa.chisel.version":        "v1.4.2",
-			ispec.AnnotationBaseImageName:   "registry.example.com/team/app:1.0",
-			ispec.AnnotationBaseImageDigest: digest.FromString("source-manifest").String(),
+			"sh.copa.chisel.release":          "ubuntu-24.04",
+			"sh.copa.chisel.version":          "v1.4.2",
+			types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+			types.AnnotationPatchOriginName:   "registry.example.com/team/app:1.0",
+			types.AnnotationPatchOriginDigest: digest.FromString("source-manifest").String(),
 		},
 	}
 
@@ -1630,4 +1633,129 @@ func TestPlatformsFromIndexManifest(t *testing.T) {
 		{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}, // v8 variant stripped
 	}
 	assert.Equal(t, want, got)
+}
+
+func TestResolveRecordedOrigin(t *testing.T) {
+	source := "example.com/app:stable"
+	original := digest.FromString("A")
+	lineage := &types.SourceLineage{Kind: types.PatchOriginImage, Name: source, Digest: original}
+	opt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{ResolveMode: llb.ResolveModePreferLocal.String(), Platform: &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}}}
+	cfg := []byte(`{"config":{"Labels":{}}}`)
+	for _, tc := range []struct {
+		name         string
+		selected     digest.Digest
+		resolveErr   error
+		immutableErr error
+		recovered    digest.Digest
+		wantErr      bool
+	}{
+		{name: "retain matching local locator", selected: original},
+		{name: "reused output tag", selected: digest.FromString("P1"), recovered: original},
+		{name: "moved tag", selected: digest.FromString("C"), recovered: original},
+		{name: "removed tag", resolveErr: errors.New("tag gone"), recovered: original},
+		{name: "original unavailable", selected: digest.FromString("P1"), immutableErr: errors.New("original gone"), wantErr: true},
+		{name: "immutable source mismatch", selected: digest.FromString("P1"), recovered: digest.FromString("C"), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			client.On("ResolveImageConfig", mock.Anything, source, opt).Return(source, tc.selected, cfg, tc.resolveErr).Once()
+			wantRef := source
+			if tc.selected != original || tc.resolveErr != nil {
+				wantRef = "example.com/app@" + original.String()
+				client.On("ResolveImageConfig", mock.Anything, wantRef, opt).Return(wantRef, tc.recovered, cfg, tc.immutableErr).Once()
+			}
+			ref, selected, got, err := resolveRecordedOrigin(t.Context(), client, source, lineage, opt)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, wantRef, ref)
+				assert.Equal(t, original, selected)
+				assert.Equal(t, cfg, got)
+			}
+			client.AssertExpectations(t)
+		})
+	}
+	for _, base := range []string{"attacker.example.com/app:stable", "example.com/app@" + digest.FromString("C").String()} {
+		client := &mocks.MockGWClient{}
+		_, _, _, err := resolveRecordedOrigin(t.Context(), client, base, lineage, opt)
+		require.Error(t, err)
+		client.AssertNotCalled(t, "ResolveImageConfig", mock.Anything, mock.Anything, mock.Anything)
+	}
+}
+
+func TestUpdateImageConfigDataOriginFailurePolicy(t *testing.T) {
+	original := digest.FromString("unavailable-original")
+	lineage := &types.SourceLineage{Kind: types.PatchOriginImage, Name: "example.com/app:original", Digest: original}
+	config := []byte(`{"config":{"Labels":{"BaseImage":"example.com/app:original","org.opencontainers.image.base.name":"example.com/os:base"}}}`)
+	modern, err := AddImageConfigLabels(config, lineage.Annotations())
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name   string
+		config []byte
+		modern bool
+	}{
+		{"new origin fails", modern, true}, {"legacy remains best effort", config, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			client.On("ResolveImageConfig", mock.Anything, mock.Anything, mock.Anything).Return("", digest.Digest(""), []byte(nil), errors.New("not found"))
+			got, patched, ref, origin, validated, err := updateImageConfigData(t.Context(), client, tc.config, "example.com/app:patched", digest.FromString("P1"), nil)
+			if tc.modern {
+				require.ErrorContains(t, err, "restore the original image")
+				return
+			}
+			require.NoError(t, err)
+			require.Nil(t, patched)
+			require.Nil(t, origin)
+			require.False(t, validated)
+			require.Equal(t, "example.com/app:patched", ref)
+			document, err := parseImageConfigLabels(got)
+			require.NoError(t, err)
+			require.Equal(t, "example.com/app:patched", document.labels["BaseImage"])
+			require.Equal(t, "example.com/os:base", document.labels[ispec.AnnotationBaseImageName])
+		})
+	}
+	malformed := []byte(`{"config":{"Labels":{"BaseImage":"example.com/app:original","sh.copa.patch.origin.kind":"image-ref"}}}`)
+	_, _, _, _, _, err = updateImageConfigData(t.Context(), &mocks.MockGWClient{}, malformed, "example.com/app:patched", digest.FromString("P1"), nil)
+	require.ErrorContains(t, err, "invalid patch origin metadata")
+}
+
+func TestNewSourceLineageNormalizesSelectedChild(t *testing.T) {
+	selected := digest.FromString("selected child")
+	lineage := newSourceLineage("example.com/app@"+digest.FromString("index").String(), selected)
+	require.True(t, lineage.Valid())
+	require.Equal(t, "example.com/app@"+selected.String(), lineage.Name)
+}
+
+type originMetadataGateway struct {
+	gwclient.Client
+	t        *testing.T
+	platform *ispec.Platform
+	calls    int
+}
+
+func (c *originMetadataGateway) ResolveImageConfig(context.Context, string, sourceresolver.Opt) (string, digest.Digest, []byte, error) {
+	return "", "", nil, errors.New("legacy image adapter must not be used for source identity")
+}
+
+func (c *originMetadataGateway) ResolveSourceMetadata(_ context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
+	c.calls++
+	require.Equal(c.t, "docker-image://example.com/app:local", op.Identifier)
+	require.NotNil(c.t, opt.ImageOpt)
+	require.Equal(c.t, llb.ResolveModePreferLocal.String(), opt.ImageOpt.ResolveMode)
+	require.Equal(c.t, c.platform, opt.ImageOpt.Platform)
+	cfg := []byte(`{"architecture":"arm64","os":"linux","config":{"Labels":{}}}`)
+	return &sourceresolver.MetaResponse{Op: op, Image: &sourceresolver.ResolveImageResponse{Digest: digest.FromString("local image"), Config: cfg}}, nil
+}
+
+func TestInitializeBuildkitConfigPreservesSourceResolveOptions(t *testing.T) {
+	platform := &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
+	gateway := &originMetadataGateway{t: t, platform: platform}
+	cfg, err := InitializeBuildkitConfig(t.Context(), gateway, "example.com/app:local", platform)
+	require.NoError(t, err)
+	require.Equal(t, digest.FromString("local image"), cfg.SourceLineage.Digest)
+	_, err = cfg.ImageState.Marshal(t.Context(), llb.Platform(*platform))
+	require.NoError(t, err)
+	require.Positive(t, gateway.calls)
 }

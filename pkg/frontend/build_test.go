@@ -13,6 +13,7 @@ import (
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	copabuildkit "github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -1059,4 +1060,15 @@ func TestExtractChiselReleaseFromContextUsesStableReleaseBasename(t *testing.T) 
 	contents, err := os.ReadFile(filepath.Join(first, "chisel.yaml"))
 	require.NoError(t, err)
 	assert.Equal(t, releaseContents, string(contents))
+}
+
+func (c *frontendMetadataTestClient) ResolveSourceMetadata(ctx context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
+	ref, dgst, config, err := c.ResolveImageConfig(ctx, strings.TrimPrefix(op.Identifier, "docker-image://"), opt)
+	if err != nil {
+		return nil, err
+	}
+	return &sourceresolver.MetaResponse{
+		Op:    &pb.SourceOp{Identifier: "docker-image://" + ref},
+		Image: &sourceresolver.ResolveImageResponse{Digest: dgst, Config: config},
+	}, nil
 }

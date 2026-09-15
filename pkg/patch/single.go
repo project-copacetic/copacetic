@@ -672,15 +672,13 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	}
 
 	result := &types.PatchResult{
-		OriginalRef:   imageName,
-		PatchedRef:    patchedRef,
-		PatchedDesc:   patchedDesc,
-		SourceLineage: nil,
+		OriginalRef: imageName,
+		PatchedRef:  patchedRef,
+		PatchedDesc: patchedDesc,
 	}
 
 	// Include preserved BuildKit states if available
 	if patchResult != nil {
-		result.SourceLineage = patchResult.SourceLineage
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
 	}
@@ -694,11 +692,11 @@ func augmentPatchedDescriptor(descriptor *ispec.Descriptor, originalAnnotations,
 	}
 
 	augmented := *descriptor
-	augmented.Annotations = maps.Clone(descriptor.Annotations)
+	augmented.Annotations = withoutSourceLineageAnnotations(descriptor.Annotations)
 	if augmented.Annotations == nil {
 		augmented.Annotations = make(map[string]string)
 	}
-	maps.Copy(augmented.Annotations, originalAnnotations)
+	maps.Copy(augmented.Annotations, withoutSourceLineageAnnotations(originalAnnotations))
 	maps.Copy(augmented.Annotations, managerAnnotations)
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -723,8 +721,9 @@ func withoutSourceLineageAnnotations(annotations map[string]string) map[string]s
 	if clean == nil {
 		clean = make(map[string]string)
 	}
-	delete(clean, ispec.AnnotationBaseImageName)
-	delete(clean, ispec.AnnotationBaseImageDigest)
+	delete(clean, types.AnnotationPatchOriginKind)
+	delete(clean, types.AnnotationPatchOriginName)
+	delete(clean, types.AnnotationPatchOriginDigest)
 	return clean
 }
 

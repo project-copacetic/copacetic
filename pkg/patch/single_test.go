@@ -702,17 +702,18 @@ func TestAttachDescriptorPlatformPreservesExistingPlatform(t *testing.T) {
 
 func TestWithoutSourceLineageAnnotations(t *testing.T) {
 	original := map[string]string{
-		v1.AnnotationBaseImageName:   "docker.io/library/stale:latest",
-		v1.AnnotationBaseImageDigest: digest.FromString("stale").String(),
-		"com.example.preserved":      "value",
+		types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+		types.AnnotationPatchOriginName:   "docker.io/library/stale:latest",
+		types.AnnotationPatchOriginDigest: digest.FromString("stale").String(),
+		"com.example.preserved":           "value",
 	}
 
 	clean := withoutSourceLineageAnnotations(original)
 
-	assert.NotContains(t, clean, v1.AnnotationBaseImageName)
-	assert.NotContains(t, clean, v1.AnnotationBaseImageDigest)
+	assert.NotContains(t, clean, types.AnnotationPatchOriginName)
+	assert.NotContains(t, clean, types.AnnotationPatchOriginDigest)
 	assert.Equal(t, "value", clean["com.example.preserved"])
-	assert.Contains(t, original, v1.AnnotationBaseImageName, "source map must not be mutated")
+	assert.Contains(t, original, types.AnnotationPatchOriginName, "source map must not be mutated")
 }
 
 func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t *testing.T) {
@@ -753,19 +754,21 @@ func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t
 
 func TestAugmentPatchedDescriptorComputedLineageWins(t *testing.T) {
 	lineage := &types.SourceLineage{
+		Kind:   types.PatchOriginImage,
 		Name:   "docker.io/library/alpine:3.20",
 		Digest: digest.FromString("selected-manifest"),
 	}
 	augmented := augmentPatchedDescriptor(
 		&v1.Descriptor{},
 		map[string]string{
-			v1.AnnotationBaseImageName:   "docker.io/library/stale:latest",
-			v1.AnnotationBaseImageDigest: digest.FromString("stale").String(),
+			types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+			types.AnnotationPatchOriginName:   "docker.io/library/stale:latest",
+			types.AnnotationPatchOriginDigest: digest.FromString("stale").String(),
 		},
 		sourceLineageAnnotations(lineage),
 	)
 
 	require.NotNil(t, augmented)
-	assert.Equal(t, lineage.Name, augmented.Annotations[v1.AnnotationBaseImageName])
-	assert.Equal(t, lineage.Digest.String(), augmented.Annotations[v1.AnnotationBaseImageDigest])
+	assert.Equal(t, lineage.Name, augmented.Annotations[types.AnnotationPatchOriginName])
+	assert.Equal(t, lineage.Digest.String(), augmented.Annotations[types.AnnotationPatchOriginDigest])
 }

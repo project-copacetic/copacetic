@@ -211,8 +211,9 @@ func TestCaptureMultiPlatformSourceUsesRecordedOriginalBase(t *testing.T) {
 		Name: currentName,
 		Index: &v1.Index{Annotations: map[string]string{
 			copaAnnotationKeyPrefix + ".patched": "2026-08-26T00:00:00Z",
-			v1.AnnotationBaseImageName:           "registry.example.com/team/app:1.0",
-			v1.AnnotationBaseImageDigest:         baseDigest.String(),
+			types.AnnotationPatchOriginKind:      types.PatchOriginImage,
+			types.AnnotationPatchOriginName:      "registry.example.com/team/app:1.0",
+			types.AnnotationPatchOriginDigest:    baseDigest.String(),
 		}},
 	}
 	base := &buildkit.ImageSource{
@@ -238,7 +239,7 @@ func TestCaptureMultiPlatformSourceUsesRecordedOriginalBase(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, current, source.Current)
 	assert.Same(t, base, source.Base)
-	assert.Equal(t, &types.SourceLineage{Name: "registry.example.com/team/app:1.0", Digest: baseDigest}, source.IndexLineage)
+	assert.Equal(t, &types.SourceLineage{Kind: types.PatchOriginImage, Name: "registry.example.com/team/app:1.0", Digest: baseDigest}, source.IndexLineage)
 }
 
 func TestCommonBaseIndexLineage(t *testing.T) {
@@ -253,7 +254,7 @@ func TestCommonBaseIndexLineage(t *testing.T) {
 			{Digest: armDigest, Platform: &v1.Platform{OS: "linux", Architecture: "arm64"}},
 		}},
 	}
-	lineage := &types.SourceLineage{Name: base.Name, Digest: indexDigest}
+	lineage := &types.SourceLineage{Kind: types.PatchOriginImage, Name: base.Name, Digest: indexDigest}
 	source := &multiPlatformSource{Current: base, Base: base, IndexLineage: lineage}
 	originalRef, err := reference.ParseNormalizedNamed(base.Name)
 	require.NoError(t, err)
@@ -262,10 +263,12 @@ func TestCommonBaseIndexLineage(t *testing.T) {
 
 	items := []types.PatchResult{
 		{
-			OriginalRef:   originalRef,
-			PatchedRef:    patchedRef,
-			PatchedDesc:   &v1.Descriptor{Digest: digest.FromString("patched-amd64"), Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}},
-			SourceLineage: &types.SourceLineage{Name: base.Name, Digest: amdDigest},
+			OriginalRef: originalRef,
+			PatchedRef:  patchedRef,
+			PatchedDesc: &v1.Descriptor{
+				Digest: digest.FromString("patched-amd64"), Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
+				Annotations: (&types.SourceLineage{Kind: types.PatchOriginImage, Name: base.Name, Digest: amdDigest}).Annotations(),
+			},
 		},
 		{
 			OriginalRef: originalRef,
@@ -276,15 +279,15 @@ func TestCommonBaseIndexLineage(t *testing.T) {
 
 	assert.Equal(t, lineage, commonBaseIndexLineage(source, items))
 
-	items[0].SourceLineage.Digest = digest.FromString("different-base")
+	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = digest.FromString("different-base").String()
 	assert.Nil(t, commonBaseIndexLineage(source, items), "a child mismatch must omit index lineage")
 
-	items[0].SourceLineage.Digest = amdDigest
-	items[0].SourceLineage.Name = "registry.example.com/different/app:1.0"
+	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = amdDigest.String()
+	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginName] = "registry.example.com/different/app:1.0"
 	assert.Nil(t, commonBaseIndexLineage(source, items), "a base-name mismatch must omit index lineage")
 }
 
-func TestCommonBaseIndexLineageAcceptsPreservedPatchedChild(t *testing.T) {
+func TestCommonBaseIndexLineageOmitsUnverifiedPreservedAncestry(t *testing.T) {
 	indexDigest := digest.FromString("source-index")
 	childDigest := digest.FromString("source-amd64")
 	base := &buildkit.ImageSource{
@@ -294,7 +297,7 @@ func TestCommonBaseIndexLineageAcceptsPreservedPatchedChild(t *testing.T) {
 			Digest: childDigest, Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
 		}}},
 	}
-	lineage := &types.SourceLineage{Name: base.Name, Digest: indexDigest}
+	lineage := &types.SourceLineage{Kind: types.PatchOriginImage, Name: base.Name, Digest: indexDigest}
 	originalRef, err := reference.ParseNormalizedNamed("registry.example.com/team/app:patched")
 	require.NoError(t, err)
 	item := types.PatchResult{
@@ -304,13 +307,14 @@ func TestCommonBaseIndexLineageAcceptsPreservedPatchedChild(t *testing.T) {
 			Digest:   digest.FromString("previously-patched-amd64"),
 			Platform: &v1.Platform{OS: "linux", Architecture: "amd64"},
 			Annotations: map[string]string{
-				v1.AnnotationBaseImageName:   base.Name,
-				v1.AnnotationBaseImageDigest: childDigest.String(),
+				types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+				types.AnnotationPatchOriginName:   base.Name,
+				types.AnnotationPatchOriginDigest: childDigest.String(),
 			},
 		},
 	}
 
-	assert.Equal(t, lineage, commonBaseIndexLineage(
+	assert.Nil(t, commonBaseIndexLineage(
 		&multiPlatformSource{Current: base, Base: base, IndexLineage: lineage},
 		[]types.PatchResult{item},
 	))
@@ -344,7 +348,7 @@ func TestImmutableCurrentIndexReferenceUsesCurrentSnapshotOnRepatch(t *testing.T
 			Descriptor: v1.Descriptor{Digest: baseDigest, MediaType: v1.MediaTypeImageIndex},
 			Index:      &v1.Index{},
 		},
-		IndexLineage: &types.SourceLineage{Name: "registry.example.com/team/app:1.0", Digest: baseDigest},
+		IndexLineage: &types.SourceLineage{Kind: types.PatchOriginImage, Name: "registry.example.com/team/app:1.0", Digest: baseDigest},
 	}
 
 	got, err := immutableCurrentIndexReference(source)
