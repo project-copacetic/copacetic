@@ -442,10 +442,9 @@ func TestPatchDaemonOnlyImage(t *testing.T) {
 		t.Skip("daemon-only patching requires COPA_BUILDKIT_ADDR=docker://...")
 	}
 
-	// Use a small, stable image from the existing fixtures so we don't pull
-	// anything new. The digest pins the content to make the test reproducible.
+	// Pin the amd64 manifest to match --platform below, including on ARM64 hosts.
 	const (
-		source     = "docker.io/library/nginx:1.21.6@sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514"
+		source     = "docker.io/library/nginx:1.27.0-bookworm@sha256:a3ab061d6909191271bcf24b9ab6eee9e8fc5f2fbf1525c5bd84d21f27a9d708"
 		daemonOnly = "127.0.0.1:1/copa-daemon-only:original"
 		bogusHost  = "127.0.0.1:1"
 	)

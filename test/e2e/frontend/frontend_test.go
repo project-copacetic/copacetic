@@ -20,7 +20,7 @@ import (
 const (
 	// defaultBridgeGateway is the default Docker bridge gateway IP.
 	defaultBridgeGateway   = "172.17.0.1"
-	frontendNginxBaseImage = "docker.io/library/nginx:1.21.6"
+	frontendNginxBaseImage = "docker.io/library/nginx:1.27.0-bookworm"
 	buildCommand           = "build"
 	buildctlOptionFlag     = "--opt"
 	outputFlag             = "--output"
@@ -102,7 +102,7 @@ func TestFrontendPatch(t *testing.T) {
 		{
 			name:       "nginx-debian",
 			baseImage:  frontendNginxBaseImage,
-			localImage: "localhost:5000/nginx:1.21.6",
+			localImage: "localhost:5000/nginx:1.27.0-bookworm",
 		},
 		{
 			name:       "alpine",
@@ -116,8 +116,8 @@ func TestFrontendPatch(t *testing.T) {
 		},
 		{
 			name:       "python-app-library-only",
-			baseImage:  "docker.io/library/python:3.11.0",
-			localImage: "localhost:5000/python:3.11.0",
+			baseImage:  "docker.io/library/python:3.11.9-slim-bookworm",
+			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
 				"pkg-types":           "library",
 				"library-patch-level": "patch",
@@ -125,8 +125,8 @@ func TestFrontendPatch(t *testing.T) {
 		},
 		{
 			name:       "python-app-library-and-os",
-			baseImage:  "docker.io/library/python:3.11.0",
-			localImage: "localhost:5000/python:3.11.0",
+			baseImage:  "docker.io/library/python:3.11.9-slim-bookworm",
+			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
 				"pkg-types":           "os,library",
 				"library-patch-level": "minor",
@@ -397,7 +397,7 @@ func buildFrontendImage(t *testing.T) {
 func runFrontendMultiplatformTest(t *testing.T) {
 	// Use nginx as a multiarch image
 	baseImage := frontendNginxBaseImage
-	localImage := "localhost:5000/nginx-multiarch:1.21.6"
+	localImage := "localhost:5000/nginx-multiarch:1.27.0-bookworm"
 
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)
@@ -523,8 +523,8 @@ func runFrontendAttestationTest(t *testing.T) {
 	// This test uses docker buildx build instead of buildctl because
 	// the --sbom and --provenance flags are easier to use with buildx
 	baseImage := frontendNginxBaseImage
-	localImage := "localhost:5000/nginx-attestation:1.21.6"
-	patchedImage := "localhost:5000/nginx-attestation:1.21.6-patched"
+	localImage := "localhost:5000/nginx-attestation:1.27.0-bookworm"
+	patchedImage := "localhost:5000/nginx-attestation:1.27.0-bookworm-patched"
 
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)

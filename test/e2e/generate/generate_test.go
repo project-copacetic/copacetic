@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	nginxImage = "nginx:1.21.6"
+	nginxImage = "nginx:1.27.0-bookworm"
 )
 
 // generateTrivyReport generates a vulnerability report using Trivy for the specified image.
@@ -86,7 +86,7 @@ func TestGenerateWithReport(t *testing.T) {
 	extractTar(t, outputFile, buildContextDir)
 
 	// build the image using docker
-	patchedImage := "nginx:1.21.6-patched-test"
+	patchedImage := "nginx:1.27.0-bookworm-patched-test"
 	buildCmd := exec.Command("docker", "build", "-t", patchedImage, buildContextDir)
 	buildOutput, err := buildCmd.CombinedOutput()
 	require.NoError(t, err, fmt.Sprintf("failed to build patched image: %s", string(buildOutput)))
@@ -110,7 +110,7 @@ func TestGenerateWithoutReport(t *testing.T) {
 		t.Skip("skipping test; docker binary not found in path")
 	}
 
-	testImage := "nginx:1.21.6"
+	testImage := "nginx:1.27.0-bookworm"
 
 	// create a temp directory for test files
 	tempDir, err := os.MkdirTemp("", "copa-generate-no-report-test-*")
@@ -145,7 +145,7 @@ func TestGenerateWithoutReport(t *testing.T) {
 	extractTar(t, outputFile, buildContextDir)
 
 	// build the image using docker
-	patchedImage := "nginx:1.21.6-patched-test"
+	patchedImage := "nginx:1.27.0-bookworm-patched-test"
 	buildCmd := exec.Command("docker", "build", "-t", patchedImage, buildContextDir)
 	buildOutput, err := buildCmd.CombinedOutput()
 	require.NoError(t, err, fmt.Sprintf("failed to build patched image: %s", string(buildOutput)))
@@ -169,10 +169,10 @@ func TestGenerateToStdout(t *testing.T) {
 		t.Skip("skipping test; docker binary not found in path")
 	}
 
-	testImage := "nginx:1.21.6"
+	testImage := "nginx:1.27.0-bookworm"
 
 	// run copa generate and pipe to docker build
-	patchedImage := "nginx:1.21.6-piped-test"
+	patchedImage := "nginx:1.27.0-bookworm-piped-test"
 
 	// create a shell command that pipes copa generate to docker build
 	shellCmd := fmt.Sprintf(
@@ -348,7 +348,7 @@ func TestGenerateWithVEXOutput(t *testing.T) {
 	extractTar(t, outputFile, buildContextDir)
 
 	// build the image using docker
-	patchedImage := "nginx:1.21.6-vex-patched-test"
+	patchedImage := "nginx:1.27.0-bookworm-vex-patched-test"
 	buildCmd := exec.Command("docker", "build", "-t", patchedImage, buildContextDir)
 	buildOutput, err := buildCmd.CombinedOutput()
 	require.NoError(t, err, fmt.Sprintf("failed to build patched image: %s", string(buildOutput)))

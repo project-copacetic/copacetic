@@ -29,8 +29,8 @@
     },
     {
         "image": "docker.io/library/nginx",
-        "tag": "1.21.6",
-        "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
+        "tag": "1.27.0-bookworm",
+        "digest": "sha256:98f8ec75657d21b924fe4f69b6b9bff2f6550ea48838af479d8894a852000e40",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present",
         "ignoreErrors": false,
@@ -38,8 +38,8 @@
     },
     {
         "image": "docker.io/library/nginx",
-        "tag": "1.21.6",
-        "digest": "sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514",
+        "tag": "1.27.0-bookworm",
+        "digest": "sha256:a3ab061d6909191271bcf24b9ab6eee9e8fc5f2fbf1525c5bd84d21f27a9d708",
         "localName": "local/image:tag",
         "distro": "Debian",
         "description": "Valid dpkg/status, apt present, locally tagged with repo and image name",
@@ -47,40 +47,31 @@
         "isManifestList": false
     },
     {
-        "image": "registry.k8s.io/kube-proxy",
-        "tag": "v1.23.4",
-        "digest": "sha256:30116c7218264d95623d3918a50da703675755cae866cd4c324586611fcd50ea",
+        "image": "registry.k8s.io/build-image/debian-base",
+        "tag": "bookworm-v1.0.2",
+        "digest": "sha256:07811166061b3ca8ea7daf7dc596bfbb83f2a4ef03ba0fefbc367e0d2134a620",
         "distro": "Debian",
-        "description": "Valid dpkg/status, apt present, custom network config",
+        "description": "Valid dpkg/status, apt present, empty resolv.conf",
         "ignoreErrors": false,
         "isManifestList": true
     },
     {
         "image": "registry.k8s.io/kube-proxy",
-        "tag": "v1.27.2",
-        "digest": "sha256:1e4f13f5f5c215813fb9c9c6f56da1c0354363f2a69bd12732658f79d585864f",
+        "tag": "v1.29.0",
+        "digest": "sha256:8da4de35c4929411300eb8052fdfd34095b6090ed0c8dbc776d58bf1c61a2c89",
         "distro": "Custom Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt, libssl1.1",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl3",
         "ignoreErrors": false,
         "isManifestList": true
     },
     {
-        "image": "registry.k8s.io/kube-proxy",
-        "tag": "v1.26.1",
-        "digest": "sha256:1e4f13f5f5c215813fb9c9c6f56da1c0354363f2a69bd12732658f79d585864f",
-        "distro": "Custom Google Distroless",
-        "description": "Custom dpkg/status.d with text names, with both libssl1.1 and libssl1",
-        "ignoreErrors": false,
-        "isManifestList": true
-    },
-    {
-        "image": "docker.io/openpolicyagent/opa",
-        "tag": "0.46.0",
-        "digest": "sha256:c4b11c9b86eaba41276ae682bb6875332316242010b7523efe30f365ad0c3cb8",
+        "image": "gcr.io/distroless/base-debian12",
+        "tag": "latest",
+        "digest": "sha256:5eae9ef0b97acf7de819f936e12b24976b2d54333a2cf329615366e16ba598cd",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt, libssl1",
+        "description": "Custom dpkg/status.d with text names, no shell or apt, libssl3",
         "ignoreErrors": false,
-        "isManifestList": false
+        "isManifestList": true
     },
     {
         "image": "quay.io/calico/cni",
@@ -208,11 +199,11 @@
         "isManifestList": false
     },
     {
-        "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
-        "tag": "test-debian",
-        "digest": "sha256:453ce8b732afa551d2e8772d131d8b060b765a4532b33c1fc1e7a90569fb2fbb",
+        "image": "docker.io/sozercan/copa-test-openssl",
+        "tag": "test-debian12",
+        "digest": "sha256:3b8cb0a05ec19ae4556bde0b3b735764ea44dbd6fa4cd71c430854e5b0755363",
         "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt, libssl1, custom openssl.cnf",
+        "description": "Custom dpkg/status.d with text names, no apt, libssl3, custom openssl.cnf",
         "ignoreErrors": false,
         "isManifestList": false
     },
