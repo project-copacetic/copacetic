@@ -83,25 +83,35 @@ func (d *Detector) DetectGoBinaries(
 OUTPUT=%s
 GO_BIN=/usr/local/go/bin/go
 
-# Create a helper script for processing individual binaries.
-# find -exec invokes this with the filename as a single argument,
-# which is safe against word splitting and glob expansion.
+# Process the bounded argument batches supplied by find -exec ... {} +.
+# Each filename remains a separate argument, without word splitting or glob expansion.
 HELPER=/copa-detect/process.sh
 cat > "$HELPER" << 'ENDHELPER'
 #!/bin/sh
-bin="$1"
-OUTPUT="$2"
-GO_BIN="$3"
-if [ -n "$bin" ] && [ -f "$bin" ]; then
-    realpath="${bin#/target}"
-    printf '=== BINARY: %%s ===\n' "$realpath" >> "$OUTPUT"
-    filemode=$(stat -c '%%a' "$bin" 2>/dev/null || stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
-    fileowner=$(stat -c '%%u:%%g' "$bin" 2>/dev/null || echo "0:0")
-    printf '=== FILEMODE: %%s ===\n' "$filemode" >> "$OUTPUT"
-    printf '=== FILEOWNER: %%s ===\n' "$fileowner" >> "$OUTPUT"
-    $GO_BIN version -m "$bin" >> "$OUTPUT" 2>&1 || echo "NOT_GO_BINARY" >> "$OUTPUT"
-    echo "" >> "$OUTPUT"
-fi
+OUTPUT="$1"
+GO_BIN="$2"
+shift 2
+for bin in "$@"; do
+    if [ -n "$bin" ] && [ -f "$bin" ]; then
+        realpath="${bin#/target}"
+        # The target mount is immutable; collect metadata only after inspection succeeds.
+        printf '=== BINARY: %%s ===\n' "$realpath" >> "$OUTPUT"
+        if ! $GO_BIN version -m "$bin" >> "$OUTPUT" 2>&1; then
+            printf 'NOT_GO_BINARY\n\n' >> "$OUTPUT"
+            continue
+        fi
+        if fileinfo=$(stat -c '%%a %%u:%%g' "$bin" 2>/dev/null); then
+            filemode=${fileinfo%%%% *}
+            fileowner=${fileinfo#* }
+        else
+            filemode=$(stat -f '%%Lp' "$bin" 2>/dev/null || echo "755")
+            fileowner="0:0"
+        fi
+        printf '=== FILEMODE: %%s ===\n' "$filemode" >> "$OUTPUT"
+        printf '=== FILEOWNER: %%s ===\n' "$fileowner" >> "$OUTPUT"
+        echo "" >> "$OUTPUT"
+    fi
+done
 ENDHELPER
 chmod +x "$HELPER"
 
@@ -109,7 +119,7 @@ chmod +x "$HELPER"
 # Shell glob expansion handles filenames with spaces correctly.
 for f in /target/*; do
     if [ -f "$f" ]; then
-        "$HELPER" "$f" "$OUTPUT" "$GO_BIN"
+        "$HELPER" "$OUTPUT" "$GO_BIN" "$f"
     fi
 done
 
@@ -118,7 +128,7 @@ done
 # preventing word splitting and glob expansion attacks from crafted filenames.
 for dir in /target/usr/local/bin /target/usr/bin /target/bin /target/sbin /target/usr/sbin /target/app /target/opt /target/go/bin /target/usr/share; do
     if [ -d "$dir" ]; then
-        find "$dir" -type f -perm /0111 -exec "$HELPER" {} "$OUTPUT" "$GO_BIN" \; 2>/dev/null
+        find "$dir" -type f -perm /0111 -exec "$HELPER" "$OUTPUT" "$GO_BIN" {} + 2>/dev/null
     fi
 done
 
