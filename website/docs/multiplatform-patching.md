@@ -84,26 +84,38 @@ copa patch --image $IMAGE --tag nginx:1.25.0-patched
 
 ### OCI Image Layout Input
 
-Copa can patch an image directly from a local [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) without importing it into Docker or Podman and without publishing it to a temporary registry:
+Copa can patch an image directly from a local [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) without importing the source into Docker or Podman or publishing it to a registry:
 
 ```bash
+# Select the only top-level image, including a multi-platform index.
+# Name the output explicitly if the input has no usable image name.
 copa patch \
-  --image example.com/acme/app:1.0 \
   --input-oci-layout ./input-layout \
+  --tag example.com/acme/app:patched \
+  --oci-dir ./patched-layout
+
+# Select one image from a layout containing multiple images.
+copa patch \
+  --input-oci-layout ./input-layout \
+  --image example.com/acme/app:1.0 \
   --oci-dir ./patched-layout
 ```
 
-`--image` remains the logical image identity used for the patched tag, VEX, and provenance. It also selects the top-level descriptor in `index.json`: Copa matches a full image name (`io.containerd.image.name`), a tag (`org.opencontainers.image.ref.name`), or a digest. A layout with exactly one top-level descriptor can use any logical image name. If a layout has multiple top-level descriptors, the name, tag, or digest must identify exactly one; the error lists the available selectors when it does not.
+`--image` selects source content. It is optional when there is one unambiguous top-level image; a multi-platform index counts as one image. With multiple images, supply a full image name (`io.containerd.image.name`), a tag (`org.opencontainers.image.ref.name`), or a digest such as `--image sha256:...`. An explicit selector must match; Copa lists available selectors on failure. Descriptors identifying non-image artifacts do not make a single image ambiguous. Standard OCI and Docker image config types in descriptor `artifactType` are accepted when they agree with the referenced image config.
 
-For a selected multi-platform index, omit `--platform` to patch every supported image platform, or pass one or more platforms to patch only those and copy the other selected-image platform descriptors and blobs unchanged. A single report with `--platform` preserves the other platforms, and a report directory follows the same preservation behavior for platforms without reports.
+Output naming is separate. When the selected image has an unambiguous usable name, the usual `--tag` and `--suffix` rules apply. A bare ref-name tag such as `latest` does not provide a repository name. If the source name is missing or ambiguous, provide a full tagged output reference with `--tag`, as in the first example. This names only the output and does not cause a registry push or invent a source provenance name. For report-based patches, VEX identifies the actual exported platform manifest digests and claims remediation only for validated updates on those platforms.
+
+For a selected multi-platform index, omit `--platform` to patch every supported image platform, or pass platforms to patch a subset and preserve the other descriptors and blobs byte-for-byte. A single report and a report directory also preserve platforms without a matching report. Explicit and report-derived targets must match the source even when it has only one platform. If a single report has no platform metadata, Copa uses the sole verified source platform; a multi-platform source needs an explicit target. Ambiguous platform constraints fail rather than choosing the first match.
 
 OCI layout input has these restrictions:
 
-- `--oci-dir` is required and must name a new directory that does not overlap the input layout.
-- `--push` and `--loader` are not supported with `--input-oci-layout`; the source is never resolved through Docker, Podman, or a registry.
-- Local and remote BuildKit addresses are supported because Copa transfers the client-side content store through the BuildKit session; the remote daemon does not need filesystem access to the input path.
-- The input layout is read-only. Invalid layout metadata, missing blobs, size mismatches, digest mismatches, and unsupported image media types fail before patching.
-- In-place updates, `copa generate`/BuildKit frontend input parity, direct registry push, and additional signature, attestation, or referrer preservation are not included. Tooling images and package repositories may still require network access, so this option does not by itself make patching fully air-gapped.
+- `--oci-dir` is required and must name a new directory that does not overlap the input layout. Copa publishes the completed output atomically.
+- `--push`, `--loader`, `--config`, and `--chart` are not supported with `--input-oci-layout`. The source image is never resolved through Docker, Podman, or a registry.
+- Local and remote BuildKit addresses are supported because Copa transfers the client-side content store through the BuildKit session; the remote daemon needs no filesystem access to the input path.
+- The input layout remains unchanged. Missing or corrupt selected blobs, artifact inputs, and unsupported image media types fail with an error.
+- An ordinary top-level multi-platform index is supported. An image index nested below that selected index is rejected before patching; recursive index preservation is not included initially.
+- Index, manifest-body, and descriptor annotations retain their scopes, including different values for the same key. Copa updates its patch metadata and documented mutable image metadata.
+- In-place updates, `copa generate`/BuildKit frontend input parity, direct registry push, and additional signature, attestation, or referrer preservation are not included. Tooling images and package repositories may still require network access.
 
 ## Multi-Platform Command Reference
 

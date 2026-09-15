@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/containerd/platforms"
 	"github.com/google/go-containerregistry/pkg/authn"
@@ -282,4 +283,53 @@ func getPlatformDescriptorFromManifest(
 	}
 
 	return nil, fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
+}
+
+// resolveOCIPlatform applies a CLI/report constraint without dropping the
+// complete identity obtained from the source. Unspecified fields never justify
+// choosing the first of multiple source identities.
+func resolveOCIPlatform(discovered []types.PatchPlatform, target *ispec.Platform) (types.PatchPlatform, error) {
+	constraint := platforms.Normalize(*target)
+	var matches []types.PatchPlatform
+	var available []string
+	for _, candidate := range discovered {
+		actual := platforms.Normalize(candidate.Platform)
+		available = append(available, buildkit.PlatformKey(actual))
+		if actual.OS != constraint.OS || actual.Architecture != constraint.Architecture || actual.Variant != constraint.Variant {
+			continue
+		}
+		if constraint.OSVersion != "" && actual.OSVersion != constraint.OSVersion {
+			continue
+		}
+		if len(constraint.OSFeatures) > 0 && !slices.Equal(actual.OSFeatures, constraint.OSFeatures) {
+			continue
+		}
+		matches = append(matches, candidate)
+	}
+	if len(matches) != 1 {
+		return types.PatchPlatform{}, fmt.Errorf(
+			"target platform %s matches %d platforms in the selected OCI image; available platforms: %s",
+			buildkit.PlatformKey(constraint), len(matches), strings.Join(available, ", "),
+		)
+	}
+	return matches[0], nil
+}
+
+func filterOCIPlatforms(discovered []types.PatchPlatform, targets []string) ([]types.PatchPlatform, error) {
+	var selected []types.PatchPlatform
+	for _, target := range targets {
+		parsed, err := platforms.Parse(target)
+		if err != nil {
+			return nil, fmt.Errorf("parse platform %q: %w", target, err)
+		}
+		if !isSupportedPatchPlatform(&parsed) {
+			return nil, fmt.Errorf("unsupported platform %q", target)
+		}
+		match, err := resolveOCIPlatform(discovered, &parsed)
+		if err != nil {
+			return nil, err
+		}
+		selected = append(selected, match)
+	}
+	return selected, nil
 }

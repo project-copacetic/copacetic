@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -90,8 +91,9 @@ func (opts OCILayoutExportOptions) WithContext(ctx context.Context) OCILayoutExp
 }
 
 type platformExportMetadata struct {
-	Config      []byte
-	Annotations map[string]string
+	Config                []byte
+	Annotations           map[string]string
+	DescriptorAnnotations map[string]string
 }
 
 const (
@@ -197,7 +199,7 @@ func InitializeBuildkitConfigWithSource(
 	// Load the target image state with the resolved image config in case environment variable settings
 	// are necessary for running apps in the target image for updates
 	if source != nil && config.PatchedConfigData == nil {
-		config.ImageState, err = source.State(platform, config.ConfigData)
+		config.ImageState, err = source.State(ctx, platform, config.ConfigData)
 	} else {
 		imageOpts := []llb.ImageOption{
 			llb.ResolveModePreferLocal,
@@ -217,7 +219,7 @@ func InitializeBuildkitConfigWithSource(
 	// BaseImage or specs.AnnotationBaseImageName
 	if config.PatchedConfigData != nil {
 		if source != nil {
-			config.PatchedImageState, err = source.State(platform, config.PatchedConfigData)
+			config.PatchedImageState, err = source.State(ctx, platform, config.PatchedConfigData)
 		} else {
 			patchedImageOpts := []llb.ImageOption{
 				llb.ResolveModePreferLocal,
@@ -562,7 +564,7 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 
 //nolint:gocritic
 func PlatformKey(pl specs.Platform) string {
-	// if platform is present in list from reference and report, then we should patch that platform
+	pl = platforms.Normalize(pl)
 	key := pl.OS + "/" + pl.Architecture
 	if pl.Variant != "" {
 		key += "/" + pl.Variant
@@ -570,6 +572,10 @@ func PlatformKey(pl specs.Platform) string {
 	// Include OS version for platforms like Windows that have multiple versions
 	if pl.OSVersion != "" {
 		key += "@" + pl.OSVersion
+	}
+	if len(pl.OSFeatures) > 0 {
+		features, _ := json.Marshal(pl.OSFeatures)
+		key += "+" + string(features)
 	}
 	return key
 }
@@ -850,7 +856,7 @@ func setupLabels(image string, configData []byte) (string, []byte, error) {
 	}
 
 	baseImage := document.labels["BaseImage"]
-	if baseImage == "" {
+	if baseImage == "" && image != "" {
 		document.labels["BaseImage"] = image
 	}
 	imageWithLabels, err := document.marshal()
@@ -1280,7 +1286,7 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 			return err
 		}
 		if len(exportOpts.state.sources) > 0 {
-			if err := wrapOCIOutputIndex(tempDir, exportOpts.OutputReference); err != nil {
+			if err := wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations); err != nil {
 				return err
 			}
 		}
@@ -1294,12 +1300,12 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 		return err
 	}
 	if len(exportOpts.state.sources) > 0 {
-		return wrapOCIOutputIndex(outputDir, exportOpts.OutputReference)
+		return wrapOCIOutputIndex(outputDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
 	}
 	return nil
 }
 
-func wrapOCIOutputIndex(outputDir, outputReference string) error {
+func wrapOCIOutputIndex(outputDir, outputReference string, sourceAnnotations map[string]string) error {
 	if outputReference == "" {
 		return fmt.Errorf("OCI layout output reference is required for OCI layout input")
 	}
@@ -1330,7 +1336,12 @@ func wrapOCIOutputIndex(outputDir, outputReference string) error {
 		return fmt.Errorf("write generated OCI index blob: %w", err)
 	}
 
-	annotations := map[string]string{"io.containerd.image.name": named.String()}
+	annotations := maps.Clone(sourceAnnotations)
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	delete(annotations, specs.AnnotationRefName)
+	annotations["io.containerd.image.name"] = named.String()
 	if tagged, ok := named.(reference.Tagged); ok {
 		annotations[specs.AnnotationRefName] = tagged.Tag()
 	}
@@ -1423,6 +1434,20 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	// Map results by platform for easy lookup
 	resultMap := make(map[string]*types.PatchResult)
 	for i, result := range results {
+		if result.OCISource != nil {
+			if result.PatchedState == nil {
+				continue
+			}
+			if result.PatchedDesc == nil || result.PatchedDesc.Platform == nil {
+				return fmt.Errorf("OCI patch result is missing its source platform")
+			}
+			key := PlatformKey(*result.PatchedDesc.Platform)
+			if _, exists := resultMap[key]; exists {
+				return fmt.Errorf("multiple OCI patch results for platform %s", key)
+			}
+			resultMap[key] = &results[i]
+			continue
+		}
 		// Find the platform for this result
 		for _, platform := range patchedPlatforms {
 			platformKey := PlatformKey(platform.Platform)
@@ -1440,7 +1465,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 		platformKey := PlatformKey(patchedPlatforms[0].Platform)
 		if _, exists := resultMap[platformKey]; !exists {
 			for i := range results {
-				if results[i].PatchedState != nil {
+				if results[i].OCISource == nil && results[i].PatchedState != nil {
 					resultMap[platformKey] = &results[i]
 					break
 				}
@@ -1455,6 +1480,8 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 			platformStates = append(platformStates, *result.PatchedState)
 			platformSpecs = append(platformSpecs, platform.Platform)
 			platformMetadata = append(platformMetadata, ociPlatformExportMetadata(result, outputTag))
+		} else if len(exportOpts.state.sources) > 0 {
+			return fmt.Errorf("missing OCI patch result for platform %s", platformKey)
 		}
 	}
 
@@ -1561,13 +1588,13 @@ func solveMultiPlatformOCI(
 
 func ociPlatformExportMetadata(result *types.PatchResult, outputTags ...string) platformExportMetadata {
 	metadata := platformExportMetadata{Config: result.ConfigData}
-	if result.PatchedDesc == nil || len(result.PatchedDesc.Annotations) == 0 {
-		return metadata
-	}
-
-	metadata.Annotations = make(map[string]string, len(result.PatchedDesc.Annotations))
-	for key, value := range result.PatchedDesc.Annotations {
-		metadata.Annotations[key] = value
+	if result.OCISource != nil {
+		metadata.Annotations = maps.Clone(result.ManifestAnnotations)
+		if result.PatchedDesc != nil {
+			metadata.DescriptorAnnotations = maps.Clone(result.PatchedDesc.Annotations)
+		}
+	} else if result.PatchedDesc != nil {
+		metadata.Annotations = maps.Clone(result.PatchedDesc.Annotations)
 	}
 
 	const versionAnnotation = "org.opencontainers.image.version"
@@ -1651,6 +1678,9 @@ func addOCIExportMetadata(result *gwclient.Result, metadata platformExportMetada
 	result.AddMeta(exptypes.ExporterImageConfigKey, metadata.Config)
 	for key, value := range metadata.Annotations {
 		result.AddMeta(exptypes.AnnotationManifestKey(nil, key), []byte(value))
+	}
+	for key, value := range metadata.DescriptorAnnotations {
+		result.AddMeta(exptypes.AnnotationManifestDescriptorKey(nil, key), []byte(value))
 	}
 	return nil
 }
@@ -1748,6 +1778,12 @@ func fixSinglePlatformInfo(outputDir string, platformSpec *specs.Platform) error
 
 	if platformSpec.Variant != "" {
 		targetPlatform["variant"] = platformSpec.Variant
+	}
+	if platformSpec.OSVersion != "" {
+		targetPlatform["os.version"] = platformSpec.OSVersion
+	}
+	if len(platformSpec.OSFeatures) > 0 {
+		targetPlatform["os.features"] = platformSpec.OSFeatures
 	}
 
 	// Update platform information in all manifests
@@ -1901,6 +1937,12 @@ func extractAndCombinePlatformTars(outputDir string, platformTars []string, plat
 		// Add variant if present
 		if platformSpec.Variant != "" {
 			targetPlatform["variant"] = platformSpec.Variant
+		}
+		if platformSpec.OSVersion != "" {
+			targetPlatform["os.version"] = platformSpec.OSVersion
+		}
+		if len(platformSpec.OSFeatures) > 0 {
+			targetPlatform["os.features"] = platformSpec.OSFeatures
 		}
 
 		// Extract manifests from this platform's index and set correct platform
@@ -2076,8 +2118,19 @@ func createMixedOCILayout(
 		}
 		defer os.RemoveAll(patchedTempDir)
 
-		// Export patched platforms using BuildKit
-		c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts)
+		// Named-image mixed export keeps the patch client's Docker-first default.
+		// OCI sources may use the OCI export helper, with explicit connections
+		// still taking precedence over auto-detection.
+		var c *client.Client
+		if len(exportOpts.state.sources) > 0 {
+			c, err = newOCIExportClient(ctx, exportOpts.BuildkitOpts)
+		} else {
+			opts := Opts{}
+			if exportOpts.BuildkitOpts != nil {
+				opts = *exportOpts.BuildkitOpts
+			}
+			c, err = NewClient(ctx, opts)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to create BuildKit client for mixed layout: %w", err)
 		}
@@ -2582,6 +2635,12 @@ func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform) (map[st
 			if platformSpec.Variant != "" {
 				targetPlatform["variant"] = platformSpec.Variant
 			}
+			if platformSpec.OSVersion != "" {
+				targetPlatform["os.version"] = platformSpec.OSVersion
+			}
+			if len(platformSpec.OSFeatures) > 0 {
+				targetPlatform["os.features"] = platformSpec.OSFeatures
+			}
 
 			manifestMap["platform"] = targetPlatform
 			return manifestMap, nil
@@ -2654,7 +2713,7 @@ func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult,
 		}
 	}
 
-	if originalRef == nil {
+	if originalRef == nil && len(exportOpts.state.sources) == 0 {
 		return fmt.Errorf("no original reference found for preserved-only layout")
 	}
 

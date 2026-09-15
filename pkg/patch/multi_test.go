@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -170,7 +171,7 @@ func TestMarkPlatformPreserved(t *testing.T) {
 		{Platform: platformSpec("linux", "arm64", "v8")},
 	}
 
-	markPlatformPreserved(platforms, "linux/arm64/v8")
+	markPlatformPreserved(platforms, "linux/arm64")
 
 	assert.False(t, platforms[0].ShouldPreserve)
 	assert.True(t, platforms[1].ShouldPreserve)
@@ -201,11 +202,18 @@ func TestPlatformsForSingleReport(t *testing.T) {
 		&types.PatchPlatform{Platform: platformSpec("linux", "s390x", "")},
 		"trivy-s390x.json",
 	)
-	require.ErrorContains(t, err, "report target platform linux/s390x is not available")
+	require.ErrorContains(t, err, "target platform linux/s390x matches 0 platforms")
 	assert.ErrorContains(t, err, "linux/amd64")
-	assert.ErrorContains(t, err, "linux/arm64/v8")
+	assert.ErrorContains(t, err, "linux/arm64")
 }
 
 func platformSpec(os, arch, variant string) v1.Platform {
 	return v1.Platform{OS: os, Architecture: arch, Variant: variant}
+}
+
+func TestBuildPatchingPlanUnnamedOCIOutput(t *testing.T) {
+	plan := buildPatchingPlan(&types.Options{
+		OCISource: &ocilayout.Source{}, PatchedTag: "registry.invalid/output:patched",
+	}, []types.PatchPlatform{{Platform: platformSpec("linux", "amd64", "")}})
+	assert.Equal(t, "registry.invalid/output:patched", plan.PatchedImageName)
 }

@@ -80,8 +80,6 @@ func patchSingleArchImageWithUpdates(
 	// Extract options
 	image := opts.Image
 	reportFile := opts.Report
-	patchedTag := opts.PatchedTag
-	suffix := opts.Suffix
 	workingFolder := opts.WorkingFolder
 	scanner := opts.Scanner
 	format := opts.Format
@@ -105,17 +103,11 @@ func patchSingleArchImageWithUpdates(
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
 
-	// parse the image reference
-	imageName, err := reference.ParseNormalizedNamed(image)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse reference: %w", err)
-	}
-
-	// resolve final patched tag
-	patchImage, patchedTag, err := common.ResolvePatchedImageName(imageName, patchedTag, suffix)
+	imageName, patchImage, patchedTag, err := resolvePatchNames(opts)
 	if err != nil {
 		return nil, err
 	}
+
 	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
@@ -184,7 +176,10 @@ func patchSingleArchImageWithUpdates(
 	defer bkClient.Close()
 
 	// Resolve image reference
-	ref := resolveImageReference(imageName)
+	ref := ""
+	if imageName != nil {
+		ref = resolveImageReference(imageName)
+	}
 	if reportFile != "" && reportHasNoUpdates {
 		if err := rejectTargetedNativeChiselPatch(ctx, bkClient, ref, &targetPlatform.Platform, opts.OCISource); err != nil {
 			// Preserve the historical ErrNoUpdatesFound result for non-native
@@ -233,11 +228,7 @@ func patchSingleArchImageWithUpdates(
 	// exporter via createBuildConfig so single-platform pushes preserve the
 	// annotations on the pushed manifest itself, not just on the in-memory
 	// PatchResult descriptor used by the multi-arch manifest list assembly.
-	manifestPlatform := &ispec.Platform{
-		OS:           targetPlatform.OS,
-		Architecture: targetPlatform.Architecture,
-		Variant:      targetPlatform.Variant,
-	}
+	manifestPlatform := &targetPlatform.Platform
 	var originalAnnotations map[string]string
 	if opts.OCISource != nil {
 		originalAnnotations, err = opts.OCISource.PlatformAnnotations(ctx, manifestPlatform)
@@ -613,7 +604,13 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 	if patchResult != nil {
 		managerAnnotations = patchResult.Annotations
 	}
-	patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	var manifestAnnotations map[string]string
+	if source != nil {
+		bodyMetadata := augmentPatchedDescriptor(&ispec.Descriptor{}, originalAnnotations, managerAnnotations)
+		manifestAnnotations = bodyMetadata.Annotations
+	} else {
+		patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	}
 	if patchedDesc != nil {
 		log.Debugf("Added %d original and %d package-manager manifest annotations for platform %s", len(originalAnnotations), len(managerAnnotations), targetPlatform.Platform)
 	}
@@ -625,16 +622,18 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 	}
 
 	result := &types.PatchResult{
-		OriginalRef: imageName,
-		PatchedRef:  patchedRef,
-		PatchedDesc: patchedDesc,
-		OCISource:   source,
+		OriginalRef:         imageName,
+		PatchedRef:          patchedRef,
+		PatchedDesc:         patchedDesc,
+		OCISource:           source,
+		ManifestAnnotations: manifestAnnotations,
 	}
 
 	// Include preserved BuildKit states if available
 	if patchResult != nil {
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
+		result.VEX = patchResult.VEX
 	}
 
 	return result, nil
@@ -705,8 +704,12 @@ func executePatchBuild(
 			Client:  c,
 		}
 
+		sourceName := ""
+		if imageName != nil {
+			sourceName = imageName.String()
+		}
 		patchOpts := &Options{
-			ImageName:           imageName.String(),
+			ImageName:           sourceName,
 			TargetPlatform:      targetPlatform,
 			Updates:             updates,
 			ValidatedUpdates:    validatedManifest,
@@ -759,7 +762,10 @@ func executePatchBuild(
 		digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 		patchedImageDigest = digest
 	}
-	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+	if source != nil && patchResult != nil && err == nil {
+		patchResult.VEX = &types.VEXData{Updates: validatedManifest, PackageType: pkgType}
+	}
+	if source == nil && patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
 		nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
 		// vex document must contain at least one statement
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {

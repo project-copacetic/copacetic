@@ -52,7 +52,15 @@ func patchMultiPlatformImage(
 			}
 			reportFiles := make(map[string]string, len(reportPlatforms))
 			for _, platform := range reportPlatforms {
-				reportFiles[buildkit.PlatformKey(platform.Platform)] = platform.ReportFile
+				match, err := resolveOCIPlatform(platforms, &platform.Platform)
+				if err != nil {
+					return fmt.Errorf("report %s: %w", platform.ReportFile, err)
+				}
+				key := buildkit.PlatformKey(match.Platform)
+				if _, exists := reportFiles[key]; exists {
+					return fmt.Errorf("multiple reports target OCI platform %s", key)
+				}
+				reportFiles[key] = platform.ReportFile
 			}
 			for i := range platforms {
 				platforms[i].ReportFile = reportFiles[buildkit.PlatformKey(platforms[i].Platform)]
@@ -70,7 +78,16 @@ func patchMultiPlatformImage(
 
 		if len(opts.Platforms) > 0 {
 			// Filter platforms based on user specification and validate
-			patchPlatforms := filterPlatforms(discoveredPlatforms, opts.Platforms)
+			var patchPlatforms []types.PatchPlatform
+			if opts.OCISource != nil {
+				var err error
+				patchPlatforms, err = filterOCIPlatforms(discoveredPlatforms, opts.Platforms)
+				if err != nil {
+					return err
+				}
+			} else {
+				patchPlatforms = filterPlatforms(discoveredPlatforms, opts.Platforms)
+			}
 			if len(patchPlatforms) == 0 {
 				return fmt.Errorf("none of the specified platforms %v are available in the image", opts.Platforms)
 			}
@@ -179,7 +196,7 @@ func patchPreparedMultiPlatformImage(
 				log.Debugf("Platform %s marked for preservation, preserving original in manifest", p.OS+"/"+p.Architecture)
 
 				// Parse the original image reference for the result
-				originalRef, err := reference.ParseNormalizedNamed(image)
+				originalRef, _, _, err := resolvePatchNames(opts)
 				if err != nil {
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -201,7 +218,7 @@ func patchPreparedMultiPlatformImage(
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Ignored",
-						Ref:      originalRef.String() + " (original reference)",
+						Ref:      sourceDisplayName(opts) + " (original reference)",
 						Message:  "Windows images are not patched and will be preserved as-is",
 					}
 					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
@@ -249,7 +266,7 @@ func patchPreparedMultiPlatformImage(
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
 					Status:   "Not Patched",
-					Ref:      originalRef.String() + " (original reference)",
+					Ref:      sourceDisplayName(opts) + " (original reference)",
 					Message:  preserveReason,
 				}
 				mu.Unlock()
@@ -286,7 +303,7 @@ func patchPreparedMultiPlatformImage(
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
 						Status:   "Up-to-date",
-						Ref:      res.OriginalRef.String() + " (original)",
+						Ref:      sourceDisplayName(opts) + " (original)",
 						Message:  "Already up-to-date",
 					}
 					patchedSuccesses++ // Count up-to-date as success
@@ -376,13 +393,7 @@ func patchPreparedMultiPlatformImage(
 		return fmt.Errorf("all platform patches failed")
 	}
 
-	// resolve image ref
-	imageName, err := reference.ParseNormalizedNamed(image)
-	if err != nil {
-		return fmt.Errorf("failed to parse reference: %w", err)
-	}
-
-	resolvedImage, resolvedPatchedTag, err := common.ResolvePatchedImageName(imageName, opts.PatchedTag, opts.Suffix)
+	_, resolvedImage, resolvedPatchedTag, err := resolvePatchNames(opts)
 	if err != nil {
 		return err
 	}
@@ -404,7 +415,7 @@ func patchPreparedMultiPlatformImage(
 		}
 	}
 
-	if !opts.Push {
+	if !opts.Push && opts.OCISource == nil {
 		// Show push commands only for actually patched images (not preserved originals)
 		log.Debugf("Total patch results: %d", len(patchResults))
 		patchedOnlyResults := make([]types.PatchResult, 0)
@@ -490,6 +501,9 @@ func patchPreparedMultiPlatformImage(
 		}
 	}
 
+	if opts.OCIDir != "" && opts.OCISource != nil {
+		return writeOCIVEX(ctx, opts, patchResults, patchedImageName.String())
+	}
 	return nil
 }
 
@@ -498,7 +512,11 @@ func platformsForSingleReport(
 	target *types.PatchPlatform,
 	reportFile string,
 ) ([]types.PatchPlatform, error) {
-	targetKey := buildkit.PlatformKey(target.Platform)
+	resolved, err := resolveOCIPlatform(discovered, &target.Platform)
+	if err != nil {
+		return nil, err
+	}
+	targetKey := buildkit.PlatformKey(resolved.Platform)
 	available := make([]string, 0, len(discovered))
 	platforms := make([]types.PatchPlatform, 0, len(discovered))
 	matched := false
@@ -556,10 +574,8 @@ func buildPatchingPlan(opts *types.Options, platforms []types.PatchPlatform) tui
 
 	// Use the same resolution logic as the actual patching to get accurate name
 	patchedName := opts.Image + "-patched" // fallback
-	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
-		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
-			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
-		}
+	if _, imageName, tag, err := resolvePatchNames(opts); err == nil {
+		patchedName = fmt.Sprintf("%s:%s", imageName, tag)
 	}
 
 	return tui.PatchingPlan{

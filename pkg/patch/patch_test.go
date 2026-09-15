@@ -10,6 +10,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
+
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -487,5 +489,75 @@ windows/amd64  Not Patched  docker.io/library/nginx (original reference)  Window
 		if strings.TrimSpace(gotLines[i]) != strings.TrimSpace(expectedLines[i]) {
 			t.Errorf("line %d mismatch:\ngot:   %q\nwant:  %q", i+1, gotLines[i], expectedLines[i])
 		}
+	}
+}
+
+func TestResolveOCIReportPlatform(t *testing.T) {
+	actual := types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "arm64", OSVersion: "1", OSFeatures: []string{"feature"}}}
+	for _, test := range []struct {
+		name      string
+		targets   []string
+		arch      string
+		wantError bool
+	}{
+		{name: "derive from sole verified source"},
+		{name: "matching explicit", targets: []string{"linux/arm64"}},
+		{name: "mismatched explicit", targets: []string{"linux/amd64"}, wantError: true},
+		{name: "matching report", arch: "arm64"},
+		{name: "mismatched report", arch: "amd64", wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			updates := &unversioned.UpdateManifest{Metadata: unversioned.Metadata{Config: unversioned.Config{Arch: test.arch}}}
+			got, err := resolveOCIReportPlatform([]types.PatchPlatform{actual}, test.targets, updates)
+			if test.wantError {
+				require.ErrorContains(t, err, "matches 0 platforms")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, actual, got)
+		})
+	}
+	other := actual
+	other.OSFeatures = []string{"other"}
+	_, err := resolveOCIReportPlatform([]types.PatchPlatform{actual, other}, nil, nil)
+	require.ErrorContains(t, err, "no platform metadata")
+	_, err = filterOCIPlatforms([]types.PatchPlatform{actual, other}, []string{"linux/arm64"})
+	require.ErrorContains(t, err, "matches 2 platforms")
+	matched, err := resolveOCIPlatform([]types.PatchPlatform{actual, other}, &other.Platform)
+	require.NoError(t, err)
+	assert.Equal(t, other, matched)
+}
+
+func TestOCIOutputNaming(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		sourceName string
+		tag        string
+		want       string
+		wantError  string
+	}{
+		{name: "unnamed needs output", wantError: "full tagged output reference"},
+		{name: "bare tag cannot name unnamed output", tag: "patched", wantError: "full tagged output reference"},
+		{name: "full output names unnamed image", tag: "example.invalid/output:patched", want: "example.invalid/output:patched"},
+		{name: "infer named output", sourceName: "example.invalid/source:stable", want: "example.invalid/source:stable-patched"},
+		{name: "bare output tag with named source", sourceName: "example.invalid/source:stable", tag: "fixed", want: "example.invalid/source:fixed"},
+		{name: "untagged source needs explicit tag", sourceName: "example.invalid/source", wantError: "no tag found"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := &ocilayout.Source{}
+			if test.sourceName != "" {
+				var err error
+				source.Reference, err = reference.ParseNormalizedNamed(test.sourceName)
+				require.NoError(t, err)
+			}
+			original, name, tag, err := resolvePatchNames(&types.Options{OCISource: source, PatchedTag: test.tag})
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.want, name+":"+tag)
+			assert.Equal(t, source.Reference, original, "output name must not become source provenance")
+		})
 	}
 }

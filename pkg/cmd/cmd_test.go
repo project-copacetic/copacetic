@@ -20,13 +20,13 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			name:                  "FAIL: No flags provided",
 			args:                  []string{},
 			expectValidationError: true,
-			expectedErrorContains: "one of --image, --config, or --chart must be provided",
+			expectedErrorContains: "one of --image, --input-oci-layout, --config, or --chart must be provided",
 		},
 		{
 			name:                  "FAIL: Conflicting flags (--config and --image)",
 			args:                  []string{"--config", "config.yaml", "--image", "alpine"},
 			expectValidationError: true,
-			expectedErrorContains: "--image, --config, and --chart are mutually exclusive",
+			expectedErrorContains: "--image/--input-oci-layout, --config, and --chart are mutually exclusive",
 		},
 		{
 			name:                  "FAIL: Conflicting flags (--config and --chisel-release)",
@@ -53,7 +53,7 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			name:                  "FAIL: OCI input requires image mode",
 			args:                  []string{"--config", "config.yaml", "--input-oci-layout", "./input", "--oci-dir", "./output"},
 			expectValidationError: true,
-			expectedErrorContains: "--input-oci-layout requires --image",
+			expectedErrorContains: "--image/--input-oci-layout, --config, and --chart are mutually exclusive",
 		},
 		{
 			name:                  "FAIL: OCI input requires OCI output",
@@ -160,4 +160,11 @@ func TestChartModeValidatesRequiredFlags(t *testing.T) {
 			assert.ErrorContains(t, cmd.Execute(), tt.want)
 		})
 	}
+}
+
+func TestOCIInputEntersImageModeWithoutImageFlag(t *testing.T) {
+	cmd := NewPatchCmd()
+	cmd.SetArgs([]string{"--input-oci-layout", t.TempDir(), "--oci-dir", t.TempDir() + "/output", "--tag", "example.invalid/output:patched"})
+	err := cmd.Execute()
+	require.ErrorContains(t, err, "read oci-layout", "must reach local layout validation without requiring --image")
 }

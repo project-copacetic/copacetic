@@ -132,7 +132,7 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 
 			hasChart := ua.chartName != ""
 			hasConfig := ua.configFile != ""
-			hasImage := ua.appImage != ""
+			hasImage := ua.appImage != "" || ua.inputOCILayout != ""
 
 			modeCount := 0
 			if hasChart {
@@ -146,15 +146,12 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 			}
 
 			if modeCount == 0 {
-				return errors.New("one of --image, --config, or --chart must be provided")
+				return errors.New("one of --image, --input-oci-layout, --config, or --chart must be provided")
 			}
 			if modeCount > 1 {
-				return errors.New("--image, --config, and --chart are mutually exclusive")
+				return errors.New("--image/--input-oci-layout, --config, and --chart are mutually exclusive")
 			}
 			if ua.inputOCILayout != "" {
-				if !hasImage {
-					return errors.New("--input-oci-layout requires --image")
-				}
 				if ua.ociDir == "" {
 					return errors.New("--input-oci-layout requires --oci-dir")
 				}

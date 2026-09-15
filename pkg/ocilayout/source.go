@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -99,9 +100,11 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 		return nil, fmt.Errorf("%s contains no image descriptors", ocispec.ImageIndexFile)
 	}
 
-	named, err := reference.ParseNormalizedNamed(selector)
-	if err != nil {
-		return nil, fmt.Errorf("parse OCI layout image selector %q: %w", selector, err)
+	// A selector may be an image name, tag, digest, or absent. It is not
+	// required to be a registry reference in order to identify local content.
+	var named reference.Named
+	if selector != "" {
+		named, _ = reference.ParseNormalizedNamed(selector)
 	}
 	desc, err := selectDescriptor(index.Manifests, selector, named)
 	if err != nil {
@@ -119,7 +122,7 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 	source := &Source{
 		Path:       input,
 		StoreID:    "copa-oci-" + hex.EncodeToString(pathSum[:8]),
-		Reference:  named,
+		Reference:  sourceReference(index.Manifests, desc.Digest),
 		Descriptor: desc,
 		store:      store,
 	}
@@ -127,6 +130,22 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 		return nil, fmt.Errorf("validate selected OCI image %s: %w", desc.Digest, err)
 	}
 	return source, nil
+}
+
+// ValidateWritePath keeps auxiliary outputs and work directories outside the
+// immutable source, including paths reached through symlinks.
+func (s *Source) ValidateWritePath(path string) error {
+	if path == "" {
+		return nil
+	}
+	target, err := canonicalTargetPath(path)
+	if err != nil {
+		return fmt.Errorf("resolve write path %q: %w", path, err)
+	}
+	if pathsOverlap(s.Path, target) {
+		return fmt.Errorf("write path %q must not overlap OCI layout input %q", path, s.Path)
+	}
+	return nil
 }
 
 func readLayoutMetadata(root, name string) ([]byte, error) {
@@ -203,38 +222,86 @@ func pathsOverlap(left, right string) bool {
 }
 
 func selectDescriptor(descriptors []ocispec.Descriptor, rawSelector string, named reference.Named) (ocispec.Descriptor, error) {
-	if digested, ok := named.(reference.Digested); ok {
-		matches := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
-			return desc.Digest == digested.Digest()
-		})
-		return requireUniqueSelection(matches, "digest "+digested.Digest().String(), descriptors)
-	}
-
-	normalized := named.String()
-	familiar := reference.FamiliarString(named)
-	nameMatches := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
-		value := desc.Annotations[annotationImageName]
-		return value != "" && (value == rawSelector || value == normalized || value == familiar)
+	candidates := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
+		return !isArtifactDescriptor(&desc) && (isImageManifest(desc.MediaType) || isImageIndex(desc.MediaType))
 	})
-	if len(nameMatches) > 0 {
-		return requireUniqueSelection(nameMatches, "name "+normalized, descriptors)
+	if rawSelector == "" {
+		unique := make(map[digest.Digest]bool)
+		var images []ocispec.Descriptor
+		for _, desc := range candidates {
+			if !unique[desc.Digest] {
+				unique[desc.Digest] = true
+				images = append(images, desc)
+			}
+		}
+		if len(images) == 1 {
+			return images[0], nil
+		}
+		return ocispec.Descriptor{}, fmt.Errorf("OCI layout contains %d top-level images; use --image to select one of: %s", len(images), availableDescriptors(images))
 	}
 
+	var selectedDigest digest.Digest
+	if parsed, err := digest.Parse(rawSelector); err == nil {
+		selectedDigest = parsed
+	} else if digested, ok := named.(reference.Digested); ok {
+		selectedDigest = digested.Digest()
+	}
+	if selectedDigest != "" {
+		matches := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool { return desc.Digest == selectedDigest })
+		return requireUniqueSelection(matches, "digest "+selectedDigest.String(), candidates)
+	}
+
+	names := []string{rawSelector}
+	if named != nil {
+		names = append(names, named.String(), reference.FamiliarString(named))
+	}
+	matches := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
+		return desc.Annotations[annotationImageName] != "" && slices.Contains(names, desc.Annotations[annotationImageName])
+	})
+	if len(matches) > 0 {
+		return requireUniqueSelection(matches, "name "+rawSelector, candidates)
+	}
 	if tagged, ok := named.(reference.Tagged); ok {
-		tag := tagged.Tag()
-		tagMatches := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
-			value := desc.Annotations[ocispec.AnnotationRefName]
-			return value == tag || value == rawSelector || value == normalized || value == familiar
-		})
-		if len(tagMatches) > 0 {
-			return requireUniqueSelection(tagMatches, "tag "+tag, descriptors)
+		names = append(names, tagged.Tag())
+	}
+	matches = descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
+		return desc.Annotations[ocispec.AnnotationRefName] != "" && slices.Contains(names, desc.Annotations[ocispec.AnnotationRefName])
+	})
+	if len(matches) > 0 {
+		return requireUniqueSelection(matches, "tag "+names[len(names)-1], candidates)
+	}
+	return ocispec.Descriptor{}, fmt.Errorf("OCI layout selector %q is ambiguous or unavailable; choose one of: %s", rawSelector, availableDescriptors(candidates))
+}
+
+// sourceReference derives a portable name from producer metadata, independently
+// of the selector. A bare ref-name tag supplies no repository identity.
+func sourceReference(descriptors []ocispec.Descriptor, selected digest.Digest) reference.Named {
+	var result reference.Named
+	for _, desc := range descriptors {
+		if desc.Digest != selected || isArtifactDescriptor(&desc) {
+			continue
+		}
+		for _, key := range []string{annotationImageName, ocispec.AnnotationRefName} {
+			for _, value := range strings.Split(desc.Annotations[key], ",") {
+				value = strings.TrimSpace(value)
+				if value == "" || (key == ocispec.AnnotationRefName && !strings.ContainsAny(value, "/:@")) {
+					continue
+				}
+				named, err := reference.ParseNormalizedNamed(value)
+				if err != nil {
+					continue
+				}
+				if digested, ok := named.(reference.Digested); ok && digested.Digest() != selected {
+					continue
+				}
+				if result != nil && result.String() != named.String() {
+					return nil
+				}
+				result = named
+			}
 		}
 	}
-
-	if len(descriptors) == 1 {
-		return descriptors[0], nil
-	}
-	return ocispec.Descriptor{}, fmt.Errorf("OCI layout selector %q is ambiguous or unavailable; choose one of: %s", rawSelector, availableDescriptors(descriptors))
+	return result
 }
 
 func descriptorsMatching(descriptors []ocispec.Descriptor, match func(ocispec.Descriptor) bool) []ocispec.Descriptor {
@@ -248,7 +315,12 @@ func descriptorsMatching(descriptors []ocispec.Descriptor, match func(ocispec.De
 }
 
 func requireUniqueSelection(matches []ocispec.Descriptor, selector string, all []ocispec.Descriptor) (ocispec.Descriptor, error) {
-	if len(matches) == 1 {
+	if len(matches) > 0 && slices.IndexFunc(matches, func(desc ocispec.Descriptor) bool {
+		first := matches[0]
+		return desc.Digest != first.Digest || desc.MediaType != first.MediaType ||
+			desc.ArtifactType != first.ArtifactType || desc.Size != first.Size
+	}) == -1 {
+		// Several producer names may point to the same verified image.
 		return matches[0], nil
 	}
 	if len(matches) == 0 {
@@ -285,6 +357,12 @@ func isImageConfig(mediaType string) bool {
 	return mediaType == ocispec.MediaTypeImageConfig || mediaType == dockerMediaTypeConfig
 }
 
+// OCI descriptors may use artifactType to repeat a runnable image's config
+// media type. The referenced manifest must still pass full image validation.
+func isArtifactDescriptor(desc *ocispec.Descriptor) bool {
+	return desc.ArtifactType != "" && (!isImageManifest(desc.MediaType) || !isImageConfig(desc.ArtifactType))
+}
+
 func isImageLayer(mediaType string) bool {
 	switch mediaType {
 	case ocispec.MediaTypeImageLayer,
@@ -304,6 +382,9 @@ func isImageLayer(mediaType string) bool {
 }
 
 func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descriptor) error {
+	if isArtifactDescriptor(desc) {
+		return fmt.Errorf("descriptor %s is an unsupported artifact of type %q", desc.Digest, desc.ArtifactType)
+	}
 	switch {
 	case isImageIndex(desc.MediaType):
 		var index ocispec.Index
@@ -313,15 +394,28 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 		if index.SchemaVersion != 2 {
 			return fmt.Errorf("image index %s has schemaVersion %d (expected 2)", desc.Digest, index.SchemaVersion)
 		}
+		if index.ArtifactType != "" {
+			return fmt.Errorf("image index %s is an unsupported artifact of type %q", desc.Digest, index.ArtifactType)
+		}
 		for _, child := range index.Manifests {
-			if isImageIndex(child.MediaType) {
-				if err := s.validateReachableImage(ctx, &child); err != nil {
-					return fmt.Errorf("descriptor %s: %w", child.Digest, err)
-				}
+			if isArtifactDescriptor(&child) {
 				continue
 			}
-			if !isImageManifest(child.MediaType) || child.ArtifactType != "" || child.Platform == nil ||
-				child.Platform.OS == unknownPlatformField || child.Platform.Architecture == unknownPlatformField {
+			if isImageIndex(child.MediaType) {
+				var nested ocispec.Index
+				if err := s.readJSONBlob(ctx, &child, &nested); err != nil {
+					return err
+				}
+				if nested.ArtifactType != "" {
+					continue
+				}
+				return fmt.Errorf("nested child image index %s (%s) is not supported; select a top-level index containing platform manifests", child.Digest, child.MediaType)
+			}
+			patchable, err := s.isPlatformImage(ctx, &child)
+			if err != nil {
+				return err
+			}
+			if !patchable {
 				continue
 			}
 			if err := s.validateReachableImage(ctx, &child); err != nil {
@@ -337,11 +431,28 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 		if manifest.SchemaVersion != 2 {
 			return fmt.Errorf("image manifest %s has schemaVersion %d (expected 2)", desc.Digest, manifest.SchemaVersion)
 		}
+		if manifest.ArtifactType != "" {
+			return fmt.Errorf("image manifest %s is an unsupported artifact of type %q", desc.Digest, manifest.ArtifactType)
+		}
+		if desc.ArtifactType != "" && desc.ArtifactType != manifest.Config.MediaType {
+			return fmt.Errorf("image descriptor %s artifactType %q conflicts with config mediaType %q", desc.Digest, desc.ArtifactType, manifest.Config.MediaType)
+		}
 		if !isImageConfig(manifest.Config.MediaType) {
 			return fmt.Errorf("image manifest %s has unsupported config mediaType %q", desc.Digest, manifest.Config.MediaType)
 		}
-		if err := s.validateBlob(ctx, &manifest.Config); err != nil {
+		var image ocispec.Image
+		if err := s.readJSONBlob(ctx, &manifest.Config, &image); err != nil {
 			return fmt.Errorf("config %s: %w", manifest.Config.Digest, err)
+		}
+		actual := platforms.Normalize(image.Platform)
+		if actual.OS == "" || actual.Architecture == "" {
+			return fmt.Errorf("image config %s does not declare os and architecture", manifest.Config.Digest)
+		}
+		if desc.Platform != nil {
+			declared := platforms.Normalize(*desc.Platform)
+			if declared.OS != actual.OS || declared.Architecture != actual.Architecture || declared.Variant != actual.Variant {
+				return fmt.Errorf("descriptor %s platform %s conflicts with image config platform %s", desc.Digest, platforms.Format(declared), platforms.Format(actual))
+			}
 		}
 		for i := range manifest.Layers {
 			layer := &manifest.Layers[i]
@@ -356,6 +467,21 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 	default:
 		return fmt.Errorf("unsupported image mediaType %q", desc.MediaType)
 	}
+}
+
+// isPlatformImage applies identical artifact filtering in validation, discovery,
+// and lookup. Artifact descriptors do not require their image blobs to exist.
+func (s *Source) isPlatformImage(ctx context.Context, desc *ocispec.Descriptor) (bool, error) {
+	if !isImageManifest(desc.MediaType) || isArtifactDescriptor(desc) || desc.Platform == nil ||
+		desc.Platform.OS == "" || desc.Platform.Architecture == "" ||
+		desc.Platform.OS == unknownPlatformField || desc.Platform.Architecture == unknownPlatformField {
+		return false, nil
+	}
+	manifest, err := s.selectedManifest(ctx, desc)
+	if err != nil {
+		return false, err
+	}
+	return manifest.ArtifactType == "", nil
 }
 
 func (s *Source) validateBlob(ctx context.Context, desc *ocispec.Descriptor) error {
@@ -421,16 +547,15 @@ func (s *Source) readJSONBlob(ctx context.Context, desc *ocispec.Descriptor, tar
 	return nil
 }
 
-// ResolveReference returns the immutable dummy reference used by BuildKit's
-// OCI source resolver. The logical repository name is retained for logs and
-// VEX identity while the selected layout digest fixes the source content.
+// ResolveReference returns the store-local address consumed by BuildKit's OCI
+// resolver. The store identifier is a transport locator, never an image name or
+// provenance claim; the verified descriptor digest identifies the content.
+// The path component is required by BuildKit's containerd reference parser.
 func (s *Source) ResolveReference() (string, error) {
-	named := reference.TrimNamed(s.Reference)
-	withDigest, err := reference.WithDigest(named, s.Descriptor.Digest)
-	if err != nil {
-		return "", fmt.Errorf("attach selected OCI digest to logical image name: %w", err)
+	if err := s.Descriptor.Digest.Validate(); err != nil {
+		return "", fmt.Errorf("invalid selected OCI digest: %w", err)
 	}
-	return withDigest.String(), nil
+	return s.StoreID + "/image@" + s.Descriptor.Digest.String(), nil
 }
 
 // ResolveImageConfig resolves an image config through the client-side OCI
@@ -439,7 +564,7 @@ func (s *Source) ResolveImageConfig(ctx context.Context, gateway interface {
 	ResolveImageConfig(context.Context, string, sourceresolver.Opt) (string, digest.Digest, []byte, error)
 }, platform *ocispec.Platform,
 ) ([]byte, error) {
-	ref, err := s.ResolveReference()
+	ref, err := s.platformReference(ctx, platform)
 	if err != nil {
 		return nil, err
 	}
@@ -458,8 +583,8 @@ func (s *Source) ResolveImageConfig(ctx context.Context, gateway interface {
 }
 
 // State returns an LLB source state bound to this client-side OCI store.
-func (s *Source) State(platform *ocispec.Platform, config []byte) (llb.State, error) {
-	ref, err := s.ResolveReference()
+func (s *Source) State(ctx context.Context, platform *ocispec.Platform, config []byte) (llb.State, error) {
+	ref, err := s.platformReference(ctx, platform)
 	if err != nil {
 		return llb.State{}, err
 	}
@@ -468,6 +593,16 @@ func (s *Source) State(platform *ocispec.Platform, config []byte) (llb.State, er
 		opts = append(opts, llb.Platform(*platform))
 	}
 	return llb.OCILayout(ref, opts...).WithImageConfig(config)
+}
+
+// Bind BuildKit to the exact manifest selected locally. BuildKit's platform
+// compatibility matcher must not reinterpret a fully resolved OCI identity.
+func (s *Source) platformReference(ctx context.Context, platform *ocispec.Platform) (string, error) {
+	desc, err := s.PlatformDescriptor(ctx, platform)
+	if err != nil {
+		return "", err
+	}
+	return s.StoreID + "/image@" + desc.Digest.String(), nil
 }
 
 // AddToSolveOpt exposes the layout content store through the BuildKit session.
@@ -492,15 +627,21 @@ func (s *Source) Platforms(ctx context.Context) ([]ocispec.Platform, error) {
 		}
 		var found []ocispec.Platform
 		for _, desc := range index.Manifests {
-			if !isImageManifest(desc.MediaType) || desc.Platform == nil {
-				continue
+			patchable, err := s.isPlatformImage(ctx, &desc)
+			if err != nil {
+				return nil, err
 			}
-			if desc.Platform.OS == unknownPlatformField || desc.Platform.Architecture == unknownPlatformField {
+			if !patchable {
 				continue
 			}
 			platform := platforms.Normalize(*desc.Platform)
 			if platform.Architecture == architectureARM64 && platform.Variant == "v8" {
 				platform.Variant = ""
+			}
+			for i := range found {
+				if platformEqual(&found[i], &platform) {
+					return nil, fmt.Errorf("selected OCI image index contains multiple descriptors for platform %+v", platform)
+				}
 			}
 			found = append(found, platform)
 		}
@@ -560,12 +701,23 @@ func (s *Source) selectedManifest(ctx context.Context, desc *ocispec.Descriptor)
 // platform, preserving its digest, media type, size, annotations, and platform.
 func (s *Source) PlatformDescriptor(ctx context.Context, target *ocispec.Platform) (*ocispec.Descriptor, error) {
 	if !isImageIndex(s.Descriptor.MediaType) {
-		desc := s.Descriptor
-		if desc.Platform == nil && target != nil {
-			platform := *target
-			desc.Platform = &platform
+		found, err := s.Platforms(ctx)
+		if err != nil {
+			return nil, err
 		}
+		actual := found[0]
+		if target != nil && !platformEqual(&actual, target) {
+			return nil, fmt.Errorf("selected OCI image platform %+v does not match requested platform %+v", actual, *target)
+		}
+		desc := s.Descriptor
+		if desc.Platform != nil && !platformEqual(desc.Platform, &actual) {
+			return nil, fmt.Errorf("selected OCI descriptor platform does not match its image config platform %+v", actual)
+		}
+		desc.Platform = &actual
 		return &desc, nil
+	}
+	if target == nil {
+		return nil, fmt.Errorf("a target platform is required for an OCI image index")
 	}
 	index, err := s.selectedIndex(ctx)
 	if err != nil {
@@ -574,7 +726,11 @@ func (s *Source) PlatformDescriptor(ctx context.Context, target *ocispec.Platfor
 	var match *ocispec.Descriptor
 	for i := range index.Manifests {
 		desc := &index.Manifests[i]
-		if !isImageManifest(desc.MediaType) || desc.Platform == nil || target == nil {
+		patchable, err := s.isPlatformImage(ctx, desc)
+		if err != nil {
+			return nil, err
+		}
+		if !patchable {
 			continue
 		}
 		if platformEqual(desc.Platform, target) {
@@ -600,11 +756,12 @@ func platformEqual(leftPlatform, rightPlatform *ocispec.Platform) bool {
 	if right.Architecture == architectureARM64 && right.Variant == "v8" {
 		right.Variant = ""
 	}
-	return left.OS == right.OS && left.Architecture == right.Architecture && left.Variant == right.Variant && left.OSVersion == right.OSVersion
+	return left.OS == right.OS && left.Architecture == right.Architecture && left.Variant == right.Variant &&
+		left.OSVersion == right.OSVersion && slices.Equal(left.OSFeatures, right.OSFeatures)
 }
 
-// PlatformAnnotations returns manifest-body and descriptor annotations for the
-// selected platform. Descriptor annotations win on duplicate keys.
+// PlatformAnnotations returns only manifest-body annotations for the selected
+// platform. Descriptor annotations remain on PlatformDescriptor.
 func (s *Source) PlatformAnnotations(ctx context.Context, target *ocispec.Platform) (map[string]string, error) {
 	desc, err := s.PlatformDescriptor(ctx, target)
 	if err != nil {
@@ -614,12 +771,7 @@ func (s *Source) PlatformAnnotations(ctx context.Context, target *ocispec.Platfo
 	if err != nil {
 		return nil, err
 	}
-	annotations := maps.Clone(manifest.Annotations)
-	if annotations == nil {
-		annotations = make(map[string]string)
-	}
-	maps.Copy(annotations, desc.Annotations)
-	return annotations, nil
+	return maps.Clone(manifest.Annotations), nil
 }
 
 // IndexAnnotations returns annotations from the selected image-index body.

@@ -1190,7 +1190,7 @@ func newOCIInputTestSource(t *testing.T) (*ocilayout.Source, ispec.Descriptor, [
 	require.NoError(t, os.WriteFile(filepath.Join(root, ispec.ImageLayoutFile), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, ispec.ImageIndexFile), indexData, 0o600))
 
-	source, err := ocilayout.Open(t.Context(), root, filepath.Join(t.TempDir(), "output"), "example.com/acme/app:latest")
+	source, err := ocilayout.Open(t.Context(), root, filepath.Join(t.TempDir(), "output"), "")
 	require.NoError(t, err)
 	return source, manifestDesc, configData
 }
@@ -1587,4 +1587,43 @@ func TestPlatformsFromIndexManifest(t *testing.T) {
 		{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}, // v8 variant stripped
 	}
 	assert.Equal(t, want, got)
+}
+
+func TestPlatformKeyIncludesNormalizedIdentity(t *testing.T) {
+	original := ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8", OSVersion: "1", OSFeatures: []string{"b", "a"}}
+	normalized := original
+	normalized.Variant = ""
+	normalized.OSFeatures = []string{"a", "b", "a"}
+	assert.Equal(t, PlatformKey(original), PlatformKey(normalized))
+	normalized.OSFeatures = []string{"c"}
+	assert.NotEqual(t, PlatformKey(original), PlatformKey(normalized))
+	normalized = original
+	normalized.OSVersion = "2"
+	assert.NotEqual(t, PlatformKey(original), PlatformKey(normalized))
+}
+
+func TestOCIExportAnnotationScopes(t *testing.T) {
+	patchResult := &types.PatchResult{
+		OCISource:           &ocilayout.Source{},
+		ConfigData:          []byte(`{"architecture":"amd64","os":"linux"}`),
+		PatchedDesc:         &ispec.Descriptor{Annotations: map[string]string{"example.scope": "descriptor"}},
+		ManifestAnnotations: map[string]string{"example.scope": "body"},
+	}
+	metadata := ociPlatformExportMetadata(patchResult)
+	result := gwclient.NewResult()
+	require.NoError(t, addOCIExportMetadata(result, metadata))
+	assert.Equal(t, []byte("body"), result.Metadata[exptypes.AnnotationManifestKey(nil, "example.scope")])
+	assert.Equal(t, []byte("descriptor"), result.Metadata[exptypes.AnnotationManifestDescriptorKey(nil, "example.scope")])
+	assert.Equal(t, "descriptor", patchResult.PatchedDesc.Annotations["example.scope"])
+}
+
+func TestOCIExportRejectsMismatchedSoleResult(t *testing.T) {
+	source, desc, config := newOCIInputTestSource(t)
+	state := llb.Scratch()
+	err := CreateOCILayoutFromResultsWithOptions(filepath.Join(t.TempDir(), "output"),
+		[]types.PatchResult{{OCISource: source, PatchedDesc: &desc, PatchedState: &state, ConfigData: config}},
+		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "registry.invalid/output:patched"},
+	)
+	require.ErrorContains(t, err, "missing OCI patch result for platform")
 }
