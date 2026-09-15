@@ -200,7 +200,10 @@ func patchSingleArchImageWithSourceAndUpdates(
 	if err != nil {
 		if reportFile != "" && reportHasNoUpdates {
 			log.Debugf("Unable to create a BuildKit client to preflight an empty report for native Chisel metadata: %v", err)
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image)
+			if err != nil {
+				return nil, err
+			}
 			res.Summary = updates.CombinedSummary()
 			return res, types.ErrNoUpdatesFound
 		}
@@ -226,7 +229,10 @@ func patchSingleArchImageWithSourceAndUpdates(
 	// Keep the existing empty-report behavior for non-native images. Native
 	// images have already returned the targeted-patching error above.
 	if reportHasNoUpdates {
-		res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+		res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image)
+		if err != nil {
+			return nil, err
+		}
 		res.Summary = updates.CombinedSummary()
 		return res, types.ErrNoUpdatesFound
 	}
@@ -279,7 +285,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 		buildkitImageRef = buildkitImageRefNamed
 		log.Debugf("Using captured platform source reference for BuildKit: %s", sourceImage)
 	} else if multiPlatform {
-		platformImageRef, err := buildkit.GetPlatformImageReference(image, &targetPlatform.Platform)
+		platformImageRef, err := buildkit.GetPlatformImageReferenceWithContext(ctx, image, &targetPlatform.Platform)
 		if err == nil {
 			// Successfully resolved platform-specific reference for local manifest
 			log.Debugf("Using platform-specific image reference for BuildKit: %s", platformImageRef)
@@ -288,6 +294,9 @@ func patchSingleArchImageWithSourceAndUpdates(
 				buildkitImageRef = buildkitImageRefNamed
 			}
 		} else {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			log.Debugf("Could not resolve platform-specific reference, using original: %v", err)
 		}
 	}
@@ -349,14 +358,14 @@ func patchSingleArchImageWithSourceAndUpdates(
 	// PlainMode due to rendering overhead; without a buffer, builds that
 	// generate heavy output (e.g. .NET patching) can stall indefinitely.
 	buildChannel := make(chan *client.SolveStatus, 128)
-	eg, ctx := errgroup.WithContext(ctx)
+	eg, buildCtx := errgroup.WithContext(ctx)
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+		result, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease,
 			resolveImageReference(imageName), expectedSourceDigest, requireBaseManifest)
 		patchBuildErr = err
@@ -375,18 +384,18 @@ func patchSingleArchImageWithSourceAndUpdates(
 		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
 		platformPrefix := tui.FormatEmulationPrefix(hostPlatform.Architecture, targetPlatform.Architecture, targetPlatform.Variant)
 		eg.Go(func() error {
-			common.ForwardProgressWithPrefix(ctx, buildChannel, sharedProgressCh, platformPrefix)
+			common.ForwardProgressWithPrefix(buildCtx, buildChannel, sharedProgressCh, platformPrefix)
 			return nil
 		})
 	} else {
 		// Display progress locally (single-arch mode)
-		common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+		common.DisplayProgress(buildCtx, eg, buildChannel, opts.Progress)
 	}
 
 	// Handle image loading if not pushing
 	if !push {
 		eg.Go(func() error {
-			return loadImageToRuntime(ctx, pipeR, patchedImageName, finalLoaderType)
+			return loadImageToRuntime(buildCtx, pipeR, patchedImageName, finalLoaderType)
 		})
 	} else {
 		go func() {
@@ -398,7 +407,10 @@ func patchSingleArchImageWithSourceAndUpdates(
 	waitErr := eg.Wait()
 	if err := selectPatchWaitError(waitErr, patchBuildErr); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image)
+			if err != nil {
+				return nil, err
+			}
 			if updates != nil {
 				res.Summary = updates.CombinedSummary()
 			}
@@ -408,7 +420,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
 	if err != nil {
 		return nil, err
 	}
@@ -662,7 +674,7 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 }
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
-func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
+func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
@@ -671,13 +683,17 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		runtime = imageloader.Podman
 	}
 
-	// Use a fresh context for descriptor lookup to avoid cancellation issues
-	// The original context might be canceled after the patching operation completes
-	descriptorCtx := context.Background()
+	// Use the patch context, not the completed BuildKit errgroup context.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	log.Debugf("Getting image descriptor for %s...", patchedImageName)
-	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
+	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
 	if err != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
 	} else {
@@ -920,9 +936,12 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	return validTypes, nil
 }
 
-func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
-	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+func createOriginalImageResult(ctx context.Context, imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
+	originalDesc, err := getPlatformDescriptorFromManifest(ctx, originalImageRef, targetPlatform)
 	if err != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		log.Warnf("Could not get original descriptor for up-to-date platform %s/%s: %v", targetPlatform.OS, targetPlatform.Architecture, err)
 	}
 

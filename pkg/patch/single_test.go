@@ -402,7 +402,7 @@ func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T)
 	imageName, err := reference.ParseNormalizedNamed("docker.io/library/alpine:3.20")
 	require.NoError(t, err)
 
-	result, err := createPatchResultWithStates(
+	result, err := createPatchResultWithStates(t.Context(),
 		imageName,
 		"Not A Valid Image Reference",
 		&types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},

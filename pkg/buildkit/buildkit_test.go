@@ -471,7 +471,7 @@ func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *test
 		return nil, nil
 	}
 
-	got, isLocal, err := resolvePreservedPlatformsDescriptor(ref)
+	got, isLocal, err := resolvePreservedPlatformsDescriptor(t.Context(), ref)
 	require.NoError(t, err)
 	assert.True(t, isLocal)
 	assert.Same(t, localIndex, got)
@@ -479,7 +479,7 @@ func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *test
 	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return localIndex, remotev1.Hash{Algorithm: "sha256", Hex: strings.Repeat("d", 64)}, true, nil
 	}
-	_, _, err = resolvePreservedPlatformsDescriptor(ref)
+	_, _, err = resolvePreservedPlatformsDescriptor(t.Context(), ref)
 	require.ErrorContains(t, err, "does not match immutable reference")
 }
 
@@ -514,7 +514,7 @@ func TestResolvePreservedPlatformsDescriptorReconcilesIncompleteLocalIndex(t *te
 				return remoteIndex, nil
 			}
 
-			got, isLocal, err := resolvePreservedPlatformsDescriptor(ref)
+			got, isLocal, err := resolvePreservedPlatformsDescriptor(t.Context(), ref)
 			require.NoError(t, err)
 			assert.False(t, isLocal)
 			assert.Same(t, remoteIndex, got)
@@ -604,7 +604,7 @@ func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.
 				return tt.remoteDesc, tt.remoteErr
 			}
 
-			got, isLocal, err := resolvePreservedPlatformsDescriptor(tt.ref)
+			got, isLocal, err := resolvePreservedPlatformsDescriptor(t.Context(), tt.ref)
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				assert.Nil(t, got)
@@ -662,7 +662,7 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 	originalRef, err := reference.ParseNormalizedNamed(registryRef.String())
 	require.NoError(t, err)
 	outputDir := filepath.Join(t.TempDir(), "layout")
-	err = createPreservedOnlyOCILayout(
+	err = createPreservedOnlyOCILayout(t.Context(),
 		outputDir,
 		[]types.PatchResult{{OriginalRef: originalRef}},
 		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}},

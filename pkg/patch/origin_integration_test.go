@@ -524,7 +524,7 @@ func TestOriginRoundTrip(t *testing.T) {
 		{Platform: specs.Platform{OS: "linux", Architecture: "386"}, ShouldPreserve: true},
 	}
 	exportOptions := buildkit.OCILayoutExportOptions{IndexAnnotations: annotations, PreservedSourceRef: pinned}
-	require.NoError(t, buildkit.CreateOCILayoutFromResultsWithOptions(dir, mixed, layoutPlatforms, exportOptions))
+	require.NoError(t, buildkit.CreateOCILayoutFromResultsWithContext(ctx, dir, mixed, layoutPlatforms, exportOptions))
 	lp, err := layout.FromPath(dir)
 	require.NoError(t, err)
 	resultIndex, err := lp.ImageIndex()

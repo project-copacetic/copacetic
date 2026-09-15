@@ -26,7 +26,7 @@ const (
 // For testing: allow stubbing descriptor lookups.
 var (
 	localPlatformDescriptor = utils.LocalPlatformDescriptor
-	getVerifiedRemoteIndex  = buildkit.GetVerifiedRemoteIndex
+	getVerifiedRemoteIndex  = buildkit.GetVerifiedRemoteIndexWithContext
 )
 
 var validPlatforms = []string{
@@ -147,9 +147,13 @@ func filterPlatforms(discoveredPlatforms []types.PatchPlatform, targetPlatforms 
 
 // getPlatformDescriptorFromManifest gets the descriptor for a specific platform from a multi-arch manifest.
 func getPlatformDescriptorFromManifest(
+	ctx context.Context,
 	imageRef string,
 	targetPlatform *types.PatchPlatform,
 ) (*ispec.Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("error parsing reference %q: %w", imageRef, err)
@@ -163,7 +167,7 @@ func getPlatformDescriptorFromManifest(
 	// path for air-gapped patching of images loaded into the daemon (e.g. via
 	// `docker load`) without ever being pushed to a registry.
 	if localDesc, ok, lerr := localPlatformDescriptor(
-		context.Background(),
+		ctx,
 		imageRef,
 		&ispec.Platform{
 			OS:           targetPlatform.OS,
@@ -184,8 +188,11 @@ func getPlatformDescriptorFromManifest(
 		// preserved-platform resolution cannot disagree with discovery. Mutable
 		// local tags remain authoritative and never trigger a remote lookup.
 		if digestRef, immutable := ref.(name.Digest); immutable {
-			desc, err = getVerifiedRemoteIndex(digestRef)
+			desc, err = getVerifiedRemoteIndex(ctx, digestRef)
 			if err != nil {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				log.Debugf("Could not verify matching remote index for locally cached %s: %v", imageRef, err)
 				desc = nil
 			} else {
@@ -209,16 +216,22 @@ func getPlatformDescriptorFromManifest(
 			)
 		}
 	} else {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if lerr != nil {
 			log.Debugf("Local platform descriptor lookup for %s failed: %v", imageRef, lerr)
 		}
 
 		// Image is not available locally — fall back to the legacy local manifest
 		// helper (multi-platform manifest list only) and then to the remote registry.
-		desc, err = buildkit.TryGetManifestFromLocal(ref)
+		desc, err = buildkit.TryGetManifestFromLocalWithContext(ctx, ref)
 		if err != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
-			desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+			desc, err = remote.Get(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 			if err != nil {
 				return nil, fmt.Errorf("error fetching descriptor for %q from both local daemon and remote registry: %w", imageRef, err)
 			}

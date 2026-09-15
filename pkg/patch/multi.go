@@ -42,7 +42,7 @@ func patchMultiPlatformImage(
 	if reportDir != "" {
 		// Using report directory - discover platforms from reports
 		var err error
-		platforms, err = buildkit.DiscoverPlatforms(image, reportDir, opts.Scanner)
+		platforms, err = buildkit.DiscoverPlatformsWithContext(ctx, image, reportDir, opts.Scanner)
 		if err != nil {
 			return err
 		}
@@ -193,9 +193,12 @@ func patchMultiPlatformImage(
 				if source != nil && source.Current != nil {
 					originalDesc, err = source.Current.PlatformDescriptor(&p.Platform)
 				} else {
-					originalDesc, err = getPlatformDescriptorFromManifest(image, &p)
+					originalDesc, err = getPlatformDescriptorFromManifest(gctx, image, &p)
 				}
 				if err != nil {
+					if err := gctx.Err(); err != nil {
+						return err
+					}
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
 						Platform: platformKey,
@@ -466,7 +469,7 @@ func patchMultiPlatformImage(
 		if err != nil {
 			return fmt.Errorf("failed to identify immutable source for preserved platforms: %w", err)
 		}
-		if err := buildkit.CreateOCILayoutFromResultsWithOptions(
+		if err := buildkit.CreateOCILayoutFromResultsWithContext(ctx,
 			opts.OCIDir,
 			patchResults,
 			platforms,
