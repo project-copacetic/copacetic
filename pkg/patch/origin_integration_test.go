@@ -52,13 +52,14 @@ func TestOriginRoundTrip(t *testing.T) {
 	t.Cleanup(func() { bkNewClient = originalNewClient })
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
-	listener, err := net.Listen("tcp", "127.0.0.1:51678")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	server := httptest.NewUnstartedServer(registry.New(registry.Logger(stdlog.New(io.Discard, "", 0))))
 	server.Listener = listener
 	server.Start()
 	defer server.Close()
 	repo := listener.Addr().String() + "/copa-1678-origin"
+	t.Logf("Origin test registry: %s", repo)
 	bk, err := buildkit.NewClient(ctx, buildkit.Opts{Addr: addr})
 	require.NoError(t, err)
 	defer bk.Close()
@@ -186,6 +187,37 @@ func TestOriginRoundTrip(t *testing.T) {
 			assertOriginFixture(t, ctx, second, images["amd64"], application, true)
 		})
 	}
+	t.Run("immutable-index-source", func(t *testing.T) {
+		input := repo + "@" + originalIndexHash.String()
+		for _, arch := range []string{"amd64", "386"} {
+			platform := descriptors[arch].Platform
+			firstOutput := repo + ":p1-pinned-index-" + arch
+			first := patchPublicOriginFixture(t, ctx, addr, input, firstOutput, platform)
+			assertOriginFixture(t, ctx, first, images[arch], application, false)
+			second := patchPublicOriginFixture(t, ctx, addr, firstOutput, repo+":p2-pinned-index-"+arch, platform)
+			assertOriginFixture(t, ctx, second, images[arch], application, true)
+		}
+	})
+	t.Run("recorded-index-locator", func(t *testing.T) {
+		input := repo + "@" + originalIndexHash.String()
+		for _, arch := range []string{"amd64", "386"} {
+			// Existing P1 images can retain an index BaseImage while recording
+			// the selected original child. Exercise that compatibility shape
+			// independently of the reference captured by today's public P1 flow.
+			img, err := remote.Image(originTestReference(t, repo+":p1-"+arch), remote.WithContext(ctx))
+			require.NoError(t, err)
+			config, err := img.ConfigFile()
+			require.NoError(t, err)
+			config.Config.Labels["BaseImage"] = input
+			require.Equal(t, descriptors[arch].Digest.String(), config.Config.Labels[types.AnnotationPatchOriginDigest])
+			img, err = mutate.ConfigFile(img, config)
+			require.NoError(t, err)
+			firstOutput := repo + ":p1-recorded-index-" + arch
+			require.NoError(t, remote.Write(originTestReference(t, firstOutput), img, remote.WithContext(ctx)))
+			second := patchPublicOriginFixture(t, ctx, addr, firstOutput, repo+":p2-recorded-index-"+arch, descriptors[arch].Platform)
+			assertOriginFixture(t, ctx, second, images[arch], application, true)
+		}
+	})
 	t.Run("second-generation-index", func(t *testing.T) {
 		repatchSource, err := captureMultiPlatformSource(ctx, repo+":p1")
 		require.NoError(t, err)
@@ -364,6 +396,36 @@ func originTestReference(t *testing.T, value string) name.Reference {
 	ref, err := name.ParseReference(value)
 	require.NoError(t, err)
 	return ref
+}
+
+func patchPublicOriginFixture(t *testing.T, ctx context.Context, addr, input, output string, platform *specs.Platform) *types.PatchResult {
+	t.Helper()
+	report := fmt.Sprintf(`{"SchemaVersion":2,"ArtifactType":"container_image",
+ "Metadata":{"OS":{"Family":"alpine","Name":"3.20.0"},"ImageConfig":{"architecture":%q}},
+ "Results":[{"Class":"os-pkgs","Type":"alpine","Vulnerabilities":[
+ {"VulnerabilityID":"CVE-2023-42363","PkgName":"busybox","InstalledVersion":"1.36.1-r29","FixedVersion":"1.36.1-r29"}]}]}`, platform.Architecture)
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	require.NoError(t, os.WriteFile(reportPath, []byte(report), 0o600))
+	outputRef, err := name.NewTag(output)
+	require.NoError(t, err)
+	require.NoError(t, Patch(ctx, &types.Options{
+		Image: input, Report: reportPath, Scanner: "trivy", Push: true, PatchedTag: outputRef.TagStr(), BkAddr: addr,
+		PkgTypes: "os", Progress: "quiet", Timeout: 5 * time.Minute,
+	}))
+	desc, err := remote.Get(originTestReference(t, output), remote.WithContext(ctx))
+	require.NoError(t, err)
+	img, err := desc.Image()
+	require.NoError(t, err)
+	manifest, err := img.Manifest()
+	require.NoError(t, err)
+	originalRef, err := reference.ParseNormalizedNamed(input)
+	require.NoError(t, err)
+	patchedRef, err := reference.ParseNormalizedNamed(output)
+	require.NoError(t, err)
+	return &types.PatchResult{OriginalRef: originalRef, PatchedRef: patchedRef, PatchedDesc: &specs.Descriptor{
+		MediaType: string(desc.MediaType), Digest: digest.Digest(desc.Digest.String()), Size: desc.Size,
+		Platform: platform, Annotations: manifest.Annotations,
+	}}
 }
 
 func patchOriginFixture(t *testing.T, ctx context.Context, bk *client.Client, input, output string, original *specs.Platform, annotations map[string]string) *types.PatchResult {

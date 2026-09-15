@@ -752,6 +752,28 @@ func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t
 	assert.Equal(t, childDigest, expectedDigest)
 }
 
+func TestCaptureSinglePlatformSourcePinsImmutableIndexChild(t *testing.T) {
+	indexDigest := digest.FromString("immutable index")
+	childDigest := digest.FromString("source-arm64")
+	imageRef := "example.com/app@" + indexDigest.String()
+	platform := &v1.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
+	originalResolver := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = originalResolver })
+	resolveImageSource = func(context.Context, string) (*buildkit.ImageSource, error) {
+		return &buildkit.ImageSource{
+			Name: imageRef, Descriptor: v1.Descriptor{Digest: indexDigest},
+			Index: &v1.Index{Manifests: []v1.Descriptor{{Digest: childDigest, Platform: platform}}},
+		}, nil
+	}
+	input, err := reference.ParseNormalizedNamed(imageRef)
+	require.NoError(t, err)
+	got, expected, requireManifest, err := captureSinglePlatformSource(t.Context(), imageRef, input, platform)
+	require.NoError(t, err)
+	require.True(t, requireManifest)
+	assert.Equal(t, childDigest, expected)
+	assert.Equal(t, "example.com/app@"+childDigest.String(), got.String())
+}
+
 func TestAugmentPatchedDescriptorComputedLineageWins(t *testing.T) {
 	lineage := &types.SourceLineage{
 		Kind:   types.PatchOriginImage,

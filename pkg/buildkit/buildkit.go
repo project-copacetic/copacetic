@@ -868,12 +868,20 @@ func resolveRecordedOrigin(ctx context.Context, c sourceresolver.ImageMetaResolv
 	if err != nil || base.Name() != origin.Name() {
 		return "", "", nil, errors.New("recorded patch origin repository does not match BaseImage")
 	}
-	if pinned, ok := base.(reference.Digested); ok && pinned.Digest() != recorded.Digest {
-		return "", "", nil, errors.New("recorded patch origin digest does not match immutable BaseImage")
-	}
+	// An immutable locator may name an index whose selected platform is the
+	// recorded origin. Validate that selection before comparing locator digests.
 	_, selected, config, err := c.ResolveImageConfig(ctx, baseImage, opt)
 	if err == nil && selected == recorded.Digest {
 		return baseImage, selected, config, nil
+	}
+	if pinned, ok := base.(reference.Digested); ok && pinned.Digest() != recorded.Digest {
+		if err != nil {
+			return "", "", nil, fmt.Errorf("resolve immutable BaseImage %s: %w", baseImage, err)
+		}
+		if selected != pinned.Digest() {
+			return "", "", nil, errors.New("recorded patch origin digest does not match immutable BaseImage")
+		}
+		return resolveRecordedIndexOrigin(ctx, c, baseImage, selected, config, recorded, opt)
 	}
 	pinned, err := reference.WithDigest(reference.TrimNamed(base), recorded.Digest)
 	if err != nil {
@@ -887,6 +895,54 @@ func resolveRecordedOrigin(ctx context.Context, c sourceresolver.ImageMetaResolv
 		return "", "", nil, fmt.Errorf("recovered patch origin %s resolved to unexpected digest %s", pinned, selected)
 	}
 	return pinned.String(), selected, config, nil
+}
+
+// BuildKit may return the index digest along with the selected child's config.
+// Verify the immutable index's platform descriptor and resolve that exact child
+// before retaining the index locator. Config equality also checks that the
+// index and child resolutions selected the same image configuration.
+func resolveRecordedIndexOrigin(
+	ctx context.Context,
+	c sourceresolver.ImageMetaResolver,
+	baseImage string,
+	indexDigest digest.Digest,
+	config []byte,
+	recorded *types.SourceLineage,
+	opt sourceresolver.Opt,
+) (string, digest.Digest, []byte, error) {
+	if opt.ImageOpt == nil || opt.ImageOpt.Platform == nil {
+		return "", "", nil, errors.New("cannot verify immutable BaseImage index without a platform")
+	}
+	source, err := ResolveImageSource(ctx, baseImage)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolve immutable BaseImage index: %w", err)
+	}
+	if source.Descriptor.Digest != indexDigest {
+		return "", "", nil, errors.New("resolved immutable BaseImage index has an unexpected digest")
+	}
+	child, err := source.PlatformDescriptor(opt.ImageOpt.Platform)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("select immutable BaseImage platform: %w", err)
+	}
+	if child.Digest != recorded.Digest || !v1types.MediaType(child.MediaType).IsImage() {
+		return "", "", nil, errors.New("recorded patch origin does not match immutable BaseImage platform manifest")
+	}
+	base, err := reference.ParseNormalizedNamed(baseImage)
+	if err != nil {
+		return "", "", nil, err
+	}
+	pinned, err := reference.WithDigest(reference.TrimNamed(base), recorded.Digest)
+	if err != nil {
+		return "", "", nil, err
+	}
+	_, selected, childConfig, err := c.ResolveImageConfig(ctx, pinned.String(), opt)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("resolve immutable BaseImage child: %w", err)
+	}
+	if selected != recorded.Digest || !bytes.Equal(config, childConfig) {
+		return "", "", nil, errors.New("immutable BaseImage child resolution does not match the recorded patch origin")
+	}
+	return baseImage, selected, childConfig, nil
 }
 
 func newSourceLineage(image string, imageDigest digest.Digest) *types.SourceLineage {

@@ -244,51 +244,6 @@ func patchSingleArchImageWithSourceAndUpdates(
 	// Check media type for OCI vs Docker export
 	shouldExportOCI := shouldExportAsOCI(ctx, ref, finalLoaderType)
 
-	// Create pipes for Docker export
-	pipeR, pipeW := io.Pipe()
-
-	// If the patched image is published or loaded using the same tag as the source
-	// image, that mutable tag may later resolve to the newly published manifest
-	// instead of the original one. Fetching the annotations here preserves the
-	// pre-patch manifest-level values before any same-tag push/load can change what
-	// a lookup by tag returns. The captured map is also forwarded into the BuildKit
-	// exporter via createBuildConfig so single-platform pushes preserve the
-	// annotations on the pushed manifest itself, not just on the in-memory
-	// PatchResult descriptor used by the multi-arch manifest list assembly.
-	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
-		OS:           targetPlatform.OS,
-		Architecture: targetPlatform.Architecture,
-		Variant:      targetPlatform.Variant,
-	})
-	if err != nil {
-		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
-		originalAnnotations = map[string]string{}
-	}
-	originalAnnotations = withoutSourceLineageAnnotations(originalAnnotations)
-
-	// Create build configuration
-	buildConfig, err := createBuildConfig(
-		patchedImageName,
-		shouldExportOCI,
-		push,
-		pipeW,
-		originalAnnotations,
-		patchedTag,
-		opts.Compression,
-		opts.ForceCompression,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create channels for build coordination.
-	// Buffer the channel to prevent backpressure from the progress display
-	// blocking BuildKit. The progrock TUI processes events slower than
-	// PlainMode due to rendering overhead; without a buffer, builds that
-	// generate heavy output (e.g. .NET patching) can stall indefinitely.
-	buildChannel := make(chan *client.SolveStatus, 128)
-	eg, ctx := errgroup.WithContext(ctx)
-
 	// Resolve image reference for BuildKit operations
 	// For multi-platform images with local manifests, use platform-specific reference
 	buildkitImageRef := imageName
@@ -336,6 +291,65 @@ func patchSingleArchImageWithSourceAndUpdates(
 			log.Debugf("Could not resolve platform-specific reference, using original: %v", err)
 		}
 	}
+
+	// Create pipes for Docker export
+	pipeR, pipeW := io.Pipe()
+
+	// If the patched image is published or loaded using the same tag as the source
+	// image, that mutable tag may later resolve to the newly published manifest
+	// instead of the original one. Fetching the annotations here preserves the
+	// pre-patch manifest-level values before any same-tag push/load can change what
+	// a lookup by tag returns. The captured map is also forwarded into the BuildKit
+	// exporter via createBuildConfig so single-platform pushes preserve the
+	// annotations on the pushed manifest itself, not just on the in-memory
+	// PatchResult descriptor used by the multi-arch manifest list assembly.
+	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
+		OS:           targetPlatform.OS,
+		Architecture: targetPlatform.Architecture,
+		Variant:      targetPlatform.Variant,
+	})
+	if err != nil {
+		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
+		originalAnnotations = map[string]string{}
+	}
+	if !multiPlatform && buildkitImageRef.String() != imageName.String() {
+		// The index lookup returns descriptor annotations. Also preserve the
+		// selected immutable child's own manifest annotations when narrowing
+		// an index reference; the child's values describe the patched image.
+		childAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, buildkitImageRef.String(), &targetPlatform.Platform)
+		if err != nil {
+			log.Warnf("Failed to get captured source manifest annotations: %v", err)
+		} else {
+			if originalAnnotations == nil {
+				originalAnnotations = map[string]string{}
+			}
+			maps.Copy(originalAnnotations, childAnnotations)
+		}
+	}
+	originalAnnotations = withoutSourceLineageAnnotations(originalAnnotations)
+
+	// Create build configuration
+	buildConfig, err := createBuildConfig(
+		patchedImageName,
+		shouldExportOCI,
+		push,
+		pipeW,
+		originalAnnotations,
+		patchedTag,
+		opts.Compression,
+		opts.ForceCompression,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create channels for build coordination.
+	// Buffer the channel to prevent backpressure from the progress display
+	// blocking BuildKit. The progrock TUI processes events slower than
+	// PlainMode due to rendering overhead; without a buffer, builds that
+	// generate heavy output (e.g. .NET patching) can stall indefinitely.
+	buildChannel := make(chan *client.SolveStatus, 128)
+	eg, ctx := errgroup.WithContext(ctx)
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
@@ -426,6 +440,18 @@ func captureSinglePlatformSource(
 	}
 	if err := descriptor.Digest.Validate(); err != nil {
 		return buildkitImageRef, "", true, fmt.Errorf("captured platform source digest is invalid: %w", err)
+	}
+	// An already-immutable index may be narrowed to its verified child. Keep
+	// mutable locators intact so daemon-only sources retain local resolution.
+	if pinned, ok := buildkitImageRef.(reference.Digested); ok {
+		if source.Descriptor.Digest != pinned.Digest() {
+			return buildkitImageRef, "", true, errors.New("captured source does not match immutable image reference")
+		}
+		child, err := reference.WithDigest(reference.TrimNamed(buildkitImageRef), descriptor.Digest)
+		if err != nil {
+			return buildkitImageRef, "", true, fmt.Errorf("pin source platform manifest: %w", err)
+		}
+		return child, descriptor.Digest, true, nil
 	}
 	return buildkitImageRef, descriptor.Digest, true, nil
 }

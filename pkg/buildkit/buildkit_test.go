@@ -1676,11 +1676,121 @@ func TestResolveRecordedOrigin(t *testing.T) {
 			client.AssertExpectations(t)
 		})
 	}
-	for _, base := range []string{"attacker.example.com/app:stable", "example.com/app@" + digest.FromString("C").String()} {
+	t.Run("reject repository mismatch before resolution", func(t *testing.T) {
 		client := &mocks.MockGWClient{}
-		_, _, _, err := resolveRecordedOrigin(t.Context(), client, base, lineage, opt)
+		_, _, _, err := resolveRecordedOrigin(t.Context(), client, "attacker.example.com/app:stable", lineage, opt)
 		require.Error(t, err)
 		client.AssertNotCalled(t, "ResolveImageConfig", mock.Anything, mock.Anything, mock.Anything)
+	})
+}
+
+func TestResolveRecordedOriginImmutableIndex(t *testing.T) {
+	original := digest.FromString("original platform manifest")
+	indexRef := "example.com/app@" + digest.FromString("original index").String()
+	originRef := "example.com/app@" + original.String()
+	lineage := &types.SourceLineage{Kind: types.PatchOriginImage, Name: originRef, Digest: original}
+	opt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{
+		ResolveMode: llb.ResolveModePreferLocal.String(),
+		Platform:    &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"},
+	}}
+	config := []byte(`{"config":{"Labels":{}}}`)
+	for _, tc := range []struct {
+		name     string
+		selected digest.Digest
+		err      error
+		wantErr  bool
+	}{
+		{name: "selected child matches origin", selected: original},
+		{name: "selected child contradicts origin", selected: digest.FromString("different child"), wantErr: true},
+		{name: "index cannot be resolved", err: errors.New("index unavailable"), wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			client.On("ResolveImageConfig", mock.Anything, indexRef, opt).Return(indexRef, tc.selected, config, tc.err).Once()
+			ref, selected, got, err := resolveRecordedOrigin(t.Context(), client, indexRef, lineage, opt)
+			if tc.wantErr {
+				require.ErrorContains(t, err, "immutable BaseImage")
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, indexRef, ref)
+				assert.Equal(t, original, selected)
+				assert.Equal(t, config, got)
+			}
+			client.AssertExpectations(t)
+			client.AssertNotCalled(t, "ResolveImageConfig", mock.Anything, originRef, mock.Anything)
+		})
+	}
+}
+
+func TestResolveRecordedOriginTopLevelIndex(t *testing.T) {
+	original := digest.FromString("original platform manifest")
+	indexDigest := digest.FromString("original index")
+	indexRef := "example.com/app@" + indexDigest.String()
+	originRef := "example.com/app@" + original.String()
+	lineage := &types.SourceLineage{Kind: types.PatchOriginImage, Name: originRef, Digest: original}
+	platform := &ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
+	opt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{ResolveMode: llb.ResolveModePreferLocal.String(), Platform: platform}}
+	config := []byte(`{"config":{"Labels":{}}}`)
+	oldLocal, oldRemote := tryGetManifestFromLocal, getRemoteImageDescriptor
+	t.Cleanup(func() { tryGetManifestFromLocal, getRemoteImageDescriptor = oldLocal, oldRemote })
+	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+		return nil, remotev1.Hash{}, false, errors.New("no local image")
+	}
+	for _, tc := range []struct {
+		name          string
+		child         digest.Digest
+		unavailable   bool
+		wrongIndex    bool
+		wrongPlatform bool
+		wrongConfig   bool
+		wantErr       bool
+	}{
+		{name: "top-level digest selects recorded child", child: original},
+		{name: "index contains another child", child: digest.FromString("other"), wantErr: true},
+		{name: "index content unavailable", child: original, unavailable: true, wantErr: true},
+		{name: "index digest differs", child: original, wrongIndex: true, wantErr: true},
+		{name: "recorded child belongs to another platform", child: original, wrongPlatform: true, wantErr: true},
+		{name: "selected config differs", child: original, wrongConfig: true, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			childPlatform := *platform
+			if tc.wrongPlatform {
+				childPlatform.Architecture = "amd64"
+			}
+			raw, err := json.Marshal(ispec.Index{Manifests: []ispec.Descriptor{{MediaType: ispec.MediaTypeImageManifest, Digest: tc.child, Platform: &childPlatform}}})
+			require.NoError(t, err)
+			getRemoteImageDescriptor = func(ref name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
+				require.Equal(t, indexRef, ref.Name())
+				if tc.unavailable {
+					return nil, errors.New("index gone")
+				}
+				hash, err := remotev1.NewHash(indexDigest.String())
+				require.NoError(t, err)
+				if tc.wrongIndex {
+					hash.Hex = digest.FromString("another index").Encoded()
+				}
+				return &remote.Descriptor{Descriptor: remotev1.Descriptor{Digest: hash, MediaType: remoteTypes.OCIImageIndex}, Manifest: raw}, nil
+			}
+			client := &mocks.MockGWClient{}
+			client.On("ResolveImageConfig", mock.Anything, indexRef, opt).Return(indexRef, indexDigest, config, nil).Once()
+			if !tc.wantErr || tc.wrongConfig {
+				childConfig := config
+				if tc.wrongConfig {
+					childConfig = []byte(`{"config":{"Labels":{"different":"true"}}}`)
+				}
+				client.On("ResolveImageConfig", mock.Anything, originRef, opt).Return(originRef, original, childConfig, nil).Once()
+			}
+			ref, selected, got, err := resolveRecordedOrigin(t.Context(), client, indexRef, lineage, opt)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, indexRef, ref)
+				assert.Equal(t, original, selected)
+				assert.Equal(t, config, got)
+			}
+			client.AssertExpectations(t)
+		})
 	}
 }
 
