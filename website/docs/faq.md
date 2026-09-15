@@ -56,7 +56,10 @@ path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
 Package configuration continues to use that configuration's saved answers.
 Configuration and database paths must be absolute, contain no `.` or `..`
 components, and resolve inside the target image. Environment substitutions such
-as `${DEBCONF_DB_DIR}` in Debconf configuration are not supported. Debconf state under
+as `${DEBCONF_DB_DIR}` and per-database `Root:` overrides (including an empty
+`Root:`) in Debconf configuration are not supported. Copa rejects these before
+installing packages because they can redirect saved answers outside the target
+image's databases. Debconf state under
 `/var/lib/dpkg` is rejected because that directory is rebuilt temporarily during
 patching. Absolute symlinks in configuration or database paths are also rejected;
 relative links must stay within the mounted target root. Copa preserves an

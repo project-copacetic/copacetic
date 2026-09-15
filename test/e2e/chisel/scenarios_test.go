@@ -428,10 +428,26 @@ func TestDistrolessUpdatePreservesCustomDebconfConfiguration(t *testing.T) {
 		configDir         string
 		databaseDir       string
 		databaseConfigDir string
+		configRoot        string
+		templatesRoot     string
+		answersOnly       bool
 		emptyAnswers      bool
 		wantError         string
 	}{
 		{name: "custom directory", configDir: "/custom", databaseDir: "/custom"},
+		{name: "saved answers without timezone files", configDir: "/custom", databaseDir: "/custom", answersOnly: true},
+		{
+			name: "empty config database root", configDir: "/custom", databaseDir: "/custom", answersOnly: true,
+			configRoot: "Root:\n", wantError: "Debconf database Root overrides are not supported",
+		},
+		{
+			name: "empty templates database root", configDir: "/custom", databaseDir: "/custom", answersOnly: true,
+			templatesRoot: "Root:\n", wantError: "Debconf database Root overrides are not supported",
+		},
+		{
+			name: "absolute database roots", configDir: "/custom", databaseDir: "/custom", answersOnly: true,
+			configRoot: "rOoT: /\n", templatesRoot: "Root: /\n", wantError: "Debconf database Root overrides are not supported",
+		},
 		{name: "empty Debconf database", configDir: "/custom", databaseDir: "/custom", emptyAnswers: true},
 		{name: "configuration under dpkg", configDir: "/var/lib/dpkg", databaseDir: "/custom", wantError: "Debconf state under /var/lib/dpkg is not supported"},
 		{name: "databases under dpkg", configDir: "/custom", databaseDir: "/var/lib/dpkg", wantError: "Debconf state under /var/lib/dpkg is not supported"},
@@ -461,14 +477,17 @@ Flags: seen
 			if tc.emptyAnswers {
 				answers = nil
 			}
-			// A regular localtime file without /etc/timezone must survive even
-			// when the existing Debconf database has no saved timezone answers.
+			// Removing both timezone files forces tzdata to use saved answers.
+			// Other cases preserve a regular localtime file, even with no answers.
+			timezoneSetup := "rm -f /rootfs/etc/localtime /rootfs/etc/timezone"
+			if !tc.answersOnly {
+				timezoneSetup += " && cp /rootfs/usr/share/zoneinfo/Europe/Berlin /rootfs/etc/localtime"
+			}
 			target := buildImageFromDockerfile(t, "distroless-custom-debconf", fixture.Platform, fmt.Sprintf(`
 FROM %s AS source
 FROM %s AS prepare
 COPY --from=source / /rootfs
-RUN rm -f /rootfs/etc/localtime /rootfs/etc/timezone \
-    && cp /rootfs/usr/share/zoneinfo/Europe/Berlin /rootfs/etc/localtime
+RUN %s
 COPY debconf.conf /rootfs%s/debconf.conf
 COPY config.dat templates.dat /rootfs%s/
 FROM scratch
@@ -477,18 +496,18 @@ ENV DEBCONF_SYSTEMRC=%s/debconf.conf
 ENV DEBCONF_DB_DIR=/custom
 USER 65532:65532
 ENTRYPOINT ["/manager"]
-`, fixture.Reference, prepare.Reference, tc.configDir, tc.databaseDir, tc.configDir), map[string][]byte{
+`, fixture.Reference, prepare.Reference, timezoneSetup, tc.configDir, tc.databaseDir, tc.configDir), map[string][]byte{
 				"debconf.conf": []byte(fmt.Sprintf(`Config: config
 Templates: templates
 
 Name: config
 Driver: File
-Filename: %s/config.dat
+%sFilename: %s/config.dat
 
 Name: templates
 Driver: File
-Filename: %s/templates.dat
-`, databaseConfigDir, databaseConfigDir)),
+%sFilename: %s/templates.dat
+`, tc.configRoot, databaseConfigDir, tc.templatesRoot, databaseConfigDir)),
 				"config.dat":    answers,
 				"templates.dat": nil,
 			})
@@ -499,8 +518,12 @@ Filename: %s/templates.dat
 			require.NotContains(t, before.Paths, "etc/debconf.conf")
 			require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
 			require.NotContains(t, before.Paths, "etc/timezone")
-			require.Contains(t, before.Paths, "etc/localtime")
-			require.Empty(t, before.Paths["etc/localtime"].Linkname)
+			if tc.answersOnly {
+				require.NotContains(t, before.Paths, "etc/localtime")
+			} else {
+				require.Contains(t, before.Paths, "etc/localtime")
+				require.Empty(t, before.Paths["etc/localtime"].Linkname)
+			}
 			beforePackages, beforeFilenames := parseStatusDirectory(t, before.StatusDirectory)
 
 			patched := uniqueImage("distroless-custom-debconf-patched")
@@ -530,8 +553,14 @@ Filename: %s/templates.dat
 			assertNoDPKGDowngrades(t, beforePackages, afterPackages)
 			assert.Equal(t, beforeFilenames, afterFilenames)
 			requireVersionGreater(t, afterPackages["tzdata"].Version, beforePackages["tzdata"].Version, "tzdata")
-			assert.NotContains(t, after.Paths, "etc/timezone")
-			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, "etc/localtime"), canonicalTreeHash(t, after.RootFSTar, "etc/localtime"), "file-only timezone configuration changed")
+			if tc.answersOnly {
+				assert.Equal(t, "/usr/share/zoneinfo/Europe/Berlin", after.Paths["etc/localtime"].Linkname, "saved target timezone answers must be used")
+				assert.Contains(t, after.Paths, "etc/timezone")
+				assertNoUpdates(t, "patch", "--image", patched, "--tag", uniqueImage("distroless-debconf-repatch"), "--platform", fixture.Platform)
+			} else {
+				assert.NotContains(t, after.Paths, "etc/timezone")
+				assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, "etc/localtime"), canonicalTreeHash(t, after.RootFSTar, "etc/localtime"), "file-only timezone configuration changed")
+			}
 			assert.Positive(t, after.Paths[strings.TrimPrefix(tc.databaseDir, "/")+"/templates.dat"].Size, "target Debconf databases were not used")
 			configFile := strings.TrimPrefix(tc.configDir, "/") + "/debconf.conf"
 			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, configFile), canonicalTreeHash(t, after.RootFSTar, configFile), "custom Debconf configuration changed")

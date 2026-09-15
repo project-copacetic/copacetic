@@ -1346,6 +1346,8 @@ else
                 # target's saved values. Require literal configuration instead.
                 perl -ne '
                     die "Debconf environment substitutions are not supported for status.d images\n" if /\$\{/;
+                    # Root overrides DPKG_ROOT, including when its value is empty.
+                    die "Debconf database Root overrides are not supported for status.d images\n" if /^\s*Root\s*:/i;
                     print "$1\n" if /^\s*(?:Filename|Directory)\s*:\s*(.*?)\s*$/i;
                 ' "$DPKG_ROOT$debconf_config" > "$DOWNLOAD_DIR/debconf-paths"
                 while IFS= read -r debconf_database; do

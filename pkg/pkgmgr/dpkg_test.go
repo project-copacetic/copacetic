@@ -2597,6 +2597,7 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 		name         string
 		configPath   string
 		databasePath string
+		rootField    string
 		setup        func(*testing.T, string)
 		wantError    string
 	}{
@@ -2605,6 +2606,11 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 		{name: "shared configuration", configPath: "/usr/share/debconf/debconf.conf"},
 		{name: "home configuration", configPath: "/root/.debconfrc"},
 		{name: "custom configuration", configPath: "/custom/debconf.conf", databasePath: "/custom/config.dat"},
+		{name: "empty database root", configPath: "/custom/debconf.conf", rootField: "Root:\n", wantError: "Debconf database Root overrides are not supported"},
+		{name: "absolute database root", configPath: "/custom/debconf.conf", rootField: "Root: /custom\n", wantError: "Debconf database Root overrides are not supported"},
+		{name: "relative database root", configPath: "/custom/debconf.conf", rootField: "Root: custom\n", wantError: "Debconf database Root overrides are not supported"},
+		{name: "mixed case database root", configPath: "/custom/debconf.conf", rootField: "  rOoT : /\n", wantError: "Debconf database Root overrides are not supported"},
+		{name: "commented database root", configPath: "/custom/debconf.conf", rootField: "# Root: /custom\n"},
 		{name: "relative override", configPath: "custom/debconf.conf", wantError: "Debconf path must be absolute"},
 		{name: "parent traversal", configPath: "/../../etc/debconf.conf", wantError: "Debconf path must be canonical"},
 		{name: "configuration under dpkg", configPath: "/var/lib/dpkg/debconf.conf", wantError: "Debconf state under /var/lib/dpkg is not supported"},
@@ -2663,6 +2669,7 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 			if tc.databasePath != "" {
 				configContents = "Filename: " + tc.databasePath + "\n"
 			}
+			configContents += tc.rootField
 			if tc.configPath != "" && filepath.IsAbs(tc.configPath) && filepath.Clean(tc.configPath) == tc.configPath {
 				configPath := filepath.Join(dpkgRoot, tc.configPath)
 				require.NoError(t, os.MkdirAll(filepath.Dir(configPath), 0o755))
