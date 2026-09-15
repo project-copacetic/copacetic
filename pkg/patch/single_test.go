@@ -13,6 +13,7 @@ import (
 	"github.com/distribution/reference"
 	buildkitclient "github.com/moby/buildkit/client"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
@@ -401,7 +402,7 @@ func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T)
 	imageName, err := reference.ParseNormalizedNamed("docker.io/library/alpine:3.20")
 	require.NoError(t, err)
 
-	result, err := createPatchResultWithStates(
+	result, err := createPatchResultWithStates(t.Context(),
 		imageName,
 		"Not A Valid Image Reference",
 		&types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},
@@ -675,4 +676,121 @@ func TestAugmentPatchedDescriptorIncludesManagerAnnotations(t *testing.T) {
 	assert.NotEmpty(t, augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"])
 
 	assert.Equal(t, map[string]string{"runtime": "preserved"}, originalDescriptor.Annotations, "the source descriptor must not be mutated")
+}
+
+func TestAttachDescriptorPlatformAddsMissingTarget(t *testing.T) {
+	original := &v1.Descriptor{Digest: digest.FromString("patched")}
+	target := &v1.Platform{OS: "linux", Architecture: "arm64"}
+
+	got := attachDescriptorPlatform(original, target)
+
+	require.NotNil(t, got)
+	assert.Equal(t, target, got.Platform)
+	assert.Nil(t, original.Platform, "the source descriptor must not be mutated")
+	assert.NotSame(t, target, got.Platform, "the target platform must be copied")
+}
+
+func TestAttachDescriptorPlatformPreservesExistingPlatform(t *testing.T) {
+	existing := &v1.Platform{OS: "linux", Architecture: "amd64"}
+	descriptor := &v1.Descriptor{Platform: existing}
+
+	got := attachDescriptorPlatform(descriptor, &v1.Platform{OS: "linux", Architecture: "arm64"})
+
+	assert.Same(t, descriptor, got)
+	assert.Same(t, existing, got.Platform)
+}
+
+func TestWithoutSourceLineageAnnotations(t *testing.T) {
+	original := map[string]string{
+		types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+		types.AnnotationPatchOriginName:   "docker.io/library/stale:latest",
+		types.AnnotationPatchOriginDigest: digest.FromString("stale").String(),
+		"com.example.preserved":           "value",
+	}
+
+	clean := withoutSourceLineageAnnotations(original)
+
+	assert.NotContains(t, clean, types.AnnotationPatchOriginName)
+	assert.NotContains(t, clean, types.AnnotationPatchOriginDigest)
+	assert.Equal(t, "value", clean["com.example.preserved"])
+	assert.Contains(t, original, types.AnnotationPatchOriginName, "source map must not be mutated")
+}
+
+func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t *testing.T) {
+	const imageRef = "registry.invalid/project/copa-e2e-local-only:latest"
+
+	childDigest := digest.FromString("source-amd64")
+	index := &buildkit.ImageSource{
+		Name: imageRef,
+		Index: &v1.Index{Manifests: []v1.Descriptor{{
+			Digest: childDigest,
+			Platform: &v1.Platform{
+				OS:           "linux",
+				Architecture: "amd64",
+			},
+		}}},
+	}
+
+	originalResolver := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = originalResolver })
+	resolveImageSource = func(context.Context, string) (*buildkit.ImageSource, error) {
+		return index, nil
+	}
+	buildkitRef, err := reference.ParseNormalizedNamed(imageRef)
+	require.NoError(t, err)
+
+	gotBuildkitRef, expectedDigest, requireManifest, err := captureSinglePlatformSource(
+		t.Context(),
+		index.Name,
+		buildkitRef,
+		&v1.Platform{OS: "linux", Architecture: "amd64"},
+	)
+	require.NoError(t, err)
+	assert.True(t, requireManifest)
+	assert.Equal(t, buildkitRef, gotBuildkitRef)
+	assert.Equal(t, imageRef, gotBuildkitRef.String(), "capturing lineage must not turn a daemon-only tag into a registry digest pull")
+	assert.Equal(t, childDigest, expectedDigest)
+}
+
+func TestCaptureSinglePlatformSourcePinsImmutableIndexChild(t *testing.T) {
+	indexDigest := digest.FromString("immutable index")
+	childDigest := digest.FromString("source-arm64")
+	imageRef := "example.com/app@" + indexDigest.String()
+	platform := &v1.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
+	originalResolver := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = originalResolver })
+	resolveImageSource = func(context.Context, string) (*buildkit.ImageSource, error) {
+		return &buildkit.ImageSource{
+			Name: imageRef, Descriptor: v1.Descriptor{Digest: indexDigest},
+			Index: &v1.Index{Manifests: []v1.Descriptor{{Digest: childDigest, Platform: platform}}},
+		}, nil
+	}
+	input, err := reference.ParseNormalizedNamed(imageRef)
+	require.NoError(t, err)
+	got, expected, requireManifest, err := captureSinglePlatformSource(t.Context(), imageRef, input, platform)
+	require.NoError(t, err)
+	require.True(t, requireManifest)
+	assert.Equal(t, childDigest, expected)
+	assert.Equal(t, "example.com/app@"+childDigest.String(), got.String())
+}
+
+func TestAugmentPatchedDescriptorComputedLineageWins(t *testing.T) {
+	lineage := &types.SourceLineage{
+		Kind:   types.PatchOriginImage,
+		Name:   "docker.io/library/alpine:3.20",
+		Digest: digest.FromString("selected-manifest"),
+	}
+	augmented := augmentPatchedDescriptor(
+		&v1.Descriptor{},
+		map[string]string{
+			types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+			types.AnnotationPatchOriginName:   "docker.io/library/stale:latest",
+			types.AnnotationPatchOriginDigest: digest.FromString("stale").String(),
+		},
+		sourceLineageAnnotations(lineage),
+	)
+
+	require.NotNil(t, augmented)
+	assert.Equal(t, lineage.Name, augmented.Annotations[types.AnnotationPatchOriginName])
+	assert.Equal(t, lineage.Digest.String(), augmented.Annotations[types.AnnotationPatchOriginDigest])
 }

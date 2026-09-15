@@ -239,13 +239,13 @@ func podmanImageDescriptor(ctx context.Context, imageRef string) (*ocispec.Descr
 }
 
 // remoteImageDescriptor tries to get the OCI image descriptor from a remote registry.
-func remoteImageDescriptor(imageRef string) (*ocispec.Descriptor, error) {
+func remoteImageDescriptor(ctx context.Context, imageRef string) (*ocispec.Descriptor, error) {
 	ref, err := name.ParseReference(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse image reference '%s': %w", imageRef, err)
 	}
 
-	ggcrDesc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	ggcrDesc, err := remoteGet(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
 		log.Debugf("failed to get remote descriptor for %s: %v", imageRef, err)
 		return nil, fmt.Errorf("failed to get remote descriptor for '%s': %w", imageRef, err)
@@ -278,6 +278,9 @@ func remoteImageDescriptor(imageRef string) (*ocispec.Descriptor, error) {
 // If the image is not found locally or a local error occurs, it tries to get the image descriptor from the remote registry.
 // runtime should be imageloader.Docker or imageloader.Podman.
 func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec.Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	log.Debugf("Attempting to get local image descriptor for %s using runtime %s", imageRef, runtime)
 
 	var localDesc *ocispec.Descriptor
@@ -296,6 +299,9 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 		return localDesc, nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	isNotFoundError := errdefs.IsNotFound(localErr)
 	if isNotFoundError {
 		log.Debugf("image %s not found locally in %s (error: %v), trying remote.", imageRef, runtime, localErr)
@@ -304,8 +310,11 @@ func GetImageDescriptor(ctx context.Context, imageRef, runtime string) (*ocispec
 	}
 
 	log.Debugf("attempting to get remote image descriptor for %s", imageRef)
-	remoteDesc, remoteErr := remoteImageDescriptor(imageRef)
+	remoteDesc, remoteErr := remoteImageDescriptor(ctx, imageRef)
 	if remoteErr != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		log.Errorf("failed to get remote image descriptor for %s: %v", imageRef, remoteErr)
 		if isNotFoundError {
 			return nil, fmt.Errorf("image '%s' not found locally and remote lookup failed: %w", imageRef, remoteErr)

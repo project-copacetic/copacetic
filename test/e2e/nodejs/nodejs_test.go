@@ -276,8 +276,11 @@ func patchImage(t *testing.T, image, tag, reportFile string) string {
 }
 
 func TestCustomBuildPatching(t *testing.T) {
-	imageTag := "copa-e2e-custom-vulnerable-app:latest"
-	patchedTag := "copa-e2e-custom-vulnerable-app:patched"
+	// The reserved .invalid registry guarantees this fixture is available only
+	// from the local daemon. Copa must not replace the local-first tag with a
+	// repository digest reference that makes BuildKit attempt a registry pull.
+	imageTag := "registry.invalid/project/copa-e2e-custom-vulnerable-app:latest"
+	patchedTag := "registry.invalid/project/copa-e2e-custom-vulnerable-app:patched"
 
 	// Download Trivy DB to its own cache directory
 	cacheDir := filepath.Join(t.TempDir(), "trivy-cache")

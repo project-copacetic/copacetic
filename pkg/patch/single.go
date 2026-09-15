@@ -15,6 +15,7 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
@@ -67,6 +68,18 @@ func patchSingleArchImage(
 	return patchSingleArchImageWithUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil)
 }
 
+func patchSingleArchImageWithSource(
+	ctx context.Context,
+	opts *types.Options,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
+	sourceImage string,
+) (*types.PatchResult, error) {
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil, sourceImage)
+}
+
 func patchSingleArchImageWithUpdates(
 	ctx context.Context,
 	opts *types.Options,
@@ -75,6 +88,19 @@ func patchSingleArchImageWithUpdates(
 	multiPlatform bool,
 	sharedProgressCh chan<- *client.SolveStatus,
 	updates *unversioned.UpdateManifest,
+) (*types.PatchResult, error) {
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, updates, "")
+}
+
+func patchSingleArchImageWithSourceAndUpdates(
+	ctx context.Context,
+	opts *types.Options,
+	//nolint:gocritic
+	targetPlatform types.PatchPlatform,
+	multiPlatform bool,
+	sharedProgressCh chan<- *client.SolveStatus,
+	updates *unversioned.UpdateManifest,
+	sourceImage string,
 ) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
@@ -174,7 +200,10 @@ func patchSingleArchImageWithUpdates(
 	if err != nil {
 		if reportFile != "" && reportHasNoUpdates {
 			log.Debugf("Unable to create a BuildKit client to preflight an empty report for native Chisel metadata: %v", err)
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image)
+			if err != nil {
+				return nil, err
+			}
 			res.Summary = updates.CombinedSummary()
 			return res, types.ErrNoUpdatesFound
 		}
@@ -200,7 +229,10 @@ func patchSingleArchImageWithUpdates(
 	// Keep the existing empty-report behavior for non-native images. Native
 	// images have already returned the targeted-patching error above.
 	if reportHasNoUpdates {
-		res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+		res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image)
+		if err != nil {
+			return nil, err
+		}
 		res.Summary = updates.CombinedSummary()
 		return res, types.ErrNoUpdatesFound
 	}
@@ -217,6 +249,57 @@ func patchSingleArchImageWithUpdates(
 
 	// Check media type for OCI vs Docker export
 	shouldExportOCI := shouldExportAsOCI(ctx, ref, finalLoaderType)
+
+	// Resolve image reference for BuildKit operations
+	// For multi-platform images with local manifests, use platform-specific reference
+	buildkitImageRef := imageName
+	var expectedSourceDigest digest.Digest
+	requireBaseManifest := multiPlatform
+	if !multiPlatform && sourceImage == "" {
+		var captureErr error
+		buildkitImageRef, expectedSourceDigest, requireBaseManifest, captureErr = captureSinglePlatformSource(
+			ctx,
+			image,
+			imageName,
+			&targetPlatform.Platform,
+		)
+		if captureErr != nil {
+			if errors.Is(captureErr, errRecordedIndexOrigin) {
+				return nil, captureErr
+			}
+			log.Warnf("Unable to capture source manifest identity for %s; lineage annotations will be omitted: %v", image, captureErr)
+		} else if expectedSourceDigest.Validate() == nil {
+			log.Debugf("Captured platform source digest %s for lineage validation; preserving BuildKit source reference %s", expectedSourceDigest, buildkitImageRef)
+		}
+	}
+	if sourceImage != "" {
+		buildkitImageRefNamed, err := reference.ParseNormalizedNamed(sourceImage)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse immutable platform source %q: %w", sourceImage, err)
+		}
+		digested, ok := buildkitImageRefNamed.(reference.Digested)
+		if !ok || digested.Digest().Validate() != nil {
+			return nil, fmt.Errorf("captured platform source %q is not an immutable digest reference", sourceImage)
+		}
+		expectedSourceDigest = digested.Digest()
+		buildkitImageRef = buildkitImageRefNamed
+		log.Debugf("Using captured platform source reference for BuildKit: %s", sourceImage)
+	} else if multiPlatform {
+		platformImageRef, err := buildkit.GetPlatformImageReferenceWithContext(ctx, image, &targetPlatform.Platform)
+		if err == nil {
+			// Successfully resolved platform-specific reference for local manifest
+			log.Debugf("Using platform-specific image reference for BuildKit: %s", platformImageRef)
+			buildkitImageRefNamed, err := reference.ParseNormalizedNamed(platformImageRef)
+			if err == nil {
+				buildkitImageRef = buildkitImageRefNamed
+			}
+		} else {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			log.Debugf("Could not resolve platform-specific reference, using original: %v", err)
+		}
+	}
 
 	// Create pipes for Docker export
 	pipeR, pipeW := io.Pipe()
@@ -238,6 +321,21 @@ func patchSingleArchImageWithUpdates(
 		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
 		originalAnnotations = map[string]string{}
 	}
+	if !multiPlatform && buildkitImageRef.String() != imageName.String() {
+		// The index lookup returns descriptor annotations. Also preserve the
+		// selected immutable child's own manifest annotations when narrowing
+		// an index reference; the child's values describe the patched image.
+		childAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, buildkitImageRef.String(), &targetPlatform.Platform)
+		if err != nil {
+			log.Warnf("Failed to get captured source manifest annotations: %v", err)
+		} else {
+			if originalAnnotations == nil {
+				originalAnnotations = map[string]string{}
+			}
+			maps.Copy(originalAnnotations, childAnnotations)
+		}
+	}
+	originalAnnotations = withoutSourceLineageAnnotations(originalAnnotations)
 
 	// Create build configuration
 	buildConfig, err := createBuildConfig(
@@ -260,32 +358,16 @@ func patchSingleArchImageWithUpdates(
 	// PlainMode due to rendering overhead; without a buffer, builds that
 	// generate heavy output (e.g. .NET patching) can stall indefinitely.
 	buildChannel := make(chan *client.SolveStatus, 128)
-	eg, ctx := errgroup.WithContext(ctx)
-
-	// Resolve image reference for BuildKit operations
-	// For multi-platform images with local manifests, use platform-specific reference
-	buildkitImageRef := imageName
-	if multiPlatform {
-		platformImageRef, err := buildkit.GetPlatformImageReference(image, &targetPlatform.Platform)
-		if err == nil {
-			// Successfully resolved platform-specific reference for local manifest
-			log.Debugf("Using platform-specific image reference for BuildKit: %s", platformImageRef)
-			buildkitImageRefNamed, err := reference.ParseNormalizedNamed(platformImageRef)
-			if err == nil {
-				buildkitImageRef = buildkitImageRefNamed
-			}
-		} else {
-			log.Debugf("Could not resolve platform-specific reference, using original: %v", err)
-		}
-	}
+	eg, buildCtx := errgroup.WithContext(ctx)
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
-			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
+		result, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease,
+			resolveImageReference(imageName), expectedSourceDigest, requireBaseManifest)
 		patchBuildErr = err
 		if err != nil {
 			return err
@@ -302,18 +384,18 @@ func patchSingleArchImageWithUpdates(
 		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
 		platformPrefix := tui.FormatEmulationPrefix(hostPlatform.Architecture, targetPlatform.Architecture, targetPlatform.Variant)
 		eg.Go(func() error {
-			common.ForwardProgressWithPrefix(ctx, buildChannel, sharedProgressCh, platformPrefix)
+			common.ForwardProgressWithPrefix(buildCtx, buildChannel, sharedProgressCh, platformPrefix)
 			return nil
 		})
 	} else {
 		// Display progress locally (single-arch mode)
-		common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+		common.DisplayProgress(buildCtx, eg, buildChannel, opts.Progress)
 	}
 
 	// Handle image loading if not pushing
 	if !push {
 		eg.Go(func() error {
-			return loadImageToRuntime(ctx, pipeR, patchedImageName, finalLoaderType)
+			return loadImageToRuntime(buildCtx, pipeR, patchedImageName, finalLoaderType)
 		})
 	} else {
 		go func() {
@@ -325,7 +407,10 @@ func patchSingleArchImageWithUpdates(
 	waitErr := eg.Wait()
 	if err := selectPatchWaitError(waitErr, patchBuildErr); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image)
+			if err != nil {
+				return nil, err
+			}
 			if updates != nil {
 				res.Summary = updates.CombinedSummary()
 			}
@@ -335,7 +420,7 @@ func patchSingleArchImageWithUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +428,44 @@ func patchSingleArchImageWithUpdates(
 		result.Summary = updates.CombinedSummary()
 	}
 	return result, nil
+}
+
+func captureSinglePlatformSource(
+	ctx context.Context,
+	image string,
+	buildkitImageRef reference.Named,
+	platform *ispec.Platform,
+) (reference.Named, digest.Digest, bool, error) {
+	source, err := resolveImageSource(ctx, image)
+	if err != nil {
+		return buildkitImageRef, "", true, err
+	}
+	if source.Index == nil {
+		return buildkitImageRef, "", false, nil
+	}
+	if _, err := captureIndexSource(ctx, source); err != nil {
+		return buildkitImageRef, "", true, err
+	}
+	descriptor, err := source.PlatformDescriptor(platform)
+	if err != nil {
+		return buildkitImageRef, "", true, err
+	}
+	if err := descriptor.Digest.Validate(); err != nil {
+		return buildkitImageRef, "", true, fmt.Errorf("captured platform source digest is invalid: %w", err)
+	}
+	// An already-immutable index may be narrowed to its verified child. Keep
+	// mutable locators intact so daemon-only sources retain local resolution.
+	if pinned, ok := buildkitImageRef.(reference.Digested); ok {
+		if source.Descriptor.Digest != pinned.Digest() {
+			return buildkitImageRef, "", true, errors.New("captured source does not match immutable image reference")
+		}
+		child, err := reference.WithDigest(reference.TrimNamed(buildkitImageRef), descriptor.Digest)
+		if err != nil {
+			return buildkitImageRef, "", true, fmt.Errorf("pin source platform manifest: %w", err)
+		}
+		return child, descriptor.Digest, true, nil
+	}
+	return buildkitImageRef, descriptor.Digest, true, nil
 }
 
 // selectPatchWaitError preserves the package-manager no-update sentinel when
@@ -551,7 +674,7 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 }
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
-func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
+func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
@@ -560,13 +683,17 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		runtime = imageloader.Podman
 	}
 
-	// Use a fresh context for descriptor lookup to avoid cancellation issues
-	// The original context might be canceled after the patching operation completes
-	descriptorCtx := context.Background()
+	// Use the patch context, not the completed BuildKit errgroup context.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	log.Debugf("Getting image descriptor for %s...", patchedImageName)
-	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
+	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
 	if err != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		prettyPlatform := platforms.Format(targetPlatform.Platform)
 		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
 	} else {
@@ -581,6 +708,7 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		managerAnnotations = patchResult.Annotations
 	}
 	patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	patchedDesc = attachDescriptorPlatform(patchedDesc, &targetPlatform.Platform)
 	if patchedDesc != nil {
 		log.Debugf("Added %d original and %d package-manager manifest annotations for platform %s", len(originalAnnotations), len(managerAnnotations), targetPlatform.Platform)
 	}
@@ -612,17 +740,39 @@ func augmentPatchedDescriptor(descriptor *ispec.Descriptor, originalAnnotations,
 	}
 
 	augmented := *descriptor
-	augmented.Annotations = maps.Clone(descriptor.Annotations)
+	augmented.Annotations = withoutSourceLineageAnnotations(descriptor.Annotations)
 	if augmented.Annotations == nil {
 		augmented.Annotations = make(map[string]string)
 	}
-	maps.Copy(augmented.Annotations, originalAnnotations)
+	maps.Copy(augmented.Annotations, withoutSourceLineageAnnotations(originalAnnotations))
 	maps.Copy(augmented.Annotations, managerAnnotations)
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	augmented.Annotations["org.opencontainers.image.created"] = now
 	augmented.Annotations[copaAnnotationKeyPrefix+".image.patched"] = now
 	return &augmented
+}
+
+func attachDescriptorPlatform(descriptor *ispec.Descriptor, platform *ispec.Platform) *ispec.Descriptor {
+	if descriptor == nil || descriptor.Platform != nil || platform == nil {
+		return descriptor
+	}
+
+	augmented := *descriptor
+	target := *platform
+	augmented.Platform = &target
+	return &augmented
+}
+
+func withoutSourceLineageAnnotations(annotations map[string]string) map[string]string {
+	clean := maps.Clone(annotations)
+	if clean == nil {
+		clean = make(map[string]string)
+	}
+	delete(clean, types.AnnotationPatchOriginKind)
+	delete(clean, types.AnnotationPatchOriginName)
+	delete(clean, types.AnnotationPatchOriginDigest)
+	return clean
 }
 
 // executePatchBuild executes the actual patch build process.
@@ -641,6 +791,9 @@ func executePatchBuild(
 	toolchainPatchLevel string,
 	goVCSURL string,
 	chiselRelease string,
+	sourceImageName string,
+	expectedSourceDigest digest.Digest,
+	requireBaseManifest bool,
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
@@ -671,17 +824,20 @@ func executePatchBuild(
 		}
 
 		patchOpts := &Options{
-			ImageName:           imageName.String(),
-			TargetPlatform:      targetPlatform,
-			Updates:             updates,
-			ValidatedUpdates:    validatedManifest,
-			WorkingFolder:       workingFolder,
-			IgnoreError:         ignoreError,
-			ReturnState:         false, // Always solve for Docker export
-			ExitOnEOL:           exitOnEOL,
-			ToolchainPatchLevel: toolchainPatchLevel,
-			GoVCSURL:            goVCSURL,
-			ChiselRelease:       chiselRelease,
+			ImageName:            imageName.String(),
+			TargetPlatform:       targetPlatform,
+			SourceImageName:      sourceImageName,
+			ExpectedSourceDigest: expectedSourceDigest,
+			RequireBaseManifest:  requireBaseManifest,
+			Updates:              updates,
+			ValidatedUpdates:     validatedManifest,
+			WorkingFolder:        workingFolder,
+			IgnoreError:          ignoreError,
+			ReturnState:          false, // Always solve for Docker export
+			ExitOnEOL:            exitOnEOL,
+			ToolchainPatchLevel:  toolchainPatchLevel,
+			GoVCSURL:             goVCSURL,
+			ChiselRelease:        chiselRelease,
 		}
 
 		// Execute the core patching logic
@@ -780,9 +936,12 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	return validTypes, nil
 }
 
-func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
-	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+func createOriginalImageResult(ctx context.Context, imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
+	originalDesc, err := getPlatformDescriptorFromManifest(ctx, originalImageRef, targetPlatform)
 	if err != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		log.Warnf("Could not get original descriptor for up-to-date platform %s/%s: %v", targetPlatform.OS, targetPlatform.Architecture, err)
 	}
 

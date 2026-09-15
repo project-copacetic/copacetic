@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	fsutiltypes "github.com/tonistiigi/fsutil/types"
@@ -174,6 +177,34 @@ func TestImageConfigWithAnnotationsUsesBaseConfigForFirstPatch(t *testing.T) {
 	assert.Equal(t, "base-user", image.Config.User)
 	assert.Equal(t, "base", image.Config.Labels["source"])
 	assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+}
+
+func TestImageConfigWithAnnotationsReplacesSourceLineageAtomically(t *testing.T) {
+	staleDigest := digest.FromString("stale")
+	configData := []byte(
+		`{"config":{"Labels":{"sh.copa.patch.origin.name":"docker.io/library/stale:latest",` +
+			`"sh.copa.patch.origin.digest":"` + staleDigest.String() + `","preserved":"value"}}}`,
+	)
+
+	omitted, err := imageConfigWithAnnotations(&buildkit.Config{ConfigData: configData}, nil)
+	require.NoError(t, err)
+	var omittedImage v1.Image
+	require.NoError(t, json.Unmarshal(omitted, &omittedImage))
+	assert.NotContains(t, omittedImage.Config.Labels, types.AnnotationPatchOriginName)
+	assert.NotContains(t, omittedImage.Config.Labels, types.AnnotationPatchOriginDigest)
+	assert.Equal(t, "value", omittedImage.Config.Labels["preserved"])
+
+	lineage := &types.SourceLineage{
+		Kind:   types.PatchOriginImage,
+		Name:   "docker.io/library/alpine:3.20",
+		Digest: digest.FromString("selected-base"),
+	}
+	replaced, err := imageConfigWithAnnotations(&buildkit.Config{ConfigData: configData}, sourceLineageAnnotations(lineage))
+	require.NoError(t, err)
+	var replacedImage v1.Image
+	require.NoError(t, json.Unmarshal(replaced, &replacedImage))
+	assert.Equal(t, lineage.Name, replacedImage.Config.Labels[types.AnnotationPatchOriginName])
+	assert.Equal(t, lineage.Digest.String(), replacedImage.Config.Labels[types.AnnotationPatchOriginDigest])
 }
 
 func TestPreservedImageStateCarriesExecutionEnvironment(t *testing.T) {
@@ -862,15 +893,156 @@ func TestOptions_ValidationScenarios(t *testing.T) {
 	}
 }
 
-func TestAddPackageManagerAnnotations(t *testing.T) {
+func TestAddResultAnnotations(t *testing.T) {
+	lineageDigest := digest.FromString("selected-base")
 	result := gwclient.NewResult()
 	annotations := map[string]string{
-		pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
-		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
+		pkgmgr.ChiselReleaseAnnotation:    "ubuntu-24.04",
+		pkgmgr.ChiselVersionAnnotation:    "v1.4.2",
+		types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+		types.AnnotationPatchOriginName:   "docker.io/library/alpine:3.20",
+		types.AnnotationPatchOriginDigest: lineageDigest.String(),
 	}
 
-	addPackageManagerAnnotations(result, annotations)
+	addResultAnnotations(result, annotations)
 
 	assert.Equal(t, []byte("ubuntu-24.04"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)])
 	assert.Equal(t, []byte("v1.4.2"), result.Metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselVersionAnnotation)])
+	assert.Equal(t, []byte("docker.io/library/alpine:3.20"), result.Metadata[exptypes.AnnotationManifestKey(nil, types.AnnotationPatchOriginName)])
+	assert.Equal(t, []byte(lineageDigest.String()), result.Metadata[exptypes.AnnotationManifestKey(nil, types.AnnotationPatchOriginDigest)])
+}
+
+func TestSourceLineageForPatch(t *testing.T) {
+	dgst := digest.FromString("selected-base")
+	tests := []struct {
+		name   string
+		config *buildkit.Config
+		opts   *Options
+		want   *types.SourceLineage
+	}{
+		{
+			name: "first multi-platform patch uses logical source name",
+			config: &buildkit.Config{SourceLineage: &types.SourceLineage{
+				Kind:   types.PatchOriginImage,
+				Name:   "docker.io/library/alpine@" + dgst.String(),
+				Digest: dgst,
+			}},
+			opts: &Options{SourceImageName: "alpine:3.20", ExpectedSourceDigest: dgst, RequireBaseManifest: true},
+			want: &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: dgst},
+		},
+		{
+			name: "unverified first multi-platform patch is omitted",
+			config: &buildkit.Config{SourceLineage: &types.SourceLineage{
+				Kind:   types.PatchOriginImage,
+				Name:   "docker.io/library/alpine:3.20",
+				Digest: dgst,
+			}},
+			opts: &Options{SourceImageName: "alpine:3.20", RequireBaseManifest: true},
+		},
+		{
+			name: "validated re-patch retains recorded original name",
+			config: &buildkit.Config{
+				PatchedConfigData:      []byte(`{"config":{}}`),
+				SourceLineageValidated: true,
+				SourceLineage: &types.SourceLineage{
+					Kind:   types.PatchOriginImage,
+					Name:   "docker.io/library/alpine:3.20",
+					Digest: dgst,
+				},
+			},
+			opts: &Options{RequireBaseManifest: true},
+			want: &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: dgst},
+		},
+		{
+			name: "unverified old multi-platform re-patch is omitted",
+			config: &buildkit.Config{
+				PatchedConfigData: []byte(`{"config":{}}`),
+				SourceLineage:     &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: dgst},
+			},
+			opts: &Options{RequireBaseManifest: true},
+		},
+		{
+			name:   "incomplete lineage is omitted",
+			config: &buildkit.Config{SourceLineage: &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20"}},
+			opts:   &Options{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sourceLineageForPatch(tt.config, tt.opts))
+		})
+	}
+}
+
+func TestSourceLineageAnnotationsAreAtomic(t *testing.T) {
+	assert.Nil(t, sourceLineageAnnotations(nil))
+	assert.Nil(t, sourceLineageAnnotations(&types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20"}))
+
+	lineage := &types.SourceLineage{
+		Kind:   types.PatchOriginImage,
+		Name:   "docker.io/library/alpine:3.20",
+		Digest: digest.FromString("selected-base"),
+	}
+	assert.Equal(t, map[string]string{
+		types.AnnotationPatchOriginKind:   types.PatchOriginImage,
+		types.AnnotationPatchOriginName:   lineage.Name,
+		types.AnnotationPatchOriginDigest: lineage.Digest.String(),
+	}, sourceLineageAnnotations(lineage))
+}
+
+func TestOriginPreservesApplicationBaseAtEverySurface(t *testing.T) {
+	appBase := map[string]string{
+		v1.AnnotationBaseImageName:   "example.com/os:stable",
+		v1.AnnotationBaseImageDigest: digest.FromString("application base B").String(),
+	}
+	source := maps.Clone(appBase)
+	source[types.AnnotationPatchOriginKind] = types.PatchOriginImage
+	source[types.AnnotationPatchOriginName] = "example.com/stale:latest"
+	source[types.AnnotationPatchOriginDigest] = digest.FromString("stale").String()
+	config, err := json.Marshal(v1.Image{Config: v1.ImageConfig{Labels: source}})
+	require.NoError(t, err)
+	origin := &types.SourceLineage{Kind: types.PatchOriginOCI, Digest: digest.FromString("original A")}
+	ref, err := reference.ParseNormalizedNamed("example.com/patched:v2")
+	require.NoError(t, err)
+	for _, annotations := range []map[string]string{origin.Annotations(), nil} {
+		for _, repatch := range []bool{false, true} {
+			cfg := &buildkit.Config{ConfigData: config}
+			if repatch {
+				cfg.PatchedConfigData = config
+			}
+			result, err := imageConfigWithAnnotations(cfg, annotations)
+			require.NoError(t, err)
+			var image v1.Image
+			require.NoError(t, json.Unmarshal(result, &image))
+			for key, value := range appBase {
+				assert.Equal(t, value, image.Config.Labels[key])
+			}
+			assert.NotContains(t, image.Config.Labels, types.AnnotationPatchOriginName)
+			assert.Equal(t, annotations[types.AnnotationPatchOriginKind], image.Config.Labels[types.AnnotationPatchOriginKind])
+		}
+	}
+	clean := withoutSourceLineageAnnotations(source)
+	desc := augmentPatchedDescriptor(&v1.Descriptor{Annotations: source}, clean, origin.Annotations())
+	tagged, ok := ref.(reference.NamedTagged)
+	require.True(t, ok)
+	index := multiPlatformIndexAnnotations(tagged, source, origin, time.Unix(0, 0))
+	for _, got := range []map[string]string{clean, desc.Annotations, index} {
+		for key, value := range appBase {
+			assert.Equal(t, value, got[key])
+		}
+		assert.NotContains(t, got, types.AnnotationPatchOriginName)
+	}
+	assert.Equal(t, "example.com/stale:latest", source[types.AnnotationPatchOriginName])
+}
+
+func (c *recordedBaseNativePatchedGateway) ResolveSourceMetadata(ctx context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
+	ref, dgst, config, err := c.ResolveImageConfig(ctx, strings.TrimPrefix(op.Identifier, "docker-image://"), opt)
+	if err != nil {
+		return nil, err
+	}
+	return &sourceresolver.MetaResponse{
+		Op:    &pb.SourceOp{Identifier: "docker-image://" + ref},
+		Image: &sourceresolver.ResolveImageResponse{Digest: dgst, Config: config},
+	}, nil
 }
