@@ -427,7 +427,7 @@ func TestFrontendResultMetadataIncludesChiselAnnotations(t *testing.T) {
 		pkgmgr.ChiselVersionAnnotation: "v1.4.2",
 	}
 
-	metadata, err := frontendResultMetadata(configData, nil, &platform, annotations)
+	metadata, err := frontendResultMetadata(configData, nil, &platform, annotations, nil)
 	require.NoError(t, err)
 
 	configKey := exptypes.ExporterImageConfigKey + "/linux/amd64"
@@ -460,7 +460,7 @@ func TestFrontendResultMetadataPreservesSuppliedChiselAnnotationsOnNoUpdate(t *t
 	require.NoError(t, err)
 	platform := ocispecs.Platform{OS: osLinux, Architecture: "amd64"}
 
-	metadata, err := frontendResultMetadata(baseConfig, patchedConfig, &platform, nil)
+	metadata, err := frontendResultMetadata(baseConfig, patchedConfig, &platform, nil, nil)
 	require.NoError(t, err)
 
 	configKey := exptypes.ExporterImageConfigKey + "/linux/amd64"
@@ -509,6 +509,7 @@ func TestFrontendResultMetadataUsesPatchedConfigWhenPresent(t *testing.T) {
 		patchedConfig,
 		&platform,
 		map[string]string{pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04"},
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -1071,4 +1072,45 @@ func (c *frontendMetadataTestClient) ResolveSourceMetadata(ctx context.Context, 
 		Op:    &pb.SourceOp{Identifier: "docker-image://" + ref},
 		Image: &sourceresolver.ResolveImageResponse{Digest: dgst, Config: config},
 	}, nil
+}
+
+func TestFrontendResultMetadataReplacesOriginAtomically(t *testing.T) {
+	original := digest.FromString("original image")
+	for _, tc := range []struct {
+		name    string
+		lineage *types.SourceLineage
+	}{
+		{"image", &types.SourceLineage{Kind: types.PatchOriginImage, Name: "example.com/app:original", Digest: original}},
+		{"unnamed layout", &types.SourceLineage{Kind: types.PatchOriginOCI, Digest: original}},
+		{"legacy without verified origin", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labels := map[string]string{
+				types.AnnotationPatchOriginKind: "stale", types.AnnotationPatchOriginName: "stale", types.AnnotationPatchOriginDigest: "stale",
+				ocispecs.AnnotationBaseImageName: "example.com/application:base", ocispecs.AnnotationBaseImageDigest: digest.FromString("application base").String(),
+				pkgmgr.ChiselReleaseAnnotation: "ubuntu-24.04",
+			}
+			raw, err := json.Marshal(ocispecs.Image{Config: ocispecs.ImageConfig{Labels: labels}})
+			require.NoError(t, err)
+			manager := map[string]string{types.AnnotationPatchOriginName: "manager-stale", pkgmgr.ChiselVersionAnnotation: "v1.4.2"}
+			metadata, err := frontendResultMetadata(raw, raw, nil, manager, tc.lineage)
+			require.NoError(t, err)
+			var image ocispecs.Image
+			require.NoError(t, json.Unmarshal(metadata[exptypes.ExporterImageConfigKey], &image))
+			for _, key := range []string{types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
+				want, present := tc.lineage.Annotations()[key]
+				assert.Equal(t, want, image.Config.Labels[key])
+				_, exists := image.Config.Labels[key]
+				assert.Equal(t, present, exists)
+				value, exists := metadata[exptypes.AnnotationManifestKey(nil, key)]
+				assert.Equal(t, present, exists)
+				assert.Equal(t, want, string(value))
+			}
+			assert.Equal(t, labels[ocispecs.AnnotationBaseImageName], image.Config.Labels[ocispecs.AnnotationBaseImageName])
+			assert.Equal(t, labels[ocispecs.AnnotationBaseImageDigest], image.Config.Labels[ocispecs.AnnotationBaseImageDigest])
+			assert.Equal(t, "ubuntu-24.04", string(metadata[exptypes.AnnotationManifestKey(nil, pkgmgr.ChiselReleaseAnnotation)]))
+			assert.Equal(t, "v1.4.2", image.Config.Labels[pkgmgr.ChiselVersionAnnotation])
+			assert.Equal(t, "manager-stale", manager[types.AnnotationPatchOriginName], "do not mutate caller metadata")
+		})
+	}
 }

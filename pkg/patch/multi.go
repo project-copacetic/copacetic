@@ -537,6 +537,9 @@ func captureIndexSource(ctx context.Context, current *buildkit.ImageSource) (*mu
 	}
 	source.Base = base
 	source.IndexLineage = recorded
+	if err := validateRecordedIndexChildren(ctx, source); err != nil {
+		return nil, fmt.Errorf("%w: %w", errRecordedIndexOrigin, err)
+	}
 	return source, nil
 }
 

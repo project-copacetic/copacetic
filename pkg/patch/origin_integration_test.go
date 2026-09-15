@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -31,9 +32,11 @@ import (
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/frontend"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/require"
+	"github.com/tonistiigi/fsutil"
 )
 
 // TestOriginRoundTrip needs a real host-networked BuildKit builder and the
@@ -248,6 +251,200 @@ func TestOriginRoundTrip(t *testing.T) {
 			require.Equal(t, value, manifest.Annotations[key])
 		}
 	})
+	t.Run("frontend", func(t *testing.T) {
+		// Earlier tag-move scenarios deliberately changed this mutable locator.
+		require.NoError(t, remote.Write(originTestReference(t, repo+":original-amd64"), images["amd64"], remote.WithContext(ctx)))
+		for _, scenario := range []struct{ name, input, platform string }{
+			{"default", repo + ":original-amd64", ""},
+			{"amd64-index", repo + "@" + originalIndexHash.String(), "linux/amd64"},
+			{"386-index", repo + "@" + originalIndexHash.String(), "linux/386"},
+		} {
+			t.Run(scenario.name, func(t *testing.T) {
+				arch := "amd64"
+				if scenario.platform == "linux/386" {
+					arch = "386"
+				}
+				input := scenario.input
+				expectedOrigin := descriptors[arch].Digest.String()
+				if scenario.platform != "" {
+					expectedOrigin = originalIndexHash.String()
+				}
+				var previousLayers []v1.Descriptor
+				for generation := 1; generation <= 3; generation++ {
+					output := fmt.Sprintf("%s:frontend-%s-p%d", repo, scenario.name, generation)
+					solveOpt := client.SolveOpt{
+						FrontendAttrs: map[string]string{"image": input},
+						Exports: []client.ExportEntry{{Type: client.ExporterImage, Attrs: map[string]string{
+							"name": output, "push": "true", "registry.insecure": "true", "oci-mediatypes": "true",
+						}}},
+					}
+					if scenario.platform != "" {
+						solveOpt.FrontendAttrs["platform"] = scenario.platform
+					}
+					if generation == 2 {
+						reportPath := originTestReport(t, arch)
+						mount, err := fsutil.NewFS(filepath.Dir(reportPath))
+						require.NoError(t, err)
+						solveOpt.LocalMounts = map[string]fsutil.FS{"report": mount}
+						solveOpt.FrontendAttrs["report"] = filepath.Base(reportPath)
+					}
+					_, err := bk.Build(ctx, solveOpt, "copa-origin-frontend-test", frontend.Build, nil)
+					require.NoError(t, err)
+					img, err := remote.Image(originTestReference(t, output), remote.WithContext(ctx), remote.WithPlatform(v1.Platform{OS: "linux", Architecture: arch}))
+					require.NoError(t, err)
+					mfst, err := img.Manifest()
+					require.NoError(t, err)
+					cfg, err := img.ConfigFile()
+					require.NoError(t, err)
+					for _, surface := range []map[string]string{mfst.Annotations, cfg.Config.Labels} {
+						require.Equal(t, types.PatchOriginImage, surface[types.AnnotationPatchOriginKind])
+						require.Equal(t, expectedOrigin, surface[types.AnnotationPatchOriginDigest])
+					}
+					for key, value := range application {
+						require.Equal(t, value, cfg.Config.Labels[key])
+					}
+					originalManifest, err := images[arch].Manifest()
+					require.NoError(t, err)
+					for i, layer := range originalManifest.Layers {
+						require.Equal(t, layer.Digest, mfst.Layers[i].Digest)
+					}
+					if generation == 2 {
+						// BuildKit can retain an empty tar layer; count actual
+						// filesystem changes to prove the previous patch was replaced.
+						layers, err := img.Layers()
+						require.NoError(t, err)
+						changed := 0
+						for _, layer := range layers[len(originalManifest.Layers):] {
+							stream, err := layer.Uncompressed()
+							require.NoError(t, err)
+							_, err = tar.NewReader(stream).Next()
+							require.True(t, err == nil || err == io.EOF)
+							if err == nil {
+								changed++
+							}
+							require.NoError(t, stream.Close())
+						}
+						require.Equal(t, 1, changed, "one replacement patch with filesystem changes")
+					}
+					if generation == 3 {
+						require.Equal(t, previousLayers, mfst.Layers, "no-op re-patch preserves the supplied layers")
+					}
+					previousLayers = mfst.Layers
+					input = output
+				}
+				cliOutput := repo + ":frontend-to-cli-" + scenario.name
+				cli := patchPublicOriginFixture(t, ctx, addr, input, cliOutput, descriptors[arch].Platform)
+				cfgImage, err := remote.Image(originTestReference(t, cliOutput), remote.WithContext(ctx))
+				require.NoError(t, err)
+				cfg, err := cfgImage.ConfigFile()
+				require.NoError(t, err)
+				require.Equal(t, expectedOrigin, cfg.Config.Labels[types.AnnotationPatchOriginDigest])
+				require.Equal(t, expectedOrigin, cli.PatchedDesc.Annotations[types.AnnotationPatchOriginDigest])
+				mfst, err := cfgImage.Manifest()
+				require.NoError(t, err)
+				originalManifest, err := images[arch].Manifest()
+				require.NoError(t, err)
+				require.Len(t, mfst.Layers, len(originalManifest.Layers)+1)
+				for key, value := range application {
+					require.Equal(t, value, cfg.Config.Labels[key])
+				}
+			})
+		}
+	})
+	t.Run("partial-repatch-index", func(t *testing.T) {
+		for _, recorded := range []bool{true, false} {
+			inputIndex := indexOut
+			if !recorded {
+				var children []mutate.IndexAddendum
+				for _, desc := range indexManifest.Manifests {
+					img, err := indexOut.Image(desc.Digest)
+					require.NoError(t, err)
+					children = append(children, mutate.IndexAddendum{Add: img, Descriptor: desc})
+				}
+				inputIndex = mutate.IndexMediaType(mutate.AppendManifests(empty.Index, children...), v1types.OCIImageIndex)
+			}
+			inputManifest, err := inputIndex.IndexManifest()
+			require.NoError(t, err)
+			input := fmt.Sprintf("%s:partial-input-%t", repo, recorded)
+			output := fmt.Sprintf("partial-output-%t", recorded)
+			require.NoError(t, remote.WriteIndex(originTestReference(t, input), inputIndex, remote.WithContext(ctx)))
+			require.NoError(t, Patch(ctx, &types.Options{
+				Image: input, Push: true, PatchedTag: output, BkAddr: addr,
+				PkgTypes: "os", Platforms: []string{"linux/amd64"}, Progress: "quiet", Timeout: time.Minute,
+			}))
+			result, err := remote.Index(originTestReference(t, repo+":"+output), remote.WithContext(ctx))
+			require.NoError(t, err)
+			mfst, err := result.IndexManifest()
+			require.NoError(t, err)
+			require.Empty(t, mfst.Annotations[types.AnnotationPatchOriginDigest], "preserved patched siblings offer only unverified ancestry")
+			for _, desc := range mfst.Manifests {
+				if desc.Platform.Architecture == "386" {
+					var original v1.Descriptor
+					for _, prior := range inputManifest.Manifests {
+						if prior.Platform.Architecture == "386" {
+							original = prior
+						}
+					}
+					require.Equal(t, original, desc, "preserved patched child descriptor must be unchanged")
+					img, err := result.Image(desc.Digest)
+					require.NoError(t, err)
+					verifyOriginBlobs(t, img)
+				}
+			}
+		}
+	})
+	t.Run("inconsistent-recorded-index", func(t *testing.T) {
+		for _, surface := range []string{"descriptor", "manifest", "config"} {
+			for _, mismatch := range []string{"repository", "digest"} {
+				t.Run(surface+"-"+mismatch, func(t *testing.T) {
+					child, err := remote.Image(originTestReference(t, repo+":p1-amd64"), remote.WithContext(ctx))
+					require.NoError(t, err)
+					claims := maps.Clone(first["amd64"].PatchedDesc.Annotations)
+					if mismatch == "repository" {
+						claims[types.AnnotationPatchOriginName] = repo + "-different:original"
+					} else {
+						claims[types.AnnotationPatchOriginDigest] = descriptors["386"].Digest.String()
+					}
+					descriptorAnnotations := maps.Clone(first["amd64"].PatchedDesc.Annotations)
+					switch surface {
+					case "descriptor":
+						descriptorAnnotations = claims
+					case "manifest":
+						child = originAnnotatedImage(t, child, claims)
+					case "config":
+						cfg, err := child.ConfigFile()
+						require.NoError(t, err)
+						maps.Copy(cfg.Config.Labels, claims)
+						child, err = mutate.ConfigFile(child, cfg)
+						require.NoError(t, err)
+					}
+					other, err := remote.Image(originTestReference(t, repo+":p1-386"), remote.WithContext(ctx))
+					require.NoError(t, err)
+					for _, count := range []int{1, 2} {
+						children := []mutate.IndexAddendum{{Add: child, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}, Annotations: descriptorAnnotations}}}
+						if count == 2 {
+							children = append(children, mutate.IndexAddendum{Add: other, Descriptor: v1.Descriptor{
+								Platform: &v1.Platform{OS: "linux", Architecture: "386"}, Annotations: first["386"].PatchedDesc.Annotations,
+							}})
+						}
+						bad := mutate.IndexMediaType(mutate.AppendManifests(empty.Index, children...), v1types.OCIImageIndex)
+						annotated, ok := mutate.Annotations(bad, common.Annotations()).(v1.ImageIndex)
+						require.True(t, ok)
+						bad = annotated
+						input := fmt.Sprintf("%s:inconsistent-%s-%s-%d", repo, surface, mismatch, count)
+						require.NoError(t, remote.WriteIndex(originTestReference(t, input), bad, remote.WithContext(ctx)))
+						tag := fmt.Sprintf("rejected-%s-%s-%d", surface, mismatch, count)
+						err = Patch(ctx, &types.Options{Image: input, Push: true, PatchedTag: tag, BkAddr: addr, PkgTypes: "os", IgnoreError: true, Progress: "quiet", Timeout: time.Minute})
+						require.ErrorIs(t, err, errRecordedIndexOrigin)
+						for _, suffix := range []string{"", "-amd64", "-386"} {
+							_, err := remote.Get(originTestReference(t, repo+":"+tag+suffix), remote.WithContext(ctx))
+							require.Error(t, err, "inconsistent origin must fail before any output")
+						}
+					}
+				})
+			}
+		}
+	})
 	t.Run("missing-original-index", func(t *testing.T) {
 		input := repo + ":missing-original-index"
 		require.NoError(t, remote.WriteIndex(originTestReference(t, input), indexOut, remote.WithContext(ctx)))
@@ -400,12 +597,7 @@ func originTestReference(t *testing.T, value string) name.Reference {
 
 func patchPublicOriginFixture(t *testing.T, ctx context.Context, addr, input, output string, platform *specs.Platform) *types.PatchResult {
 	t.Helper()
-	report := fmt.Sprintf(`{"SchemaVersion":2,"ArtifactType":"container_image",
- "Metadata":{"OS":{"Family":"alpine","Name":"3.20.0"},"ImageConfig":{"architecture":%q}},
- "Results":[{"Class":"os-pkgs","Type":"alpine","Vulnerabilities":[
- {"VulnerabilityID":"CVE-2023-42363","PkgName":"busybox","InstalledVersion":"1.36.1-r29","FixedVersion":"1.36.1-r29"}]}]}`, platform.Architecture)
-	reportPath := filepath.Join(t.TempDir(), "report.json")
-	require.NoError(t, os.WriteFile(reportPath, []byte(report), 0o600))
+	reportPath := originTestReport(t, platform.Architecture)
 	outputRef, err := name.NewTag(output)
 	require.NoError(t, err)
 	require.NoError(t, Patch(ctx, &types.Options{
@@ -523,4 +715,15 @@ func originAnnotatedImage(t *testing.T, img v1.Image, annotations map[string]str
 	annotated, ok := mutate.Annotations(img, annotations).(v1.Image)
 	require.True(t, ok)
 	return annotated
+}
+
+func originTestReport(t *testing.T, arch string) string {
+	t.Helper()
+	report := fmt.Sprintf(`{"SchemaVersion":2,"ArtifactType":"container_image",
+ "Metadata":{"OS":{"Family":"alpine","Name":"3.20.0"},"ImageConfig":{"architecture":%q}},
+ "Results":[{"Class":"os-pkgs","Type":"alpine","Vulnerabilities":[
+ {"VulnerabilityID":"CVE-2023-42363","PkgName":"busybox","InstalledVersion":"1.36.1-r29","FixedVersion":"1.36.1-r29"}]}]}`, arch)
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	require.NoError(t, os.WriteFile(reportPath, []byte(report), 0o600))
+	return reportPath
 }
