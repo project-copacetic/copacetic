@@ -43,7 +43,8 @@ This will generate a VEX Document that looks like:
   "statements": [
     {
       "vulnerability": {
-        "@id": "CVE-2024-0727"
+        "@id": "CVE-2024-0727",
+        "name": "CVE-2024-0727"
       },
       "products": [
         {
