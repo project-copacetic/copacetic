@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+set -eu -o pipefail
+
+# Pin BuildKit to match BUILDKIT_VERSION (set in .github/workflows/build.yml,
+# test.yml, and private-registry-test.yml). Every other buildkit env script
+# respects this var; using :latest here caused version drift between the
+# podman/container matrix cell and the rest of the CI.
+: "${BUILDKIT_VERSION:=0.19.0}"
+
+# GitHub's Ubuntu 24.04 runner can pair Podman 5.x with an outdated
+# /usr/bin/crun that rejects the OCI 1.2 runtime spec. Podman's built-in
+# runtime lookup bypasses PATH, so override the crun path for this shell and
+# every inherited Podman client (including Trivy). This remains compatible
+# with older runner images.
+# https://github.com/actions/runner-images/issues/14473
+: "${PODMAN_OCI_RUNTIME:=$(command -v crun)}"
+echo "Using Podman OCI runtime: ${PODMAN_OCI_RUNTIME}" >&2
+"${PODMAN_OCI_RUNTIME}" --version >&2
+
+PODMAN_CONTAINERS_CONF="$(mktemp)"
+cat >"${PODMAN_CONTAINERS_CONF}" <<EOF
+[engine]
+runtime = "crun"
+
+[engine.runtimes]
+crun = ["${PODMAN_OCI_RUNTIME}"]
+EOF
+export CONTAINERS_CONF_OVERRIDE="${PODMAN_CONTAINERS_CONF}"
+
+# Start Podman buildkit container
+CONTAINER_NAME="copa-buildkitd-$(date +%s)"
+echo "Starting Podman buildkit container: ${CONTAINER_NAME} (buildkit v${BUILDKIT_VERSION})" >&2
+
+# Start buildkit.
+# --dns forces explicit resolvers in the container's /etc/resolv.conf. With
+# --network=host podman still writes a custom resolv.conf in the container,
+# which BuildKit reads at startup for its sandbox DNS. This hardens the job
+# against flaky resolver config on the self-hosted runners.
+podman --runtime "${PODMAN_OCI_RUNTIME}" run -d --rm --name "${CONTAINER_NAME}" \
+    --privileged \
+    --network=host \
+    --dns=8.8.8.8 \
+    --dns=1.1.1.1 \
+    "docker.io/moby/buildkit:v${BUILDKIT_VERSION}" >/dev/null
+
+# Wait for container to be ready
+echo "Waiting for buildkit container to be ready..." >&2
+for i in {1..30}; do
+    if podman inspect --format "{{.State.Status}}" "${CONTAINER_NAME}" 2>/dev/null | grep -q "running"; then
+        echo "Container ${CONTAINER_NAME} is running" >&2
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo "Container ${CONTAINER_NAME} failed to start" >&2
+        exit 1
+    fi
+    sleep 1
+done
+
+# Function to cleanup container on exit
+_cleanup() {
+    echo "Cleaning up Podman buildkit container: ${CONTAINER_NAME}" >&2
+    podman kill "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    podman rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+    rm -f "${PODMAN_CONTAINERS_CONF}"
+}
+
+# Set trap to cleanup on exit
+trap '_cleanup' EXIT INT TERM
+
+# Set buildkit address for copa to use
+export COPA_BUILDKIT_ADDR="podman-container://${CONTAINER_NAME}"

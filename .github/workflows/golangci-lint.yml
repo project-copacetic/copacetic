@@ -1,0 +1,43 @@
+name: "[Blocking] Run golangci-lint"
+on:
+  push:
+    paths:
+      - '**.go'
+    branches:
+      - main
+      - release-*
+    tags:
+      - v*
+  pull_request:
+    paths:
+      - '**.go'
+    branches:
+      - main
+      - release-*
+
+permissions: read-all
+
+jobs:
+  golangci:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.10.1
+          args: --new-from-rev=origin/main

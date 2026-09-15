@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+
+docker buildx create --name testpatch
+docker buildx inspect --bootstrap testpatch
+export COPA_BUILDKIT_ADDR="buildx://testpatch"

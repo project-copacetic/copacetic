@@ -1,0 +1,2 @@
+openssl	2.1.1k-21.cm2	x86_64
+openssl-libs	2.1.1k-21.cm2	x86_64

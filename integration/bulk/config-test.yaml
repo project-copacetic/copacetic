@@ -1,0 +1,26 @@
+apiVersion: copa.sh/v1alpha1
+kind: PatchConfig
+images:
+  - name: "nginx-pattern-test"
+    image: "__NGINX_REPO__"
+    tags:
+      strategy: "pattern"
+      pattern: "^1\\.25\\.[0-9]+$"
+      maxTags: 2
+      exclude: ["1.25.1"]
+    target:
+      tag: "{{ .SourceTag }}-patched-e2e"
+  - name: "alpine-latest-test"
+    image: "__ALPINE_REPO__"
+    tags:
+      strategy: "latest"
+    target:
+      tag: "{{ .SourceTag }}-patched-e2e"
+  - name: "ubuntu-list-test"
+    image: "__UBUNTU_REPO__"
+    tags:
+      strategy: "list"
+      list: ["20.04"]
+    target:
+      tag: "{{ .SourceTag }}-patched-e2e"
+      

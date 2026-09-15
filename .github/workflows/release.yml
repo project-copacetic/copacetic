@@ -1,0 +1,174 @@
+name: Publish release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set Version Variables
+        id: vars
+        env:
+          RAW_GITHUB_REF: ${{ github.ref }}
+        run: |
+          # Get the version without the 'refs/tags/v' prefix, e.g., "1.2.3"
+          VERSION_TAG_ONLY="${RAW_GITHUB_REF#refs/tags/v}"
+          
+          # Reconstruct the full pushed tag, e.g., "v1.2.3"
+          PUSHED_TAG="v${VERSION_TAG_ONLY}"
+          
+          # Get the immediate previous tag relative to the pushed tag.
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "${PUSHED_TAG}^" 2>/dev/null || echo "v0.0.0")
+
+          # Output for other steps
+          echo "version_tag=${VERSION_TAG_ONLY}" >> "$GITHUB_OUTPUT"
+          
+          # Outputs for the validation step
+          echo "pushed_tag=${PUSHED_TAG}" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=${PREVIOUS_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Version Order
+        run: bash .github/workflows/scripts/release/validate_version.sh
+        env:
+          PUSHED_TAG: ${{ steps.vars.outputs.pushed_tag }}
+          PREVIOUS_TAG: ${{ steps.vars.outputs.previous_tag }}
+
+      - name: Create release branch
+        env:
+          VERSION_TAG_ONLY: ${{ steps.vars.outputs.version_tag }}
+        run: |
+          # Extract version from tag without the leading 'v' (e.g., 0.11.0 -> 0.11 or 0.12.0-rc.1 -> 0.12)
+          VERSION=$(echo "${VERSION_TAG_ONLY}" | cut -d'.' -f1,2)
+          BRANCH_NAME="release-${VERSION}"
+          
+          # Check if release branch already exists
+          if git show-ref --verify --quiet \
+            "refs/remotes/origin/${BRANCH_NAME}"; then
+            echo "Release branch ${BRANCH_NAME} already exists, skipping"
+          else
+            echo "Creating release branch ${BRANCH_NAME}"
+            git checkout -b "${BRANCH_NAME}"
+            git push origin "${BRANCH_NAME}"
+            echo "Created and pushed release branch ${BRANCH_NAME}"
+          fi
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - uses: anchore/sbom-action/download-syft@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: latest
+          args: release --clean --config .goreleaser.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout copa-action repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/copa-action
+          path: copa-action
+          ref: main
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Login to ghcr
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push copa-action image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
+        run: |
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
+          docker buildx build --build-arg copa_version="${tag}" -t "ghcr.io/${image_owner}/copa-action:v${tag}" --push ./copa-action
+
+      - name: Checkout copa-extension repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/copa-extension
+          path: copa-extension
+          ref: main
+
+      - name: Set up Docker for copa-extension
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Login to ghcr for copa-extension
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push copa-extension image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
+        run: |
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
+          docker buildx build --push --platform linux/amd64,linux/arm64 --build-arg copa_version="${tag}" -t "ghcr.io/${image_owner}/copa-extension:v${tag}" ./copa-extension/container/copa-extension
+
+      - name: Set up Docker for copa frontend
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Login to ghcr for copa frontend
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push copa frontend image with new version
+        env:
+          RELEASE_TAG: ${{ steps.vars.outputs.version_tag }}
+          IMAGE_OWNER: ${{ github.repository_owner }}
+        run: |
+          tag="${RELEASE_TAG}"
+          image_owner="${IMAGE_OWNER}"
+          # Derive Go toolchain version from go.mod so the frontend image
+          # never drifts from the module's required Go version.
+          go_version=$(awk '/^go /{print $2; exit}' go.mod)
+          echo "Building copacetic-frontend with Go ${go_version}"
+          # Only tag :latest on final releases, never on -rc.* tags.
+          extra_tags=()
+          if [[ "${tag}" != *-* ]]; then
+            extra_tags+=(-t "ghcr.io/${image_owner}/copacetic-frontend:latest")
+          else
+            echo "Skipping :latest tag for pre-release ${tag}"
+          fi
+          docker buildx build --push \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg "GO_VERSION=${go_version}" \
+            -f frontend.Dockerfile \
+            -t "ghcr.io/${image_owner}/copacetic-frontend:v${tag}" \
+            "${extra_tags[@]}" \
+            .

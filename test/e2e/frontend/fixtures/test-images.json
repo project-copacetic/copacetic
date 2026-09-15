@@ -1,0 +1,42 @@
+[
+  {
+    "originalImage": "docker.io/library/nginx",
+    "localImage": "localhost:5000/nginx",
+    "tag": "1.21.6",
+    "distro": "debian", 
+    "description": "Frontend test with nginx debian - inline report",
+    "ignoreErrors": false,
+    "testType": "inline-report",
+    "platforms": ["linux/amd64"]
+  },
+  {
+    "originalImage": "docker.io/library/alpine",
+    "localImage": "localhost:5000/alpine",
+    "tag": "3.18",
+    "distro": "alpine",
+    "description": "Frontend test with alpine - inline report",
+    "ignoreErrors": false,
+    "testType": "inline-report", 
+    "platforms": ["linux/amd64"]
+  },
+  {
+    "originalImage": "docker.io/library/ubuntu",
+    "localImage": "localhost:5000/ubuntu",
+    "tag": "20.04",
+    "distro": "ubuntu",
+    "description": "Frontend test with ubuntu - error handling",
+    "ignoreErrors": true,
+    "testType": "error-handling",
+    "platforms": ["linux/amd64"]
+  },
+  {
+    "originalImage": "docker.io/library/nginx",
+    "localImage": "localhost:5000/nginx-multiplatform",
+    "tag": "1.21.6",
+    "distro": "debian",
+    "description": "Frontend test multiplatform nginx",
+    "ignoreErrors": false,
+    "testType": "multiplatform",
+    "platforms": ["linux/amd64", "linux/arm64"]
+  }
+]

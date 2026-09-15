@@ -1,0 +1,1184 @@
+package langmgr
+
+import (
+	"fmt"
+	"testing"
+
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestIsValidGoVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		version  string
+		expected bool
+	}{
+		{
+			name:     "valid simple version with v prefix",
+			version:  "v1.2.3",
+			expected: true,
+		},
+		{
+			name:     "valid simple version without v prefix",
+			version:  "1.2.3",
+			expected: true,
+		},
+		{
+			name:     "valid major.minor version",
+			version:  "v1.2.0",
+			expected: true,
+		},
+		{
+			name:     "valid pseudo-version",
+			version:  "v0.0.0-20230101120000-abcdef123456",
+			expected: true,
+		},
+		{
+			name:     "valid pre-release version",
+			version:  "v1.2.3-beta.1",
+			expected: true,
+		},
+		{
+			name:     "valid version with build metadata",
+			version:  "v1.2.3+build.1",
+			expected: true,
+		},
+		{
+			name:     "invalid version format",
+			version:  "invalid",
+			expected: false,
+		},
+		{
+			name:     "empty version",
+			version:  "",
+			expected: false,
+		},
+		{
+			name:     "version without v prefix (still valid after normalization)",
+			version:  "0.0.0",
+			expected: true,
+		},
+		{
+			name:     "invalid characters",
+			version:  "v1.2.3@invalid",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isValidGoVersion(tt.version)
+			assert.Equal(t, tt.expected, result, "Version: %s", tt.version)
+		})
+	}
+}
+
+func TestIsLessThanGoVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		v1       string
+		v2       string
+		expected bool
+	}{
+		{
+			name:     "v1 less than v2",
+			v1:       "v1.0.0",
+			v2:       "v1.1.0",
+			expected: true,
+		},
+		{
+			name:     "v1 greater than v2",
+			v1:       "v1.1.0",
+			v2:       "v1.0.0",
+			expected: false,
+		},
+		{
+			name:     "v1 equals v2",
+			v1:       "v1.0.0",
+			v2:       "v1.0.0",
+			expected: false,
+		},
+		{
+			name:     "different major versions",
+			v1:       "v1.0.0",
+			v2:       "v2.0.0",
+			expected: true,
+		},
+		{
+			name:     "patch version difference",
+			v1:       "v1.2.0",
+			v2:       "v1.2.1",
+			expected: true,
+		},
+		{
+			name:     "pseudo-versions comparison",
+			v1:       "v0.0.0-20230101120000-abcdef123456",
+			v2:       "v0.0.0-20230102120000-ghijkl789012",
+			expected: true,
+		},
+		{
+			name:     "pre-release vs release",
+			v1:       "v1.0.0-beta.1",
+			v2:       "v1.0.0",
+			expected: true,
+		},
+		{
+			name:     "versions without v prefix",
+			v1:       "1.0.0",
+			v2:       "1.1.0",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isLessThanGoVersion(tt.v1, tt.v2)
+			assert.Equal(t, tt.expected, result, "v1: %s, v2: %s", tt.v1, tt.v2)
+		})
+	}
+}
+
+func TestValidateGoPackageName(t *testing.T) {
+	tests := []struct {
+		name        string
+		packageName string
+		expectError bool
+	}{
+		{
+			name:        "valid package name",
+			packageName: "github.com/user/repo",
+			expectError: false,
+		},
+		{
+			name:        "valid package name with subdirectory",
+			packageName: "github.com/user/repo/pkg/module",
+			expectError: false,
+		},
+		{
+			name:        "valid package name with version suffix",
+			packageName: "github.com/user/repo/v2",
+			expectError: false,
+		},
+		{
+			name:        "valid golang.org package",
+			packageName: "golang.org/x/mod",
+			expectError: false,
+		},
+		{
+			name:        "empty package name",
+			packageName: "",
+			expectError: true,
+		},
+		{
+			name:        "package name without slash",
+			packageName: "invalid",
+			expectError: true,
+		},
+		{
+			name:        "package name with shell injection characters (semicolon)",
+			packageName: "github.com/user/repo; rm -rf /",
+			expectError: true,
+		},
+		{
+			name:        "package name with shell injection characters (pipe)",
+			packageName: "github.com/user/repo | cat /etc/passwd",
+			expectError: true,
+		},
+		{
+			name:        "package name with backticks",
+			packageName: "github.com/user/`echo hacked`",
+			expectError: true,
+		},
+		{
+			name:        "package name with dollar sign",
+			packageName: "github.com/user/$HOME",
+			expectError: true,
+		},
+		{
+			name:        "package name with whitespace",
+			packageName: "github.com/user/repo name",
+			expectError: true,
+		},
+		{
+			name:        "package name with newline",
+			packageName: "github.com/user/repo\n",
+			expectError: true,
+		},
+		{
+			name:        "package name starting with dash",
+			packageName: "-modfile=/tmp/pwn/mod",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGoPackageName(tt.packageName)
+			if tt.expectError {
+				assert.Error(t, err, "Expected error for package name: %s", tt.packageName)
+			} else {
+				assert.NoError(t, err, "Expected no error for package name: %s", tt.packageName)
+			}
+		})
+	}
+}
+
+func TestValidateGoVersion(t *testing.T) {
+	tests := []struct {
+		name        string
+		version     string
+		expectError bool
+	}{
+		{
+			name:        "valid version with v prefix",
+			version:     "v1.2.3",
+			expectError: false,
+		},
+		{
+			name:        "valid version without v prefix",
+			version:     "1.2.3",
+			expectError: false,
+		},
+		{
+			name:        "valid pseudo-version",
+			version:     "v0.0.0-20230101120000-abcdef123456",
+			expectError: false,
+		},
+		{
+			name:        "valid pre-release",
+			version:     "v1.0.0-beta.1",
+			expectError: false,
+		},
+		{
+			name:        "empty version",
+			version:     "",
+			expectError: true,
+		},
+		{
+			name:        "invalid version format",
+			version:     "invalid",
+			expectError: true,
+		},
+		{
+			name:        "version with shell injection (semicolon)",
+			version:     "v1.0.0; echo hacked",
+			expectError: true,
+		},
+		{
+			name:        "version with shell injection (pipe)",
+			version:     "v1.0.0 | cat /etc/passwd",
+			expectError: true,
+		},
+		{
+			name:        "version with backticks",
+			version:     "v1.0.0`echo hacked`",
+			expectError: true,
+		},
+		{
+			name:        "version with dollar sign",
+			version:     "v1.0.0$HOME",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGoVersion(tt.version)
+			if tt.expectError {
+				assert.Error(t, err, "Expected error for version: %s", tt.version)
+			} else {
+				assert.NoError(t, err, "Expected no error for version: %s", tt.version)
+			}
+		})
+	}
+}
+
+func TestCleanGoVersion(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "single version with v prefix",
+			input:    "v1.2.3",
+			expected: "v1.2.3",
+		},
+		{
+			name:     "single version without v prefix",
+			input:    "1.2.3",
+			expected: "v1.2.3",
+		},
+		{
+			name:     "comma-separated versions",
+			input:    "v1.2.3, v1.2.4, v1.2.5",
+			expected: "v1.2.3",
+		},
+		{
+			name:     "comma-separated with whitespace",
+			input:    "  v1.2.3  ,  v1.2.4  ",
+			expected: "v1.2.3",
+		},
+		{
+			name:     "single pseudo-version",
+			input:    "v0.0.0-20230101120000-abcdef123456",
+			expected: "v0.0.0-20230101120000-abcdef123456",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "invalid version in list",
+			input:    "invalid, v1.2.3",
+			expected: "v1.2.3",
+		},
+		{
+			name:     "all invalid versions",
+			input:    "invalid1, invalid2",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := cleanGoVersion(tt.input)
+			assert.Equal(t, tt.expected, result, "Input: %s", tt.input)
+		})
+	}
+}
+
+func TestFilterGoPackages(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          unversioned.LangUpdatePackages
+		expected       int
+		expectedStdlib string
+		expectedNames  []string
+	}{
+		{
+			name: "all Go modules",
+			input: unversioned.LangUpdatePackages{
+				{Name: "pkg1", Type: utils.GoModules},
+				{Name: "pkg2", Type: utils.GoModules},
+			},
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg2"},
+		},
+		{
+			name: "all Go binaries",
+			input: unversioned.LangUpdatePackages{
+				{Name: "pkg1", Type: utils.GoBinary},
+				{Name: "pkg2", Type: utils.GoBinary},
+			},
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg2"},
+		},
+		{
+			name: "mixed Go modules and binaries",
+			input: unversioned.LangUpdatePackages{
+				{Name: "pkg1", Type: utils.GoModules},
+				{Name: "pkg2", Type: utils.GoBinary},
+			},
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg2"},
+		},
+		{
+			name: "mixed with other package types",
+			input: unversioned.LangUpdatePackages{
+				{Name: "pkg1", Type: utils.GoModules},
+				{Name: "pkg2", Type: utils.PythonPackages},
+				{Name: "pkg3", Type: utils.NodePackages},
+				{Name: "pkg4", Type: utils.GoBinary},
+			},
+			expected:      2,
+			expectedNames: []string{"pkg1", "pkg4"},
+		},
+		{
+			name: "no Go packages",
+			input: unversioned.LangUpdatePackages{
+				{Name: "pkg1", Type: utils.PythonPackages},
+				{Name: "pkg2", Type: utils.NodePackages},
+			},
+			expected: 0,
+		},
+		{
+			name:     "empty input",
+			input:    unversioned.LangUpdatePackages{},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, stdlibFixedVersion := filterGoPackages(tt.input)
+			require.Len(t, result, tt.expected, "Expected %d packages, got %d", tt.expected, len(result))
+			assert.Equal(t, tt.expectedStdlib, stdlibFixedVersion, "stdlibFixedVersion mismatch")
+
+			// Verify all returned packages are Go packages with expected names
+			var names []string
+			for _, pkg := range result {
+				assert.True(t,
+					pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary,
+					"Package %s has unexpected type %s", pkg.Name, pkg.Type)
+				names = append(names, pkg.Name)
+			}
+			if tt.expectedNames != nil {
+				assert.ElementsMatch(t, tt.expectedNames, names, "Returned package names mismatch")
+			}
+		})
+	}
+
+	// Test stdlib detection
+	t.Run("stdlib detected", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.23.7", FixedVersion: "1.24.6"},
+			{Name: "golang.org/x/crypto", Type: utils.GoModules, FixedVersion: "v0.45.0"},
+		}
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.NotEmpty(t, stdlibFixedVersion, "Expected stdlibFixedVersion to be set")
+		assert.Equal(t, "v1.24.6", stdlibFixedVersion)
+		assert.Len(t, result, 1, "Expected 1 non-stdlib package")
+		assert.Equal(t, "golang.org/x/crypto", result[0].Name)
+	})
+
+	t.Run("stdlib only", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.23.7", FixedVersion: "1.24.6"},
+		}
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.NotEmpty(t, stdlibFixedVersion, "Expected stdlibFixedVersion to be set")
+		assert.Equal(t, "v1.24.6", stdlibFixedVersion)
+		assert.Len(t, result, 0, "Expected 0 non-stdlib packages")
+	})
+
+	t.Run("no stdlib", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "golang.org/x/crypto", Type: utils.GoModules, FixedVersion: "v0.45.0"},
+		}
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.Empty(t, stdlibFixedVersion, "Expected stdlibFixedVersion to be empty")
+		assert.Len(t, result, 1)
+	})
+
+	t.Run("multiple stdlib vulns picks highest fix", func(t *testing.T) {
+		input := unversioned.LangUpdatePackages{
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.22.0", FixedVersion: "1.23.5"},
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.22.0", FixedVersion: "1.24.1"},
+			{Name: "stdlib", Type: utils.GoBinary, InstalledVersion: "v1.22.0", FixedVersion: "1.23.8"},
+		}
+		result, stdlibFixedVersion := filterGoPackages(input)
+		assert.Equal(t, "v1.24.1", stdlibFixedVersion, "Expected highest stdlib fix version")
+		assert.Len(t, result, 0)
+	})
+}
+
+func TestGetLanguageManagers_Go(t *testing.T) {
+	config := &buildkit.Config{}
+	workingFolder := "/tmp"
+
+	tests := []struct {
+		name            string
+		manifest        *unversioned.UpdateManifest
+		expectedCount   int
+		expectGoMgr     bool
+		expectPythonMgr bool
+		expectNodeMgr   bool
+	}{
+		{
+			name: "only Go modules",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+				},
+			},
+			expectedCount:   1,
+			expectGoMgr:     true,
+			expectPythonMgr: false,
+			expectNodeMgr:   false,
+		},
+		{
+			name: "only Go binaries",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "github.com/user/repo", Type: utils.GoBinary, FixedVersion: "v1.2.3"},
+				},
+			},
+			expectedCount:   1,
+			expectGoMgr:     true,
+			expectPythonMgr: false,
+			expectNodeMgr:   false,
+		},
+		{
+			name: "Go modules and Python packages",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+					{Name: "requests", Type: utils.PythonPackages, FixedVersion: "2.28.0"},
+				},
+			},
+			expectedCount:   2,
+			expectGoMgr:     true,
+			expectPythonMgr: true,
+			expectNodeMgr:   false,
+		},
+		{
+			name: "all language types",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{
+					{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+					{Name: "requests", Type: utils.PythonPackages, FixedVersion: "2.28.0"},
+					{Name: "express", Type: utils.NodePackages, FixedVersion: "4.18.0"},
+				},
+			},
+			expectedCount:   3,
+			expectGoMgr:     true,
+			expectPythonMgr: true,
+			expectNodeMgr:   true,
+		},
+		{
+			name: "no language updates",
+			manifest: &unversioned.UpdateManifest{
+				LangUpdates: unversioned.LangUpdatePackages{},
+			},
+			expectedCount:   0,
+			expectGoMgr:     false,
+			expectPythonMgr: false,
+			expectNodeMgr:   false,
+		},
+		{
+			name:            "nil manifest",
+			manifest:        nil,
+			expectedCount:   0,
+			expectGoMgr:     false,
+			expectPythonMgr: false,
+			expectNodeMgr:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			managers := GetLanguageManagers(config, workingFolder, tt.manifest, "", "", "")
+			assert.Len(t, managers, tt.expectedCount, "Expected %d managers, got %d", tt.expectedCount, len(managers))
+
+			var hasGoMgr, hasPythonMgr, hasNodeMgr bool
+			for _, mgr := range managers {
+				switch mgr.(type) {
+				case *golangManager:
+					hasGoMgr = true
+				case *pythonManager:
+					hasPythonMgr = true
+				case *nodejsManager:
+					hasNodeMgr = true
+				}
+			}
+
+			assert.Equal(t, tt.expectGoMgr, hasGoMgr, "Go manager presence mismatch")
+			assert.Equal(t, tt.expectPythonMgr, hasPythonMgr, "Python manager presence mismatch")
+			assert.Equal(t, tt.expectNodeMgr, hasNodeMgr, "Node manager presence mismatch")
+		})
+	}
+
+	// Verify toolchainPatchLevel is propagated to the Go manager
+	t.Run("toolchainPatchLevel propagated", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+			},
+		}
+		managers := GetLanguageManagers(config, workingFolder, manifest, "minor", "", "")
+		require.Len(t, managers, 1)
+		goMgr, ok := managers[0].(*golangManager)
+		require.True(t, ok, "Expected golangManager")
+		assert.Equal(t, "minor", goMgr.toolchainPatchLevel, "toolchainPatchLevel should be propagated")
+	})
+
+	t.Run("toolchainPatchLevel empty when not set", func(t *testing.T) {
+		manifest := &unversioned.UpdateManifest{
+			LangUpdates: unversioned.LangUpdatePackages{
+				{Name: "github.com/user/repo", Type: utils.GoModules, FixedVersion: "v1.2.3"},
+			},
+		}
+		managers := GetLanguageManagers(config, workingFolder, manifest, "", "", "")
+		require.Len(t, managers, 1)
+		goMgr, ok := managers[0].(*golangManager)
+		require.True(t, ok, "Expected golangManager")
+		assert.Empty(t, goMgr.toolchainPatchLevel, "toolchainPatchLevel should be empty when not set")
+	})
+}
+
+func TestGetUniqueLatestUpdates_Go(t *testing.T) {
+	goComparer := VersionComparer{isValidGoVersion, isLessThanGoVersion}
+
+	tests := []struct {
+		name          string
+		input         unversioned.LangUpdatePackages
+		ignoreErrors  bool
+		expectedCount int
+		expectError   bool
+		checkPackage  func(*testing.T, unversioned.LangUpdatePackages)
+	}{
+		{
+			name: "single package single version",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			ignoreErrors:  false,
+			expectedCount: 1,
+			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 1)
+				assert.Equal(t, "github.com/gin-gonic/gin", packages[0].Name)
+				assert.Equal(t, "v1.7.7", packages[0].FixedVersion)
+			},
+		},
+		{
+			name: "single package multiple versions - selects highest",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "v1.7.0", Type: utils.GoModules},
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "v1.7.7", Type: utils.GoModules},
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "v1.7.4", Type: utils.GoModules},
+			},
+			ignoreErrors:  false,
+			expectedCount: 1,
+			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 1)
+				assert.Equal(t, "github.com/gin-gonic/gin", packages[0].Name)
+				assert.Equal(t, "v1.7.7", packages[0].FixedVersion, "Should select highest version")
+			},
+		},
+		{
+			name: "multiple packages",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "v1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", FixedVersion: "v0.5.0", Type: utils.GoModules},
+			},
+			ignoreErrors:  false,
+			expectedCount: 2,
+			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 2)
+				nameToVersion := map[string]string{}
+				for _, pkg := range packages {
+					nameToVersion[pkg.Name] = pkg.FixedVersion
+				}
+				assert.Equal(t, "v1.7.7", nameToVersion["github.com/gin-gonic/gin"])
+				assert.Equal(t, "v0.5.0", nameToVersion["golang.org/x/net"])
+			},
+		},
+		{
+			name: "package with empty FixedVersion - should be skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "", Type: utils.GoModules},
+				{Name: "golang.org/x/net", FixedVersion: "v0.5.0", Type: utils.GoModules},
+			},
+			ignoreErrors:  false,
+			expectedCount: 1,
+			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 1)
+				assert.Equal(t, "golang.org/x/net", packages[0].Name)
+			},
+		},
+		{
+			name: "invalid version with ignoreErrors=true",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "invalid", Type: utils.GoModules},
+				{Name: "golang.org/x/net", FixedVersion: "v0.5.0", Type: utils.GoModules},
+			},
+			ignoreErrors:  true,
+			expectedCount: 1,
+			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 1)
+				assert.Equal(t, "golang.org/x/net", packages[0].Name)
+			},
+		},
+		{
+			name: "invalid version with ignoreErrors=false",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", FixedVersion: "invalid", Type: utils.GoModules},
+			},
+			ignoreErrors:  false,
+			expectedCount: 0,
+			expectError:   true,
+		},
+		{
+			name: "pseudo-versions",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/user/repo", FixedVersion: "v0.0.0-20230101120000-abcdef123456", Type: utils.GoModules},
+				{Name: "github.com/user/repo", FixedVersion: "v0.0.0-20230102120000-ghijkl789012", Type: utils.GoModules},
+			},
+			ignoreErrors:  false,
+			expectedCount: 1,
+			expectError:   false,
+			checkPackage: func(t *testing.T, packages unversioned.LangUpdatePackages) {
+				require.Len(t, packages, 1)
+				assert.Equal(t, "v0.0.0-20230102120000-ghijkl789012", packages[0].FixedVersion, "Should select later pseudo-version")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := GetUniqueLatestUpdates(tt.input, goComparer, tt.ignoreErrors)
+
+			if tt.expectError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+
+			assert.Len(t, result, tt.expectedCount, "Expected %d packages, got %d", tt.expectedCount, len(result))
+
+			if tt.checkPackage != nil {
+				tt.checkPackage(t, result)
+			}
+		})
+	}
+}
+
+func TestRebuildFailureString(t *testing.T) {
+	tests := []struct {
+		name     string
+		failure  rebuildFailure
+		expected string
+	}{
+		{
+			name:     "no build info",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/foo", reason: "no build info"},
+			expected: "/usr/bin/foo: no build info",
+		},
+		{
+			name:     "error reason",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/bar", reason: "exit status 1"},
+			expected: "/usr/bin/bar: exit status 1",
+		},
+		{
+			name:     "empty reason",
+			failure:  rebuildFailure{binaryPath: "/usr/bin/baz", reason: ""},
+			expected: "/usr/bin/baz: ",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tt.failure.String())
+		})
+	}
+}
+
+func TestRebuildFailureSliceFormat(t *testing.T) {
+	failures := []rebuildFailure{
+		{binaryPath: "/usr/bin/foo", reason: "no build info"},
+		{binaryPath: "/usr/bin/bar", reason: "exit status 1"},
+	}
+	oldStyle := []string{
+		"/usr/bin/foo: no build info",
+		"/usr/bin/bar: exit status 1",
+	}
+	assert.Equal(t, fmt.Sprintf("%v", oldStyle), fmt.Sprintf("%v", failures),
+		"rebuildFailure slice must format identically to the old []string representation")
+}
+
+func TestCollectGoBinaryInfo(t *testing.T) {
+	tests := []struct {
+		name        string
+		updates     unversioned.LangUpdatePackages
+		wantPaths   []string
+		wantVersion string
+	}{
+		{
+			name: "extracts paths and Go version from stdlib",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary, InstalledVersion: "v1.26.0"},
+				{Name: "golang.org/x/crypto", PkgPath: "manager", Type: utils.GoBinary},
+			},
+			wantPaths:   []string{"manager"},
+			wantVersion: "1.26.0",
+		},
+		{
+			name: "multiple paths no stdlib",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "golang.org/x/crypto", PkgPath: "bin/consul", Type: utils.GoBinary},
+				{Name: "golang.org/x/net", PkgPath: "bin/consul-agent", Type: utils.GoBinary},
+			},
+			wantPaths:   []string{"bin/consul", "bin/consul-agent"},
+			wantVersion: "",
+		},
+		{
+			name:      "skips non-gobinary",
+			updates:   unversioned.LangUpdatePackages{{Name: "flask", PkgPath: "app/requirements.txt", Type: "pip"}},
+			wantPaths: nil,
+		},
+		{
+			name: "skips gomod entries even if PkgPath set",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/foo/bar", PkgPath: "src/go.mod", Type: utils.GoModules},
+				{Name: "stdlib", PkgPath: "manager", Type: utils.GoBinary, InstalledVersion: "v1.26.0"},
+			},
+			wantPaths:   []string{"manager"},
+			wantVersion: "1.26.0",
+		},
+		{
+			name: "all gomod, no binary paths returned",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "github.com/foo/bar", PkgPath: "src/go.mod", Type: utils.GoModules},
+				{Name: "github.com/baz/qux", PkgPath: "src/go.sum", Type: utils.GoModules},
+			},
+			wantPaths:   nil,
+			wantVersion: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			paths, goVersion := collectGoBinaryInfo(tt.updates)
+			assert.Equal(t, tt.wantPaths, paths)
+			assert.Equal(t, tt.wantVersion, goVersion)
+		})
+	}
+}
+
+func TestBuildSyntheticBinaryInfo(t *testing.T) {
+	tests := []struct {
+		name      string
+		paths     []string
+		goVCSURL  string
+		wantCount int
+		wantPaths []string
+		wantMod   string
+	}{
+		{
+			name:      "single binary path",
+			paths:     []string{"manager"},
+			goVCSURL:  "https://github.com/grafana/grafana-operator@v5.22.0",
+			wantCount: 1,
+			wantPaths: []string{"/manager"},
+			wantMod:   "github.com/grafana/grafana-operator",
+		},
+		{
+			name:      "multiple paths",
+			paths:     []string{"bin/consul", "bin/consul-agent"},
+			goVCSURL:  "https://github.com/hashicorp/consul@v1.22.4",
+			wantCount: 2,
+			wantPaths: []string{"/bin/consul", "/bin/consul-agent"},
+			wantMod:   "github.com/hashicorp/consul",
+		},
+		{
+			name:      "path already has leading slash",
+			paths:     []string{"/usr/local/bin/app"},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 1,
+			wantPaths: []string{"/usr/local/bin/app"},
+			wantMod:   "github.com/example/app",
+		},
+		{
+			name:      "empty paths",
+			paths:     []string{},
+			goVCSURL:  "https://github.com/example/app@v1.0.0",
+			wantCount: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := buildSyntheticBinaryInfo(tt.paths, tt.goVCSURL, "1.26.0")
+			assert.Len(t, result, tt.wantCount)
+
+			for i, wantPath := range tt.wantPaths {
+				if i < len(result) {
+					assert.Equal(t, wantPath, result[i].Path)
+					assert.Equal(t, tt.wantMod, result[i].ModulePath)
+					assert.Equal(t, "0", result[i].BuildSettings["CGO_ENABLED"])
+					assert.Equal(t, "0755", result[i].FileMode)
+					assert.Equal(t, "0:0", result[i].FileOwner)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildGoUpdateCmd asserts that the shell command emitted for both Go
+// module update sites uses `go mod tidy -e`. The -e flag tolerates broken
+// upstream go.mod files so that unrelated upstream module hygiene issues do
+// not block CVE patches; see the helper's docstring in golang.go.
+func TestBuildGoUpdateCmd(t *testing.T) {
+	tests := []struct {
+		name      string
+		modPath   string
+		allGetCmd string
+		want      string
+	}{
+		{
+			// Site 1: primary in-image path with a discovered go.mod path.
+			name:      "in-image module path",
+			modPath:   "/app",
+			allGetCmd: "go get golang.org/x/net@v0.23.0",
+			want:      `sh -c 'cd /app && go get golang.org/x/net@v0.23.0 && go mod tidy -e'`,
+		},
+		{
+			// Site 2: tooling container fallback path.
+			name:      "tooling container workspace",
+			modPath:   "/workspace",
+			allGetCmd: "go get golang.org/x/net@v0.23.0 && go get golang.org/x/text@v0.14.0",
+			want:      `sh -c 'cd /workspace && go get golang.org/x/net@v0.23.0 && go get golang.org/x/text@v0.14.0 && go mod tidy -e'`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildGoUpdateCmd(tt.modPath, tt.allGetCmd)
+			assert.Equal(t, tt.want, got)
+			// Explicit guards against regression to bare `go mod tidy`.
+			assert.Contains(t, got, "go mod tidy -e",
+				"updateCmd must use 'go mod tidy -e' to tolerate broken upstream go.mod")
+			assert.NotContains(t, got, "go mod tidy'",
+				"updateCmd must not end with bare 'go mod tidy' (missing -e flag)")
+		})
+	}
+}
+
+func TestFilterGoDowngrades(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           unversioned.LangUpdatePackages
+		expectedNames   []string
+		expectedSkipped []string
+	}{
+		{
+			name: "fixed version older than installed - skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "fixed version equal to installed - skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.7", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "fixed version newer than installed - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.0", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "versions without v prefix are normalized",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "1.9.1", FixedVersion: "1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", InstalledVersion: "0.4.0", FixedVersion: "0.5.0", Type: utils.GoModules},
+			},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "empty installed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "empty fixed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "unparsable installed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "not-a-version", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "unparsable fixed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7, v1.8.0", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "mixed packages - only downgrades removed",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", InstalledVersion: "v0.4.0", FixedVersion: "v0.5.0", Type: utils.GoModules},
+				{Name: "golang.org/x/text", InstalledVersion: "v0.3.8", FixedVersion: "v0.3.8", Type: utils.GoModules},
+			},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin", "golang.org/x/text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, skipped := filterGoDowngrades(tt.input)
+			names := make([]string, 0, len(result))
+			for _, pkg := range result {
+				names = append(names, pkg.Name)
+			}
+			assert.Equal(t, tt.expectedNames, names)
+			assert.Equal(t, tt.expectedSkipped, skipped)
+			for _, skippedName := range skipped {
+				assert.NotContains(t, names, skippedName,
+					"skipped downgrade must not appear in the updates that get applied")
+			}
+		})
+	}
+}
+
+func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
+	config := &buildkit.Config{}
+	currentState := &config.ImageState
+	manager := &golangManager{}
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name:             "github.com/gin-gonic/gin",
+				InstalledVersion: "v1.9.1",
+				FixedVersion:     "v1.7.7",
+				Type:             utils.GoModules,
+			},
+		},
+	}
+
+	state, errPkgs, err := manager.InstallUpdates(t.Context(), currentState, manifest, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github.com/gin-gonic/gin"}, errPkgs,
+		"downgrade-skipped packages must be reported as unpatched so they stay out of validated updates")
+	assert.Same(t, currentState, state)
+}
+
+func TestAppendIncompatibleIfNeeded(t *testing.T) {
+	tests := []struct {
+		name       string
+		modulePath string
+		version    string
+		expected   string
+	}{
+		{
+			name:       "pre-module major v2+ without path suffix",
+			modulePath: "github.com/docker/docker",
+			version:    "v28.0.0",
+			expected:   "v28.0.0+incompatible",
+		},
+		{
+			name:       "module path with matching major suffix",
+			modulePath: "github.com/foo/bar/v2",
+			version:    "v2.1.0",
+			expected:   "v2.1.0",
+		},
+		{
+			name:       "major v0",
+			modulePath: "github.com/foo/bar",
+			version:    "v0.9.1",
+			expected:   "v0.9.1",
+		},
+		{
+			name:       "major v1",
+			modulePath: "github.com/foo/bar",
+			version:    "v1.2.3",
+			expected:   "v1.2.3",
+		},
+		{
+			name:       "already suffixed",
+			modulePath: "github.com/docker/docker",
+			version:    "v28.0.0+incompatible",
+			expected:   "v28.0.0+incompatible",
+		},
+		{
+			name:       "pseudo-version at v0",
+			modulePath: "github.com/foo/bar",
+			version:    "v0.0.0-20230101120000-abcdef123456",
+			expected:   "v0.0.0-20230101120000-abcdef123456",
+		},
+		{
+			name:       "pseudo-version at major v2 without path suffix",
+			modulePath: "github.com/foo/bar",
+			version:    "v2.0.1-0.20230101120000-abcdef123456",
+			expected:   "v2.0.1-0.20230101120000-abcdef123456+incompatible",
+		},
+		{
+			name:       "pseudo-version at major v2 with path suffix",
+			modulePath: "github.com/foo/bar/v2",
+			version:    "v2.0.1-0.20230101120000-abcdef123456",
+			expected:   "v2.0.1-0.20230101120000-abcdef123456",
+		},
+		{
+			name:       "invalid version left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "not-a-version",
+			expected:   "not-a-version",
+		},
+		{
+			name:       "empty version left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "",
+			expected:   "",
+		},
+		{
+			// A version that already carries build metadata must not gain a
+			// second '+' component, which would be invalid semver.
+			name:       "existing build metadata left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "v2.0.0+build1",
+			expected:   "v2.0.0+build1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := appendIncompatibleIfNeeded(tt.modulePath, tt.version)
+			assert.Equal(t, tt.expected, result, "Module: %s, version: %s", tt.modulePath, tt.version)
+		})
+	}
+}
+
+// TestIncompatibleVersionsPassValidation ensures the +incompatible build tag
+// survives the existing version validation and cleaning paths.
+func TestIncompatibleVersionsPassValidation(t *testing.T) {
+	assert.True(t, isValidGoVersion("v28.0.0+incompatible"))
+	assert.NoError(t, validateGoVersion("v28.0.0+incompatible"))
+	assert.Equal(t, "v28.0.0+incompatible", cleanGoVersion("v28.0.0+incompatible"))
+}
+
+// TestBuildBinaryUpdateMap asserts that the binary-rebuild path normalizes the
+// versions it records as module requirements: a missing 'v' prefix is added and
+// pre-module major>=2 dependencies gain the +incompatible build tag, matching
+// the `go get` spec construction used by the in-image module path.
+func TestBuildBinaryUpdateMap(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "github.com/docker/docker", FixedVersion: "v28.0.0"},
+		{Name: "github.com/moby/moby", FixedVersion: "28.0.0"},
+		{Name: "github.com/foo/bar/v2", FixedVersion: "v2.1.0"},
+		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+		{Name: "github.com/already/tagged", FixedVersion: "v3.1.0+incompatible"},
+		{Name: "github.com/no/fix", FixedVersion: ""},
+		{Name: "k8s.io/kubernetes", FixedVersion: "v1.30.0"},
+	}
+
+	got := buildBinaryUpdateMap(updates)
+
+	want := map[string]string{
+		"github.com/docker/docker":  "v28.0.0+incompatible",
+		"github.com/moby/moby":      "v28.0.0+incompatible",
+		"github.com/foo/bar/v2":     "v2.1.0",
+		"golang.org/x/net":          "v0.23.0",
+		"github.com/already/tagged": "v3.1.0+incompatible",
+	}
+	assert.Equal(t, want, got)
+}

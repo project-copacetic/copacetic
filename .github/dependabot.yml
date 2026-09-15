@@ -1,0 +1,49 @@
+version: 2
+updates:
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+        - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      all:
+        patterns:
+        - "*"
+
+  - package-ecosystem: "npm"
+    directory: "/website"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+    groups:
+      all:
+        patterns:
+        - "*"
+
+  - package-ecosystem: docker
+    directory: /integration/singlearch/fixtures/openssl-test-img-debian
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /integration/singlearch/fixtures/openssl-test-img-rpm
+    schedule:
+      interval: daily
+
+  - package-ecosystem: docker
+    directory: /integration/singlearch/fixtures/tdnf-test-img
+    schedule:
+      interval: daily

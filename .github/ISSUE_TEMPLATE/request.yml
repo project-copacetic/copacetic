@@ -1,0 +1,35 @@
+name: Request
+description: Request a new feature or propose an enhancement to Project Copacetic
+title: "[REQ] <title>"
+labels:
+  - "enhancement"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search to see if an issue already exists for your request before continuing.
+  - type: dropdown
+    attributes:
+      label: What kind of request is this?
+      multiple: false
+      options:
+        - New feature
+        - Improvement of existing experience
+        - Other
+  - type: textarea
+    attributes:
+      label: What is your request or suggestion?
+      placeholder: |
+        e.g. I would like copa to add this <feature> so that I can use it in my <scenario>.
+        e.g. When using <copa command> the <current behavior> has this <limitation> and it would be better if it has this <improvement>.
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out a request!
+  - type: checkboxes
+    id: idea
+    attributes:
+      label: "Are you willing to submit PRs to contribute to this feature request?"
+      description: "This is absolutely not required, but we are happy to guide you in the contribution process especially when you already have a good proposal or understanding of how to implement it. Join us at the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf) if you have any questions."
+      options:
+        - label: Yes, I am willing to implement it.

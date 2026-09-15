@@ -1,0 +1,40 @@
+#!/usr/bin/env sh
+
+# dockerd requires containerd snapshotter support to be enabled otherwise required features for buildkit are disabled.
+docker build -t dind -<<EOF
+FROM docker:26.1-dind
+RUN mkdir -p /etc/docker && echo '{"features": { "containerd-snapshotter": true }}' > /etc/docker/daemon.json
+ENTRYPOINT ["dockerd"]
+EOF
+
+: "${DOCKER_DIND_VOLUME:="copa-docker-dind"}"
+
+sock_dir="$(mktemp -d)"
+
+docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
+echo "DOCKER_CUSTOM_UNIX_ID=$docker_custom_unix_id" >> "$GITHUB_ENV"
+echo "SOCK_DIR=$sock_dir" >> "$GITHUB_ENV"
+
+
+# The variables in this script are intentionally expanded by the inner shell.
+# shellcheck disable=SC2016
+timeout 5m bash -c '
+docker_custom_unix_id="$1"
+until [ "$(docker inspect -f "{{.State.Status}}" "$docker_custom_unix_id")" = "running" ]; do
+    sleep 0.1
+done
+' -- "$docker_custom_unix_id"
+
+_check_docker_dind() {
+    docker -H "unix://${sock_dir}/docker.sock" info
+}
+
+while ! _check_docker_dind; do
+    _check_docker_dind || sleep 1
+done
+
+# Keep every Docker client in this shell on the same nested daemon as Copa.
+# In particular, in-process descriptor checks do not receive the explicit
+# environment overrides used by child commands in the integration tests.
+export DOCKER_HOST="unix://${sock_dir}/docker.sock"
+export COPA_BUILDKIT_ADDR="docker://${DOCKER_HOST}"

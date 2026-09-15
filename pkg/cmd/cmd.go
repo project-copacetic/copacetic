@@ -1,0 +1,262 @@
+package cmd
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/bulk"
+	"github.com/project-copacetic/copacetic/pkg/patch"
+	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/utils"
+	log "github.com/sirupsen/logrus"
+	"github.com/spf13/cobra"
+
+	// Register connection helpers for buildkit.
+	_ "github.com/moby/buildkit/client/connhelper/dockercontainer"
+	_ "github.com/moby/buildkit/client/connhelper/kubepod"
+	_ "github.com/moby/buildkit/client/connhelper/nerdctlcontainer"
+	_ "github.com/moby/buildkit/client/connhelper/podmancontainer"
+	_ "github.com/moby/buildkit/client/connhelper/ssh"
+	"github.com/moby/buildkit/util/progress/progressui"
+)
+
+type patchArgs struct {
+	appImage            string
+	report              string
+	patchedTag          string
+	suffix              string
+	workingFolder       string
+	timeout             time.Duration
+	scanner             string
+	ignoreError         bool
+	format              string
+	output              string
+	bkOpts              buildkit.Opts
+	push                bool
+	platform            []string
+	loader              string
+	pkgTypes            string
+	libraryPatchLevel   string
+	toolchainPatchLevel string
+	goVCSURL            string
+	progress            string
+	ociDir              string
+	compression         string
+	forceCompression    bool
+	eolAPIBaseURL       string
+	exitOnEOL           bool
+	configFile          string
+	chiselRelease       string
+	chartRegistry       string
+	chartName           string
+	chartVersion        string
+	chartRepo           string
+}
+
+func NewPatchCmd() *cobra.Command {
+	ua := patchArgs{}
+	patchCmd := &cobra.Command{
+		Use:   "patch",
+		Short: "Patch container image(s) with upgrade packages specified by a vulnerability report or by comprehensive update",
+		Example: `copa patch -i images/python:3.7-alpine -r trivy.json -t 3.7-alpine-patched (Single Image Patching)
+copa patch --config copa-bulk-config.yaml --push (Bulk Image Patching)
+copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/stakater/charts --chart-registry oci://ghcr.io/myorg/charts --push (Single Chart Patching)`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Validate library patch level
+			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
+				return err
+			}
+
+			// Create a context that is canceled on SIGINT/SIGTERM.
+			// This ensures BuildKit and all child operations stop promptly on Ctrl+C.
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
+			// Set up force-quit handler for multiple Ctrl+C presses.
+			// If the user presses Ctrl+C again while we're shutting down, exit immediately.
+			forceQuitCh := make(chan os.Signal, 1)
+			signal.Notify(forceQuitCh, os.Interrupt, syscall.SIGTERM)
+			go func() {
+				<-forceQuitCh // First signal is handled by NotifyContext above
+				<-forceQuitCh // Second signal: force quit
+				fmt.Fprintln(os.Stderr, "\nForce quit")
+				os.Exit(1)
+			}()
+			defer signal.Stop(forceQuitCh)
+
+			opts := &types.Options{
+				Image:               ua.appImage,
+				Report:              ua.report,
+				PatchedTag:          ua.patchedTag,
+				Suffix:              ua.suffix,
+				WorkingFolder:       ua.workingFolder,
+				Timeout:             ua.timeout,
+				Scanner:             ua.scanner,
+				IgnoreError:         ua.ignoreError,
+				Format:              ua.format,
+				Output:              ua.output,
+				BkAddr:              ua.bkOpts.Addr,
+				BkCACertPath:        ua.bkOpts.CACertPath,
+				BkCertPath:          ua.bkOpts.CertPath,
+				BkKeyPath:           ua.bkOpts.KeyPath,
+				Push:                ua.push,
+				Platforms:           ua.platform,
+				Loader:              ua.loader,
+				PkgTypes:            ua.pkgTypes,
+				LibraryPatchLevel:   ua.libraryPatchLevel,
+				ToolchainPatchLevel: ua.toolchainPatchLevel,
+				GoVCSURL:            ua.goVCSURL,
+				Progress:            progressui.DisplayMode(ua.progress),
+				OCIDir:              ua.ociDir,
+				Compression:         ua.compression,
+				ForceCompression:    ua.forceCompression,
+				EOLAPIBaseURL:       ua.eolAPIBaseURL,
+				ExitOnEOL:           ua.exitOnEOL,
+				ConfigFile:          ua.configFile,
+				ChiselRelease:       ua.chiselRelease,
+				ChartRegistry:       ua.chartRegistry,
+				ChartName:           ua.chartName,
+				ChartVersion:        ua.chartVersion,
+				ChartRepo:           ua.chartRepo,
+			}
+
+			hasChart := ua.chartName != ""
+			hasConfig := ua.configFile != ""
+			hasImage := ua.appImage != ""
+
+			modeCount := 0
+			if hasChart {
+				modeCount++
+			}
+			if hasConfig {
+				modeCount++
+			}
+			if hasImage {
+				modeCount++
+			}
+
+			if modeCount == 0 {
+				return errors.New("one of --image, --config, or --chart must be provided")
+			}
+			if modeCount > 1 {
+				return errors.New("--image, --config, and --chart are mutually exclusive")
+			}
+
+			if hasConfig {
+				if ua.appImage != "" || ua.patchedTag != "" {
+					return errors.New("--config cannot be used with --image or --tag")
+				}
+				if cmd.Flags().Changed("chisel-release") {
+					return errors.New("--chisel-release cannot be used with --config")
+				}
+
+				log.Info("Starting in bulk image patching mode...")
+
+				return bulk.PatchFromConfig(ctx, ua.configFile, opts)
+			}
+
+			if hasChart {
+				if ua.chartVersion == "" || ua.chartRepo == "" {
+					return errors.New("--chart requires --chart-version and --chart-repo")
+				}
+				if ua.chartRegistry == "" {
+					return errors.New("--chart requires --chart-registry")
+				}
+				log.Info("Starting in single chart patching mode...")
+				return bulk.PatchChart(ctx, opts)
+			}
+
+			log.Info("Starting in single image patching mode...")
+			return patch.Patch(ctx, opts)
+		},
+	}
+	flags := patchCmd.Flags()
+	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file. Cannot be used with --image, --tag, or --chisel-release.")
+	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
+	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory of reports")
+	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
+	flags.StringVar(&ua.chiselRelease, "chisel-release", "", "Chisel release name, local directory, or pinned HTTPS Git URL override")
+	flags.StringVarP(&ua.suffix, "tag-suffix", "", "patched",
+		"Suffix for the patched image (if no explicit --tag provided)")
+	flags.StringVarP(&ua.workingFolder, "working-folder", "w", "", "Working folder, defaults to system temp folder")
+	flags.StringVarP(&ua.bkOpts.Addr, "addr", "a", "",
+		"Address of buildkitd service, defaults to local docker daemon with fallback to "+buildkit.DefaultAddr)
+	flags.StringVarP(&ua.bkOpts.CACertPath, "cacert", "", "", "Absolute path to buildkitd CA certificate")
+	flags.StringVarP(&ua.bkOpts.CertPath, "cert", "", "", "Absolute path to buildkit client certificate")
+	flags.StringVarP(&ua.bkOpts.KeyPath, "key", "", "", "Absolute path to buildkit client key")
+	flags.DurationVar(&ua.timeout, "timeout", 5*time.Minute, "Timeout for the operation, defaults to '5m'")
+	flags.StringVarP(&ua.scanner, "scanner", "s", "trivy", "Scanner used to generate the report, defaults to 'trivy'")
+	flags.BoolVar(&ua.ignoreError, "ignore-errors", false, "Ignore errors and continue patching (for single-platform: continue with other packages; for multi-platform: continue with other platforms)")
+	flags.StringVarP(&ua.format, "format", "f", "openvex", "Output format, defaults to 'openvex'")
+	flags.StringVarP(&ua.output, "output", "o", "", "Output file path")
+	flags.BoolVarP(&ua.push, "push", "p", false, "Push patched image to destination registry")
+	flags.StringVar(&ua.ociDir, "oci-dir", "", "Create OCI layout at specified directory for multi-platform images (only used when --push is not specified)")
+	flags.StringSliceVar(&ua.platform, "platform", nil,
+		"Target platform(s) for multi-arch images when no report directory is provided (e.g., linux/amd64,linux/arm64). "+
+			"Valid platforms: linux/amd64, linux/arm64, linux/riscv64, linux/ppc64le, linux/s390x, linux/386, linux/arm/v7, linux/arm/v6. "+
+			"If platform flag is used, only specified platforms are patched and the rest are preserved. If not specified, all platforms present in the image are patched.")
+	flags.StringVarP(&ua.loader, "loader", "l", "", "Loader to use for loading images. Options: 'docker', 'podman', or empty for auto-detection based on buildkit address")
+	flags.StringVar(&ua.eolAPIBaseURL, "eol-api-url", "", "EOL API base URL, defaults to 'https://endoflife.date/api/v1/products'")
+	flags.BoolVar(&ua.exitOnEOL, "exit-on-eol", false, "Exit with error when EOL (End of Life) operating system is detected")
+	flags.StringVar(&ua.progress, "progress", "auto", "Set the buildkit display mode (auto, plain, tty, quiet or rawjson). Set to quiet to discard all output.")
+	flags.StringVar(&ua.compression, "compression", patch.DefaultLocalExportCompression,
+		"Layer compression for patched-platform local export (BuildKit values such as 'uncompressed', 'gzip', 'estargz', or 'zstd')")
+	flags.BoolVar(&ua.forceCompression, "force-compression", false, "Re-encode BuildKit-exported patched-platform layers to the selected compression on local export")
+
+	// Experimental flags - only available when COPA_EXPERIMENTAL=1
+	if os.Getenv("COPA_EXPERIMENTAL") == "1" {
+		flags.StringVar(&ua.chartRegistry, "chart-registry", "", "[EXPERIMENTAL] OCI registry to push patched wrapper charts (e.g. oci://ghcr.io/myorg/charts)")
+		flags.StringVar(&ua.chartName, "chart", "", "[EXPERIMENTAL] Helm chart name for single chart patching mode")
+		flags.StringVar(&ua.chartVersion, "chart-version", "", "[EXPERIMENTAL] Helm chart version (required with --chart)")
+		flags.StringVar(&ua.chartRepo, "chart-repo", "", "[EXPERIMENTAL] Helm chart repository URL (required with --chart, e.g. oci://ghcr.io/vectordotdev/helm)")
+
+		flags.StringVar(&ua.pkgTypes, "pkg-types", utils.PkgTypeOS,
+			"[EXPERIMENTAL] Package types to patch, comma-separated list of 'os' and 'library'. "+
+				"Defaults to 'os' for OS vulnerabilities only")
+		flags.StringVar(&ua.libraryPatchLevel, "library-patch-level", utils.PatchTypePatch,
+			"[EXPERIMENTAL] Library patch level preference: 'patch', 'minor', or 'major'. "+
+				"Only applicable when 'library' is included in --pkg-types. Defaults to 'patch'")
+		flags.StringVar(&ua.toolchainPatchLevel, "toolchain-patch-level", "",
+			"[EXPERIMENTAL] Upgrade the language toolchain (e.g., Go compiler) to fix stdlib vulnerabilities. "+
+				"Values: 'patch' (e.g., 1.23.0 -> 1.23.latest), 'minor' (e.g., 1.23 -> 1.25), 'major'. "+
+				"Currently supported for Go only. Requires 'library' in --pkg-types")
+		flags.Lookup("toolchain-patch-level").NoOptDefVal = utils.PatchTypePatch
+		flags.StringVar(&ua.goVCSURL, "go-vcs-url", "",
+			"[EXPERIMENTAL] Override Go source repository and ref for binary rebuilds. Format: 'https://github.com/org/repo@ref'")
+	} else {
+		// Set default values when experimental flags are not enabled
+		ua.pkgTypes = utils.PkgTypeOS
+		ua.libraryPatchLevel = utils.PatchTypePatch
+	}
+
+	return patchCmd
+}
+
+// validateLibraryPatchLevel validates the library patch level flag and its usage.
+func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
+	// Valid library patch levels
+	validLevels := map[string]bool{
+		utils.PatchTypePatch: true,
+		utils.PatchTypeMinor: true,
+		utils.PatchTypeMajor: true,
+	}
+
+	// Check if the provided level is valid
+	if !validLevels[libraryPatchLevel] {
+		return fmt.Errorf("invalid library patch level '%s': must be one of 'patch', 'minor', or 'major'", libraryPatchLevel)
+	}
+
+	// If library patch level is specified and not the default, ensure library is in pkg-types
+	if libraryPatchLevel != utils.PatchTypePatch && !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
+		return fmt.Errorf("--library-patch-level can only be used when 'library' is included in --pkg-types")
+	}
+
+	return nil
+}

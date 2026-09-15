@@ -1,0 +1,309 @@
+package pkgmgr
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/hashicorp/go-multierror"
+	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/frontend/gateway/client"
+	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
+	log "github.com/sirupsen/logrus"
+)
+
+const (
+	copaPrefix       = "copa-"
+	inputPath        = "/" + copaPrefix + "input"
+	resultsPath      = "/" + copaPrefix + "out"
+	downloadPath     = "/" + copaPrefix + "downloads"
+	unpackPath       = "/" + copaPrefix + "unpacked"
+	resultManifest   = "results.manifest"
+	imageCachePrefix = "ghcr.io/project-copacetic/copacetic"
+
+	ChiselReleaseAnnotation        = "sh.copa.chisel.release"
+	ChiselVersionAnnotation        = "sh.copa.chisel.version"
+	NativeChiselTargetedPatchError = "targeted patching of native Chisel manifests is not supported; omit --report to run a comprehensive Chisel update"
+	NativeChiselManifestPath       = "/var/lib/chisel/manifest.wall"
+)
+
+type PackageManager interface {
+	InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error)
+	GetPackageType() string
+}
+
+// PackageManagerOptions contains optional settings used when constructing a
+// package manager.
+type PackageManagerOptions struct {
+	ChiselRelease string
+}
+
+// PackageManagerMetadata is an optional interface implemented by package
+// managers that produce OCI annotations while installing updates. Callers must
+// continue to support package managers that do not implement this interface.
+type PackageManagerMetadata interface {
+	Annotations() map[string]string
+}
+
+// GetPackageManagerAnnotations returns a defensive copy of annotations exposed
+// by manager. Package managers that do not implement PackageManagerMetadata
+// simply return no annotations.
+func GetPackageManagerAnnotations(manager PackageManager) map[string]string {
+	metadata, ok := manager.(PackageManagerMetadata)
+	if !ok {
+		return nil
+	}
+
+	annotations := metadata.Annotations()
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	result := make(map[string]string, len(annotations))
+	for key, value := range annotations {
+		result[key] = value
+	}
+	return result
+}
+
+func GetPackageManager(osType string, osVersion string, config *buildkit.Config, workingFolder string) (PackageManager, error) {
+	return GetPackageManagerWithOptions(osType, osVersion, config, workingFolder, PackageManagerOptions{})
+}
+
+// GetPackageManagerWithOptions constructs a package manager with optional
+// manager-specific settings while preserving the original constructor for
+// existing callers.
+func GetPackageManagerWithOptions(osType string, osVersion string, config *buildkit.Config, workingFolder string, managerOptions PackageManagerOptions) (PackageManager, error) {
+	canonicalOSType := utils.CanonicalOSType(osType)
+	switch canonicalOSType {
+	case utils.OSTypeAlpine:
+		return &apkManager{
+			config:        config,
+			workingFolder: workingFolder,
+		}, nil
+	case utils.OSTypeDebian, utils.OSTypeUbuntu:
+		return &dpkgManager{
+			config:        config,
+			workingFolder: workingFolder,
+			osVersion:     osVersion,
+			osType:        canonicalOSType,
+			chiselRelease: managerOptions.ChiselRelease,
+		}, nil
+	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
+		return &rpmManager{
+			config:        config,
+			workingFolder: workingFolder,
+			osType:        canonicalOSType,
+			osVersion:     osVersion,
+		}, nil
+	case utils.OSTypeSLES, utils.OSTypeOpenSUSELeap, utils.OSTypeOpenSUSETW:
+		return &rpmManager{
+			config:        config,
+			workingFolder: workingFolder,
+			osType:        canonicalOSType,
+			osVersion:     osVersion,
+		}, nil
+	case utils.OSTypeArchLinux:
+		return &pacmanManager{
+			config:        config,
+			workingFolder: workingFolder,
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported osType %s specified", osType)
+	}
+}
+
+// Utility functions for package manager implementations to share
+
+// validOSPackageNamePattern matches valid OS package names across dpkg, rpm, apk, and pacman.
+// Allows alphanumeric characters plus . + - : ~ _ (common in Debian epochs, RPM release tags, etc.).
+var validOSPackageNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.+\-:~_]*$`)
+
+// ValidateOSPackageNames validates that all package names in the update list are safe
+// for interpolation into shell commands. Returns an error if any name is invalid.
+func ValidateOSPackageNames(updates unversioned.UpdatePackages) error {
+	for _, u := range updates {
+		if u.Name == "" {
+			return fmt.Errorf("empty package name found in update list")
+		}
+		if len(u.Name) > 256 {
+			return fmt.Errorf("package name too long (max 256 characters): %s", u.Name)
+		}
+		if !validOSPackageNamePattern.MatchString(u.Name) {
+			return fmt.Errorf("invalid OS package name %q: must match %s", u.Name, validOSPackageNamePattern.String())
+		}
+		if strings.ContainsAny(u.Name, ";&|`$(){}[]<>\"'\\") {
+			return fmt.Errorf("OS package name contains unsafe shell characters: %s", u.Name)
+		}
+	}
+	return nil
+}
+
+type VersionComparer struct {
+	IsValid  func(string) bool
+	LessThan func(string, string) bool
+}
+
+func GetUniqueLatestUpdates(updates unversioned.UpdatePackages, cmp VersionComparer, ignoreErrors bool) (unversioned.UpdatePackages, error) {
+	if len(updates) == 0 {
+		// Return an empty slice (not nil) to indicate no OS updates.
+		// This allows library-only patching flows to proceed without raising an error.
+		return unversioned.UpdatePackages{}, nil
+	}
+
+	dict := make(map[string]string)
+	var allErrors *multierror.Error
+	for _, u := range updates {
+		if cmp.IsValid(u.FixedVersion) {
+			ver, ok := dict[u.Name]
+			if !ok {
+				dict[u.Name] = u.FixedVersion
+			} else if cmp.LessThan(ver, u.FixedVersion) {
+				dict[u.Name] = u.FixedVersion
+			}
+		} else {
+			err := fmt.Errorf("invalid version %s found for package %s", u.FixedVersion, u.Name)
+			log.Error(err)
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+	}
+	if allErrors != nil && !ignoreErrors {
+		return nil, allErrors.ErrorOrNil()
+	}
+
+	out := unversioned.UpdatePackages{}
+	for k, v := range dict {
+		out = append(out, unversioned.UpdatePackage{Name: k, FixedVersion: v})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+type UpdatePackageInfo struct {
+	Filename string
+	Version  string
+}
+
+type PackageInfoReader interface {
+	GetVersion(string) (string, error)
+	GetName(string) (string, error)
+}
+
+type UpdateMap map[string]*UpdatePackageInfo
+
+func GetValidatedUpdatesMap(updates unversioned.UpdatePackages, cmp VersionComparer, reader PackageInfoReader, stagingPath string) (UpdateMap, error) {
+	m := make(UpdateMap)
+	for _, update := range updates {
+		m[update.Name] = &UpdatePackageInfo{Version: update.FixedVersion}
+	}
+
+	files, err := os.ReadDir(stagingPath)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		log.Warn("No downloaded packages to install")
+		return nil, nil
+	}
+
+	var allErrors *multierror.Error
+	for _, file := range files {
+		name, err := reader.GetName(file.Name())
+		if err != nil {
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+		version, err := reader.GetVersion(file.Name())
+		if err != nil {
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+		if !cmp.IsValid(version) {
+			err := fmt.Errorf("invalid version %s found for package %s", version, name)
+			log.Error(err)
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+
+		p, ok := m[name]
+		if !ok {
+			log.Warnf("Unexpected: ignoring downloaded update package %s not specified in report", name)
+			os.Remove(filepath.Join(stagingPath, file.Name()))
+			continue
+		}
+
+		if cmp.LessThan(version, p.Version) {
+			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", name, version, p.Version)
+			log.Error(err)
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+		p.Filename = file.Name()
+	}
+
+	if allErrors != nil {
+		return nil, allErrors.ErrorOrNil()
+	}
+	return m, nil
+}
+
+// tryImage attempts to create an llb.Image reference and call c.Solve() on it
+// to confirm it exists. If it doesn't, it will return an error so we can fallback.
+func tryImage(ctx context.Context, imageRef string, c client.Client, platform *ocispecs.Platform) (llb.State, error) {
+	imageOpts := []llb.ImageOption{
+		llb.ResolveModeDefault,
+		llb.WithCustomName(fmt.Sprintf("Resolving image %s", imageRef)),
+	}
+	if platform != nil {
+		imageOpts = append(imageOpts, llb.Platform(*platform))
+	}
+	st := llb.Image(
+		imageRef,
+		imageOpts...,
+	)
+	def, err := st.Marshal(ctx)
+	if err != nil {
+		return llb.State{}, err
+	}
+
+	// Evaluate the solve to see if BuildKit can actually resolve it
+	_, err = c.Solve(ctx, client.SolveRequest{
+		Definition: def.ToPB(),
+		Evaluate:   true,
+	})
+	if err != nil {
+		return llb.State{}, fmt.Errorf("failed to resolve %s: %w", imageRef, err)
+	}
+	return st, nil
+}
+
+// isMarkerMissingErr returns true only when a marker-file extraction failed
+// during ReadFile (not during c.Solve). This guarantees the error text we
+// inspect came from the file-read phase only and cannot contain shell command
+// text from the preceding graph, so a path/basename match reliably identifies
+// a missing marker rather than an unrelated "not found" in a command string.
+func isMarkerMissingErr(err *buildkit.ReadFileErr, markerPath string) bool {
+	if err == nil || !err.ReadFailed || markerPath == "" {
+		return false
+	}
+
+	errString := strings.ToLower(err.Error())
+	if !strings.Contains(errString, "no such file or directory") && !strings.Contains(errString, "not found") {
+		return false
+	}
+
+	markerPath = strings.ToLower(markerPath)
+	markerBase := strings.ToLower(filepath.Base(markerPath))
+
+	return strings.Contains(errString, markerPath) || strings.Contains(errString, markerBase)
+}

@@ -1,0 +1,1096 @@
+package provenance
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestDetermineBaseImage(t *testing.T) {
+	tests := []struct {
+		name      string
+		buildInfo *BuildInfo
+		want      string
+	}{
+		{
+			name: "explicit base image",
+			buildInfo: &BuildInfo{
+				BaseImage: "docker.io/library/golang:1.21-alpine",
+				GoVersion: "1.21",
+			},
+			want: "docker.io/library/golang:1.21-alpine",
+		},
+		{
+			name: "construct from Go version",
+			buildInfo: &BuildInfo{
+				GoVersion: "1.22",
+			},
+			want: "golang:" + golangToolingTag,
+		},
+		{
+			name: "construct from Go version with patch",
+			buildInfo: &BuildInfo{
+				GoVersion: "1.21.5",
+			},
+			want: "golang:" + golangToolingTag,
+		},
+		{
+			name:      "empty build info",
+			buildInfo: &BuildInfo{},
+			want:      "",
+		},
+	}
+
+	rebuilder := NewRebuilder()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := rebuilder.determineBaseImage(tt.buildInfo)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGenerateGoMod(t *testing.T) {
+	tests := []struct {
+		name      string
+		buildInfo *BuildInfo
+		updates   map[string]string
+		contains  []string
+	}{
+		{
+			name: "basic go.mod",
+			buildInfo: &BuildInfo{
+				ModulePath: "github.com/example/app",
+				GoVersion:  "1.21",
+				Dependencies: map[string]string{
+					"github.com/pkg/errors": "v0.9.1",
+				},
+			},
+			updates: map[string]string{},
+			contains: []string{
+				"module github.com/example/app",
+				"go 1.21",
+				"github.com/pkg/errors v0.9.1",
+			},
+		},
+		{
+			name: "go.mod with updates",
+			buildInfo: &BuildInfo{
+				ModulePath: "github.com/example/app",
+				GoVersion:  "1.21",
+				Dependencies: map[string]string{
+					"github.com/pkg/errors": "v0.9.1",
+					"golang.org/x/net":      "v0.18.0",
+				},
+			},
+			updates: map[string]string{
+				"golang.org/x/net": "v0.19.0",
+			},
+			contains: []string{
+				"module github.com/example/app",
+				"go 1.21",
+				"github.com/pkg/errors v0.9.1",
+				"golang.org/x/net v0.19.0",
+			},
+		},
+		{
+			name: "go.mod replacing existing dependency",
+			buildInfo: &BuildInfo{
+				ModulePath: "github.com/example/app",
+				GoVersion:  "1.22",
+				Dependencies: map[string]string{
+					"github.com/vulnerable/pkg": "v1.0.0",
+				},
+			},
+			updates: map[string]string{
+				"github.com/vulnerable/pkg": "v1.0.1",
+			},
+			contains: []string{
+				"module github.com/example/app",
+				"go 1.22",
+				"github.com/vulnerable/pkg v1.0.1",
+			},
+		},
+		{
+			name: "go.mod with version normalization (no v prefix)",
+			buildInfo: &BuildInfo{
+				ModulePath: "github.com/example/app",
+				GoVersion:  "1.22",
+				Dependencies: map[string]string{
+					"github.com/some/pkg": "v1.0.0",
+				},
+			},
+			updates: map[string]string{
+				"github.com/some/pkg": "1.0.1",
+			},
+			contains: []string{
+				"module github.com/example/app",
+				"go 1.22",
+				"github.com/some/pkg v1.0.1",
+			},
+		},
+	}
+
+	rebuilder := NewRebuilder()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			goMod := rebuilder.generateGoMod(tt.buildInfo, tt.updates)
+
+			for _, s := range tt.contains {
+				assert.Contains(t, goMod, s)
+			}
+		})
+	}
+}
+
+func TestConstructBuildCommand(t *testing.T) {
+	tests := []struct {
+		name       string
+		buildInfo  *BuildInfo
+		outputPath string
+		contains   []string
+	}{
+		{
+			name: "basic build command",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				MainPackage: "./cmd/app",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				"CGO_ENABLED=0",
+				"/usr/local/go/bin/go build",
+				"-o /output/app",
+				"./cmd/app",
+			},
+		},
+		{
+			name: "build with CGO enabled",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  true,
+				MainPackage: ".",
+			},
+			outputPath: "/output/binary",
+			contains: []string{
+				"CGO_ENABLED=1",
+				"/usr/local/go/bin/go build",
+				"-o /output/binary",
+			},
+		},
+		{
+			name: "build with GOOS/GOARCH",
+			buildInfo: &BuildInfo{
+				CGOEnabled: false,
+				BuildArgs: map[string]string{
+					"GOOS":   "linux",
+					"GOARCH": "arm64",
+				},
+				MainPackage: ".",
+			},
+			outputPath: "/output/binary",
+			contains: []string{
+				"CGO_ENABLED=0",
+				"GOOS=linux",
+				"GOARCH=arm64",
+				"/usr/local/go/bin/go build",
+				"-o /output/binary",
+			},
+		},
+		{
+			name: "build with flags - ldflags quoted",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-trimpath", "-ldflags=-s -w"},
+				MainPackage: "./cmd/server",
+			},
+			outputPath: "/output/server",
+			contains: []string{
+				"CGO_ENABLED=0",
+				"-o /output/server",
+				"-trimpath",
+				"'-ldflags=-s -w'",
+				"./cmd/server",
+			},
+		},
+		{
+			name: "build with X flags in ldflags",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-ldflags=-s -w -X main.version=1.0.0 -X main.commit=abc123"},
+				MainPackage: ".",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				"'-ldflags=-s -w -X main.version=1.0.0 -X main.commit=abc123'",
+			},
+		},
+		{
+			name: "single-word flag not quoted",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				BuildFlags:  []string{"-trimpath"},
+				MainPackage: ".",
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				" -trimpath ",
+			},
+		},
+		{
+			name: "default main package",
+			buildInfo: &BuildInfo{
+				CGOEnabled: false,
+			},
+			outputPath: "/output/app",
+			contains: []string{
+				"/usr/local/go/bin/go build",
+				"-o /output/app",
+				".",
+			},
+		},
+		{
+			name: "empty output path",
+			buildInfo: &BuildInfo{
+				CGOEnabled:  false,
+				MainPackage: ".",
+			},
+			outputPath: "",
+			contains: []string{
+				"CGO_ENABLED=0",
+				"/usr/local/go/bin/go build .",
+			},
+		},
+	}
+
+	rebuilder := NewRebuilder()
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.buildInfo.BuildArgs == nil {
+				tt.buildInfo.BuildArgs = make(map[string]string)
+			}
+
+			cmd, err := rebuilder.constructBuildCommand(tt.buildInfo, "/usr/local/go/bin/go", tt.outputPath)
+			require.NoError(t, err)
+
+			for _, s := range tt.contains {
+				assert.Contains(t, cmd, s)
+			}
+		})
+	}
+}
+
+func TestRebuildStrategy_String(t *testing.T) {
+	tests := []struct {
+		strategy RebuildStrategy
+		want     string
+	}{
+		{RebuildStrategyAuto, "auto"},
+		{RebuildStrategyHeuristic, "heuristic"},
+		{RebuildStrategyNone, "none"},
+		{RebuildStrategy(999), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			got := tt.strategy.String()
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestNormalizeVersion(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"1.0.0", "v1.0.0"},
+		{"v1.0.0", "v1.0.0"},
+		{"", ""},
+		{"2.3.4", "v2.3.4"},
+		{"v0.0.0", "v0.0.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := normalizeVersion(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBuildGoModEditArgs(t *testing.T) {
+	args, err := buildGoModEditArgs("/usr/local/go/bin/go", map[string]string{
+		"google.golang.org/grpc": "v1.57.1",
+		"golang.org/x/sys":       "0.44.0",
+		"golang.org/x/net":       "v0.56.0",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"/usr/local/go/bin/go",
+		"mod",
+		"edit",
+		"-require=golang.org/x/net@v0.56.0",
+		"-require=golang.org/x/sys@v0.44.0",
+		"-require=google.golang.org/grpc@v1.57.1",
+	}, args)
+}
+
+func TestBuildGoModEditArgsRejectsUnsafeInput(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates map[string]string
+		wantErr string
+	}{
+		{
+			name:    "unsafe module",
+			updates: map[string]string{"example.com/mod;true": "v1.0.0"},
+			wantErr: "module name contains unsafe characters",
+		},
+		{
+			name:    "unsafe version",
+			updates: map[string]string{"example.com/mod": "v1.0.0;true"},
+			wantErr: "version contains unsafe characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := buildGoModEditArgs("go", tt.updates)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestValidateBinaryPath(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid absolute path",
+			path:    "/coredns",
+			wantErr: false,
+		},
+		{
+			name:    "valid nested path",
+			path:    "/usr/bin/myapp",
+			wantErr: false,
+		},
+		{
+			name:    "empty path",
+			path:    "",
+			wantErr: true,
+			errMsg:  "empty",
+		},
+		{
+			name:    "relative path",
+			path:    "bin/myapp",
+			wantErr: true,
+			errMsg:  "absolute",
+		},
+		{
+			name:    "path traversal",
+			path:    "/usr/../etc/passwd",
+			wantErr: true,
+			errMsg:  "traversal",
+		},
+		{
+			name:    "path with null byte",
+			path:    "/app\x00malicious",
+			wantErr: true,
+			errMsg:  "null byte",
+		},
+		{
+			name:    "path with shell metacharacters",
+			path:    "/app;rm -rf /",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with pipe",
+			path:    "/app|cat",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with backticks",
+			path:    "/app`id`",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with dollar sign",
+			path:    "/app$HOME",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with space",
+			path:    "/usr/local/bin/my app",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with newline",
+			path:    "/usr/local/bin/app\ntouch pwned",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with tab",
+			path:    "/usr/local/bin/app\tpwned",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with carriage return",
+			path:    "/usr/local/bin/app\rpwned",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with wildcard asterisk",
+			path:    "/usr/local/bin/app*",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "path with wildcard question mark",
+			path:    "/usr/local/bin/app?",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateBinaryPath(tt.path)
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errMsg != "" {
+					assert.Contains(t, err.Error(), tt.errMsg)
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestStripGoMajorVersionSuffix(t *testing.T) {
+	tests := []struct {
+		subpath string
+		want    string
+	}{
+		{"", ""},
+		{"v2", ""},
+		{"v3", ""},
+		{"v10", ""},
+		{"v1", "v1"},
+		{"v0", "v0"},
+		{"cmd/app", "cmd/app"},
+		{"cluster-autoscaler", "cluster-autoscaler"},
+		{"pkg/v2", "pkg"},
+		{"internal/cmd/v3", "internal/cmd"},
+		{"vfoo", "vfoo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.subpath, func(t *testing.T) {
+			got := stripGoMajorVersionSuffix(tt.subpath)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidateGoModuleName(t *testing.T) {
+	tests := []struct {
+		name    string
+		module  string
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid module name",
+			module:  "github.com/example/module",
+			wantErr: false,
+		},
+		{
+			name:    "unsafe shell characters",
+			module:  "github.com/example/module;rm -rf /",
+			wantErr: true,
+			errMsg:  "unsafe characters",
+		},
+		{
+			name:    "leading dash rejected",
+			module:  "-modfile=/tmp/pwn.mod",
+			wantErr: true,
+			errMsg:  "cannot start with '-'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateGoModuleName(tt.module)
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errMsg)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateRepoURL(t *testing.T) {
+	tests := []struct {
+		url     string
+		wantErr bool
+	}{
+		{"https://github.com/prometheus/alertmanager", false},
+		{"https://github.com/coredns/coredns", false},
+		{"https://gitlab.com/evil/repo", true},
+		{"https://evil.com/backdoor", true},
+		{"http://github.com/user/repo", true},
+		{"", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			err := validateRepoURL(tt.url)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCommitHash(t *testing.T) {
+	tests := []struct {
+		name    string
+		commit  string
+		wantErr bool
+	}{
+		{"valid sha1", "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d", false},
+		{"valid short", "abc1234", false},
+		{"too short", "abc12", true},
+		{"empty", "", true},
+		{"has semicolon", "abc;rm -rf /", true},
+		{"has space", "abc 123", true},
+		{"has newline", "abc\n123", true},
+		{"has dot", "abc.123", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateCommitHash(tt.commit)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDeriveRepoFromModulePath(t *testing.T) {
+	tests := []struct {
+		modulePath  string
+		wantRepoURL string
+		wantSubpath string
+	}{
+		{
+			modulePath:  "github.com/user/repo",
+			wantRepoURL: "https://github.com/user/repo",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "github.com/user/repo/subdir",
+			wantRepoURL: "https://github.com/user/repo",
+			wantSubpath: "subdir",
+		},
+		{
+			modulePath:  "k8s.io/autoscaler",
+			wantRepoURL: "https://github.com/kubernetes/autoscaler",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "k8s.io/autoscaler/cluster-autoscaler",
+			wantRepoURL: "https://github.com/kubernetes/autoscaler",
+			wantSubpath: "cluster-autoscaler",
+		},
+		{
+			modulePath:  "golang.org/x/net",
+			wantRepoURL: "https://github.com/golang/net",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "sigs.k8s.io/controller-runtime",
+			wantRepoURL: "https://github.com/kubernetes-sigs/controller-runtime",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "cloud.google.com/go/storage",
+			wantRepoURL: "https://github.com/googleapis/google-cloud-go",
+			wantSubpath: "storage",
+		},
+		{
+			modulePath:  "go.uber.org/zap",
+			wantRepoURL: "https://github.com/uber-go/zap",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "go.etcd.io/etcd/client/v3",
+			wantRepoURL: "https://github.com/etcd-io/etcd",
+			wantSubpath: "client/v3",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/otel/exporters/otlp",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-go",
+			wantSubpath: "exporters/otlp",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-go-contrib",
+			wantSubpath: "instrumentation/net/http/otelhttp",
+		},
+		{
+			modulePath:  "go.opentelemetry.io/collector/component",
+			wantRepoURL: "https://github.com/open-telemetry/opentelemetry-collector",
+			wantSubpath: "component",
+		},
+		{
+			modulePath:  "google.golang.org/grpc",
+			wantRepoURL: "https://github.com/grpc/grpc-go",
+			wantSubpath: "",
+		},
+		{
+			modulePath:  "google.golang.org/protobuf/encoding/protojson",
+			wantRepoURL: "https://github.com/protocolbuffers/protobuf-go",
+			wantSubpath: "encoding/protojson",
+		},
+		{
+			modulePath:  "",
+			wantRepoURL: "",
+			wantSubpath: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.modulePath, func(t *testing.T) {
+			repoURL, subpath := deriveRepoFromModulePath(tt.modulePath)
+			assert.Equal(t, tt.wantRepoURL, repoURL)
+			assert.Equal(t, tt.wantSubpath, subpath)
+		})
+	}
+}
+
+func TestFormatOCILabelsForScript(t *testing.T) {
+	tests := []struct {
+		name     string
+		labels   map[string]string
+		want     string
+		wantSkip []string // substrings expected NOT to appear
+	}{
+		{
+			name:   "nil labels",
+			labels: nil,
+			want:   "",
+		},
+		{
+			name: "all valid labels",
+			labels: map[string]string{
+				"org.opencontainers.image.version":  "v1.2.3",
+				"org.opencontainers.image.revision": "ae2bbc2abcdef0123456789",
+				"org.opencontainers.image.source":   "https://github.com/foo/bar",
+			},
+			want: "OCI_VERSION=v1.2.3\nOCI_REVISION=ae2bbc2abcdef0123456789\nOCI_SOURCE=https://github.com/foo/bar\n",
+		},
+		{
+			name: "injection attempt in revision is rejected",
+			labels: map[string]string{
+				"org.opencontainers.image.revision": "abc123; rm -rf /",
+			},
+			want:     "",
+			wantSkip: []string{"rm -rf", ";"},
+		},
+		{
+			name: "injection attempt in version via command substitution is rejected",
+			labels: map[string]string{
+				"org.opencontainers.image.version": "v1.0.0$(whoami)",
+			},
+			want:     "",
+			wantSkip: []string{"whoami", "$("},
+		},
+		{
+			name: "injection attempt in source via backticks is rejected",
+			labels: map[string]string{
+				"org.opencontainers.image.source": "https://github.com/foo/bar`id`",
+			},
+			want:     "",
+			wantSkip: []string{"`", "id"},
+		},
+		{
+			name: "mixed valid and invalid - valid entries pass through",
+			labels: map[string]string{
+				"org.opencontainers.image.version":  "v1.2.3",
+				"org.opencontainers.image.revision": "abc123\nexport X=y",
+			},
+			want: "OCI_VERSION=v1.2.3\n",
+		},
+		{
+			name: "empty values skipped",
+			labels: map[string]string{
+				"org.opencontainers.image.version":  "",
+				"org.opencontainers.image.revision": "abc123",
+			},
+			want: "OCI_REVISION=abc123\n",
+		},
+		{
+			name: "unrelated label ignored",
+			labels: map[string]string{
+				"some.other.label":                 "value; with; semis",
+				"org.opencontainers.image.version": "v1.0.0",
+			},
+			want: "OCI_VERSION=v1.0.0\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatOCILabelsForScript(tt.labels)
+			assert.Equal(t, tt.want, got)
+			for _, s := range tt.wantSkip {
+				assert.NotContains(t, got, s, "injection substring should not pass validation")
+			}
+		})
+	}
+}
+
+func TestIsSafeOCIVersion(t *testing.T) {
+	cases := map[string]bool{
+		"v1.2.3":             true,
+		"1.2.3":              true,
+		"v1.2.3-rc1":         true,
+		"v1.2.3+build123":    true,
+		"v1.0.0_snapshot":    true,
+		"":                   false,
+		"v1.0.0$(whoami)":    false,
+		"v1; rm -rf /":       false,
+		"v1 2 3":             false,
+		"v1.0.0\nexport X=y": false,
+		"v1.0.0`id`":         false,
+		"v1.0.0\"malicious":  false,
+	}
+	for input, want := range cases {
+		assert.Equal(t, want, isSafeOCIVersion(input), "input=%q", input)
+	}
+}
+
+func TestIsSafeOCIRevision(t *testing.T) {
+	cases := map[string]bool{
+		"abc123":                  true,
+		"ae2bbc2abcdef0123456789": true,
+		"v1.2.3":                  true,
+		"refs/tags/v1.2.3":        true,
+		"":                        false,
+		"abc; echo x":             false,
+		"abc$(id)":                false,
+		"abc\n":                   false,
+	}
+	for input, want := range cases {
+		assert.Equal(t, want, isSafeOCIRevision(input), "input=%q", input)
+	}
+}
+
+func TestIsSafeOCISource(t *testing.T) {
+	cases := map[string]bool{
+		"https://github.com/foo/bar":     true,
+		"https://gitlab.com/foo/bar.git": true,
+		"https://github.com/foo/bar+baz": true,
+		"git@github.com:foo/bar.git":     true, // ssh-style url: safe chars only
+		"":                               false,
+		"https://evil.com/`id`":          false,
+		"https://evil.com/;rm":           false,
+		"https://evil.com/$(whoami)":     false,
+		"https://evil.com/ with space":   false,
+	}
+	for input, want := range cases {
+		got := isSafeOCISource(input)
+		assert.Equal(t, want, got, "input=%q", input)
+	}
+}
+
+func TestExtractImageTag(t *testing.T) {
+	tests := []struct {
+		name     string
+		imageRef string
+		want     string
+	}{
+		{name: "tagged image", imageRef: "prometheus:v3.9.1", want: "v3.9.1"},
+		{name: "registry with port", imageRef: "localhost:5000/prometheus:v3.9.1", want: "v3.9.1"},
+		{name: "digest only", imageRef: "ghcr.io/org/repo@sha256:abc", want: ""},
+		{name: "tag and digest", imageRef: "ghcr.io/org/repo:v1.2.3@sha256:abc", want: "v1.2.3"},
+		{name: "no tag", imageRef: "ghcr.io/org/repo", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractImageTag(tt.imageRef))
+		})
+	}
+}
+
+func TestParseGoVCSURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantRepo  string
+		wantRef   string
+		wantError bool
+	}{
+		{name: "tag ref", input: "https://github.com/org/repo@v1.2.3", wantRepo: "https://github.com/org/repo", wantRef: "v1.2.3"},
+		{name: "commit ref", input: "https://github.com/org/repo@d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d", wantRepo: "https://github.com/org/repo", wantRef: "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d"},
+		{name: "missing ref", input: "https://github.com/org/repo@", wantError: true},
+		{name: "missing separator", input: "https://github.com/org/repo", wantError: true},
+		{name: "untrusted host", input: "https://gitlab.com/org/repo@v1.0.0", wantError: true},
+		{name: "unsafe ref", input: "https://github.com/org/repo@v1.0.0;rm", wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo, ref, err := parseGoVCSURL(tt.input)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRepo, repo)
+			assert.Equal(t, tt.wantRef, ref)
+		})
+	}
+}
+
+func TestCloneSourceCodeFallbackChain(t *testing.T) {
+	rebuilder := NewRebuilder()
+
+	tests := []struct {
+		name        string
+		buildInfo   *BuildInfo
+		rebuildCtx  *RebuildContext
+		wantRef     string
+		wantRepo    string
+		wantSubpath string
+		wantError   bool
+	}{
+		{
+			name: "go-vcs-url override has highest priority",
+			buildInfo: &BuildInfo{
+				BuildArgs: map[string]string{
+					"_sourceRepo":   "https://github.com/source/repo",
+					"_sourceCommit": "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+				},
+				ModulePath: "github.com/source/repo/cmd/app",
+			},
+			rebuildCtx:  &RebuildContext{GoVCSURL: "https://github.com/override/repo@v1.2.3"},
+			wantRepo:    "https://github.com/override/repo",
+			wantRef:     "v1.2.3",
+			wantSubpath: "cmd/app",
+		},
+		{
+			name: "binary vcs commit is used when override absent",
+			buildInfo: &BuildInfo{
+				BuildArgs: map[string]string{
+					"_sourceRepo":   "https://github.com/source/repo",
+					"_sourceCommit": "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+				},
+				ModulePath: "github.com/source/repo/cmd/app",
+			},
+			rebuildCtx:  &RebuildContext{ImageRef: "repo:v9.9.9"},
+			wantRepo:    "https://github.com/source/repo",
+			wantRef:     "d7b4f0c7322e7151d6e3b1e31cbc15361e295d8d",
+			wantSubpath: "cmd/app",
+		},
+		{
+			name: "image tag fallback when commit missing",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus/cmd/prometheus",
+				GoVersion:  "1.22",
+			},
+			rebuildCtx:  &RebuildContext{ImageRef: "prometheus:v3.9.1"},
+			wantRepo:    "https://github.com/prometheus/prometheus",
+			wantRef:     "v3.9.1",
+			wantSubpath: "cmd/prometheus",
+		},
+		{
+			name: "fails when no ref sources available",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus",
+			},
+			rebuildCtx: &RebuildContext{ImageRef: "prometheus"},
+			wantError:  true,
+		},
+		{
+			name: "rejects non-semver tag like latest",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/prometheus/prometheus",
+			},
+			rebuildCtx: &RebuildContext{ImageRef: "prometheus:latest"},
+			wantError:  true,
+		},
+		{
+			name: "uses OCI source label when no VCS commit",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/VictoriaMetrics/VictoriaLogs",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "victoriametrics/victoria-logs:v1.45.0",
+				ImageSourceLabel: "https://github.com/VictoriaMetrics/VictoriaMetrics",
+			},
+			wantRepo: "github.com/VictoriaMetrics/VictoriaMetrics",
+			wantRef:  "v1.45.0",
+		},
+		{
+			name: "OCI label without semver tag fails",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "github.com/example/repo",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "example/repo:latest",
+				ImageSourceLabel: "https://github.com/example/repo",
+			},
+			wantError: true,
+		},
+		{
+			name: "OCI label with non-github URL rejected",
+			buildInfo: &BuildInfo{
+				BuildArgs:  map[string]string{},
+				ModulePath: "gitlab.com/example/repo",
+			},
+			rebuildCtx: &RebuildContext{
+				ImageRef:         "example/repo:v1.0.0",
+				ImageSourceLabel: "https://gitlab.com/example/repo",
+			},
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state, subpath, err := rebuilder.cloneSourceCode(tt.buildInfo, tt.rebuildCtx)
+			if tt.wantError {
+				assert.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSubpath, subpath)
+
+			def, marshalErr := state.Marshal(context.Background())
+			require.NoError(t, marshalErr)
+			blob := strings.Builder{}
+			for _, dt := range def.Def {
+				blob.Write(dt)
+			}
+			assert.Contains(t, blob.String(), tt.wantRepo)
+			assert.Contains(t, blob.String(), tt.wantRef)
+		})
+	}
+}
+
+func TestLooksLikeSemverTag(t *testing.T) {
+	tests := []struct {
+		tag  string
+		want bool
+	}{
+		{"v1.2.3", true},
+		{"1.45.0", true},
+		{"v3.9.1-rc1", true},
+		{"v0.1.0", true},
+		{"latest", false},
+		{"stable", false},
+		{"alpine", false},
+		{"v", false},
+		{"", false},
+		{"3", false},
+		{"sha-abc123", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			assert.Equal(t, tt.want, looksLikeSemverTag(tt.tag))
+		})
+	}
+}
+
+// TestRebuilderUsesGoModTidyDashE is a regression guard ensuring the binary
+// rebuild path runs `go mod tidy -e` (not bare `go mod tidy`). The -e flag
+// tolerates broken upstream go.mod files so unrelated upstream module hygiene
+// issues do not block CVE patches; without it, prometheus-config-reloader and
+// similar images fail to patch (see the failing CI run referenced in the PR
+// that introduced this test).
+func TestRebuilderUsesGoModTidyDashE(t *testing.T) {
+	src, err := os.ReadFile("rebuilder.go")
+	require.NoError(t, err, "must be able to read rebuilder.go")
+	body := string(src)
+	assert.Contains(t, body, `"%s mod tidy -e"`,
+		"rebuilder.go must invoke 'go mod tidy -e' (not bare tidy) to tolerate broken upstream go.mod")
+	assert.NotContains(t, body, `"%s mod tidy"`,
+		"rebuilder.go must not invoke bare 'go mod tidy' (regression: missing -e flag)")
+}
+
+// TestGenerateGoModDeterministicOrder guards against the require block being
+// emitted in Go map iteration order, which made the synthesized go.mod differ
+// byte-for-byte between runs and broke build reproducibility.
+func TestGenerateGoModDeterministicOrder(t *testing.T) {
+	buildInfo := &BuildInfo{
+		ModulePath: "github.com/example/app",
+		GoVersion:  "go1.22.0",
+		Dependencies: map[string]string{
+			"github.com/zzz/last":  "v1.0.0",
+			"github.com/aaa/first": "v2.0.0",
+			"golang.org/x/term":    "v0.20.0",
+		},
+	}
+	updates := map[string]string{
+		"golang.org/x/net":  "0.56.0",
+		"golang.org/x/sys":  "0.44.0",
+		"golang.org/x/text": "0.39.0",
+	}
+
+	rebuilder := NewRebuilder()
+	want := rebuilder.generateGoMod(buildInfo, updates)
+
+	// Existing dependencies sort before the updated modules, and each group is
+	// ordered by module path.
+	requireBlock := []string{
+		"\tgithub.com/aaa/first v2.0.0\n",
+		"\tgithub.com/zzz/last v1.0.0\n",
+		"\tgolang.org/x/term v0.20.0\n",
+		"\tgolang.org/x/net v0.56.0\n",
+		"\tgolang.org/x/sys v0.44.0\n",
+		"\tgolang.org/x/text v0.39.0\n",
+	}
+	assert.Contains(t, want, strings.Join(requireBlock, ""))
+
+	for i := 0; i < 20; i++ {
+		assert.Equal(t, want, rebuilder.generateGoMod(buildInfo, updates))
+	}
+}

@@ -1,0 +1,9 @@
+{
+  "name": "vulnerable-app",
+  "version": "1.0.0",
+  "description": "A simple Node.js app with a patchable transitive vulnerability",
+  "main": "index.js",
+  "dependencies": {
+    "mkdirp": "0.5.1"
+  }
+}

@@ -1,0 +1,17 @@
+name: Question
+description: Ask a question about Project Copacetic
+title: "[QUESTION] <title>"
+labels:
+  - "question"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search to see if an issue for your question already exists before continuing.
+  - type: textarea
+    attributes:
+      label: What is your question?
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for your question! The maintainers will do their best to respond to it soon!

@@ -1,0 +1,43 @@
+name: Bug Report
+description: Report a bug in Project Copacetic
+title: "[BUG] <title>"
+labels:
+  - "bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search to see if an issue already exists for your bug before continuing.
+        > If you need to report a security issue please see https://github.com/project-copacetic/copacetic/security/policy instead.
+  - type: input
+    attributes:
+      label: Version of copa
+      placeholder: Release version (e.g. v0.1.0) or `git describe --dirty` output if built from source
+  - type: textarea
+    attributes:
+      label: Expected Behavior
+      description: Briefly describe what you expect to happen.
+  - type: textarea
+    attributes:
+      label: Actual Behavior
+      description: Briefly describe what is actually happening.
+  - type: textarea
+    attributes:
+      label: Steps To Reproduce
+      description: Detailed steps to reproduce the behavior.
+      placeholder: |
+        1. On Ubuntu 20.04 x86_64 environment...
+        2. With this config...
+        3. Run '...'
+        4. See error...
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out a bug report!
+  - type: checkboxes
+    id: idea
+    attributes:
+      label: "Are you willing to submit PRs to contribute to this bug fix?"
+      description: "This is absolutely not required, but we are happy to guide you in the contribution process especially when you already have a good proposal or understanding of how to implement it. Join us at the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf) if you have any questions."
+      options:
+        - label: Yes, I am willing to implement it.

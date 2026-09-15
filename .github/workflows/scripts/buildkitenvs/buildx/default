@@ -1,0 +1,5 @@
+#!/usr/bin/env sh
+
+docker buildx create --use
+docker buildx inspect --bootstrap
+export COPA_BUILDKIT_ADDR="buildx://"

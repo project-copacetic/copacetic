@@ -1,0 +1,68 @@
+package types
+
+import (
+	"time"
+
+	"github.com/moby/buildkit/util/progress/progressui"
+)
+
+// Options contains common copacetic options.
+type Options struct {
+	// Core single image patch configuration
+	Image         string
+	Report        string
+	PatchedTag    string
+	Suffix        string
+	ChiselRelease string
+
+	// Bulk image patch configuration
+	ConfigFile string
+
+	// Working environment
+	WorkingFolder string
+	Timeout       time.Duration
+
+	// Scanner and output
+	Scanner     string
+	IgnoreError bool
+
+	// Output configuration
+	Format   string
+	Output   string
+	Progress progressui.DisplayMode
+
+	// Buildkit connection options
+	BkAddr       string
+	BkCACertPath string
+	BkCertPath   string
+	BkKeyPath    string
+
+	// Platform and push
+	Push             bool
+	Platforms        []string
+	Loader           string
+	OCIDir           string
+	Compression      string
+	ForceCompression bool
+
+	// Package types and library patch level
+	PkgTypes          string
+	LibraryPatchLevel string
+
+	// Toolchain patch level (e.g., Go stdlib upgrade)
+	ToolchainPatchLevel string
+	GoVCSURL            string
+
+	// Generate specific
+	OutputContext string
+
+	// EOL configuration
+	EOLAPIBaseURL string
+	ExitOnEOL     bool
+
+	// Chart patching
+	ChartName     string
+	ChartVersion  string
+	ChartRepo     string
+	ChartRegistry string
+}

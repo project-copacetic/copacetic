@@ -1,0 +1,16 @@
+{
+  "sidebar": [
+    "introduction",
+    "installation",
+    "quick-start",
+    "output",
+    "troubleshooting",
+    "design",
+    "faq",
+    "scanner-plugins",
+    "contributing",
+    "code-of-conduct",
+    "github-action",
+    "release"
+  ]
+}

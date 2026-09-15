@@ -1,0 +1,4 @@
+Package: apt-get
+Version: a.b.c.d
+Package: base-files
+Version: x.y.z

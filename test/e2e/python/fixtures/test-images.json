@@ -1,0 +1,8 @@
+[
+  {
+    "image": "ghcr.io/kiwigrid/k8s-sidecar",
+    "tag": "2.5.0",
+    "digest": "sha256:a6b3f707f883108376514489a94d6629109a327b2978e1d826cd104c4ca436df",
+    "description": "k8s-sidecar with Python packages in /app/.venv"
+  }
+]

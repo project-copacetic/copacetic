@@ -1,0 +1,1 @@
+For the most up-to-date list of adopters, please visit [our website’s adopters page](https://project-copacetic.github.io/copacetic/website/adopters).

@@ -1,0 +1,38 @@
+project_name: copacetic
+builds:
+  - id: copacetic
+    goos:
+    - linux
+    - darwin
+    goarch:
+    - amd64
+    - arm64
+    env:
+      - CGO_ENABLED=0
+      - GO111MODULE=on
+    ldflags: -s -w
+      -X github.com/project-copacetic/copacetic/pkg/version.GitVersion={{.Version}}
+      -X github.com/project-copacetic/copacetic/pkg/version.GitCommit={{.Commit}}
+      -X github.com/project-copacetic/copacetic/pkg/version.BuildDate={{.Date}}
+      -X main.version={{.Version}}
+      -extldflags "-static"
+    binary: copa
+    hooks: {}
+
+archives:
+  - id: copacetic
+    builds:
+      - copacetic
+    format: tar.gz
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}_checksums.txt"
+  algorithm: sha256
+
+sboms:
+  - artifacts: archive
+
+release:
+  # Auto-mark releases with -rc.N, -beta.N, etc. suffixes as pre-releases.
+  prerelease: auto

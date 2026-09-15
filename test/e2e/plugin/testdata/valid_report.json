@@ -1,0 +1,13 @@
+{
+    "OSType": "alpine",
+    "OSVersion": "3.7.3",
+    "Arch": "amd64",
+    "Packages": [
+        {
+            "Name": "musl",
+            "InstalledVersion": "1.1.18-r3",
+            "FixedVersion": "1.1.18-r4",
+            "VulnerabilityID": "CVE-2019-14697"
+        }
+    ]
+}

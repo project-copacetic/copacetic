@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "os": {
+      "type": "ubuntu",
+      "version": "20.04"
+    },
+    "config": {
+      "arch": "amd64"
+    }
+  },
+  "updates": [
+    {
+      "name": "curl",
+      "installedVersion": "7.68.0-1ubuntu2.18",
+      "fixedVersion": "7.68.0-1ubuntu2.19",
+      "vulnerabilityID": "CVE-2023-28321"
+    },
+    {
+      "name": "libssl1.1",
+      "installedVersion": "1.1.1f-1ubuntu2.17",
+      "fixedVersion": "1.1.1f-1ubuntu2.18",
+      "vulnerabilityID": "CVE-2023-0464"
+    },
+    {
+      "name": "openssl",
+      "installedVersion": "1.1.1f-1ubuntu2.17",
+      "fixedVersion": "1.1.1f-1ubuntu2.18",
+      "vulnerabilityID": "CVE-2023-0464"
+    },
+    {
+      "name": "nonexistent-package",
+      "installedVersion": "1.0.0",
+      "fixedVersion": "1.0.1",
+      "vulnerabilityID": "CVE-2023-FAKE"
+    }
+  ]
+}

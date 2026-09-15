@@ -1,0 +1,90 @@
+[
+  {
+    "id": "canonical-native-dotnet",
+    "layout": "native-chisel",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:20bd739a82b977ad1fc882d0a73be15df8db4ad04c9cee210ba2572fdc273351",
+    "platform": "linux/amd64",
+    "expectedUpgradePackages": [
+      "dotnet-runtime-8.0",
+      "libc6",
+      "openssl"
+    ],
+    "runtimeContains": "Microsoft.NETCore.App"
+  },
+  {
+    "id": "canonical-native-dotnet-arm64",
+    "layout": "native-chisel",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:aa0e4e30a90a0f470fc7a8662b54f056a6e45c12100ebe58f54b60f00abfc2d9",
+    "platform": "linux/arm64",
+    "expectedUpgradePackages": [
+      "dotnet-runtime-8.0",
+      "libc6",
+      "openssl"
+    ],
+    "runtimeContains": "Microsoft.NETCore.App"
+  },
+  {
+    "id": "canonical-native-dotnet-ppc64le",
+    "layout": "native-chisel",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:36e74837da6a5fc4824b7ce69d7587a69750b2a4706becda5aa34645c7bedf7c",
+    "platform": "linux/ppc64le",
+    "expectedUpgradePackages": [
+      "dotnet-runtime-8.0",
+      "libc6",
+      "openssl"
+    ]
+  },
+  {
+    "id": "canonical-native-dotnet-s390x",
+    "layout": "native-chisel",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:49b7f6fee042f22288459e91c7df96b927f574bc7f2cfbd715d47aff2c6e980b",
+    "platform": "linux/s390x",
+    "expectedUpgradePackages": [
+      "dotnet-runtime-8.0",
+      "libc6",
+      "openssl"
+    ]
+  },
+  {
+    "id": "community-native-sonarr",
+    "layout": "native-chisel",
+    "reference": "ghcr.io/hadrienpatte/sonarr@sha256:d506fff2fe6ca5a7a02f7303c3014a9911e50299d17774e0d3b64ed8a244fa1f",
+    "platform": "linux/amd64",
+    "chiselRelease": "ubuntu-24.04",
+    "expectedUpgradePackages": [
+      "libc6",
+      "libsqlite3-0",
+      "openssl"
+    ],
+    "preserveTree": "Sonarr/"
+  },
+  {
+    "id": "ubuntu-full-status-base",
+    "layout": "external-full-status-fixture-base",
+    "reference": "docker.io/library/ubuntu:24.04@sha256:562456a05a0dbd62a671c1854868862a4687bf979a96d48ae8e766642cd911e8",
+    "platform": "linux/amd64",
+    "expectedUpgradePackages": [
+      "libc6"
+    ],
+    "preserveTree": "opt/copa-fixture/"
+  },
+  {
+    "id": "canonical-native-index",
+    "layout": "native-chisel-index",
+    "reference": "docker.io/ubuntu/dotnet-runtime:8.0-24.04_stable_145@sha256:b82dacfba50e41a83f2b1ab7848cff634a112a07437a0bf50a990ef086dd98b1",
+    "platform": "linux/amd64",
+    "chiselRelease": "ubuntu-24.04"
+  },
+  {
+    "id": "distroless-status-directory",
+    "layout": "external-status-directory",
+    "reference": "gcr.io/distroless/base-debian12@sha256:5eae9ef0b97acf7de819f936e12b24976b2d54333a2cf329615366e16ba598cd",
+    "platform": "linux/amd64",
+    "expectedUpgradePackages": [
+      "libssl3"
+    ],
+    "preserveTree": "opt/copa-e2e/",
+    "encodedStatusPackage": "libc6",
+    "encodedStatusFilename": "copa%2Flibc6"
+  }
+]

