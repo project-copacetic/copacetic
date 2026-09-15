@@ -726,3 +726,51 @@ func TestBlobOperationsObserveCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestTemporaryRootsStayOutsideSource(t *testing.T) {
+	fixture := newSingleLayout(t, nil)
+	source, err := Open(t.Context(), fixture.path, "", "")
+	require.NoError(t, err)
+	require.NoError(t, source.ValidateTempDir(filepath.Dir(fixture.path)), "shared ancestor temp roots are safe")
+	require.NoError(t, source.ValidateTempDir(t.TempDir()))
+	for _, root := range []string{fixture.path, filepath.Join(fixture.path, "tmp")} {
+		require.ErrorContains(t, source.ValidateTempDir(root), "temporary directory")
+	}
+	link := filepath.Join(t.TempDir(), "input-link")
+	require.NoError(t, os.Symlink(fixture.path, link))
+	require.ErrorContains(t, source.ValidateTempDir(filepath.Join(link, "tmp")), "temporary directory")
+}
+
+func TestOpenValidatesCompletePlatformIdentity(t *testing.T) {
+	actual := ocispec.Platform{OS: "linux", Architecture: "arm64", OSVersion: "fixture.1", OSFeatures: []string{"b", "a"}}
+	for _, test := range []struct {
+		name     string
+		version  string
+		features []string
+		wantErr  bool
+	}{
+		{name: "normalized equivalent", version: "fixture.1", features: []string{"a", "b", "a"}},
+		{name: "different OS version", version: "fixture.2", features: []string{"a", "b"}, wantErr: true},
+		{name: "missing OS version", features: []string{"a", "b"}, wantErr: true},
+		{name: "different OS features", version: "fixture.1", features: []string{"c"}, wantErr: true},
+		{name: "missing OS features", version: "fixture.1", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			desc := newImageManifest(t, root, &actual, nil, nil)
+			declared := actual
+			declared.Variant = "v8"
+			declared.OSVersion, declared.OSFeatures = test.version, test.features
+			desc.Platform = &declared
+			newLayoutAt(t, root, []ocispec.Descriptor{desc})
+			before := snapshotLayout(t, root)
+			_, err := Open(t.Context(), root, "", "")
+			if test.wantErr {
+				require.ErrorContains(t, err, "conflicts with image config platform")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, before, snapshotLayout(t, root))
+		})
+	}
+}

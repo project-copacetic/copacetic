@@ -115,6 +115,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		if err != nil {
 			return err
 		}
+		if err := source.ValidateTempDir(os.TempDir()); err != nil {
+			return err
+		}
 		for _, path := range []string{opts.Output, opts.WorkingFolder} {
 			if err := source.ValidateWritePath(path); err != nil {
 				return err

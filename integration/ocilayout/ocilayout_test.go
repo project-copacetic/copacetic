@@ -135,7 +135,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		before := snapshot(t, input)
 		opts := options(input, filepath.Join(t.TempDir(), "output"))
 		opts.Image = logicalName
-		opts.Platforms = []string{"linux/amd64"}
+		opts.Platforms = []string{"linux/amd64", "linux/x86_64", "linux/amd64"}
 		require.NoError(t, patch.Patch(t.Context(), opts))
 		assert.Equal(t, before, snapshot(t, input))
 		assertPreserved(t, input, opts.OCIDir, "386")
@@ -462,6 +462,38 @@ func TestOCILayoutFixtures(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, string(configType), desc.ArtifactType)
 				}
+			}
+		})
+	}
+}
+
+func TestOCILayoutRejectsOverlappingTempDir(t *testing.T) {
+	config, err := empty.Image.ConfigFile()
+	require.NoError(t, err)
+	config.OS, config.Architecture = linuxOS, amd64Arch
+	img, err := mutate.ConfigFile(empty.Image, config)
+	require.NoError(t, err)
+	input := writeLayout(t, map[string]v1.Image{amd64Arch: img}, false, false)
+	nested := filepath.Join(input, "tmp")
+	require.NoError(t, os.Mkdir(nested, 0o755))
+	link := filepath.Join(t.TempDir(), "source-link")
+	require.NoError(t, os.Symlink(input, link))
+	for _, tempRoot := range []string{input, nested, link} {
+		t.Run(filepath.Base(tempRoot), func(t *testing.T) {
+			output := filepath.Join(t.TempDir(), "output")
+			working := t.TempDir()
+			before := snapshot(t, input)
+			t.Setenv("TMPDIR", tempRoot)
+			for _, work := range []string{"", working} {
+				err := patch.Patch(t.Context(), &types.Options{
+					InputOCILayout: input, OCIDir: output, PatchedTag: outputName,
+					WorkingFolder: work, BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second,
+					PkgTypes: "os", Progress: progressui.QuietMode,
+				})
+				require.ErrorContains(t, err, "temporary directory")
+				assert.Equal(t, before, snapshot(t, input))
+				_, err = os.Stat(output)
+				assert.True(t, os.IsNotExist(err))
 			}
 		})
 	}

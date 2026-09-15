@@ -317,6 +317,7 @@ func resolveOCIPlatform(discovered []types.PatchPlatform, target *ispec.Platform
 
 func filterOCIPlatforms(discovered []types.PatchPlatform, targets []string) ([]types.PatchPlatform, error) {
 	var selected []types.PatchPlatform
+	seen := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
 		parsed, err := platforms.Parse(target)
 		if err != nil {
@@ -329,6 +330,11 @@ func filterOCIPlatforms(discovered []types.PatchPlatform, targets []string) ([]t
 		if err != nil {
 			return nil, err
 		}
+		key := buildkit.PlatformKey(match.Platform)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
 		selected = append(selected, match)
 	}
 	return selected, nil

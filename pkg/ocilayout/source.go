@@ -149,6 +149,19 @@ func (s *Source) ValidateWritePath(path string) error {
 	return nil
 }
 
+// ValidateTempDir checks a shared temporary root without rejecting an ancestor
+// of the source: exclusive temporary allocations alongside the input are safe.
+func (s *Source) ValidateTempDir(path string) error {
+	target, err := canonicalTargetPath(path)
+	if err != nil {
+		return fmt.Errorf("resolve temporary directory %q: %w", path, err)
+	}
+	if pathWithin(s.Path, target) {
+		return fmt.Errorf("temporary directory %q must not be inside OCI layout input %q; set TMPDIR outside the input", path, s.Path)
+	}
+	return nil
+}
+
 func readLayoutMetadata(root, name string) ([]byte, error) {
 	path := filepath.Join(root, name)
 	info, err := os.Lstat(path)
@@ -214,11 +227,11 @@ func canonicalTargetPath(path string) (string, error) {
 }
 
 func pathsOverlap(left, right string) bool {
-	rel, err := filepath.Rel(left, right)
-	if err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))) {
-		return true
-	}
-	rel, err = filepath.Rel(right, left)
+	return pathWithin(left, right) || pathWithin(right, left)
+}
+
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
 	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
@@ -451,8 +464,8 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 		}
 		if desc.Platform != nil {
 			declared := platforms.Normalize(*desc.Platform)
-			if declared.OS != actual.OS || declared.Architecture != actual.Architecture || declared.Variant != actual.Variant {
-				return fmt.Errorf("descriptor %s platform %s conflicts with image config platform %s", desc.Digest, platforms.Format(declared), platforms.Format(actual))
+			if !platformEqual(&declared, &actual) {
+				return fmt.Errorf("descriptor %s platform %+v conflicts with image config platform %+v", desc.Digest, declared, actual)
 			}
 		}
 		for i := range manifest.Layers {
