@@ -22,7 +22,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var resolveImageSource = buildkit.ResolveImageSource
+var (
+	resolveImageSource     = buildkit.ResolveImageSource
+	errRecordedIndexOrigin = errors.New("cannot recover recorded patch origin index; restore the original index before re-patching")
+)
 
 // patchMultiPlatformImage patches a multi-platform image across all discovered platforms.
 func patchMultiPlatformImage(
@@ -94,6 +97,9 @@ func patchMultiPlatformImage(
 
 	source, err := captureMultiPlatformSource(ctx, image)
 	if err != nil {
+		if errors.Is(err, errRecordedIndexOrigin) {
+			return err
+		}
 		log.Warnf("Unable to capture multi-platform source lineage for %s; lineage annotations will be omitted where identity is unknown: %v", image, err)
 		source = nil
 	}
@@ -490,28 +496,44 @@ func captureMultiPlatformSource(ctx context.Context, image string) (*multiPlatfo
 	if err != nil {
 		return nil, err
 	}
+	return captureIndexSource(ctx, current)
+}
+
+// captureIndexSource also validates index origins when a one-child index is
+// dispatched through the single-platform patch path.
+func captureIndexSource(ctx context.Context, current *buildkit.ImageSource) (*multiPlatformSource, error) {
 	if current.Index == nil {
 		return nil, fmt.Errorf("source %s is not an image index", current.Name)
 	}
 
 	source := &multiPlatformSource{Current: current}
-	if _, repatch := current.Index.Annotations[copaAnnotationKeyPrefix+".patched"]; !repatch {
-		source.Base = current
-		source.IndexLineage = &types.SourceLineage{Kind: types.PatchOriginImage, Name: current.Name, Digest: current.Descriptor.Digest}
+	annotations := current.Index.Annotations
+	_, hasKind := annotations[types.AnnotationPatchOriginKind]
+	_, hasName := annotations[types.AnnotationPatchOriginName]
+	_, hasDigest := annotations[types.AnnotationPatchOriginDigest]
+	if !hasKind && !hasName && !hasDigest {
+		// Legacy and deliberately omitted common origins are not recovery claims.
+		if _, repatch := annotations[copaAnnotationKeyPrefix+".patched"]; !repatch {
+			source.Base = current
+			source.IndexLineage = &types.SourceLineage{Kind: types.PatchOriginImage, Name: current.Name, Digest: current.Descriptor.Digest}
+		}
 		return source, nil
 	}
 
-	recorded := sourceLineageFromAnnotations(current.Index.Annotations)
+	recorded := sourceLineageFromAnnotations(annotations)
 	if !recorded.Valid() {
-		return source, nil
+		return nil, fmt.Errorf("%w: invalid origin metadata", errRecordedIndexOrigin)
 	}
 	pinned, err := immutableLineageReference(recorded)
 	if err != nil {
-		return source, nil
+		return nil, fmt.Errorf("%w: %w", errRecordedIndexOrigin, err)
 	}
 	base, err := resolveImageSource(ctx, pinned)
-	if err != nil || base.Index == nil || base.Descriptor.Digest != recorded.Digest {
-		return source, nil
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolve %s: %w", errRecordedIndexOrigin, pinned, err)
+	}
+	if base == nil || base.Index == nil || base.Descriptor.Digest != recorded.Digest {
+		return nil, fmt.Errorf("%w: %s did not resolve to the recorded index", errRecordedIndexOrigin, pinned)
 	}
 	source.Base = base
 	source.IndexLineage = recorded

@@ -45,6 +45,11 @@ func TestOriginRoundTrip(t *testing.T) {
 	if addr == "" {
 		t.Skip("set COPA_ORIGIN_BUILDKIT_ADDR to run the real origin round trip")
 	}
+	// Unit-test initialization uses an unavailable client. This boundary test
+	// must exercise the production factory for the public Patch entry point.
+	originalNewClient := bkNewClient
+	bkNewClient = buildkit.NewClient
+	t.Cleanup(func() { bkNewClient = originalNewClient })
 	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Minute)
 	defer cancel()
 	listener, err := net.Listen("tcp", "127.0.0.1:51678")
@@ -209,6 +214,47 @@ func TestOriginRoundTrip(t *testing.T) {
 		}
 		for key, value := range application {
 			require.Equal(t, value, manifest.Annotations[key])
+		}
+	})
+	t.Run("missing-original-index", func(t *testing.T) {
+		input := repo + ":missing-original-index"
+		require.NoError(t, remote.WriteIndex(originTestReference(t, input), indexOut, remote.WithContext(ctx)))
+		singleInput := repo + ":missing-original-index-single"
+		singleIndex := mutate.RemoveManifests(indexOut, func(d v1.Descriptor) bool {
+			return d.Platform == nil || d.Platform.Architecture != "amd64"
+		})
+		require.NoError(t, remote.WriteIndex(originTestReference(t, singleInput), singleIndex, remote.WithContext(ctx)))
+		originalRef := originTestReference(t, repo+"@"+originalIndexHash.String())
+		require.NoError(t, remote.Delete(originalRef, remote.WithContext(ctx)))
+		defer func() {
+			// The tag still exists after deletion; restore the missing digest directly.
+			require.NoError(t, remote.WriteIndex(originalRef, index, remote.WithContext(ctx)))
+			_, err := remote.Get(originalRef, remote.WithContext(ctx))
+			require.NoError(t, err)
+		}()
+		_, err := remote.Get(originalRef, remote.WithContext(ctx))
+		require.Error(t, err, "the recorded original index must be unavailable")
+		// P1 children and each original A manifest remain available. Their
+		// successful resolution must not excuse the missing recorded index.
+		for _, child := range indexManifest.Manifests {
+			img, err := remote.Image(originTestReference(t, repo+"@"+child.Digest.String()), remote.WithContext(ctx))
+			require.NoError(t, err)
+			cfg, err := img.ConfigFile()
+			require.NoError(t, err)
+			_, err = remote.Get(originTestReference(t, repo+"@"+cfg.Config.Labels[types.AnnotationPatchOriginDigest]), remote.WithContext(ctx))
+			require.NoError(t, err)
+		}
+		for _, input := range []string{input, singleInput} {
+			err = Patch(ctx, &types.Options{
+				Image: input, Push: true, PatchedTag: "rejected-index", BkAddr: addr,
+				PkgTypes: "os", IgnoreError: true, Progress: "quiet", Timeout: time.Minute,
+			})
+			require.ErrorIs(t, err, errRecordedIndexOrigin)
+			require.ErrorContains(t, err, "restore the original index")
+			for _, tag := range []string{"rejected-index", "rejected-index-amd64", "rejected-index-386"} {
+				_, err := remote.Get(originTestReference(t, repo+":"+tag), remote.WithContext(ctx))
+				require.Error(t, err, "rejected recovery must not produce output %s", tag)
+			}
 		}
 	})
 	t.Run("missing-original", func(t *testing.T) {

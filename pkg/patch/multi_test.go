@@ -3,9 +3,12 @@ package patch
 import (
 	"context"
 	"errors"
+	"maps"
+	"sync/atomic"
 	"testing"
 
 	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client"
 	"github.com/opencontainers/go-digest"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -359,4 +362,86 @@ func TestImmutableCurrentIndexReferenceUsesCurrentSnapshotOnRepatch(t *testing.T
 
 func platformSpec(os, arch, variant string) v1.Platform {
 	return v1.Platform{OS: os, Architecture: arch, Variant: variant}
+}
+
+func TestPatchMultiPlatformImageRejectsUnrecoverableIndexOrigin(t *testing.T) {
+	const input = "registry.example.com/team/app:patched"
+	originalDigest := digest.FromString("original index")
+	origin := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: "registry.example.com/team/app:original", Digest: originalDigest}).Annotations()
+	origin[copaAnnotationKeyPrefix+".patched"] = "2026-09-15T00:00:00Z"
+	resolverBefore := resolveImageSource
+	builderBefore := bkNewClient
+	t.Cleanup(func() { resolveImageSource, bkNewClient = resolverBefore, builderBefore })
+	for _, tc := range []struct {
+		name       string
+		change     func(map[string]string)
+		base       *buildkit.ImageSource
+		resolveErr error
+	}{
+		{name: "missing original", resolveErr: errors.New("original index not found")},
+		{name: "missing marker", change: func(a map[string]string) { delete(a, copaAnnotationKeyPrefix+".patched") }, resolveErr: errors.New("original index not found")},
+		{name: "partial tuple", change: func(a map[string]string) { delete(a, types.AnnotationPatchOriginDigest) }},
+		{name: "inconsistent name", change: func(a map[string]string) {
+			a[types.AnnotationPatchOriginName] = "registry.example.com/team/app@" + digest.FromString("different index").String()
+		}},
+		{name: "unsupported recovery kind", change: func(a map[string]string) {
+			a[types.AnnotationPatchOriginKind] = types.PatchOriginOCI
+			delete(a, types.AnnotationPatchOriginName)
+		}},
+		{name: "original is not an index", base: &buildkit.ImageSource{Descriptor: v1.Descriptor{Digest: originalDigest}}},
+		{name: "original digest mismatch", base: &buildkit.ImageSource{Descriptor: v1.Descriptor{Digest: digest.FromString("different index")}, Index: &v1.Index{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			annotations := maps.Clone(origin)
+			if tc.change != nil {
+				tc.change(annotations)
+			}
+			resolveImageSource = func(_ context.Context, image string) (*buildkit.ImageSource, error) {
+				if image == input {
+					return &buildkit.ImageSource{Name: input, Index: &v1.Index{Annotations: annotations}}, nil
+				}
+				require.Equal(t, "registry.example.com/team/app@"+originalDigest.String(), image)
+				return tc.base, tc.resolveErr
+			}
+			_, err := captureMultiPlatformSource(t.Context(), input)
+			require.ErrorIs(t, err, errRecordedIndexOrigin, "recorded-origin failure must not become omitted ancestry")
+			inputRef, err := reference.ParseNormalizedNamed(input)
+			require.NoError(t, err)
+			_, _, _, err = captureSinglePlatformSource(t.Context(), input, inputRef, &v1.Platform{OS: "linux", Architecture: "amd64"})
+			require.ErrorIs(t, err, errRecordedIndexOrigin, "single-platform dispatch must validate the index too")
+			var builds atomic.Int32
+			bkNewClient = func(context.Context, buildkit.Opts) (*client.Client, error) {
+				builds.Add(1)
+				return nil, errors.New("unexpected BuildKit construction")
+			}
+			err = patchMultiPlatformImage(t.Context(), &types.Options{Image: input, IgnoreError: true}, []types.PatchPlatform{{Platform: platformSpec("linux", "amd64", "")}})
+			require.ErrorContains(t, err, "restore the original index")
+			require.Zero(t, builds.Load(), "recovery must fail before any patch or export")
+		})
+	}
+}
+
+func TestCaptureMultiPlatformSourceKeepsUnrecordedOriginOmitted(t *testing.T) {
+	const input = "registry.example.com/team/app:patched"
+	resolverBefore := resolveImageSource
+	t.Cleanup(func() { resolveImageSource = resolverBefore })
+	for _, annotations := range []map[string]string{
+		{copaAnnotationKeyPrefix + ".patched": "2026-09-15T00:00:00Z"},
+		{
+			copaAnnotationKeyPrefix + ".patched": "2026-09-15T00:00:00Z",
+			v1.AnnotationBaseImageName:           "example.com/application-base:stable",
+			v1.AnnotationBaseImageDigest:         digest.FromString("application base").String(),
+		},
+	} {
+		current := &buildkit.ImageSource{Name: input, Index: &v1.Index{Annotations: annotations}}
+		resolveImageSource = func(_ context.Context, image string) (*buildkit.ImageSource, error) {
+			require.Equal(t, input, image, "unrecorded ancestry must not trigger recovery")
+			return current, nil
+		}
+		source, err := captureMultiPlatformSource(t.Context(), input)
+		require.NoError(t, err)
+		require.Same(t, current, source.Current)
+		require.Nil(t, source.Base)
+		require.Nil(t, source.IndexLineage)
+	}
 }
