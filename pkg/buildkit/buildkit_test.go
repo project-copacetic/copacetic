@@ -1728,3 +1728,33 @@ func TestOCIExportRejectsMismatchedSoleResult(t *testing.T) {
 	)
 	require.ErrorContains(t, err, "missing OCI patch result for platform")
 }
+
+func TestPlatformKeyAvoidsDelimiterCollisions(t *testing.T) {
+	for _, pair := range [][2]ispec.Platform{
+		{{OS: "linux", Architecture: "amd64", OSVersion: `1+["x"]`}, {OS: "linux", Architecture: "amd64", OSVersion: "1", OSFeatures: []string{"x"}}},
+		{{OS: "linux/amd64", Architecture: "v8"}, {OS: "linux", Architecture: "amd64", Variant: "v8"}},
+		{{OS: "linux", Architecture: "amd64@1"}, {OS: "linux", Architecture: "amd64", OSVersion: "1"}},
+		{{OS: "linux", Architecture: "amd64", Variant: "v1@2"}, {OS: "linux", Architecture: "amd64", Variant: "v1", OSVersion: "2"}},
+		{{OS: "linux", Architecture: "amd64", OSFeatures: []string{"a,b"}}, {OS: "linux", Architecture: "amd64", OSFeatures: []string{"a", "b"}}},
+	} {
+		assert.NotEqual(t, PlatformKey(pair[0]), PlatformKey(pair[1]), "%+v must remain distinct from %+v", pair[0], pair[1])
+	}
+	assert.Equal(t,
+		PlatformKey(ispec.Platform{OS: "linux", Architecture: "amd64"}),
+		PlatformKey(ispec.Platform{OS: "linux", Architecture: "amd64", OSFeatures: []string{}}),
+	)
+}
+
+func TestFormatPlatformPreservesDisplay(t *testing.T) {
+	for _, test := range []struct {
+		platform ispec.Platform
+		want     string
+	}{
+		{ispec.Platform{OS: "linux", Architecture: "amd64"}, "linux/amd64"},
+		{ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}, "linux/arm64"},
+		{ispec.Platform{OS: "windows", Architecture: "amd64", OSVersion: "10.0.1"}, "windows/amd64@10.0.1"},
+		{ispec.Platform{OS: "linux", Architecture: "amd64", OSVersion: "1", OSFeatures: []string{"b", "a"}}, `linux/amd64@1+["a","b"]`},
+	} {
+		assert.Equal(t, test.want, FormatPlatform(test.platform))
+	}
+}

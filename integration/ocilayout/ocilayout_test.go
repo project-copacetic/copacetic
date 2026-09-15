@@ -20,6 +20,7 @@ import (
 	"github.com/moby/buildkit/util/progress/progressui"
 	digest "github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -129,6 +130,55 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		desc, err := openLayout(t, opts.OCIDir).PlatformDescriptor(t.Context(), &found[0])
 		require.NoError(t, err)
 		assert.Equal(t, found[0], *desc.Platform)
+	})
+
+	t.Run("formerly colliding platform results export independently", func(t *testing.T) {
+		identities := []ocispec.Platform{
+			{OS: linuxOS, Architecture: amd64Arch, OSVersion: `1+["x"]`},
+			{OS: linuxOS, Architecture: amd64Arch, OSVersion: "1", OSFeatures: []string{"x"}},
+		}
+		variants := make(map[string]v1.Image)
+		for i, identity := range identities {
+			config, err := images[amd64Arch].ConfigFile()
+			require.NoError(t, err)
+			config.OSVersion, config.OSFeatures = identity.OSVersion, identity.OSFeatures
+			config.Config.Labels = map[string]string{"example.identity": fmt.Sprint(i)}
+			img, err := mutate.ConfigFile(images[amd64Arch], config)
+			require.NoError(t, err)
+			variants[fmt.Sprint(i)] = img
+		}
+		input := writeLayout(t, variants, true, false)
+		before := snapshot(t, input)
+		source := openLayout(t, input)
+		var results []types.PatchResult
+		var targets []types.PatchPlatform
+		for i, identity := range identities {
+			config, err := variants[fmt.Sprint(i)].RawConfigFile()
+			require.NoError(t, err)
+			state, err := source.State(t.Context(), &identity, config)
+			require.NoError(t, err)
+			desc, err := source.PlatformDescriptor(t.Context(), &identity)
+			require.NoError(t, err)
+			results = append(results, types.PatchResult{OCISource: source, PatchedDesc: desc, PatchedState: &state, ConfigData: config})
+			targets = append(targets, types.PatchPlatform{Platform: identity})
+		}
+		output := filepath.Join(t.TempDir(), "output")
+		require.NoError(t, buildkit.CreateOCILayoutFromResultsWithOptions(output, results, targets,
+			buildkit.OCILayoutExportOptions{OutputReference: outputName, Atomic: true, BuildkitOpts: &buildkit.Opts{Addr: addr}}.WithContext(t.Context())))
+		assert.Equal(t, before, snapshot(t, input))
+		exported := openLayout(t, output)
+		found, err := exported.Platforms(t.Context())
+		require.NoError(t, err)
+		require.Len(t, found, 2)
+		for i, identity := range identities {
+			desc, err := exported.PlatformDescriptor(t.Context(), &identity)
+			require.NoError(t, err)
+			manifest := readManifest(t, output, desc)
+			var config ocispec.Image
+			readJSONBlob(t, output, &manifest.Config, &config)
+			assert.Equal(t, identity, config.Platform)
+			assert.Equal(t, fmt.Sprint(i), config.Config.Labels["example.identity"])
+		}
 	})
 
 	t.Run("selected platform preserves exact sibling content", func(t *testing.T) {

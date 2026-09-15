@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -171,7 +172,7 @@ func TestMarkPlatformPreserved(t *testing.T) {
 		{Platform: platformSpec("linux", "arm64", "v8")},
 	}
 
-	markPlatformPreserved(platforms, "linux/arm64")
+	markPlatformPreserved(platforms, buildkit.PlatformKey(platformSpec("linux", "arm64", "")))
 
 	assert.False(t, platforms[0].ShouldPreserve)
 	assert.True(t, platforms[1].ShouldPreserve)
@@ -231,4 +232,20 @@ func TestPlatformsForSingleReportRejectsUnsupportedTarget(t *testing.T) {
 			assert.True(t, discovered[1].ShouldPreserve)
 		})
 	}
+}
+
+func TestPlatformKeysKeepReportAndPreservationSeparate(t *testing.T) {
+	first := types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64", OSVersion: `1+["x"]`}}
+	second := types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64", OSVersion: "1", OSFeatures: []string{"x"}}}
+	discovered := []types.PatchPlatform{first, second}
+	prepared, err := platformsForSingleReport(discovered, &second, "report.json")
+	require.NoError(t, err)
+	require.Len(t, prepared, 2)
+	assert.True(t, prepared[0].ShouldPreserve)
+	assert.Empty(t, prepared[0].ReportFile)
+	assert.False(t, prepared[1].ShouldPreserve)
+	assert.Equal(t, "report.json", prepared[1].ReportFile)
+	markPlatformPreserved(discovered, buildkit.PlatformKey(second.Platform))
+	assert.False(t, discovered[0].ShouldPreserve)
+	assert.True(t, discovered[1].ShouldPreserve)
 }

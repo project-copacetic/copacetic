@@ -425,25 +425,25 @@ func TestMultiPlatformSummaryTable(t *testing.T) {
 	}
 
 	summaryMap := map[string]*types.MultiPlatformSummary{
-		"linux/amd64": {
+		buildkit.PlatformKey(ispec.Platform{OS: "linux", Architecture: "amd64"}): {
 			Platform: "linux/amd64",
 			Status:   "Patched",
 			Ref:      "docker.io/library/nginx:patched-amd64",
 			Message:  "",
 		},
-		"linux/arm64": {
+		buildkit.PlatformKey(ispec.Platform{OS: "linux", Architecture: "arm64"}): {
 			Platform: "linux/arm64",
 			Status:   "Error",
 			Ref:      "",
 			Message:  "emulation is not enabled for platform linux/arm64",
 		},
-		"linux/arm/v7": {
+		buildkit.PlatformKey(ispec.Platform{OS: "linux", Architecture: "arm", Variant: "v7"}): {
 			Platform: "linux/arm/v7",
 			Status:   "Ignored",
 			Ref:      "",
 			Message:  "",
 		},
-		"windows/amd64": {
+		buildkit.PlatformKey(ispec.Platform{OS: "windows", Architecture: "amd64"}): {
 			Platform: "windows/amd64",
 			Status:   "Not Patched",
 			Ref:      "docker.io/library/nginx (original reference)",

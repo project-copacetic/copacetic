@@ -562,8 +562,19 @@ func DiscoverPlatformsFromReference(manifestRef string) ([]types.PatchPlatform, 
 	return nil, nil
 }
 
+// PlatformKey encodes the complete normalized identity for map lookups.
+// Display labels must use FormatPlatform instead.
+//
 //nolint:gocritic
 func PlatformKey(pl specs.Platform) string {
+	encoded, _ := json.Marshal(platforms.Normalize(pl))
+	return string(encoded)
+}
+
+// FormatPlatform returns a readable platform label for logs and summaries.
+//
+//nolint:gocritic
+func FormatPlatform(pl specs.Platform) string {
 	pl = platforms.Normalize(pl)
 	key := pl.OS + "/" + pl.Architecture
 	if pl.Variant != "" {
@@ -610,7 +621,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		for _, pl := range p2 {
 			key := reportPlatformKey(&pl.Platform)
 			if _, exists := reportSet[key]; exists {
-				return nil, fmt.Errorf("multiple reports target platform %s", key)
+				return nil, fmt.Errorf("multiple reports target platform %s", FormatPlatform(specs.Platform{OS: pl.OS, Architecture: pl.Architecture, Variant: pl.Variant}))
 			}
 			reportSet[key] = pl.ReportFile
 		}
@@ -624,7 +635,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 			key := reportPlatformKey(&pl.Platform)
 			if rp, ok := reportSet[key]; ok {
 				if matchCounts[key] != 1 {
-					return nil, fmt.Errorf("report %s matches %d image platforms for %s", rp, matchCounts[key], key)
+					return nil, fmt.Errorf("report %s matches %d image platforms for %s", rp, matchCounts[key], FormatPlatform(specs.Platform{OS: pl.OS, Architecture: pl.Architecture, Variant: pl.Variant}))
 				}
 				// Platform has a report - will be patched
 				pl.ReportFile = rp
@@ -632,7 +643,7 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 				platforms = append(platforms, pl)
 			} else {
 				// Platform has no report - preserve original without patching
-				log.Debugf("No report found for platform %s, preserving original", PlatformKey(pl.Platform))
+				log.Debugf("No report found for platform %s, preserving original", FormatPlatform(pl.Platform))
 				pl.ReportFile = ""
 				pl.ShouldPreserve = true
 				platforms = append(platforms, pl)
@@ -1474,7 +1485,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 			}
 			key := PlatformKey(*result.PatchedDesc.Platform)
 			if _, exists := resultMap[key]; exists {
-				return fmt.Errorf("multiple OCI patch results for platform %s", key)
+				return fmt.Errorf("multiple OCI patch results for platform %s", FormatPlatform(*result.PatchedDesc.Platform))
 			}
 			resultMap[key] = &results[i]
 			continue
@@ -1512,7 +1523,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 			platformSpecs = append(platformSpecs, platform.Platform)
 			platformMetadata = append(platformMetadata, ociPlatformExportMetadata(result, outputTag))
 		} else if len(exportOpts.state.sources) > 0 {
-			return fmt.Errorf("missing OCI patch result for platform %s", platformKey)
+			return fmt.Errorf("missing OCI patch result for platform %s", FormatPlatform(platform.Platform))
 		}
 	}
 
@@ -2195,7 +2206,7 @@ func createMixedOCILayout(
 			for _, platform := range preservedPlatforms {
 				desc, err := exportOpts.state.sources[0].CopyPlatform(ctx, outputDir, &platform.Platform, allBlobs)
 				if err != nil {
-					return fmt.Errorf("copy preserved OCI platform %s: %w", PlatformKey(platform.Platform), err)
+					return fmt.Errorf("copy preserved OCI platform %s: %w", FormatPlatform(platform.Platform), err)
 				}
 				entry, err := descriptorMap(desc)
 				if err != nil {
@@ -2755,7 +2766,7 @@ func createPreservedOnlyOCILayout(outputDir string, results []types.PatchResult,
 		for _, platform := range preservedPlatforms {
 			desc, copyErr := exportOpts.state.sources[0].CopyPlatform(exportOpts.state.context, outputDir, &platform.Platform, copied)
 			if copyErr != nil {
-				return fmt.Errorf("copy preserved OCI platform %s: %w", PlatformKey(platform.Platform), copyErr)
+				return fmt.Errorf("copy preserved OCI platform %s: %w", FormatPlatform(platform.Platform), copyErr)
 			}
 			entry, mapErr := descriptorMap(desc)
 			if mapErr != nil {

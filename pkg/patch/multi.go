@@ -58,7 +58,7 @@ func patchMultiPlatformImage(
 				}
 				key := buildkit.PlatformKey(match.Platform)
 				if _, exists := reportFiles[key]; exists {
-					return fmt.Errorf("multiple reports target OCI platform %s", key)
+					return fmt.Errorf("multiple reports target OCI platform %s", buildkit.FormatPlatform(match.Platform))
 				}
 				reportFiles[key] = platform.ReportFile
 			}
@@ -182,6 +182,7 @@ func patchPreparedMultiPlatformImage(
 		// rebind
 		p := p //nolint
 		platformKey := buildkit.PlatformKey(p.Platform)
+		platformLabel := buildkit.FormatPlatform(p.Platform)
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -199,7 +200,7 @@ func patchPreparedMultiPlatformImage(
 				if err != nil {
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Error",
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
@@ -215,7 +216,7 @@ func patchPreparedMultiPlatformImage(
 					mu.Lock()
 					defer mu.Unlock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Ignored",
 						Ref:      sourceDisplayName(opts) + " (original reference)",
 						Message:  "Windows images are not patched and will be preserved as-is",
@@ -234,7 +235,7 @@ func patchPreparedMultiPlatformImage(
 				if err != nil {
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Error",
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
@@ -266,7 +267,7 @@ func patchPreparedMultiPlatformImage(
 				}
 				// Add summary entry for unpatched platform
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
-					Platform: platformKey,
+					Platform: platformLabel,
 					Status:   "Not Patched",
 					Ref:      sourceDisplayName(opts) + " (original reference)",
 					Message:  preserveReason,
@@ -303,7 +304,7 @@ func patchPreparedMultiPlatformImage(
 					patchResults = append(patchResults, *res)
 					markPlatformPreserved(platforms, platformKey)
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Up-to-date",
 						Ref:      sourceDisplayName(opts) + " (original)",
 						Message:  "Already up-to-date",
@@ -322,14 +323,14 @@ func patchPreparedMultiPlatformImage(
 						}
 						original, preserveErr := createOriginalImageResult(gctx, originalRef, &p, image, opts.OCISource)
 						if preserveErr != nil {
-							return fmt.Errorf("preserve failed platform %s: %w", platformKey, preserveErr)
+							return fmt.Errorf("preserve failed platform %s: %w", platformLabel, preserveErr)
 						}
 						patchResults = append(patchResults, *original)
 						markPlatformPreserved(platforms, platformKey)
 					}
 				}
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
-					Platform: platformKey,
+					Platform: platformLabel,
 					Status:   status,
 					Ref:      "",
 					Message:  err.Error(),
@@ -340,7 +341,7 @@ func patchPreparedMultiPlatformImage(
 			}
 			if res == nil {
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
-					Platform: platformKey,
+					Platform: platformLabel,
 					Status:   "Error",
 					Ref:      "",
 					Message:  "patchSingleArchImage returned nil result",
@@ -351,7 +352,7 @@ func patchPreparedMultiPlatformImage(
 
 			patchResults = append(patchResults, *res)
 			summaryMap[platformKey] = &types.MultiPlatformSummary{
-				Platform: platformKey,
+				Platform: platformLabel,
 				Status:   "Patched",
 				Ref:      res.PatchedRef.String(),
 				Message:  "Successfully patched",
@@ -529,7 +530,7 @@ func platformsForSingleReport(
 		return nil, err
 	}
 	if !isSupportedPatchPlatform(&resolved.Platform) {
-		return nil, fmt.Errorf("unsupported scan report platform %q", buildkit.PlatformKey(resolved.Platform))
+		return nil, fmt.Errorf("unsupported scan report platform %q", buildkit.FormatPlatform(resolved.Platform))
 	}
 	targetKey := buildkit.PlatformKey(resolved.Platform)
 	available := make([]string, 0, len(discovered))
@@ -538,7 +539,7 @@ func platformsForSingleReport(
 	for _, platform := range discovered {
 		platformCopy := platform
 		key := buildkit.PlatformKey(platform.Platform)
-		available = append(available, key)
+		available = append(available, buildkit.FormatPlatform(platform.Platform))
 		if key == targetKey {
 			platformCopy.ReportFile = reportFile
 			platformCopy.ShouldPreserve = false
@@ -552,7 +553,7 @@ func platformsForSingleReport(
 	if !matched {
 		return nil, fmt.Errorf(
 			"report target platform %s is not available in the selected OCI image; available platforms: %s",
-			targetKey,
+			buildkit.FormatPlatform(resolved.Platform),
 			strings.Join(available, ", "),
 		)
 	}

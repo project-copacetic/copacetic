@@ -294,7 +294,7 @@ func resolveOCIPlatform(discovered []types.PatchPlatform, target *ispec.Platform
 	var available []string
 	for _, candidate := range discovered {
 		actual := platforms.Normalize(candidate.Platform)
-		available = append(available, buildkit.PlatformKey(actual))
+		available = append(available, buildkit.FormatPlatform(actual))
 		if actual.OS != constraint.OS || actual.Architecture != constraint.Architecture || actual.Variant != constraint.Variant {
 			continue
 		}
@@ -309,7 +309,7 @@ func resolveOCIPlatform(discovered []types.PatchPlatform, target *ispec.Platform
 	if len(matches) != 1 {
 		return types.PatchPlatform{}, fmt.Errorf(
 			"target platform %s matches %d platforms in the selected OCI image; available platforms: %s",
-			buildkit.PlatformKey(constraint), len(matches), strings.Join(available, ", "),
+			buildkit.FormatPlatform(constraint), len(matches), strings.Join(available, ", "),
 		)
 	}
 	return matches[0], nil
