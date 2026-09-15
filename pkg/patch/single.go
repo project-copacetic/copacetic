@@ -23,6 +23,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/tui"
@@ -79,8 +80,6 @@ func patchSingleArchImageWithUpdates(
 	// Extract options
 	image := opts.Image
 	reportFile := opts.Report
-	patchedTag := opts.PatchedTag
-	suffix := opts.Suffix
 	workingFolder := opts.WorkingFolder
 	scanner := opts.Scanner
 	format := opts.Format
@@ -104,17 +103,11 @@ func patchSingleArchImageWithUpdates(
 		log.Warn("No vulnerability report was provided, so no VEX output will be generated.")
 	}
 
-	// parse the image reference
-	imageName, err := reference.ParseNormalizedNamed(image)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse reference: %w", err)
-	}
-
-	// resolve final patched tag
-	patchImage, patchedTag, err := common.ResolvePatchedImageName(imageName, patchedTag, suffix)
+	imageName, patchImage, patchedTag, err := resolvePatchNames(opts)
 	if err != nil {
 		return nil, err
 	}
+
 	if multiPlatform {
 		patchedTag = archTag(patchedTag, targetPlatform.Architecture, targetPlatform.Variant)
 	}
@@ -174,7 +167,10 @@ func patchSingleArchImageWithUpdates(
 	if err != nil {
 		if reportFile != "" && reportHasNoUpdates {
 			log.Debugf("Unable to create a BuildKit client to preflight an empty report for native Chisel metadata: %v", err)
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+			if err != nil {
+				return nil, err
+			}
 			res.Summary = updates.CombinedSummary()
 			return res, types.ErrNoUpdatesFound
 		}
@@ -183,9 +179,12 @@ func patchSingleArchImageWithUpdates(
 	defer bkClient.Close()
 
 	// Resolve image reference
-	ref := resolveImageReference(imageName)
+	ref := ""
+	if imageName != nil {
+		ref = resolveImageReference(imageName)
+	}
 	if reportFile != "" && reportHasNoUpdates {
-		if err := rejectTargetedNativeChiselPatch(ctx, bkClient, ref, &targetPlatform.Platform); err != nil {
+		if err := rejectTargetedNativeChiselPatch(ctx, bkClient, ref, &targetPlatform.Platform, opts.OCISource); err != nil {
 			// Preserve the historical ErrNoUpdatesFound result for non-native
 			// empty reports when BuildKit is unavailable to perform the preflight.
 			// A positively identified native image always returns the exact
@@ -200,7 +199,10 @@ func patchSingleArchImageWithUpdates(
 	// Keep the existing empty-report behavior for non-native images. Native
 	// images have already returned the targeted-patching error above.
 	if reportHasNoUpdates {
-		res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+		res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+		if err != nil {
+			return nil, err
+		}
 		res.Summary = updates.CombinedSummary()
 		return res, types.ErrNoUpdatesFound
 	}
@@ -214,9 +216,12 @@ func patchSingleArchImageWithUpdates(
 
 	// Determine the loader type
 	finalLoaderType := determineLoaderType(loader, bkOpts.Addr)
+	if opts.OCISource != nil {
+		finalLoaderType = ""
+	}
 
 	// Check media type for OCI vs Docker export
-	shouldExportOCI := shouldExportAsOCI(ctx, ref, finalLoaderType)
+	shouldExportOCI := opts.OCISource != nil || shouldExportAsOCI(ctx, ref, finalLoaderType)
 
 	// Create pipes for Docker export
 	pipeR, pipeW := io.Pipe()
@@ -229,16 +234,17 @@ func patchSingleArchImageWithUpdates(
 	// exporter via createBuildConfig so single-platform pushes preserve the
 	// annotations on the pushed manifest itself, not just on the in-memory
 	// PatchResult descriptor used by the multi-arch manifest list assembly.
-	originalAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, image, &ispec.Platform{
-		OS:           targetPlatform.OS,
-		Architecture: targetPlatform.Architecture,
-		Variant:      targetPlatform.Variant,
-	})
+	manifestPlatform := &targetPlatform.Platform
+	var originalAnnotations map[string]string
+	if opts.OCISource != nil {
+		originalAnnotations, err = opts.OCISource.PlatformAnnotations(ctx, manifestPlatform)
+	} else {
+		originalAnnotations, err = utils.GetPlatformManifestAnnotations(ctx, image, manifestPlatform)
+	}
 	if err != nil {
 		log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
 		originalAnnotations = map[string]string{}
 	}
-
 	// Create build configuration
 	buildConfig, err := createBuildConfig(
 		patchedImageName,
@@ -253,6 +259,13 @@ func patchSingleArchImageWithUpdates(
 	if err != nil {
 		return nil, err
 	}
+	if opts.OCISource != nil {
+		opts.OCISource.AddToSolveOpt(&buildConfig.SolveOpt)
+		// Keep the patched image in the selected BuildKit worker's content store
+		// for this solve; the final OCI layout is produced from PatchedState below.
+		buildConfig.SolveOpt.Exports[0].Type = client.ExporterImage
+		buildConfig.SolveOpt.Exports[0].Output = nil
+	}
 
 	// Create channels for build coordination.
 	// Buffer the channel to prevent backpressure from the progress display
@@ -260,12 +273,12 @@ func patchSingleArchImageWithUpdates(
 	// PlainMode due to rendering overhead; without a buffer, builds that
 	// generate heavy output (e.g. .NET patching) can stall indefinitely.
 	buildChannel := make(chan *client.SolveStatus, 128)
-	eg, ctx := errgroup.WithContext(ctx)
+	eg, buildCtx := errgroup.WithContext(ctx)
 
 	// Resolve image reference for BuildKit operations
 	// For multi-platform images with local manifests, use platform-specific reference
 	buildkitImageRef := imageName
-	if multiPlatform {
+	if multiPlatform && opts.OCISource == nil {
 		platformImageRef, err := buildkit.GetPlatformImageReference(image, &targetPlatform.Platform)
 		if err == nil {
 			// Successfully resolved platform-specific reference for local manifest
@@ -284,7 +297,7 @@ func patchSingleArchImageWithUpdates(
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+		result, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform, opts.OCISource,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
 		patchBuildErr = err
 		if err != nil {
@@ -302,18 +315,18 @@ func patchSingleArchImageWithUpdates(
 		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
 		platformPrefix := tui.FormatEmulationPrefix(hostPlatform.Architecture, targetPlatform.Architecture, targetPlatform.Variant)
 		eg.Go(func() error {
-			common.ForwardProgressWithPrefix(ctx, buildChannel, sharedProgressCh, platformPrefix)
+			common.ForwardProgressWithPrefix(buildCtx, buildChannel, sharedProgressCh, platformPrefix)
 			return nil
 		})
 	} else {
 		// Display progress locally (single-arch mode)
-		common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+		common.DisplayProgress(buildCtx, eg, buildChannel, opts.Progress)
 	}
 
 	// Handle image loading if not pushing
-	if !push {
+	if !push && opts.OCISource == nil {
 		eg.Go(func() error {
-			return loadImageToRuntime(ctx, pipeR, patchedImageName, finalLoaderType)
+			return loadImageToRuntime(buildCtx, pipeR, patchedImageName, finalLoaderType)
 		})
 	} else {
 		go func() {
@@ -325,7 +338,10 @@ func patchSingleArchImageWithUpdates(
 	waitErr := eg.Wait()
 	if err := selectPatchWaitError(waitErr, patchBuildErr); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
-			res, _ := createOriginalImageResult(imageName, &targetPlatform, image)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+			if err != nil {
+				return nil, err
+			}
 			if updates != nil {
 				res.Summary = updates.CombinedSummary()
 			}
@@ -335,7 +351,7 @@ func patchSingleArchImageWithUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult, opts.OCISource)
 	if err != nil {
 		return nil, err
 	}
@@ -521,10 +537,14 @@ func validateReportPlatform(updates *unversioned.UpdateManifest, targetPlatform 
 	return nil
 }
 
-func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuildClient, image string, platform *ispec.Platform) error {
+func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuildClient, image string, platform *ispec.Platform, source *ocilayout.Source) error {
 	var manifestExists bool
-	_, err := bkClient.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-		config, err := buildkit.InitializeBuildkitConfig(ctx, c, image, platform)
+	solveOpt := authenticatedSolveOpt()
+	if source != nil {
+		source.AddToSolveOpt(&solveOpt)
+	}
+	_, err := bkClient.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+		config, err := buildkit.InitializeBuildkitConfigWithSource(ctx, c, image, platform, source)
 		if err != nil {
 			return nil, err
 		}
@@ -551,8 +571,8 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 }
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
-func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
+func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
+	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result, source *ocilayout.Source,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -564,13 +584,26 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	// The original context might be canceled after the patching operation completes
 	descriptorCtx := context.Background()
 
-	log.Debugf("Getting image descriptor for %s...", patchedImageName)
-	patchedDesc, err := utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
-	if err != nil {
-		prettyPlatform := platforms.Format(targetPlatform.Platform)
-		log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
+	var patchedDesc *ispec.Descriptor
+	var err error
+	if source != nil {
+		patchedDesc, err = source.PlatformDescriptor(ctx, &targetPlatform.Platform)
+		if err != nil {
+			return nil, fmt.Errorf("get OCI source descriptor for patched platform: %w", err)
+		}
+		// This descriptor identifies the source manifest. Clear its digest and
+		// size because the patched descriptor is produced by the later OCI export.
+		patchedDesc.Digest = ""
+		patchedDesc.Size = 0
 	} else {
-		log.Debugf("Got image descriptor for %s", patchedImageName)
+		log.Debugf("Getting image descriptor for %s...", patchedImageName)
+		patchedDesc, err = utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)
+		if err != nil {
+			prettyPlatform := platforms.Format(targetPlatform.Platform)
+			log.Warnf("failed to get patched image descriptor for platform '%s': %v", prettyPlatform, err)
+		} else {
+			log.Debugf("Got image descriptor for %s", patchedImageName)
+		}
 	}
 
 	// Add original and package-manager annotations if we have a patched
@@ -580,7 +613,13 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	if patchResult != nil {
 		managerAnnotations = patchResult.Annotations
 	}
-	patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	var manifestAnnotations map[string]string
+	if source != nil {
+		bodyMetadata := augmentPatchedDescriptor(&ispec.Descriptor{}, originalAnnotations, managerAnnotations)
+		manifestAnnotations = bodyMetadata.Annotations
+	} else {
+		patchedDesc = augmentPatchedDescriptor(patchedDesc, originalAnnotations, managerAnnotations)
+	}
 	if patchedDesc != nil {
 		log.Debugf("Added %d original and %d package-manager manifest annotations for platform %s", len(originalAnnotations), len(managerAnnotations), targetPlatform.Platform)
 	}
@@ -592,15 +631,18 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 	}
 
 	result := &types.PatchResult{
-		OriginalRef: imageName,
-		PatchedRef:  patchedRef,
-		PatchedDesc: patchedDesc,
+		OriginalRef:         imageName,
+		PatchedRef:          patchedRef,
+		PatchedDesc:         patchedDesc,
+		OCISource:           source,
+		ManifestAnnotations: manifestAnnotations,
 	}
 
 	// Include preserved BuildKit states if available
 	if patchResult != nil {
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
+		result.VEX = patchResult.VEX
 	}
 
 	return result, nil
@@ -632,6 +674,7 @@ func executePatchBuild(
 	buildConfig *BuildConfig,
 	imageName reference.Named,
 	targetPlatform *types.PatchPlatform,
+	source *ocilayout.Source,
 	workingFolder string,
 	updates *unversioned.UpdateManifest,
 	ignoreError bool,
@@ -670,8 +713,12 @@ func executePatchBuild(
 			Client:  c,
 		}
 
+		sourceName := ""
+		if imageName != nil {
+			sourceName = imageName.String()
+		}
 		patchOpts := &Options{
-			ImageName:           imageName.String(),
+			ImageName:           sourceName,
 			TargetPlatform:      targetPlatform,
 			Updates:             updates,
 			ValidatedUpdates:    validatedManifest,
@@ -682,6 +729,7 @@ func executePatchBuild(
 			ToolchainPatchLevel: toolchainPatchLevel,
 			GoVCSURL:            goVCSURL,
 			ChiselRelease:       chiselRelease,
+			OCISource:           source,
 		}
 
 		// Execute the core patching logic
@@ -723,7 +771,10 @@ func executePatchBuild(
 		digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 		patchedImageDigest = digest
 	}
-	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+	if source != nil && patchResult != nil && err == nil && reportFile != "" {
+		patchResult.VEX = &types.VEXData{Updates: validatedManifest, PackageType: pkgType}
+	}
+	if source == nil && patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
 		nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
 		// vex document must contain at least one statement
 		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
@@ -780,8 +831,17 @@ func parsePkgTypes(pkgTypesStr string) ([]string, error) {
 	return validTypes, nil
 }
 
-func createOriginalImageResult(imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string) (*types.PatchResult, error) {
-	originalDesc, err := getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+func createOriginalImageResult(ctx context.Context, imageName reference.Named, targetPlatform *types.PatchPlatform, originalImageRef string, source *ocilayout.Source) (*types.PatchResult, error) {
+	var originalDesc *ispec.Descriptor
+	var err error
+	if source != nil {
+		originalDesc, err = source.PlatformDescriptor(ctx, &targetPlatform.Platform)
+		if err != nil {
+			return nil, fmt.Errorf("get original OCI platform descriptor: %w", err)
+		}
+	} else {
+		originalDesc, err = getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
+	}
 	if err != nil {
 		log.Warnf("Could not get original descriptor for up-to-date platform %s/%s: %v", targetPlatform.OS, targetPlatform.Architecture, err)
 	}
@@ -790,5 +850,6 @@ func createOriginalImageResult(imageName reference.Named, targetPlatform *types.
 		OriginalRef: imageName,
 		PatchedRef:  imageName,
 		PatchedDesc: originalDesc,
+		OCISource:   source,
 	}, nil
 }

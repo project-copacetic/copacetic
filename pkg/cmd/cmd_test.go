@@ -20,13 +20,13 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			name:                  "FAIL: No flags provided",
 			args:                  []string{},
 			expectValidationError: true,
-			expectedErrorContains: "one of --image, --config, or --chart must be provided",
+			expectedErrorContains: "one of --image, --input-oci-layout, --config, or --chart must be provided",
 		},
 		{
 			name:                  "FAIL: Conflicting flags (--config and --image)",
 			args:                  []string{"--config", "config.yaml", "--image", "alpine"},
 			expectValidationError: true,
-			expectedErrorContains: "--image, --config, and --chart are mutually exclusive",
+			expectedErrorContains: "--image/--input-oci-layout, --config, and --chart are mutually exclusive",
 		},
 		{
 			name:                  "FAIL: Conflicting flags (--config and --chisel-release)",
@@ -48,6 +48,30 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			name:                  "PASS: Bulk mode validation",
 			args:                  []string{"--config", "config.yaml"},
 			expectValidationError: false, // This combination of flags is valid.
+		},
+		{
+			name:                  "FAIL: OCI input requires image mode",
+			args:                  []string{"--config", "config.yaml", "--input-oci-layout", "./input", "--oci-dir", "./output"},
+			expectValidationError: true,
+			expectedErrorContains: "--image/--input-oci-layout, --config, and --chart are mutually exclusive",
+		},
+		{
+			name:                  "FAIL: OCI input requires OCI output",
+			args:                  []string{"--image", "example.com/acme/app:1.0", "--input-oci-layout", "./input"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout requires --oci-dir",
+		},
+		{
+			name:                  "FAIL: OCI input rejects push",
+			args:                  []string{"--image", "example.com/acme/app:1.0", "--input-oci-layout", "./input", "--oci-dir", "./output", "--push"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout cannot be used with --push",
+		},
+		{
+			name:                  "FAIL: OCI input rejects daemon loader",
+			args:                  []string{"--image", "example.com/acme/app:1.0", "--input-oci-layout", "./input", "--oci-dir", "./output", "--loader", "docker"},
+			expectValidationError: true,
+			expectedErrorContains: "--input-oci-layout cannot be used with --loader",
 		},
 	}
 
@@ -76,6 +100,16 @@ func TestNewPatchCmdValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestNewPatchCmdOCILayoutFlags(t *testing.T) {
+	cmd := NewPatchCmd()
+	input := cmd.Flags().Lookup("input-oci-layout")
+	require.NotNil(t, input)
+	assert.Contains(t, input.Usage, "requires --oci-dir")
+	output := cmd.Flags().Lookup("oci-dir")
+	require.NotNil(t, output)
+	assert.NotContains(t, output.Usage, "multi-platform")
 }
 
 func TestNewPatchCmdChiselReleaseFlag(t *testing.T) {
@@ -126,4 +160,11 @@ func TestChartModeValidatesRequiredFlags(t *testing.T) {
 			assert.ErrorContains(t, cmd.Execute(), tt.want)
 		})
 	}
+}
+
+func TestOCIInputEntersImageModeWithoutImageFlag(t *testing.T) {
+	cmd := NewPatchCmd()
+	cmd.SetArgs([]string{"--input-oci-layout", t.TempDir(), "--oci-dir", t.TempDir() + "/output", "--tag", "example.invalid/output:patched"})
+	err := cmd.Execute()
+	require.ErrorContains(t, err, "read oci-layout", "must reach local layout validation without requiring --image")
 }

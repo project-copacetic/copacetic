@@ -28,6 +28,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	remoteTypes "github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -36,6 +37,7 @@ import (
 	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/mocks"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 
@@ -401,6 +403,7 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 		outputDir,
 		[]types.PatchResult{{OriginalRef: originalRef}},
 		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}},
+		OCILayoutExportOptions{},
 	)
 	require.NoError(t, err)
 
@@ -423,6 +426,48 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, compressed.Close()) })
 	_, err = io.Copy(io.Discard, compressed)
 	require.NoError(t, err)
+}
+
+func TestDiscoverPlatformsReportMetadata(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "unix:///copa-report-test-no-daemon.sock")
+	server := httptest.NewServer(registry.New())
+	t.Cleanup(server.Close)
+	ref, err := name.NewTag(server.Listener.Addr().String()+"/test/report:latest", name.Insecure)
+	require.NoError(t, err)
+	reportDir := t.TempDir()
+	reportFile := filepath.Join(reportDir, "amd64.json")
+	require.NoError(t, os.WriteFile(reportFile, []byte(`{
+		"SchemaVersion":2,"ArtifactName":"example.com/test/image:latest","ArtifactType":"container_image",
+		"Metadata":{"OS":{"Family":"alpine","Name":"3.21.0"},"ImageConfig":{"architecture":"amd64"}},
+		"Results":[{"Class":"os-pkgs","Type":"alpine","Vulnerabilities":[{
+			"VulnerabilityID":"CVE-2025-46394","PkgName":"busybox","InstalledVersion":"1.37.0-r8","FixedVersion":"1.37.0-r9"
+		}]}]
+	}`), 0o600))
+	image, err := random.Image(128, 1)
+	require.NoError(t, err)
+	platform := &remotev1.Platform{OS: "linux", Architecture: "amd64", OSVersion: "fixture.1", OSFeatures: []string{"b", "a"}}
+	index := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: platform}},
+		mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: &remotev1.Platform{OS: "linux", Architecture: "386"}}},
+	)
+	require.NoError(t, remote.WriteIndex(ref, index))
+	found, err := DiscoverPlatforms(ref.String(), reportDir, "trivy")
+	require.NoError(t, err)
+	require.Len(t, found, 2)
+	assert.False(t, found[0].ShouldPreserve)
+	assert.Equal(t, reportFile, found[0].ReportFile)
+	assert.Equal(t, platform.OSVersion, found[0].OSVersion)
+	assert.Equal(t, platform.OSFeatures, found[0].OSFeatures)
+	assert.True(t, found[1].ShouldPreserve)
+	assert.Empty(t, found[1].ReportFile)
+
+	// An underspecified report cannot select an arbitrary feature/version variant.
+	other := *platform
+	other.OSVersion = "fixture.2"
+	index = mutate.AppendManifests(index, mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: &other}})
+	require.NoError(t, remote.WriteIndex(ref, index))
+	_, err = DiscoverPlatforms(ref.String(), reportDir, "trivy")
+	require.ErrorContains(t, err, "matches 2 image platforms")
 }
 
 func TestDiscoverPlatformsMutableTagKeepsLocalPlatform(t *testing.T) {
@@ -1155,6 +1200,179 @@ func TestUpdateImageConfigData(t *testing.T) {
 	})
 }
 
+func writeOCIInputTestBlob(t *testing.T, root, mediaType string, data []byte) ispec.Descriptor {
+	t.Helper()
+	dgst := digest.FromBytes(data)
+	path := filepath.Join(root, "blobs", dgst.Algorithm().String(), dgst.Encoded())
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return ispec.Descriptor{MediaType: mediaType, Digest: dgst, Size: int64(len(data))}
+}
+
+func newOCIInputTestSource(t *testing.T) (*ocilayout.Source, ispec.Descriptor, []byte) {
+	t.Helper()
+	root := t.TempDir()
+	configData := []byte(`{"architecture":"amd64","os":"linux","config":{"Labels":{"BaseImage":"registry.invalid/base:latest","existing":"kept"}},"rootfs":{"type":"layers","diff_ids":[]}}`)
+	configDesc := writeOCIInputTestBlob(t, root, ispec.MediaTypeImageConfig, configData)
+	manifestData, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     ispec.MediaTypeImageManifest,
+		"config":        configDesc,
+		"layers":        []ispec.Descriptor{},
+	})
+	require.NoError(t, err)
+	manifestDesc := writeOCIInputTestBlob(t, root, ispec.MediaTypeImageManifest, manifestData)
+	manifestDesc.Platform = &ispec.Platform{OS: "linux", Architecture: "amd64"}
+	indexData, err := json.Marshal(map[string]any{
+		"schemaVersion": 2,
+		"mediaType":     ispec.MediaTypeImageIndex,
+		"manifests":     []ispec.Descriptor{manifestDesc},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, ispec.ImageLayoutFile), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, ispec.ImageIndexFile), indexData, 0o600))
+
+	source, err := ocilayout.Open(t.Context(), root, filepath.Join(t.TempDir(), "output"), "")
+	require.NoError(t, err)
+	return source, manifestDesc, configData
+}
+
+func TestInitializeBuildkitConfigWithSourceKeepsResolutionLocal(t *testing.T) {
+	source, manifestDesc, configData := newOCIInputTestSource(t)
+	resolvedRef, err := source.ResolveReference()
+	require.NoError(t, err)
+
+	mockClient := &mocks.MockGWClient{}
+	mockClient.On("ResolveImageConfig", mock.Anything, resolvedRef, mock.Anything).
+		Return(resolvedRef, manifestDesc.Digest, configData, nil).
+		Once()
+	config, err := InitializeBuildkitConfigWithSource(t.Context(), mockClient, "example.com/acme/app:latest", manifestDesc.Platform, source)
+	require.NoError(t, err)
+	assert.Nil(t, config.PatchedConfigData)
+	var image ispec.Image
+	require.NoError(t, json.Unmarshal(config.ConfigData, &image))
+	assert.Equal(t, "registry.invalid/base:latest", image.Config.Labels["BaseImage"])
+	assert.Equal(t, "kept", image.Config.Labels["existing"])
+	mockClient.AssertExpectations(t)
+
+	solveOpt := client.SolveOpt{}
+	addOCIStores(&solveOpt, OCILayoutExportOptions{state: &ociLayoutExportState{sources: []*ocilayout.Source{source}}})
+	assert.NotNil(t, solveOpt.OCIStores[source.StoreID])
+}
+
+func TestCreatePreservedOnlyOCILayoutFromSourceIsAtomic(t *testing.T) {
+	source, _, _ := newOCIInputTestSource(t)
+	output := filepath.Join(t.TempDir(), "output")
+	platform := types.PatchPlatform{
+		Platform:       ispec.Platform{OS: "linux", Architecture: "amd64"},
+		ShouldPreserve: true,
+	}
+	result := types.PatchResult{
+		OriginalRef: source.Reference,
+		PatchedRef:  source.Reference,
+		PatchedDesc: &source.Descriptor,
+		OCISource:   source,
+	}
+	require.NoError(t, CreateOCILayoutFromResultsWithOptions(
+		output,
+		[]types.PatchResult{result},
+		[]types.PatchPlatform{platform},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "example.com/acme/app:patched"},
+	))
+
+	var index ispec.Index
+	data, err := os.ReadFile(filepath.Join(output, ispec.ImageIndexFile))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(data, &index))
+	require.Len(t, index.Manifests, 1)
+	assert.Equal(t, ispec.MediaTypeImageIndex, index.Manifests[0].MediaType)
+	assert.Equal(t, "patched", index.Manifests[0].Annotations[ispec.AnnotationRefName])
+	selectedIndexData, err := os.ReadFile(filepath.Join(output, "blobs", index.Manifests[0].Digest.Algorithm().String(), index.Manifests[0].Digest.Encoded()))
+	require.NoError(t, err)
+	var selectedIndex ispec.Index
+	require.NoError(t, json.Unmarshal(selectedIndexData, &selectedIndex))
+	require.Len(t, selectedIndex.Manifests, 1)
+	assert.Equal(t, source.Descriptor.Digest, selectedIndex.Manifests[0].Digest)
+	assert.NotEmpty(t, selectedIndex.Annotations["org.opencontainers.image.created"])
+	assert.NotEmpty(t, selectedIndex.Annotations["sh.copa.patched"])
+	_, err = os.Stat(filepath.Join(output, "blobs", source.Descriptor.Digest.Algorithm().String(), source.Descriptor.Digest.Encoded()))
+	require.NoError(t, err)
+	reopened, err := ocilayout.Open(t.Context(), output, filepath.Join(t.TempDir(), "next-output"), "example.com/acme/app:patched")
+	require.NoError(t, err)
+	platforms, err := reopened.Platforms(t.Context())
+	require.NoError(t, err)
+	require.Len(t, platforms, 1)
+	assert.Equal(t, "amd64", platforms[0].Architecture)
+
+	existingOutput := t.TempDir()
+	err = CreateOCILayoutFromResultsWithOptions(
+		existingOutput,
+		[]types.PatchResult{result},
+		[]types.PatchPlatform{platform},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "example.com/acme/app:patched"},
+	)
+	require.ErrorContains(t, err, "already exists")
+}
+
+func TestOCIPublicationHonorsLateCancellation(t *testing.T) {
+	source, _, _ := newOCIInputTestSource(t)
+	parent := t.TempDir()
+	output := filepath.Join(parent, "output")
+	result := types.PatchResult{OCISource: source, PatchedDesc: &source.Descriptor}
+	platform := types.PatchPlatform{Platform: *source.Descriptor.Platform, ShouldPreserve: true}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	completed := false
+	err := createAtomicOCILayout(ctx, output, func(staging string) error {
+		// Finish a real preserved-layout export, then cancel before publication.
+		err := CreateOCILayoutFromResultsWithOptions(staging,
+			[]types.PatchResult{result}, []types.PatchPlatform{platform},
+			OCILayoutExportOptions{OutputReference: "example.com/app:patched"},
+		)
+		if err != nil {
+			return err
+		}
+		_, err = ocilayout.Open(t.Context(), staging, "", "")
+		require.NoError(t, err)
+		completed = true
+		cancel()
+		return nil
+	})
+	require.True(t, completed)
+	require.ErrorIs(t, err, context.Canceled)
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "late cancellation must remove staging and publish nothing")
+
+	existing := t.TempDir()
+	marker := filepath.Join(existing, "keep")
+	require.NoError(t, os.WriteFile(marker, []byte("unchanged"), 0o600))
+	err = createAtomicOCILayout(ctx, existing, func(string) error {
+		t.Fatal("an existing destination must prevent any writes")
+		return nil
+	})
+	require.ErrorContains(t, err, "already exists")
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "unchanged", string(data))
+}
+
+func TestCanceledOCIExportRemovesStagingDirectory(t *testing.T) {
+	source, _, _ := newOCIInputTestSource(t)
+	parent := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := CreateOCILayoutFromResultsWithOptions(filepath.Join(parent, "output"),
+		[]types.PatchResult{{OCISource: source, PatchedDesc: &source.Descriptor}},
+		[]types.PatchPlatform{{Platform: *source.Descriptor.Platform, ShouldPreserve: true}},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "example.com/app:patched"}.WithContext(ctx),
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
 func TestMapGoArch(t *testing.T) {
 	cases := []struct {
 		arch, variant, want string
@@ -1470,4 +1688,73 @@ func TestPlatformsFromIndexManifest(t *testing.T) {
 		{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}, // v8 variant stripped
 	}
 	assert.Equal(t, want, got)
+}
+
+func TestPlatformKeyIncludesNormalizedIdentity(t *testing.T) {
+	original := ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8", OSVersion: "1", OSFeatures: []string{"b", "a"}}
+	normalized := original
+	normalized.Variant = ""
+	normalized.OSFeatures = []string{"a", "b", "a"}
+	assert.Equal(t, PlatformKey(original), PlatformKey(normalized))
+	normalized.OSFeatures = []string{"c"}
+	assert.NotEqual(t, PlatformKey(original), PlatformKey(normalized))
+	normalized = original
+	normalized.OSVersion = "2"
+	assert.NotEqual(t, PlatformKey(original), PlatformKey(normalized))
+}
+
+func TestOCIExportAnnotationScopes(t *testing.T) {
+	patchResult := &types.PatchResult{
+		OCISource:           &ocilayout.Source{},
+		ConfigData:          []byte(`{"architecture":"amd64","os":"linux"}`),
+		PatchedDesc:         &ispec.Descriptor{Annotations: map[string]string{"example.scope": "descriptor"}},
+		ManifestAnnotations: map[string]string{"example.scope": "body"},
+	}
+	metadata := ociPlatformExportMetadata(patchResult)
+	result := gwclient.NewResult()
+	require.NoError(t, addOCIExportMetadata(result, metadata))
+	assert.Equal(t, []byte("body"), result.Metadata[exptypes.AnnotationManifestKey(nil, "example.scope")])
+	assert.Equal(t, []byte("descriptor"), result.Metadata[exptypes.AnnotationManifestDescriptorKey(nil, "example.scope")])
+	assert.Equal(t, "descriptor", patchResult.PatchedDesc.Annotations["example.scope"])
+}
+
+func TestOCIExportRejectsMismatchedSoleResult(t *testing.T) {
+	source, desc, config := newOCIInputTestSource(t)
+	state := llb.Scratch()
+	err := CreateOCILayoutFromResultsWithOptions(filepath.Join(t.TempDir(), "output"),
+		[]types.PatchResult{{OCISource: source, PatchedDesc: &desc, PatchedState: &state, ConfigData: config}},
+		[]types.PatchPlatform{{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}}},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "registry.invalid/output:patched"},
+	)
+	require.ErrorContains(t, err, "missing OCI patch result for platform")
+}
+
+func TestPlatformKeyAvoidsDelimiterCollisions(t *testing.T) {
+	for _, pair := range [][2]ispec.Platform{
+		{{OS: "linux", Architecture: "amd64", OSVersion: `1+["x"]`}, {OS: "linux", Architecture: "amd64", OSVersion: "1", OSFeatures: []string{"x"}}},
+		{{OS: "linux/amd64", Architecture: "v8"}, {OS: "linux", Architecture: "amd64", Variant: "v8"}},
+		{{OS: "linux", Architecture: "amd64@1"}, {OS: "linux", Architecture: "amd64", OSVersion: "1"}},
+		{{OS: "linux", Architecture: "amd64", Variant: "v1@2"}, {OS: "linux", Architecture: "amd64", Variant: "v1", OSVersion: "2"}},
+		{{OS: "linux", Architecture: "amd64", OSFeatures: []string{"a,b"}}, {OS: "linux", Architecture: "amd64", OSFeatures: []string{"a", "b"}}},
+	} {
+		assert.NotEqual(t, PlatformKey(pair[0]), PlatformKey(pair[1]), "%+v must remain distinct from %+v", pair[0], pair[1])
+	}
+	assert.Equal(t,
+		PlatformKey(ispec.Platform{OS: "linux", Architecture: "amd64"}),
+		PlatformKey(ispec.Platform{OS: "linux", Architecture: "amd64", OSFeatures: []string{}}),
+	)
+}
+
+func TestFormatPlatformPreservesDisplay(t *testing.T) {
+	for _, test := range []struct {
+		platform ispec.Platform
+		want     string
+	}{
+		{ispec.Platform{OS: "linux", Architecture: "amd64"}, "linux/amd64"},
+		{ispec.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}, "linux/arm64"},
+		{ispec.Platform{OS: "windows", Architecture: "amd64", OSVersion: "10.0.1"}, "windows/amd64@10.0.1"},
+		{ispec.Platform{OS: "linux", Architecture: "amd64", OSVersion: "1", OSFeatures: []string{"b", "a"}}, `linux/amd64@1+["a","b"]`},
+	} {
+		assert.Equal(t, test.want, FormatPlatform(test.platform))
+	}
 }
