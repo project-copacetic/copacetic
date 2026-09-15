@@ -49,6 +49,14 @@ docker buildx create --name copa-builder --use
 copa patch -i docker.io/library/nginx:1.21.6 -r nginx.1.21.6.json -t 1.21.6-patched --addr buildx://copa-builder
 ```
 
+You can also select the builder with `BUILDX_BUILDER` and use `--addr buildx://`.
+A builder named in the address takes precedence over `BUILDX_BUILDER`.
+When either option selects a builder and Buildx supports `dial-stdio`, Copa
+omits `DOCKER_HOST` from that command's environment so it does not override the
+builder's Docker context. The image
+loader still receives `DOCKER_HOST`. If neither the address nor `BUILDX_BUILDER`
+selects a builder, Buildx continues to receive `DOCKER_HOST`.
+
 ### BuildKit in a Container
 
 Run BuildKit in a dedicated container:
