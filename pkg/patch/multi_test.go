@@ -217,3 +217,18 @@ func TestBuildPatchingPlanUnnamedOCIOutput(t *testing.T) {
 	}, []types.PatchPlatform{{Platform: platformSpec("linux", "amd64", "")}})
 	assert.Equal(t, "registry.invalid/output:patched", plan.PatchedImageName)
 }
+
+func TestPlatformsForSingleReportRejectsUnsupportedTarget(t *testing.T) {
+	for _, platform := range []v1.Platform{
+		{OS: "linux", Architecture: "mips64le"},
+		{OS: "windows", Architecture: "amd64"},
+	} {
+		t.Run(platform.OS+"/"+platform.Architecture, func(t *testing.T) {
+			target := types.PatchPlatform{Platform: platform, ShouldPreserve: true}
+			discovered := []types.PatchPlatform{{Platform: platformSpec("linux", "amd64", "")}, target}
+			_, err := platformsForSingleReport(discovered, &target, "report.json")
+			require.ErrorContains(t, err, "unsupported scan report platform")
+			assert.True(t, discovered[1].ShouldPreserve)
+		})
+	}
+}

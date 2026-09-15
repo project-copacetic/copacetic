@@ -610,7 +610,7 @@ func TestImageDescriptorConfigArtifactTypeMustMatchManifest(t *testing.T) {
 	desc = writeBlob(t, fixture.path, ocispec.MediaTypeImageManifest, marshalJSON(t, body))
 	desc.ArtifactType = ocispec.MediaTypeImageConfig
 	newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc})
-	_, err = Open(t.Context(), fixture.path, "", "")
+	_, err = Open(t.Context(), fixture.path, "", desc.Digest.String())
 	require.ErrorContains(t, err, "unsupported artifact")
 }
 
@@ -773,4 +773,91 @@ func TestOpenValidatesCompletePlatformIdentity(t *testing.T) {
 			assert.Equal(t, before, snapshotLayout(t, root))
 		})
 	}
+}
+
+func TestLayoutMetadataObservesCancellation(t *testing.T) {
+	for _, name := range []string{ocispec.ImageLayoutFile, ocispec.ImageIndexFile} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			data := bytes.Repeat([]byte("metadata"), maxContextReadSize)
+			require.NoError(t, os.WriteFile(filepath.Join(root, name), data, 0o600))
+			got, err := readLayoutMetadata(t.Context(), root, name)
+			require.NoError(t, err)
+			assert.Equal(t, data, got)
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			_, err = readLayoutMetadata(ctx, root, name)
+			require.ErrorIs(t, err, context.Canceled)
+		})
+	}
+}
+
+func TestSelectorsIgnoreBodyArtifactAliases(t *testing.T) {
+	for _, mediaType := range []string{ocispec.MediaTypeImageManifest, ocispec.MediaTypeImageIndex} {
+		t.Run(mediaType, func(t *testing.T) {
+			annotations := map[string]string{annotationImageName: "example.com/app:stable", ocispec.AnnotationRefName: "stable"}
+			fixture := newSingleLayout(t, annotations)
+			image := fixture.manifests[0]
+			artifact := writeBlob(t, fixture.path, mediaType, marshalJSON(t, map[string]any{
+				"schemaVersion": 2, "mediaType": mediaType, "artifactType": "application/example",
+			}))
+			artifact.Annotations = annotations
+			newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, image})
+			before := snapshotLayout(t, fixture.path)
+			for _, selector := range []string{"", "example.com/app:stable", "stable", image.Digest.String()} {
+				source, err := Open(t.Context(), fixture.path, "", selector)
+				require.NoError(t, err)
+				assert.Equal(t, image.Digest, source.Descriptor.Digest)
+			}
+			_, err := Open(t.Context(), fixture.path, "", artifact.Digest.String())
+			require.ErrorContains(t, err, "unsupported artifact")
+			assert.Equal(t, before, snapshotLayout(t, fixture.path))
+
+			other := newImageManifest(t, fixture.path, &ocispec.Platform{OS: "linux", Architecture: "arm64"}, annotations, nil)
+			newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, image, other})
+			_, err = Open(t.Context(), fixture.path, "", "")
+			require.ErrorContains(t, err, "2 top-level images")
+			_, err = Open(t.Context(), fixture.path, "", "stable")
+			require.ErrorContains(t, err, "2 descriptors matching")
+		})
+	}
+}
+
+func TestCandidateClassificationPreservesSelectedValidation(t *testing.T) {
+	for _, defect := range []string{"missing", "invalid JSON", "corrupt artifact"} {
+		t.Run(defect, func(t *testing.T) {
+			fixture := newSingleLayout(t, map[string]string{ocispec.AnnotationRefName: "valid"})
+			image := fixture.manifests[0]
+			bad := writeBlob(t, fixture.path, ocispec.MediaTypeImageManifest, []byte("invalid JSON"))
+			switch defect {
+			case "missing":
+				require.NoError(t, os.Remove(filepath.Join(fixture.path, "blobs", bad.Digest.Algorithm().String(), bad.Digest.Encoded())))
+			case "corrupt artifact":
+				bad = writeBlob(t, fixture.path, ocispec.MediaTypeImageManifest, []byte(`{"artifactType":"application/example"}`))
+				bad.Size++ // Unverified content cannot establish an artifact.
+			}
+			bad.Annotations = map[string]string{ocispec.AnnotationRefName: "bad"}
+			newLayoutAt(t, fixture.path, []ocispec.Descriptor{bad, image})
+			before := snapshotLayout(t, fixture.path)
+			source, err := Open(t.Context(), fixture.path, "", "valid")
+			require.NoError(t, err)
+			assert.Equal(t, image.Digest, source.Descriptor.Digest)
+			_, err = Open(t.Context(), fixture.path, "", "")
+			require.ErrorContains(t, err, "2 top-level images")
+			_, err = Open(t.Context(), fixture.path, "", "bad")
+			require.ErrorContains(t, err, "validate selected OCI image")
+			assert.Equal(t, before, snapshotLayout(t, fixture.path))
+		})
+	}
+}
+
+func TestCandidateClassificationPropagatesCancellation(t *testing.T) {
+	fixture := newSingleLayout(t, nil)
+	source, err := Open(t.Context(), fixture.path, "", "")
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	source.store = &cancelingContentStore{Store: source.store, target: fixture.manifests[0].Digest, onOpen: 1, cancel: cancel}
+	_, err = source.selectDescriptor(ctx, fixture.manifests, "", nil)
+	require.ErrorIs(t, err, context.Canceled)
 }

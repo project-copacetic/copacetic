@@ -78,6 +78,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 
 	t.Run("unnamed single manifest and final VEX identity", func(t *testing.T) {
 		input := writeLayout(t, images, false, false)
+		addBodyArtifactAliases(t, input)
 		before := snapshot(t, input)
 		output := filepath.Join(t.TempDir(), "output")
 		opts := options(input, output)
@@ -132,6 +133,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 
 	t.Run("selected platform preserves exact sibling content", func(t *testing.T) {
 		input := writeLayout(t, images, true, true)
+		addBodyArtifactAliases(t, input)
 		before := snapshot(t, input)
 		opts := options(input, filepath.Join(t.TempDir(), "output"))
 		opts.Image = logicalName
@@ -496,5 +498,52 @@ func TestOCILayoutRejectsOverlappingTempDir(t *testing.T) {
 				assert.True(t, os.IsNotExist(err))
 			}
 		})
+	}
+}
+
+func addBodyArtifactAliases(t *testing.T, root string) {
+	t.Helper()
+	indexPath := filepath.Join(root, ocispec.ImageIndexFile)
+	data, err := os.ReadFile(indexPath)
+	require.NoError(t, err)
+	var index ocispec.Index
+	require.NoError(t, json.Unmarshal(data, &index))
+	for _, mediaType := range []string{ocispec.MediaTypeImageManifest, ocispec.MediaTypeImageIndex} {
+		data, err := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": mediaType, "artifactType": "application/example"})
+		require.NoError(t, err)
+		dgst := digest.FromBytes(data)
+		require.NoError(t, os.WriteFile(filepath.Join(root, "blobs", dgst.Algorithm().String(), dgst.Encoded()), data, 0o600))
+		index.Manifests = append(index.Manifests, ocispec.Descriptor{
+			MediaType: mediaType, Digest: dgst, Size: int64(len(data)),
+			Annotations: map[string]string{"io.containerd.image.name": logicalName, ocispec.AnnotationRefName: "original"},
+		})
+	}
+	data, err = json.Marshal(index)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(indexPath, data, 0o600))
+}
+
+func TestOCILayoutRejectsUnsupportedSingleReport(t *testing.T) {
+	images := make(map[string]v1.Image)
+	for _, arch := range []string{amd64Arch, "mips64le"} {
+		config, err := empty.Image.ConfigFile()
+		require.NoError(t, err)
+		config.OS, config.Architecture = linuxOS, arch
+		img, err := mutate.ConfigFile(empty.Image, config)
+		require.NoError(t, err)
+		images[arch] = img
+	}
+	input := writeLayout(t, images, true, false)
+	before := snapshot(t, input)
+	for _, ignore := range []bool{false, true} {
+		opts := &types.Options{
+			InputOCILayout: input, OCIDir: filepath.Join(t.TempDir(), "output"), PatchedTag: outputName,
+			Report: writeReport(t, "mips64le"), Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch",
+			BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, IgnoreError: ignore, Progress: progressui.QuietMode,
+		}
+		require.ErrorContains(t, patch.Patch(t.Context(), opts), "unsupported scan report platform")
+		assert.Equal(t, before, snapshot(t, input))
+		_, err := os.Stat(opts.OCIDir)
+		assert.True(t, os.IsNotExist(err))
 	}
 }

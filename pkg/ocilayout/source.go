@@ -71,7 +71,7 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 		}
 	}
 
-	layoutData, err := readLayoutMetadata(input, ocispec.ImageLayoutFile)
+	layoutData, err := readLayoutMetadata(ctx, input, ocispec.ImageLayoutFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ocispec.ImageLayoutFile, err)
 	}
@@ -83,7 +83,7 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 		return nil, fmt.Errorf("unsupported OCI image layout version %q in %s (expected %q)", layout.Version, ocispec.ImageLayoutFile, ocispec.ImageLayoutVersion)
 	}
 
-	indexData, err := readLayoutMetadata(input, ocispec.ImageIndexFile)
+	indexData, err := readLayoutMetadata(ctx, input, ocispec.ImageIndexFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", ocispec.ImageIndexFile, err)
 	}
@@ -107,7 +107,12 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 	if selector != "" {
 		named, _ = reference.ParseNormalizedNamed(selector)
 	}
-	desc, err := selectDescriptor(index.Manifests, selector, named)
+	store, err := contentlocal.NewStore(input)
+	if err != nil {
+		return nil, fmt.Errorf("open OCI layout content store: %w", err)
+	}
+	source := &Source{Path: input, store: store}
+	desc, err := source.selectDescriptor(ctx, index.Manifests, selector, named)
 	if err != nil {
 		return nil, err
 	}
@@ -115,18 +120,10 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 		return nil, fmt.Errorf("selected descriptor %s has unsupported image mediaType %q", desc.Digest, desc.MediaType)
 	}
 
-	store, err := contentlocal.NewStore(input)
-	if err != nil {
-		return nil, fmt.Errorf("open OCI layout content store: %w", err)
-	}
 	pathSum := sha256.Sum256([]byte(input + "\x00" + desc.Digest.String()))
-	source := &Source{
-		Path:       input,
-		StoreID:    "copa-oci-" + hex.EncodeToString(pathSum[:8]),
-		Reference:  sourceReference(index.Manifests, desc.Digest),
-		Descriptor: desc,
-		store:      store,
-	}
+	source.StoreID = "copa-oci-" + hex.EncodeToString(pathSum[:8])
+	source.Reference = sourceReference(index.Manifests, desc.Digest)
+	source.Descriptor = desc
 	if err := source.validateReachableImage(ctx, &desc); err != nil {
 		return nil, fmt.Errorf("validate selected OCI image %s: %w", desc.Digest, err)
 	}
@@ -162,7 +159,10 @@ func (s *Source) ValidateTempDir(path string) error {
 	return nil
 }
 
-func readLayoutMetadata(root, name string) ([]byte, error) {
+func readLayoutMetadata(ctx context.Context, root, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	path := filepath.Join(root, name)
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -171,7 +171,12 @@ func readLayoutMetadata(root, name string) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("must be a regular file")
 	}
-	return os.ReadFile(path)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(contextReader{ctx: ctx, reader: file})
 }
 
 func canonicalExistingDirectory(path string) (string, error) {
@@ -235,10 +240,27 @@ func pathWithin(root, target string) bool {
 	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
 
-func selectDescriptor(descriptors []ocispec.Descriptor, rawSelector string, named reference.Named) (ocispec.Descriptor, error) {
-	candidates := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
-		return !isArtifactDescriptor(&desc) && (isImageManifest(desc.MediaType) || isImageIndex(desc.MediaType))
-	})
+func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Descriptor, rawSelector string, named reference.Named) (ocispec.Descriptor, error) {
+	var candidates []ocispec.Descriptor
+	for _, desc := range descriptors {
+		if isArtifactDescriptor(&desc) || (!isImageManifest(desc.MediaType) && !isImageIndex(desc.MediaType)) {
+			continue
+		}
+		var body struct {
+			ArtifactType string `json:"artifactType"`
+		}
+		err := s.readJSONBlob(ctx, &desc, &body)
+		if contextErr := ctx.Err(); contextErr != nil {
+			return ocispec.Descriptor{}, contextErr
+		}
+		// Only a verified body can establish an artifact. Keep unreadable or
+		// corrupt descriptors as candidates so their validation remains scoped
+		// to selection and cannot silently hide an ambiguous image.
+		if err == nil && body.ArtifactType != "" {
+			continue
+		}
+		candidates = append(candidates, desc)
+	}
 	if rawSelector == "" {
 		unique := make(map[digest.Digest]bool)
 		var images []ocispec.Descriptor

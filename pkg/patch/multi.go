@@ -528,6 +528,9 @@ func platformsForSingleReport(
 	if err != nil {
 		return nil, err
 	}
+	if !isSupportedPatchPlatform(&resolved.Platform) {
+		return nil, fmt.Errorf("unsupported scan report platform %q", buildkit.PlatformKey(resolved.Platform))
+	}
 	targetKey := buildkit.PlatformKey(resolved.Platform)
 	available := make([]string, 0, len(discovered))
 	platforms := make([]types.PatchPlatform, 0, len(discovered))
