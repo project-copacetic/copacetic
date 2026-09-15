@@ -428,6 +428,48 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestDiscoverPlatformsReportMetadata(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "unix:///copa-report-test-no-daemon.sock")
+	server := httptest.NewServer(registry.New())
+	t.Cleanup(server.Close)
+	ref, err := name.NewTag(server.Listener.Addr().String()+"/test/report:latest", name.Insecure)
+	require.NoError(t, err)
+	reportDir := t.TempDir()
+	reportFile := filepath.Join(reportDir, "amd64.json")
+	require.NoError(t, os.WriteFile(reportFile, []byte(`{
+		"SchemaVersion":2,"ArtifactName":"example.com/test/image:latest","ArtifactType":"container_image",
+		"Metadata":{"OS":{"Family":"alpine","Name":"3.21.0"},"ImageConfig":{"architecture":"amd64"}},
+		"Results":[{"Class":"os-pkgs","Type":"alpine","Vulnerabilities":[{
+			"VulnerabilityID":"CVE-2025-46394","PkgName":"busybox","InstalledVersion":"1.37.0-r8","FixedVersion":"1.37.0-r9"
+		}]}]
+	}`), 0o600))
+	image, err := random.Image(128, 1)
+	require.NoError(t, err)
+	platform := &remotev1.Platform{OS: "linux", Architecture: "amd64", OSVersion: "fixture.1", OSFeatures: []string{"b", "a"}}
+	index := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: platform}},
+		mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: &remotev1.Platform{OS: "linux", Architecture: "386"}}},
+	)
+	require.NoError(t, remote.WriteIndex(ref, index))
+	found, err := DiscoverPlatforms(ref.String(), reportDir, "trivy")
+	require.NoError(t, err)
+	require.Len(t, found, 2)
+	assert.False(t, found[0].ShouldPreserve)
+	assert.Equal(t, reportFile, found[0].ReportFile)
+	assert.Equal(t, platform.OSVersion, found[0].OSVersion)
+	assert.Equal(t, platform.OSFeatures, found[0].OSFeatures)
+	assert.True(t, found[1].ShouldPreserve)
+	assert.Empty(t, found[1].ReportFile)
+
+	// An underspecified report cannot select an arbitrary feature/version variant.
+	other := *platform
+	other.OSVersion = "fixture.2"
+	index = mutate.AppendManifests(index, mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: &other}})
+	require.NoError(t, remote.WriteIndex(ref, index))
+	_, err = DiscoverPlatforms(ref.String(), reportDir, "trivy")
+	require.ErrorContains(t, err, "matches 2 image platforms")
+}
+
 func TestDiscoverPlatformsMutableTagKeepsLocalPlatform(t *testing.T) {
 	originalLocal := localImagePlatforms
 	originalRemote := getRemoteImageDescriptor

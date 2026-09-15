@@ -64,7 +64,7 @@ func patchMultiPlatformImage(
 			}
 			for i := range platforms {
 				platforms[i].ReportFile = reportFiles[buildkit.PlatformKey(platforms[i].Platform)]
-				platforms[i].ShouldPreserve = platforms[i].ReportFile == ""
+				platforms[i].ShouldPreserve = platforms[i].ShouldPreserve || platforms[i].ReportFile == ""
 			}
 		}
 		if len(platforms) == 0 {
@@ -114,11 +114,10 @@ func patchMultiPlatformImage(
 				platforms = append(platforms, platformCopy)
 			}
 		} else {
-			// Patch all available platforms since no specific platforms were requested
+			// Patch supported platforms, retaining any source preservation decisions.
 			for _, p := range discoveredPlatforms {
 				platformCopy := p
 				platformCopy.ReportFile = "" // No vulnerability report, just patch with latest packages
-				platformCopy.ShouldPreserve = false
 				platforms = append(platforms, platformCopy)
 			}
 			log.Infof("Patching all available platforms")
@@ -257,9 +256,12 @@ func patchPreparedMultiPlatformImage(
 				mu.Lock()
 				patchResults = append(patchResults, result)
 				var preserveReason string
-				if reportDir != "" && p.ReportFile == "" {
+				switch {
+				case !isSupportedPatchPlatform(&p.Platform):
+					preserveReason = "Unsupported patch platform"
+				case reportDir != "" && p.ReportFile == "":
 					preserveReason = "No scan report for platform"
-				} else {
+				default:
 					preserveReason = "Not in --platform list"
 				}
 				// Add summary entry for unpatched platform
@@ -313,6 +315,18 @@ func patchPreparedMultiPlatformImage(
 				status := "Error"
 				if ignoreError {
 					status = "Ignored"
+					if opts.OCISource != nil {
+						originalRef, _, _, resolveErr := resolvePatchNames(opts)
+						if resolveErr != nil {
+							return resolveErr
+						}
+						original, preserveErr := createOriginalImageResult(gctx, originalRef, &p, image, opts.OCISource)
+						if preserveErr != nil {
+							return fmt.Errorf("preserve failed platform %s: %w", platformKey, preserveErr)
+						}
+						patchResults = append(patchResults, *original)
+						markPlatformPreserved(platforms, platformKey)
+					}
 				}
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
 					Platform: platformKey,
@@ -347,11 +361,9 @@ func patchPreparedMultiPlatformImage(
 		})
 	}
 
-	// Wait for all goroutines to complete (don't fail early on errors if ignoring errors)
-	if err := g.Wait(); err != nil && !ignoreError {
-		// g.Wait() will return the first non-nil error from any goroutine
-		// But since we're now returning nil from all goroutines, this should only
-		// happen if context is canceled
+	// Patch failures are recorded above. A group error means cancellation or
+	// failure to preserve source content, neither of which can be ignored.
+	if err := g.Wait(); err != nil {
 		// Ensure the progress channel is closed on early exit
 		closeProgressOnce.Do(func() { close(sharedProgressCh) })
 		_ = displayEg.Wait()

@@ -107,6 +107,8 @@ Output naming is separate. When the selected image has an unambiguous usable nam
 
 For a selected multi-platform index, omit `--platform` to patch every supported image platform, or pass platforms to patch a subset and preserve the other descriptors and blobs byte-for-byte. A single report and a report directory also preserve platforms without a matching report. Explicit and report-derived targets must match the source even when it has only one platform. If a single report has no platform metadata, Copa uses the sole verified source platform; a multi-platform source needs an explicit target. Ambiguous platform constraints fail rather than choosing the first match.
 
+Unsupported platforms, including Windows, are preserved; a source containing no supported patch platform is rejected before connecting to BuildKit. With `--ignore-errors`, a failed platform is also preserved when another patch succeeds. If every patch attempt fails, no output is published. Preserved platforms receive no VEX remediation claim, and reportless patches do not generate VEX even when `--output` is set.
+
 OCI layout input has these restrictions:
 
 - `--oci-dir` is required and must name a new directory that does not overlap the input layout. Copa publishes the completed output atomically.

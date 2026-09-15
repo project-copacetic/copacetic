@@ -167,7 +167,10 @@ func patchSingleArchImageWithUpdates(
 	if err != nil {
 		if reportFile != "" && reportHasNoUpdates {
 			log.Debugf("Unable to create a BuildKit client to preflight an empty report for native Chisel metadata: %v", err)
-			res, _ := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+			if err != nil {
+				return nil, err
+			}
 			res.Summary = updates.CombinedSummary()
 			return res, types.ErrNoUpdatesFound
 		}
@@ -196,7 +199,10 @@ func patchSingleArchImageWithUpdates(
 	// Keep the existing empty-report behavior for non-native images. Native
 	// images have already returned the targeted-patching error above.
 	if reportHasNoUpdates {
-		res, _ := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+		res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+		if err != nil {
+			return nil, err
+		}
 		res.Summary = updates.CombinedSummary()
 		return res, types.ErrNoUpdatesFound
 	}
@@ -267,7 +273,7 @@ func patchSingleArchImageWithUpdates(
 	// PlainMode due to rendering overhead; without a buffer, builds that
 	// generate heavy output (e.g. .NET patching) can stall indefinitely.
 	buildChannel := make(chan *client.SolveStatus, 128)
-	eg, ctx := errgroup.WithContext(ctx)
+	eg, buildCtx := errgroup.WithContext(ctx)
 
 	// Resolve image reference for BuildKit operations
 	// For multi-platform images with local manifests, use platform-specific reference
@@ -291,7 +297,7 @@ func patchSingleArchImageWithUpdates(
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform, opts.OCISource,
+		result, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform, opts.OCISource,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
 		patchBuildErr = err
 		if err != nil {
@@ -309,18 +315,18 @@ func patchSingleArchImageWithUpdates(
 		hostPlatform := platforms.Normalize(platforms.DefaultSpec())
 		platformPrefix := tui.FormatEmulationPrefix(hostPlatform.Architecture, targetPlatform.Architecture, targetPlatform.Variant)
 		eg.Go(func() error {
-			common.ForwardProgressWithPrefix(ctx, buildChannel, sharedProgressCh, platformPrefix)
+			common.ForwardProgressWithPrefix(buildCtx, buildChannel, sharedProgressCh, platformPrefix)
 			return nil
 		})
 	} else {
 		// Display progress locally (single-arch mode)
-		common.DisplayProgress(ctx, eg, buildChannel, opts.Progress)
+		common.DisplayProgress(buildCtx, eg, buildChannel, opts.Progress)
 	}
 
 	// Handle image loading if not pushing
 	if !push && opts.OCISource == nil {
 		eg.Go(func() error {
-			return loadImageToRuntime(ctx, pipeR, patchedImageName, finalLoaderType)
+			return loadImageToRuntime(buildCtx, pipeR, patchedImageName, finalLoaderType)
 		})
 	} else {
 		go func() {
@@ -332,7 +338,10 @@ func patchSingleArchImageWithUpdates(
 	waitErr := eg.Wait()
 	if err := selectPatchWaitError(waitErr, patchBuildErr); err != nil {
 		if errors.Is(err, types.ErrNoUpdatesFound) {
-			res, _ := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+			res, err := createOriginalImageResult(ctx, imageName, &targetPlatform, image, opts.OCISource)
+			if err != nil {
+				return nil, err
+			}
 			if updates != nil {
 				res.Summary = updates.CombinedSummary()
 			}
@@ -762,7 +771,7 @@ func executePatchBuild(
 		digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 		patchedImageDigest = digest
 	}
-	if source != nil && patchResult != nil && err == nil {
+	if source != nil && patchResult != nil && err == nil && reportFile != "" {
 		patchResult.VEX = &types.VEXData{Updates: validatedManifest, PackageType: pkgType}
 	}
 	if source == nil && patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
@@ -827,6 +836,9 @@ func createOriginalImageResult(ctx context.Context, imageName reference.Named, t
 	var err error
 	if source != nil {
 		originalDesc, err = source.PlatformDescriptor(ctx, &targetPlatform.Platform)
+		if err != nil {
+			return nil, fmt.Errorf("get original OCI platform descriptor: %w", err)
+		}
 	} else {
 		originalDesc, err = getPlatformDescriptorFromManifest(originalImageRef, targetPlatform)
 	}

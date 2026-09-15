@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 	"time"
 
@@ -28,7 +29,8 @@ import (
 )
 
 const (
-	linuxOS = "linux"
+	linuxOS   = "linux"
+	amd64Arch = "amd64"
 	// Alpine 3.21.0; immutable multi-platform input, not a moving latest tag.
 	alpineIndex = "index.docker.io/library/alpine@sha256:21dc6063fd678b478f57c0e13f47560d0ea4eeba26dfc947b2a4f81f686b9f45"
 	logicalName = "registry.invalid/copa-1677/input:original"
@@ -55,7 +57,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	images := make(map[string]v1.Image)
 	for _, desc := range manifest.Manifests {
-		if desc.Platform == nil || desc.Platform.OS != linuxOS || (desc.Platform.Architecture != "amd64" && desc.Platform.Architecture != "386") {
+		if desc.Platform == nil || desc.Platform.OS != linuxOS || (desc.Platform.Architecture != amd64Arch && desc.Platform.Architecture != "386") {
 			continue
 		}
 		img, err := index.Image(desc.Digest)
@@ -79,12 +81,12 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		before := snapshot(t, input)
 		output := filepath.Join(t.TempDir(), "output")
 		opts := options(input, output)
-		opts.Report = writeReport(t, "amd64")
+		opts.Report = writeReport(t, amd64Arch)
 		opts.Output = filepath.Join(t.TempDir(), "vex.json")
 		require.NoError(t, patch.Patch(t.Context(), opts))
 		assert.Equal(t, before, snapshot(t, input))
 		source := openLayout(t, output)
-		platform := &ocispec.Platform{OS: linuxOS, Architecture: "amd64"}
+		platform := &ocispec.Platform{OS: linuxOS, Architecture: amd64Arch}
 		desc, err := source.PlatformDescriptor(t.Context(), platform)
 		require.NoError(t, err)
 		body := readManifest(t, output, desc)
@@ -107,13 +109,13 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 	})
 
 	t.Run("full platform metadata survives export", func(t *testing.T) {
-		config, err := images["amd64"].ConfigFile()
+		config, err := images[amd64Arch].ConfigFile()
 		require.NoError(t, err)
 		config.OSVersion = "fixture.1"
 		config.OSFeatures = []string{"b", "a"}
-		img, err := mutate.ConfigFile(images["amd64"], config)
+		img, err := mutate.ConfigFile(images[amd64Arch], config)
 		require.NoError(t, err)
-		input := writeLayout(t, map[string]v1.Image{"amd64": img}, false, false)
+		input := writeLayout(t, map[string]v1.Image{amd64Arch: img}, false, false)
 		before := snapshot(t, input)
 		opts := options(input, filepath.Join(t.TempDir(), "output"))
 		require.NoError(t, patch.Patch(t.Context(), opts))
@@ -147,7 +149,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 	t.Run("report directory preserves platform without report", func(t *testing.T) {
 		input := writeLayout(t, images, true, false)
 		opts := options(input, filepath.Join(t.TempDir(), "output"))
-		opts.Report = filepath.Dir(writeReport(t, "amd64"))
+		opts.Report = filepath.Dir(writeReport(t, amd64Arch))
 		opts.Output = filepath.Join(t.TempDir(), "vex.json")
 		require.NoError(t, patch.Patch(t.Context(), opts))
 		assertPreserved(t, input, opts.OCIDir, "386")
@@ -173,6 +175,122 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("reportless output does not produce VEX", func(t *testing.T) {
+		for _, multi := range []bool{false, true} {
+			input := writeLayout(t, images, multi, false)
+			before := snapshot(t, input)
+			opts := options(input, filepath.Join(t.TempDir(), "output"))
+			opts.Output = filepath.Join(t.TempDir(), "vex.json")
+			opts.Format = "unsupported-vex-format"
+			require.NoError(t, patch.Patch(t.Context(), opts))
+			openLayout(t, opts.OCIDir)
+			assert.Equal(t, before, snapshot(t, input))
+			_, err := os.Stat(opts.Output)
+			assert.True(t, os.IsNotExist(err), "reportless patch must not emit VEX")
+		}
+	})
+
+	t.Run("unsupported source platforms are preserved", func(t *testing.T) {
+		unsupported := make(map[string]v1.Image)
+		for _, platform := range []ocispec.Platform{
+			{OS: "windows", Architecture: amd64Arch, OSVersion: "10.0.20348.0"},
+			{OS: linuxOS, Architecture: "mips64le"},
+		} {
+			config, err := images[amd64Arch].ConfigFile()
+			require.NoError(t, err)
+			config.OS, config.Architecture, config.OSVersion = platform.OS, platform.Architecture, platform.OSVersion
+			img, err := mutate.ConfigFile(images[amd64Arch], config)
+			require.NoError(t, err)
+			unsupported[platform.OS+"/"+platform.Architecture] = img
+		}
+		mixed := map[string]v1.Image{amd64Arch: images[amd64Arch]}
+		for key, image := range unsupported {
+			mixed[key] = image
+		}
+		input := writeLayout(t, mixed, true, false)
+		before := snapshot(t, input)
+		for _, mode := range []string{"reportless", "report file", "report directory"} {
+			t.Run(mode, func(t *testing.T) {
+				opts := options(input, filepath.Join(t.TempDir(), "output"))
+				if mode != "reportless" {
+					opts.Report = writeReport(t, amd64Arch)
+					if mode == "report directory" {
+						opts.Report = filepath.Dir(opts.Report)
+					}
+				}
+				require.NoError(t, patch.Patch(t.Context(), opts))
+				assert.Equal(t, before, snapshot(t, input))
+				found, err := openLayout(t, input).Platforms(t.Context())
+				require.NoError(t, err)
+				for _, platform := range found {
+					if platform.OS != linuxOS || platform.Architecture != amd64Arch {
+						assertPlatformPreserved(t, input, opts.OCIDir, &platform)
+					}
+				}
+			})
+		}
+		for _, target := range []string{"windows/amd64", "linux/mips64le"} {
+			opts := options(input, filepath.Join(t.TempDir(), "output"))
+			opts.Platforms = []string{target}
+			require.ErrorContains(t, patch.Patch(t.Context(), opts), "unsupported platform")
+			_, err := os.Stat(opts.OCIDir)
+			assert.True(t, os.IsNotExist(err))
+		}
+		input = writeLayout(t, unsupported, true, false)
+		before = snapshot(t, input)
+		opts := options(input, filepath.Join(t.TempDir(), "output"))
+		opts.BkAddr = "tcp://127.0.0.1:1" // Rejection must precede any BuildKit connection.
+		require.ErrorContains(t, patch.Patch(t.Context(), opts), "no supported patch platforms")
+		assert.Equal(t, before, snapshot(t, input))
+		_, err := os.Stat(opts.OCIDir)
+		assert.True(t, os.IsNotExist(err))
+	})
+
+	t.Run("ignored OCI failure preserves source without a VEX claim", func(t *testing.T) {
+		broken, err := mutate.AppendLayers(images["386"], static.NewLayer([]byte("not a tar archive"), v1types.OCIUncompressedLayer))
+		require.NoError(t, err)
+		input := writeLayout(t, map[string]v1.Image{amd64Arch: images[amd64Arch], "386": broken}, true, false)
+		before := snapshot(t, input)
+		reportDir := t.TempDir()
+		for _, arch := range []string{amd64Arch, "386"} {
+			require.NoError(t, os.Rename(writeReport(t, arch), filepath.Join(reportDir, arch+".json")))
+		}
+		for _, ignore := range []bool{false, true} {
+			opts := options(input, filepath.Join(t.TempDir(), "output"))
+			opts.Report, opts.IgnoreError = reportDir, ignore
+			opts.Output = filepath.Join(t.TempDir(), "vex.json")
+			err := patch.Patch(t.Context(), opts)
+			assert.Equal(t, before, snapshot(t, input))
+			if !ignore {
+				require.ErrorContains(t, err, "one or more platform patches failed")
+				_, err = os.Stat(opts.OCIDir)
+				assert.True(t, os.IsNotExist(err))
+				continue
+			}
+			require.NoError(t, err)
+			assertPreserved(t, input, opts.OCIDir, "386")
+			output := openLayout(t, opts.OCIDir)
+			patched, err := output.PlatformDescriptor(t.Context(), &ocispec.Platform{OS: linuxOS, Architecture: amd64Arch})
+			require.NoError(t, err)
+			preserved, err := output.PlatformDescriptor(t.Context(), &ocispec.Platform{OS: linuxOS, Architecture: "386"})
+			require.NoError(t, err)
+			data, err := os.ReadFile(opts.Output)
+			require.NoError(t, err)
+			assert.Contains(t, string(data), patched.Digest.String())
+			assert.NotContains(t, string(data), preserved.Digest.String())
+		}
+		brokenAMD64, err := mutate.AppendLayers(images[amd64Arch], static.NewLayer([]byte("not a tar archive"), v1types.OCIUncompressedLayer))
+		require.NoError(t, err)
+		input = writeLayout(t, map[string]v1.Image{amd64Arch: brokenAMD64, "386": broken}, true, false)
+		before = snapshot(t, input)
+		opts := options(input, filepath.Join(t.TempDir(), "output"))
+		opts.IgnoreError = true
+		require.ErrorContains(t, patch.Patch(t.Context(), opts), "all platform patches failed")
+		assert.Equal(t, before, snapshot(t, input))
+		_, err = os.Stat(opts.OCIDir)
+		assert.True(t, os.IsNotExist(err))
+	})
+
 	t.Run("sole source rejects mismatched explicit and report targets", func(t *testing.T) {
 		input := writeLayout(t, images, false, false)
 		before := snapshot(t, input)
@@ -191,9 +309,9 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 	})
 
 	t.Run("failed source unpack leaves input and output untouched", func(t *testing.T) {
-		broken, err := mutate.AppendLayers(images["amd64"], static.NewLayer([]byte("not a tar archive"), v1types.OCIUncompressedLayer))
+		broken, err := mutate.AppendLayers(images[amd64Arch], static.NewLayer([]byte("not a tar archive"), v1types.OCIUncompressedLayer))
 		require.NoError(t, err)
-		input := writeLayout(t, map[string]v1.Image{"amd64": broken}, false, false)
+		input := writeLayout(t, map[string]v1.Image{amd64Arch: broken}, false, false)
 		before := snapshot(t, input)
 		opts := options(input, filepath.Join(t.TempDir(), "output"))
 		require.ErrorContains(t, patch.Patch(t.Context(), opts), "unexpected EOF")
@@ -213,13 +331,20 @@ func writeLayout(t *testing.T, images map[string]v1.Image, multi, named bool) st
 		annotations["io.containerd.image.name"] = logicalName
 	}
 	if !multi {
-		require.NoError(t, out.AppendImage(images["amd64"], layout.WithAnnotations(annotations)))
+		require.NoError(t, out.AppendImage(images[amd64Arch], layout.WithAnnotations(annotations)))
 		return root
 	}
 	var adds []mutate.IndexAddendum
-	for _, arch := range []string{"amd64", "386"} {
-		adds = append(adds, mutate.IndexAddendum{Add: images[arch], Descriptor: v1.Descriptor{
-			Platform:    &v1.Platform{OS: linuxOS, Architecture: arch},
+	keys := make([]string, 0, len(images))
+	for key := range images {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		config, err := images[key].ConfigFile()
+		require.NoError(t, err)
+		adds = append(adds, mutate.IndexAddendum{Add: images[key], Descriptor: v1.Descriptor{
+			Platform:    &v1.Platform{OS: config.OS, Architecture: config.Architecture, Variant: config.Variant, OSVersion: config.OSVersion, OSFeatures: config.OSFeatures},
 			Annotations: map[string]string{"example.scope": "descriptor"},
 		}})
 	}
@@ -275,7 +400,11 @@ func readManifest(t *testing.T, root string, desc *ocispec.Descriptor) ocispec.M
 
 func assertPreserved(t *testing.T, input, output, arch string) {
 	t.Helper()
-	platform := &ocispec.Platform{OS: linuxOS, Architecture: arch}
+	assertPlatformPreserved(t, input, output, &ocispec.Platform{OS: linuxOS, Architecture: arch})
+}
+
+func assertPlatformPreserved(t *testing.T, input, output string, platform *ocispec.Platform) {
+	t.Helper()
 	before, err := openLayout(t, input).PlatformDescriptor(t.Context(), platform)
 	require.NoError(t, err)
 	after, err := openLayout(t, output).PlatformDescriptor(t.Context(), platform)
@@ -311,7 +440,7 @@ func TestOCILayoutFixtures(t *testing.T) {
 	for _, configType := range []v1types.MediaType{v1types.OCIConfigJSON, v1types.DockerConfigJSON} {
 		t.Run(string(configType), func(t *testing.T) {
 			images := make(map[string]v1.Image)
-			for _, arch := range []string{"amd64", "386"} {
+			for _, arch := range []string{amd64Arch, "386"} {
 				config, err := empty.Image.ConfigFile()
 				require.NoError(t, err)
 				config.OS, config.Architecture = linuxOS, arch

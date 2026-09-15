@@ -580,6 +580,12 @@ func PlatformKey(pl specs.Platform) string {
 	return key
 }
 
+// reportPlatformKey uses the fields supplied by scanner reports. Complete
+// platform keys remain necessary for result and descriptor association.
+func reportPlatformKey(pl *specs.Platform) string {
+	return PlatformKey(specs.Platform{OS: pl.OS, Architecture: pl.Architecture, Variant: pl.Variant})
+}
+
 func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
@@ -602,11 +608,24 @@ func DiscoverPlatforms(manifestRef, reportDir, scanner string) ([]types.PatchPla
 		// include all platforms from original manifest, patching only those with reports
 		reportSet := make(map[string]string, len(p2))
 		for _, pl := range p2 {
-			reportSet[PlatformKey(pl.Platform)] = pl.ReportFile
+			key := reportPlatformKey(&pl.Platform)
+			if _, exists := reportSet[key]; exists {
+				return nil, fmt.Errorf("multiple reports target platform %s", key)
+			}
+			reportSet[key] = pl.ReportFile
+		}
+
+		matchCounts := make(map[string]int, len(p))
+		for _, pl := range p {
+			matchCounts[reportPlatformKey(&pl.Platform)]++
 		}
 
 		for _, pl := range p {
-			if rp, ok := reportSet[PlatformKey(pl.Platform)]; ok {
+			key := reportPlatformKey(&pl.Platform)
+			if rp, ok := reportSet[key]; ok {
+				if matchCounts[key] != 1 {
+					return nil, fmt.Errorf("report %s matches %d image platforms for %s", rp, matchCounts[key], key)
+				}
 				// Platform has a report - will be patched
 				pl.ReportFile = rp
 				pl.ShouldPreserve = false

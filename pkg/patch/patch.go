@@ -306,8 +306,14 @@ func discoverPlatformsForOptions(ctx context.Context, opts *types.Options) ([]ty
 		return nil, err
 	}
 	result := make([]types.PatchPlatform, 0, len(discovered))
+	hasPatchTarget := false
 	for _, platform := range discovered {
-		result = append(result, types.PatchPlatform{Platform: platform})
+		supported := isSupportedPatchPlatform(&platform)
+		hasPatchTarget = hasPatchTarget || supported
+		result = append(result, types.PatchPlatform{Platform: platform, ShouldPreserve: !supported})
+	}
+	if !hasPatchTarget {
+		return nil, fmt.Errorf("no supported patch platforms found in selected OCI image")
 	}
 	return result, nil
 }
