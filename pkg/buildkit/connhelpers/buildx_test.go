@@ -91,19 +91,50 @@ func TestBuildxDialStdio(t *testing.T) {
 	}
 }
 
-func TestBuildxDialStdioIgnoresDockerHostForNamedBuilder(t *testing.T) {
+func TestBuildxDialStdioUsesEffectiveBuilderEnvironment(t *testing.T) {
 	originalCommand := buildxExecCommand
 	t.Cleanup(func() { buildxExecCommand = originalCommand })
 	buildxExecCommand = buildxDialHelperCommand
 
-	t.Setenv("DOCKER_HOST", "unix:///docker-loader.sock")
-	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
-	t.Cleanup(cancel)
+	tests := []struct {
+		name               string
+		builder            string
+		environmentBuilder string
+		wantError          bool
+	}{
+		{
+			name:    "explicit URL builder ignores Docker host",
+			builder: "desktop-linux",
+		},
+		{
+			name:               "BUILDX_BUILDER fallback ignores Docker host",
+			environmentBuilder: "desktop-linux",
+		},
+		{
+			name:      "no effective builder retains Docker host",
+			wantError: true,
+		},
+	}
 
-	conn, err := buildxDialStdio(ctx, "desktop-linux")
-	require.NoError(t, err)
-	require.NotNil(t, conn)
-	require.NoError(t, conn.Close())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("DOCKER_HOST", "unix:///docker-loader.sock")
+			t.Setenv("BUILDX_BUILDER", tt.environmentBuilder)
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			t.Cleanup(cancel)
+
+			conn, err := buildxDialStdio(ctx, tt.builder)
+			if tt.wantError {
+				require.ErrorContains(t, err, "buildx dial-stdio failed before connecting")
+				assert.Nil(t, conn)
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, conn)
+			require.NoError(t, conn.Close())
+		})
+	}
 }
 
 func TestBuildxDialStdioReturnsEarlyProgressError(t *testing.T) {
@@ -218,12 +249,6 @@ func TestBuildxDialStdioHelperProcess(t *testing.T) {
 	fmt.Fprint(os.Stdout, "proxy ready")
 	_, _ = io.Copy(io.Discard, os.Stdin)
 	os.Exit(0)
-}
-
-func TestBuildxDialStdioEnvPreservesDockerHostForUnnamedBuilder(t *testing.T) {
-	t.Setenv("DOCKER_HOST", "tcp://builder.example:2375")
-
-	assert.Contains(t, buildxDialStdioEnv(""), "DOCKER_HOST=tcp://builder.example:2375")
 }
 
 func TestContainerContextDialer(t *testing.T) {

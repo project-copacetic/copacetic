@@ -210,13 +210,18 @@ func buildxDialStdio(ctx context.Context, builder string) (net.Conn, error) {
 }
 
 // buildxDialStdioEnv prevents a Docker endpoint override that is needed by a
-// later image loader from changing the context used by an explicitly selected
-// Buildx builder. Context-bound docker driver builders otherwise reject the
-// connection before the gRPC client can start, leaving it waiting until the
-// patch timeout. An unnamed builder continues to honor DOCKER_HOST.
+// later image loader from changing the context used by a Buildx builder
+// selected in the URL or through BUILDX_BUILDER. Context-bound docker driver
+// builders otherwise reject the connection before the gRPC client can start,
+// leaving it waiting until the patch timeout. With no effective builder,
+// DOCKER_HOST continues to be honored.
 func buildxDialStdioEnv(builder string) []string {
 	env := os.Environ()
-	if builder == "" {
+	effectiveBuilder := builder
+	if effectiveBuilder == "" {
+		effectiveBuilder = os.Getenv("BUILDX_BUILDER")
+	}
+	if effectiveBuilder == "" {
 		return env
 	}
 
