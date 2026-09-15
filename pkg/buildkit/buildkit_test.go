@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -164,7 +165,7 @@ func TestResolveImageSourceUsesAuthoritativeLocalDigest(t *testing.T) {
 		tryGetManifestFromLocal = originalLocal
 		getRemoteImageDescriptor = originalRemote
 	})
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return &remote.Descriptor{
 			Descriptor: remotev1.Descriptor{
 				MediaType: remoteTypes.OCIImageIndex,
@@ -204,7 +205,7 @@ func TestResolveImageSourceReconcilesIncompleteLocalIndexByDigest(t *testing.T) 
 		tryGetManifestFromLocal = originalLocal
 		getRemoteImageDescriptor = originalRemote
 	})
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return localIndex, sourceDigest, false, nil
 	}
 	getRemoteImageDescriptor = func(gotRef name.Reference, _ ...remote.Option) (*remote.Descriptor, error) {
@@ -216,6 +217,128 @@ func TestResolveImageSourceReconcilesIncompleteLocalIndexByDigest(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, sourceDigest.String(), source.Descriptor.Digest.String())
 	require.NotNil(t, source.Index)
+}
+
+func TestResolveImageSourceCancellation(t *testing.T) {
+	for _, stage := range []string{"daemon inspect", "daemon image", "incomplete index", "cached index", "remote image"} {
+		t.Run(stage, func(t *testing.T) {
+			started := make(chan struct{}, 1)
+			release := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/_ping" {
+					w.Header().Set("API-Version", "1.52")
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				if r.URL.Path == "/v2/" {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				select {
+				case started <- struct{}{}:
+				default:
+				}
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			oldIndex, oldLocal, oldRemote := localImageIndex, tryGetManifestFromLocal, getRemoteImageDescriptor
+			t.Cleanup(func() {
+				localImageIndex, tryGetManifestFromLocal, getRemoteImageDescriptor = oldIndex, oldLocal, oldRemote
+			})
+			input := "example.invalid/app:latest"
+			if stage == "daemon inspect" || stage == "daemon image" {
+				t.Setenv("DOCKER_HOST", "tcp://"+strings.TrimPrefix(server.URL, "http://"))
+				t.Setenv("DOCKER_API_VERSION", "1.52")
+				t.Setenv("DOCKER_TLS_VERIFY", "")
+				getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+					return nil, errors.New("must not fall back to registry after cancellation")
+				}
+				if stage == "daemon image" {
+					localImageIndex = func(context.Context, string) (*ispec.Index, *ispec.Descriptor, bool, bool, error) {
+						return nil, nil, true, true, nil
+					}
+				}
+			} else {
+				top := remotev1.Hash{Algorithm: "sha256", Hex: strings.Repeat("c", 64)}
+				input = strings.TrimPrefix(server.URL, "http://") + "/app@" + top.String()
+				tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+					if stage == "remote image" {
+						return nil, remotev1.Hash{}, false, errors.New("no local source")
+					}
+					local := testRemoteIndexDescriptor(top.Hex)
+					if stage == "cached index" {
+						local.MediaType = remoteTypes.OCIManifestSchema1
+						local.Digest.Hex = strings.Repeat("a", 64)
+					}
+					return local, top, stage == "cached index", nil
+				}
+			}
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan struct{})
+			result := make(chan error, 1)
+			go func() {
+				defer close(done)
+				_, err := ResolveImageSource(ctx, input)
+				result <- err
+			}()
+			defer func() {
+				cancel()
+				close(release)
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					t.Error("source resolution did not exit after releasing fixture")
+				}
+				server.Close()
+			}()
+			select {
+			case <-started:
+			case err := <-result:
+				t.Fatalf("source returned before request started: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("source request did not start")
+			}
+			cancel()
+			select {
+			case err := <-result:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(2 * time.Second):
+				t.Fatal("source request ignored cancellation")
+			}
+		})
+	}
+}
+
+func TestResolveImageSourceExpiredContext(t *testing.T) {
+	for _, expired := range []bool{false, true} {
+		t.Run(fmt.Sprintf("expired=%t", expired), func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			want := context.Canceled
+			if expired {
+				cancel()
+				ctx, cancel = context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
+				want = context.DeadlineExceeded
+			} else {
+				cancel()
+			}
+			defer cancel()
+			oldLocal, oldRemote := tryGetManifestFromLocal, getRemoteImageDescriptor
+			t.Cleanup(func() { tryGetManifestFromLocal, getRemoteImageDescriptor = oldLocal, oldRemote })
+			tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+				t.Error("canceled source must not probe the daemon")
+				return nil, remotev1.Hash{}, false, errors.New("no local source")
+			}
+			getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
+				t.Error("canceled source must not probe the registry")
+				return nil, errors.New("no remote source")
+			}
+			_, err := ResolveImageSource(ctx, "example.invalid/app:latest")
+			require.ErrorIs(t, err, want)
+		})
+	}
 }
 
 func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
@@ -310,7 +433,7 @@ func TestTryGetManifestFromLocalUsesDockerIndexMetadata(t *testing.T) {
 
 	ref, err := name.ParseReference(imageRef)
 	require.NoError(t, err)
-	desc, sourceDigest, complete, err := getManifestFromLocal(ref)
+	desc, sourceDigest, complete, err := getManifestFromLocal(t.Context(), ref)
 	require.NoError(t, err)
 	assert.True(t, complete)
 	assert.True(t, desc.MediaType.IsIndex())
@@ -340,7 +463,7 @@ func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *test
 		tryGetManifestFromLocal = originalLocal
 		getRemoteImageDescriptor = originalRemote
 	})
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return localIndex, sourceDigest, true, nil
 	}
 	getRemoteImageDescriptor = func(name.Reference, ...remote.Option) (*remote.Descriptor, error) {
@@ -353,7 +476,7 @@ func TestResolvePreservedPlatformsDescriptorKeepsLocalIndexAuthoritative(t *test
 	assert.True(t, isLocal)
 	assert.Same(t, localIndex, got)
 
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return localIndex, remotev1.Hash{Algorithm: "sha256", Hex: strings.Repeat("d", 64)}, true, nil
 	}
 	_, _, err = resolvePreservedPlatformsDescriptor(ref)
@@ -382,7 +505,7 @@ func TestResolvePreservedPlatformsDescriptorReconcilesIncompleteLocalIndex(t *te
 
 	for _, ref := range []name.Reference{immutableRef, mutableRef} {
 		t.Run(ref.Identifier(), func(t *testing.T) {
-			tryGetManifestFromLocal = func(gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+			tryGetManifestFromLocal = func(_ context.Context, gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 				assert.Equal(t, ref.String(), gotRef.String())
 				return localIndex, sourceDigest, false, nil
 			}
@@ -471,7 +594,7 @@ func TestResolvePreservedPlatformsDescriptorReconcilesImmutableIndex(t *testing.
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			remoteCalls := 0
-			tryGetManifestFromLocal = func(gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+			tryGetManifestFromLocal = func(_ context.Context, gotRef name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 				assert.Equal(t, tt.ref.String(), gotRef.String())
 				return localChild, localChild.Digest, true, nil
 			}
@@ -531,7 +654,7 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 		tryGetManifestFromLocal = originalLocal
 		getRemoteImageDescriptor = originalRemote
 	})
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return nil, remotev1.Hash{}, false, errors.New("image is not available locally")
 	}
 	getRemoteImageDescriptor = remote.Get
@@ -1733,7 +1856,7 @@ func TestResolveRecordedOriginTopLevelIndex(t *testing.T) {
 	config := []byte(`{"config":{"Labels":{}}}`)
 	oldLocal, oldRemote := tryGetManifestFromLocal, getRemoteImageDescriptor
 	t.Cleanup(func() { tryGetManifestFromLocal, getRemoteImageDescriptor = oldLocal, oldRemote })
-	tryGetManifestFromLocal = func(name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
+	tryGetManifestFromLocal = func(context.Context, name.Reference) (*remote.Descriptor, remotev1.Hash, bool, error) {
 		return nil, remotev1.Hash{}, false, errors.New("no local image")
 	}
 	for _, tc := range []struct {

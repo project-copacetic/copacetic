@@ -145,6 +145,9 @@ func (source *ImageSource) PlatformDescriptor(platform *specs.Platform) (*specs.
 // digest is the daemon's source descriptor digest, not a digest recomputed from
 // a possibly incomplete locally reconstructed index.
 func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	named, err := reference.ParseNormalizedNamed(imageRef)
 	if err != nil {
 		return nil, fmt.Errorf("parse image reference %q: %w", imageRef, err)
@@ -157,7 +160,10 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 		return nil, fmt.Errorf("parse normalized image reference %q: %w", named.String(), err)
 	}
 
-	descriptor, sourceDigest, complete, localErr := tryGetManifestFromLocal(ref)
+	descriptor, sourceDigest, complete, localErr := tryGetManifestFromLocal(ctx, ref)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if localErr == nil {
 		if descriptor == nil {
 			return nil, fmt.Errorf("local daemon returned no descriptor for %q", named.String())
@@ -173,7 +179,7 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 		}
 		if !complete {
 			sourceRef := ref.Context().Digest(sourceDigest.String())
-			descriptor, err = GetVerifiedRemoteIndex(sourceRef)
+			descriptor, err = getVerifiedRemoteIndex(ctx, sourceRef)
 			if err != nil {
 				return nil, fmt.Errorf("reconcile incomplete local image index %q: %w", named.String(), err)
 			}
@@ -188,7 +194,7 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 			// materialized descriptor digest differs from the daemon's top-level
 			// source digest, verify and use the exact remote index instead.
 			if descriptor.Digest.String() != sourceDigest.String() {
-				descriptor, err = GetVerifiedRemoteIndex(immutable)
+				descriptor, err = getVerifiedRemoteIndex(ctx, immutable)
 				if err != nil {
 					return nil, fmt.Errorf("resolve immutable source descriptor %q: %w", named.String(), err)
 				}
@@ -242,7 +248,14 @@ func imageSourceFromRemoteDescriptor(sourceName string, descriptor *remote.Descr
 // must not use this helper with mutable tags when reconciling local images with
 // remote metadata.
 func GetVerifiedRemoteIndex(ref name.Digest) (*remote.Descriptor, error) {
-	desc, err := getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	return getVerifiedRemoteIndex(context.Background(), ref)
+}
+
+func getVerifiedRemoteIndex(ctx context.Context, ref name.Digest) (*remote.Descriptor, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	desc, err := getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain), remote.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("fetch remote descriptor for %q: %w", ref.String(), err)
 	}
@@ -427,15 +440,14 @@ func isSupportedOsType(osType string) bool {
 // It returns a remote.Descriptor if successful, or an error if the manifest cannot be retrieved locally.
 // This is exported to support patching images that exist locally but not in a remote registry.
 func TryGetManifestFromLocal(ref name.Reference) (*remote.Descriptor, error) {
-	descriptor, _, _, err := getManifestFromLocal(ref)
+	descriptor, _, _, err := getManifestFromLocal(context.Background(), ref)
 	return descriptor, err
 }
 
-func getManifestFromLocal(ref name.Reference) (*remote.Descriptor, v1.Hash, bool, error) {
+func getManifestFromLocal(ctx context.Context, ref name.Reference) (*remote.Descriptor, v1.Hash, bool, error) {
 	imageName := ref.String()
 	log.Debugf("Attempting to get manifest from local daemon for %s", imageName)
 
-	ctx := context.Background()
 	index, localDescriptor, complete, found, err := localImageIndex(ctx, imageName)
 	if err != nil {
 		return nil, v1.Hash{}, false, fmt.Errorf("failed to inspect image in local daemon: %w", err)
@@ -2231,7 +2243,7 @@ func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) erro
 }
 
 func resolvePreservedPlatformsDescriptor(ref name.Reference) (*remote.Descriptor, bool, error) {
-	desc, sourceDigest, complete, err := tryGetManifestFromLocal(ref)
+	desc, sourceDigest, complete, err := tryGetManifestFromLocal(context.Background(), ref)
 	if err != nil {
 		log.Debugf("Failed to get descriptor from local daemon: %v, trying remote registry", err)
 		desc, err = getRemoteImageDescriptor(ref, remote.WithAuthFromKeychain(authn.DefaultKeychain))
