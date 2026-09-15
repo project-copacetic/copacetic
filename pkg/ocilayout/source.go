@@ -39,6 +39,7 @@ const (
 	ociMediaTypeForeignGzip  = "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip"
 	ociMediaTypeForeignZstd  = "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd"
 	unknownPlatformField     = "unknown"
+	maxContextReadSize       = 32 * 1024
 )
 
 // Source is one validated, immutable image selected from an OCI Image Layout.
@@ -255,7 +256,7 @@ func selectDescriptor(descriptors []ocispec.Descriptor, rawSelector string, name
 	if named != nil {
 		names = append(names, named.String(), reference.FamiliarString(named))
 	}
-	matches := descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
+	matches := descriptorsMatching(candidates, func(desc ocispec.Descriptor) bool {
 		return desc.Annotations[annotationImageName] != "" && slices.Contains(names, desc.Annotations[annotationImageName])
 	})
 	if len(matches) > 0 {
@@ -264,7 +265,7 @@ func selectDescriptor(descriptors []ocispec.Descriptor, rawSelector string, name
 	if tagged, ok := named.(reference.Tagged); ok {
 		names = append(names, tagged.Tag())
 	}
-	matches = descriptorsMatching(descriptors, func(desc ocispec.Descriptor) bool {
+	matches = descriptorsMatching(candidates, func(desc ocispec.Descriptor) bool {
 		return desc.Annotations[ocispec.AnnotationRefName] != "" && slices.Contains(names, desc.Annotations[ocispec.AnnotationRefName])
 	})
 	if len(matches) > 0 {
@@ -484,6 +485,27 @@ func (s *Source) isPlatformImage(ctx context.Context, desc *ocispec.Descriptor) 
 	return manifest.ArtifactType == "", nil
 }
 
+// contextReader checks cancellation around each bounded copy read, including
+// the final read, because the filesystem content store does not enforce it.
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	if len(p) > maxContextReadSize {
+		p = p[:maxContextReadSize]
+	}
+	n, err := r.reader.Read(p)
+	if contextErr := r.ctx.Err(); contextErr != nil {
+		return n, contextErr
+	}
+	return n, err
+}
+
 func (s *Source) validateBlob(ctx context.Context, desc *ocispec.Descriptor) error {
 	if err := desc.Digest.Validate(); err != nil {
 		return fmt.Errorf("invalid digest %q: %w", desc.Digest, err)
@@ -503,7 +525,7 @@ func (s *Source) validateBlob(ctx context.Context, desc *ocispec.Descriptor) err
 		return fmt.Errorf("size mismatch: descriptor declares %d bytes, blob contains %d", desc.Size, ra.Size())
 	}
 	verifier := desc.Digest.Verifier()
-	if _, err := io.Copy(verifier, content.NewReader(ra)); err != nil {
+	if _, err := io.Copy(verifier, contextReader{ctx: ctx, reader: content.NewReader(ra)}); err != nil {
 		return fmt.Errorf("read blob: %w", err)
 	}
 	if !verifier.Verified() {
@@ -537,7 +559,12 @@ func (s *Source) readJSONBlob(ctx context.Context, desc *ocispec.Descriptor, tar
 	if err := s.validateBlob(ctx, desc); err != nil {
 		return err
 	}
-	data, err := content.ReadBlob(ctx, s.store, *desc)
+	ra, err := s.store.ReaderAt(ctx, *desc)
+	if err != nil {
+		return err
+	}
+	defer ra.Close()
+	data, err := io.ReadAll(contextReader{ctx: ctx, reader: content.NewReader(ra)})
 	if err != nil {
 		return err
 	}
@@ -828,11 +855,14 @@ func (s *Source) copyBlob(ctx context.Context, outputDir string, desc *ocispec.D
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
-	if _, err := io.Copy(temp, content.NewReader(ra)); err != nil {
+	if _, err := io.Copy(temp, contextReader{ctx: ctx, reader: content.NewReader(ra)}); err != nil {
 		temp.Close()
 		return fmt.Errorf("copy blob %s: %w", desc.Digest, err)
 	}
 	if err := temp.Close(); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := os.Rename(tempName, destination); err != nil {

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/containerd/containerd/v2/core/content"
 	containerdref "github.com/containerd/containerd/v2/pkg/reference"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
@@ -611,4 +612,117 @@ func TestImageDescriptorConfigArtifactTypeMustMatchManifest(t *testing.T) {
 	newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc})
 	_, err = Open(t.Context(), fixture.path, "", "")
 	require.ErrorContains(t, err, "unsupported artifact")
+}
+
+func TestSelectorsIgnoreArtifactAliases(t *testing.T) {
+	for _, test := range []struct {
+		annotation string
+		selector   string
+	}{
+		{annotationImageName, "example.com/app:stable"},
+		{ocispec.AnnotationRefName, "stable"},
+	} {
+		t.Run(test.annotation, func(t *testing.T) {
+			annotations := map[string]string{test.annotation: test.selector}
+			fixture := newSingleLayout(t, annotations)
+			image := fixture.manifests[0]
+			artifact := ocispec.Descriptor{
+				MediaType: ocispec.MediaTypeImageManifest, ArtifactType: "application/example",
+				Digest: digest.FromString("absent-artifact"), Annotations: annotations,
+			}
+			newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, image})
+			source, err := Open(t.Context(), fixture.path, "", test.selector)
+			require.NoError(t, err)
+			assert.Equal(t, image.Digest, source.Descriptor.Digest)
+
+			other := newImageManifest(t, fixture.path, &ocispec.Platform{OS: "linux", Architecture: "arm64"}, annotations, nil)
+			newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, image, other})
+			_, err = Open(t.Context(), fixture.path, "", test.selector)
+			require.ErrorContains(t, err, "2 descriptors matching")
+		})
+	}
+}
+
+type cancelingContentStore struct {
+	content.Store
+	target    digest.Digest
+	onOpen    int
+	opens     int
+	bytesRead int
+	cancel    context.CancelFunc
+}
+
+//nolint:gocritic // The content.Store interface passes descriptors by value.
+func (s *cancelingContentStore) ReaderAt(ctx context.Context, desc ocispec.Descriptor) (content.ReaderAt, error) {
+	ra, err := s.Store.ReaderAt(ctx, desc)
+	if err != nil || desc.Digest != s.target {
+		return ra, err
+	}
+	s.opens++
+	if s.opens != s.onOpen {
+		return ra, nil
+	}
+	return &cancelingBlobReader{ReaderAt: ra, store: s}, nil
+}
+
+type cancelingBlobReader struct {
+	content.ReaderAt
+	store *cancelingContentStore
+}
+
+func (r *cancelingBlobReader) ReadAt(p []byte, off int64) (int, error) {
+	n, err := r.ReaderAt.ReadAt(p, off)
+	r.store.bytesRead += n
+	r.store.cancel()
+	return n, err
+}
+
+func TestBlobOperationsObserveCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		copy   bool
+		json   bool
+		onOpen int
+	}{
+		{name: "already canceled"},
+		{name: "during validation", onOpen: 1},
+		{name: "during preserved transfer", copy: true, onOpen: 2},
+		{name: "during metadata read after validation", json: true, onOpen: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSingleLayout(t, nil)
+			source, err := Open(t.Context(), fixture.path, "", "")
+			require.NoError(t, err)
+			data := bytes.Repeat([]byte("blob"), 256*1024)
+			desc := writeBlob(t, fixture.path, ocispec.MediaTypeImageLayer, data)
+			before := snapshotLayout(t, fixture.path)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			store := &cancelingContentStore{Store: source.store, target: desc.Digest, onOpen: test.onOpen, cancel: cancel}
+			source.store = store
+			if test.onOpen == 0 {
+				cancel()
+			}
+			switch {
+			case test.copy:
+				output := t.TempDir()
+				destination := filepath.Join(output, "blobs", desc.Digest.Algorithm().String(), desc.Digest.Encoded())
+				require.NoError(t, os.MkdirAll(filepath.Dir(destination), 0o755))
+				require.NoError(t, os.WriteFile(destination, []byte("existing destination"), 0o600))
+				beforeOutput := snapshotLayout(t, output)
+				copied := make(map[string]bool)
+				err = source.copyBlob(ctx, output, &desc, copied)
+				assert.Empty(t, copied)
+				assert.Equal(t, beforeOutput, snapshotLayout(t, output), "cancellation leaves existing blobs unchanged and removes temporary copies")
+			case test.json:
+				var metadata any
+				err = source.readJSONBlob(ctx, &desc, &metadata)
+			default:
+				err = source.validateBlob(ctx, &desc)
+			}
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Less(t, store.bytesRead, len(data), "stop before reading the rest of a large blob")
+			assert.Equal(t, before, snapshotLayout(t, fixture.path))
+		})
+	}
 }

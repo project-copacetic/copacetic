@@ -1287,32 +1287,15 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 	}
 
 	if exportOpts.Atomic {
-		if _, err := os.Stat(outputDir); err == nil {
-			return fmt.Errorf("OCI layout output directory %q already exists; choose a new path", outputDir)
-		} else if !os.IsNotExist(err) {
-			return fmt.Errorf("stat OCI layout output directory: %w", err)
-		}
-		parent := filepath.Dir(outputDir)
-		if err := os.MkdirAll(parent, 0o755); err != nil {
-			return fmt.Errorf("create OCI layout output parent: %w", err)
-		}
-		tempDir, err := os.MkdirTemp(parent, ".copa-oci-output-*")
-		if err != nil {
-			return fmt.Errorf("create temporary OCI layout output: %w", err)
-		}
-		defer os.RemoveAll(tempDir)
-		if err := createOCILayoutFromResultsAt(tempDir, results, platforms, exportOpts); err != nil {
-			return err
-		}
-		if len(exportOpts.state.sources) > 0 {
-			if err := wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations); err != nil {
+		return createAtomicOCILayout(exportContext, outputDir, func(tempDir string) error {
+			if err := createOCILayoutFromResultsAt(tempDir, results, platforms, exportOpts); err != nil {
 				return err
 			}
-		}
-		if err := os.Rename(tempDir, outputDir); err != nil {
-			return fmt.Errorf("publish OCI layout output atomically: %w", err)
-		}
-		return nil
+			if len(exportOpts.state.sources) > 0 {
+				return wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
+			}
+			return nil
+		})
 	}
 
 	if err := createOCILayoutFromResultsAt(outputDir, results, platforms, exportOpts); err != nil {
@@ -1320,6 +1303,35 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 	}
 	if len(exportOpts.state.sources) > 0 {
 		return wrapOCIOutputIndex(outputDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
+	}
+	return nil
+}
+
+// createAtomicOCILayout owns the staging directory and publishes it only after
+// the writer completes successfully and the caller still permits publication.
+func createAtomicOCILayout(ctx context.Context, outputDir string, write func(string) error) error {
+	if _, err := os.Stat(outputDir); err == nil {
+		return fmt.Errorf("OCI layout output directory %q already exists; choose a new path", outputDir)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat OCI layout output directory: %w", err)
+	}
+	parent := filepath.Dir(outputDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("create OCI layout output parent: %w", err)
+	}
+	tempDir, err := os.MkdirTemp(parent, ".copa-oci-output-*")
+	if err != nil {
+		return fmt.Errorf("create temporary OCI layout output: %w", err)
+	}
+	defer os.RemoveAll(tempDir)
+	if err := write(tempDir); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("OCI layout export canceled before publication: %w", err)
+	}
+	if err := os.Rename(tempDir, outputDir); err != nil {
+		return fmt.Errorf("publish OCI layout output atomically: %w", err)
 	}
 	return nil
 }

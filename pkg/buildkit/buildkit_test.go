@@ -1314,6 +1314,65 @@ func TestCreatePreservedOnlyOCILayoutFromSourceIsAtomic(t *testing.T) {
 	require.ErrorContains(t, err, "already exists")
 }
 
+func TestOCIPublicationHonorsLateCancellation(t *testing.T) {
+	source, _, _ := newOCIInputTestSource(t)
+	parent := t.TempDir()
+	output := filepath.Join(parent, "output")
+	result := types.PatchResult{OCISource: source, PatchedDesc: &source.Descriptor}
+	platform := types.PatchPlatform{Platform: *source.Descriptor.Platform, ShouldPreserve: true}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	completed := false
+	err := createAtomicOCILayout(ctx, output, func(staging string) error {
+		// Finish a real preserved-layout export, then cancel before publication.
+		err := CreateOCILayoutFromResultsWithOptions(staging,
+			[]types.PatchResult{result}, []types.PatchPlatform{platform},
+			OCILayoutExportOptions{OutputReference: "example.com/app:patched"},
+		)
+		if err != nil {
+			return err
+		}
+		_, err = ocilayout.Open(t.Context(), staging, "", "")
+		require.NoError(t, err)
+		completed = true
+		cancel()
+		return nil
+	})
+	require.True(t, completed)
+	require.ErrorIs(t, err, context.Canceled)
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "late cancellation must remove staging and publish nothing")
+
+	existing := t.TempDir()
+	marker := filepath.Join(existing, "keep")
+	require.NoError(t, os.WriteFile(marker, []byte("unchanged"), 0o600))
+	err = createAtomicOCILayout(ctx, existing, func(string) error {
+		t.Fatal("an existing destination must prevent any writes")
+		return nil
+	})
+	require.ErrorContains(t, err, "already exists")
+	data, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	assert.Equal(t, "unchanged", string(data))
+}
+
+func TestCanceledOCIExportRemovesStagingDirectory(t *testing.T) {
+	source, _, _ := newOCIInputTestSource(t)
+	parent := t.TempDir()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := CreateOCILayoutFromResultsWithOptions(filepath.Join(parent, "output"),
+		[]types.PatchResult{{OCISource: source, PatchedDesc: &source.Descriptor}},
+		[]types.PatchPlatform{{Platform: *source.Descriptor.Platform, ShouldPreserve: true}},
+		OCILayoutExportOptions{Atomic: true, OutputReference: "example.com/app:patched"}.WithContext(ctx),
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	assert.Empty(t, entries)
+}
+
 func TestMapGoArch(t *testing.T) {
 	cases := []struct {
 		arch, variant, want string
