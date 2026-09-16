@@ -31,7 +31,7 @@ func TestPushToRegistry(t *testing.T) {
 	defer stopLocalRegistry(t)
 
 	// pull a small test image
-	testImage := "docker.io/library/nginx:1.27.0-bookworm"
+	testImage := "docker.io/library/nginx:1.27.0-bookworm@sha256:98f8ec75657d21b924fe4f69b6b9bff2f6550ea48838af479d8894a852000e40"
 	localImage := "localhost:5000/nginx:test"
 
 	pushCmd := exec.Command("oras", "cp", testImage, localImage)

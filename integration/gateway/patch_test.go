@@ -122,7 +122,7 @@ func TestPatchDebian(t *testing.T) {
 	testCases := []patchTestCase{
 		{
 			name:      "bash update",
-			image:     "debian:12.6-slim",
+			image:     "docker.io/library/debian:12.6-slim@sha256:70d4c04302bdcd71c4fa21b6c12e99888380a07f04e3d44452b961bca046489d",
 			osType:    "debian",
 			osVersion: "12",
 			packages: []testenv.PackageUpdate{
@@ -138,7 +138,7 @@ func TestPatchDebian(t *testing.T) {
 		},
 		{
 			name:           "update all",
-			image:          "debian:12.6-slim",
+			image:          "docker.io/library/debian:12.6-slim@sha256:70d4c04302bdcd71c4fa21b6c12e99888380a07f04e3d44452b961bca046489d",
 			osType:         "debian",
 			osVersion:      "12",
 			packages:       nil,
@@ -147,7 +147,7 @@ func TestPatchDebian(t *testing.T) {
 		},
 		{
 			name:      "nginx image",
-			image:     "docker.io/library/nginx:1.27.0-bookworm",
+			image:     "docker.io/library/nginx:1.27.0-bookworm@sha256:a3ab061d6909191271bcf24b9ab6eee9e8fc5f2fbf1525c5bd84d21f27a9d708",
 			osType:    "debian",
 			osVersion: "12",
 			packages: []testenv.PackageUpdate{

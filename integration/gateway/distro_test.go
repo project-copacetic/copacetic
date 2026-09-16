@@ -302,7 +302,7 @@ func TestConfigFilePreservation(t *testing.T) {
 		},
 		{
 			name:       "debian openssl.cnf",
-			image:      "docker.io/library/nginx:1.27.0-bookworm",
+			image:      "docker.io/library/nginx:1.27.0-bookworm@sha256:a3ab061d6909191271bcf24b9ab6eee9e8fc5f2fbf1525c5bd84d21f27a9d708",
 			osType:     "debian",
 			osVersion:  "12",
 			configFile: "/etc/ssl/openssl.cnf",
@@ -390,7 +390,7 @@ func TestPatchUpdateAll(t *testing.T) {
 		osReleaseMatch string
 	}{
 		{"alpine", "alpine:3.18", "Alpine"},
-		{"debian", "debian:12.6-slim", "Debian"},
+		{"debian", "docker.io/library/debian:12.6-slim@sha256:70d4c04302bdcd71c4fa21b6c12e99888380a07f04e3d44452b961bca046489d", "Debian"},
 		{"mariner", "mcr.microsoft.com/cbl-mariner/base/core:2.0", "Mariner"},
 		{"azure linux", "mcr.microsoft.com/azurelinux/base/core:3.0", "Azure Linux"},
 		{"amazon linux", "docker.io/library/amazonlinux:2", "Amazon Linux"},
