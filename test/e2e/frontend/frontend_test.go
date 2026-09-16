@@ -19,11 +19,12 @@ import (
 
 const (
 	// defaultBridgeGateway is the default Docker bridge gateway IP.
-	defaultBridgeGateway   = "172.17.0.1"
-	frontendNginxBaseImage = "docker.io/library/nginx:1.27.0-bookworm"
-	buildCommand           = "build"
-	buildctlOptionFlag     = "--opt"
-	outputFlag             = "--output"
+	defaultBridgeGateway    = "172.17.0.1"
+	frontendNginxBaseImage  = "docker.io/library/nginx:1.27.0-bookworm@sha256:98f8ec75657d21b924fe4f69b6b9bff2f6550ea48838af479d8894a852000e40"
+	frontendPythonBaseImage = "docker.io/library/python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317"
+	buildCommand            = "build"
+	buildctlOptionFlag      = "--opt"
+	outputFlag              = "--output"
 )
 
 // ensureBuildxBuilder creates a BuildKit builder with insecure registry support for testing.
@@ -116,7 +117,7 @@ func TestFrontendPatch(t *testing.T) {
 		},
 		{
 			name:       "python-app-library-only",
-			baseImage:  "docker.io/library/python:3.11.9-slim-bookworm",
+			baseImage:  frontendPythonBaseImage,
 			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
 				"pkg-types":           "library",
@@ -125,7 +126,7 @@ func TestFrontendPatch(t *testing.T) {
 		},
 		{
 			name:       "python-app-library-and-os",
-			baseImage:  "docker.io/library/python:3.11.9-slim-bookworm",
+			baseImage:  frontendPythonBaseImage,
 			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
 				"pkg-types":           "os,library",

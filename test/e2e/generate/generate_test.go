@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	nginxImage = "nginx:1.27.0-bookworm"
+	nginxImage = "nginx:1.27.0-bookworm@sha256:98f8ec75657d21b924fe4f69b6b9bff2f6550ea48838af479d8894a852000e40"
 )
 
 // generateTrivyReport generates a vulnerability report using Trivy for the specified image.
@@ -110,7 +110,7 @@ func TestGenerateWithoutReport(t *testing.T) {
 		t.Skip("skipping test; docker binary not found in path")
 	}
 
-	testImage := "nginx:1.27.0-bookworm"
+	testImage := nginxImage
 
 	// create a temp directory for test files
 	tempDir, err := os.MkdirTemp("", "copa-generate-no-report-test-*")
@@ -169,7 +169,7 @@ func TestGenerateToStdout(t *testing.T) {
 		t.Skip("skipping test; docker binary not found in path")
 	}
 
-	testImage := "nginx:1.27.0-bookworm"
+	testImage := nginxImage
 
 	// run copa generate and pipe to docker build
 	patchedImage := "nginx:1.27.0-bookworm-piped-test"
