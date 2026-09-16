@@ -426,6 +426,7 @@ func TestDistrolessUpdatePreservesCustomDebconfConfiguration(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
 		configDir         string
+		systemRC          string
 		databaseDir       string
 		databaseConfigDir string
 		configRoot        string
@@ -436,6 +437,8 @@ func TestDistrolessUpdatePreservesCustomDebconfConfiguration(t *testing.T) {
 	}{
 		{name: "custom directory", configDir: "/custom", databaseDir: "/custom"},
 		{name: "saved answers without timezone files", configDir: "/custom", databaseDir: "/custom", answersOnly: true},
+		{name: "system flag with saved answers", configDir: "/etc", databaseDir: "/custom", systemRC: "1", answersOnly: true},
+		{name: "system flag shared configuration", configDir: "/usr/share/debconf", databaseDir: "/custom", systemRC: "1", answersOnly: true},
 		{
 			name: "empty config database root", configDir: "/custom", databaseDir: "/custom", answersOnly: true,
 			configRoot: "Root:\n", wantError: "Debconf database Root overrides are not supported",
@@ -457,6 +460,12 @@ func TestDistrolessUpdatePreservesCustomDebconfConfiguration(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			systemRC := tc.configDir + "/debconf.conf"
+			ignoredConfigSetup := ""
+			if tc.systemRC != "" {
+				systemRC = tc.systemRC
+				ignoredConfigSetup = "COPY ignored-debconf.conf /rootfs/root/.debconfrc\nCOPY ignored-debconf.conf /rootfs/1"
+			}
 			databaseConfigDir := tc.databaseDir
 			if tc.databaseConfigDir != "" {
 				databaseConfigDir = tc.databaseConfigDir
@@ -490,13 +499,14 @@ COPY --from=source / /rootfs
 RUN %s
 COPY debconf.conf /rootfs%s/debconf.conf
 COPY config.dat templates.dat /rootfs%s/
+%s
 FROM scratch
 COPY --from=prepare /rootfs /
-ENV DEBCONF_SYSTEMRC=%s/debconf.conf
+ENV DEBCONF_SYSTEMRC=%s
 ENV DEBCONF_DB_DIR=/custom
 USER 65532:65532
 ENTRYPOINT ["/manager"]
-`, fixture.Reference, prepare.Reference, timezoneSetup, tc.configDir, tc.databaseDir, tc.configDir), map[string][]byte{
+`, fixture.Reference, prepare.Reference, timezoneSetup, tc.configDir, tc.databaseDir, ignoredConfigSetup, systemRC), map[string][]byte{
 				"debconf.conf": []byte(fmt.Sprintf(`Config: config
 Templates: templates
 
@@ -508,15 +518,20 @@ Name: templates
 Driver: File
 %sFilename: %s/templates.dat
 `, tc.configRoot, databaseConfigDir, tc.templatesRoot, databaseConfigDir)),
-				"config.dat":    answers,
-				"templates.dat": nil,
+				"config.dat":           answers,
+				"templates.dat":        nil,
+				"ignored-debconf.conf": []byte("Root: /unsafe\n"),
 			})
 
 			before := captureImage(t, target, fixture.Platform)
 			assertStatusDirectoryLayout(t, &before)
-			require.Contains(t, before.Config.Config.Env, "DEBCONF_SYSTEMRC="+tc.configDir+"/debconf.conf")
-			require.NotContains(t, before.Paths, "etc/debconf.conf")
-			require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
+			require.Contains(t, before.Config.Config.Env, "DEBCONF_SYSTEMRC="+systemRC)
+			if tc.configDir != "/etc" {
+				require.NotContains(t, before.Paths, "etc/debconf.conf")
+			}
+			if tc.configDir != "/usr/share/debconf" {
+				require.NotContains(t, before.Paths, "usr/share/debconf/debconf.conf")
+			}
 			require.NotContains(t, before.Paths, "etc/timezone")
 			if tc.answersOnly {
 				require.NotContains(t, before.Paths, "etc/localtime")
@@ -564,6 +579,11 @@ Driver: File
 			assert.Positive(t, after.Paths[strings.TrimPrefix(tc.databaseDir, "/")+"/templates.dat"].Size, "target Debconf databases were not used")
 			configFile := strings.TrimPrefix(tc.configDir, "/") + "/debconf.conf"
 			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, configFile), canonicalTreeHash(t, after.RootFSTar, configFile), "custom Debconf configuration changed")
+			if tc.systemRC == "1" {
+				for _, ignored := range []string{"root/.debconfrc", "1"} {
+					assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, ignored), canonicalTreeHash(t, after.RootFSTar, ignored), "ignored relative/user configuration changed")
+				}
+			}
 			assert.Equal(t, canonicalTreeHash(t, before.RootFSTar, fixture.PreserveTree), canonicalTreeHash(t, after.RootFSTar, fixture.PreserveTree), "application binary changed")
 		})
 	}

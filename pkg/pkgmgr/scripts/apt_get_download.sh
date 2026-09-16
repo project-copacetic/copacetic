@@ -1327,6 +1327,10 @@ else
             dpkg_root_real=$(readlink -f "$DPKG_ROOT")
             debconf_config_found=false
             for debconf_config in "${DEBCONF_SYSTEMRC:-/root/.debconfrc}" /etc/debconf.conf /usr/share/debconf/debconf.conf; do
+                # The conventional value 1 selects system configuration only.
+                # Never pass it to Debconf as a relative filename: its loader
+                # concatenates DPKG_ROOT and could read a sibling of the root.
+                if [ "$debconf_config" = "1" ]; then continue; fi
                 validate_debconf_path "$debconf_config"
                 if [ -e "$DPKG_ROOT$debconf_config" ]; then
                     debconf_config_found=true
@@ -1353,6 +1357,9 @@ else
                 while IFS= read -r debconf_database; do
                     validate_debconf_path "$debconf_database"
                 done < "$DOWNLOAD_DIR/debconf-paths"
+                if [ "${DEBCONF_SYSTEMRC:-}" = "1" ]; then
+                    export DEBCONF_SYSTEMRC="$debconf_config"
+                fi
             else
                 # Chrootless maintainer scripts use the tooling Debconf, which
                 # looks for configuration and databases under DPKG_ROOT. Keep

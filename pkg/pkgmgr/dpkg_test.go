@@ -2593,9 +2593,18 @@ esac
 
 func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 	const proxySentinel = "https://copa-test-proxy.invalid"
+	conflictingConfigs := func(t *testing.T, root string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "root"), 0o755))
+		for _, path := range []string{filepath.Join(root, "root", ".debconfrc"), filepath.Join(root, "1"), root + "1"} {
+			require.NoError(t, os.WriteFile(path, []byte("Root: /unsafe\n"), 0o600))
+		}
+	}
 	for _, tc := range []struct {
 		name         string
 		configPath   string
+		systemRC     string
+		wantSystemRC string
 		databasePath string
 		rootField    string
 		setup        func(*testing.T, string)
@@ -2606,6 +2615,12 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 		{name: "shared configuration", configPath: "/usr/share/debconf/debconf.conf"},
 		{name: "home configuration", configPath: "/root/.debconfrc"},
 		{name: "custom configuration", configPath: "/custom/debconf.conf", databasePath: "/custom/config.dat"},
+		{name: "system flag", configPath: "/etc/debconf.conf", systemRC: "1", wantSystemRC: "/etc/debconf.conf", setup: conflictingConfigs},
+		{name: "system flag shared fallback", configPath: "/usr/share/debconf/debconf.conf", systemRC: "1", wantSystemRC: "/usr/share/debconf/debconf.conf", setup: conflictingConfigs},
+		{name: "system flag missing configuration", systemRC: "1", setup: conflictingConfigs},
+		{name: "system flag root override", configPath: "/etc/debconf.conf", systemRC: "1", rootField: "Root: /\n", wantError: "Debconf database Root overrides are not supported"},
+		{name: "system flag database traversal", configPath: "/etc/debconf.conf", systemRC: "1", databasePath: "/../../config.dat", wantError: "Debconf path must be canonical"},
+		{name: "other relative flag", configPath: "true", wantError: "Debconf path must be absolute"},
 		{name: "empty database root", configPath: "/custom/debconf.conf", rootField: "Root:\n", wantError: "Debconf database Root overrides are not supported"},
 		{name: "absolute database root", configPath: "/custom/debconf.conf", rootField: "Root: /custom\n", wantError: "Debconf database Root overrides are not supported"},
 		{name: "relative database root", configPath: "/custom/debconf.conf", rootField: "Root: custom\n", wantError: "Debconf database Root overrides are not supported"},
@@ -2661,6 +2676,13 @@ func TestAptGetDownloadScriptPreservesStatusDirectoryFlow(t *testing.T) {
 				default:
 					systemRC = tc.configPath
 				}
+			}
+			if tc.systemRC != "" {
+				systemRC = tc.systemRC
+			}
+			wantSystemRC := systemRC
+			if tc.wantSystemRC != "" {
+				wantSystemRC = tc.wantSystemRC
 			}
 			if tc.setup != nil {
 				tc.setup(t, dpkgRoot)
@@ -2773,7 +2795,7 @@ esac
 				"INSTALL_LOG":                 installLog,
 				"DEBCONF_LOG":                 debconfLog,
 				"EXISTING_DEBCONF_CONFIG":     tc.configPath,
-				"EXPECTED_DEBCONF_SYSTEMRC":   systemRC,
+				"EXPECTED_DEBCONF_SYSTEMRC":   wantSystemRC,
 				"DEBCONF_SYSTEMRC":            systemRC,
 				"HTTPS_PROXY":                 proxySentinel,
 			})

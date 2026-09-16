@@ -53,6 +53,9 @@ Copa supplies temporary configuration and databases so packages such as `tzdata`
 can finish installing. This temporary state is removed before exporting the
 patched image. Existing Debconf configuration is preserved, including a custom
 path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
+The conventional value `DEBCONF_SYSTEMRC=1` skips the user's configuration and
+selects `/etc/debconf.conf` or `/usr/share/debconf/debconf.conf`. Copa passes the
+validated absolute path to Debconf; a relative file named `1` is not used.
 Package configuration continues to use that configuration's saved answers.
 Configuration and database paths must be absolute, contain no `.` or `..`
 components, and resolve inside the target image. Environment substitutions such
