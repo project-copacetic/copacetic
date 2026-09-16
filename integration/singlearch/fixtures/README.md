@@ -35,9 +35,10 @@ The recipe pins an older official Distroless Debian 12 base and copies the exact
 builds `linux/amd64`, pushes only to a disposable loopback registry, and exports
 the resulting manifest digest in `COPA_TEST_OPENSSL_IMAGE`. Standalone and buildx
 BuildKit daemons use host networking for these jobs so they can read the same
-registry. The custom-unix Docker job imports the built archive into its nested
-daemon and verifies an identical digest in its own loopback registry. Podman's
-BuildKit already uses host networking. No prepublished OpenSSL image or registry
+registry. The custom-unix Docker job copies the registry data into its nested
+daemon before starting the identical registry image, then verifies the raw
+manifest digest. This preserves OCI and Docker manifests without a save/load
+conversion. Podman's BuildKit already uses host networking. No prepublished OpenSSL image or registry
 credentials are needed.
 
 `TestPatchBuiltOpenSSL` runs in both report-driven and update-all matrices. It

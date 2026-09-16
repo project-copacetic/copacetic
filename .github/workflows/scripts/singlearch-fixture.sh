@@ -42,11 +42,14 @@ case "${1:-}" in
             --metadata-file "${fixture_dir}/build.json" \
             "${repo_root}/integration/singlearch/fixtures/openssl-test-img-debian"
         docker --host "$host" push "$image"
-        curl --max-time 10 -fsS -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+        curl --max-time 10 -fsS -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
             "http://${address}/v2/copa-openssl/manifests/test-debian12" > "${fixture_dir}/manifest.json"
         jq -e '.schemaVersion == 2 and has("layers") and (has("manifests") | not)' "${fixture_dir}/manifest.json"
         digest="sha256:$(sha256sum "${fixture_dir}/manifest.json" | cut -d ' ' -f 1)"
-        docker --host "$host" save --output "${fixture_dir}/image.tar" "$image"
+        # Preserve registry bytes across Docker versions; save/load can rewrite
+        # the manifest even when the image filesystem is unchanged.
+        mkdir "${fixture_dir}/registry"
+        docker --host "$host" cp "${registry_name}:/var/lib/registry/." "${fixture_dir}/registry"
         record_env COPA_TEST_OPENSSL_IMAGE "${image}@${digest}"
         ;;
     load)
@@ -55,20 +58,26 @@ case "${1:-}" in
             # custom-unix runs a separate dockerd. Its loopback registry needs the same
             # bytes and address; keep that daemon's networking isolated from the host.
             address="${COPA_TEST_OPENSSL_TAG%%/*}"
-            docker run -d --name "$COPA_TEST_OPENSSL_REGISTRY" \
+            docker create --name "$COPA_TEST_OPENSSL_REGISTRY" \
                 -p "127.0.0.1:${address##*:}:5000" "$registry_image"
+            docker cp "${COPA_TEST_OPENSSL_DIR}/registry/." "${COPA_TEST_OPENSSL_REGISTRY}:/var/lib/registry"
+            docker start "$COPA_TEST_OPENSSL_REGISTRY"
             for _ in {1..30}; do
-                if docker exec "$COPA_TEST_OPENSSL_REGISTRY" wget -q -O /dev/null http://127.0.0.1:5000/v2/; then
+                if timeout 5s docker exec "$COPA_TEST_OPENSSL_REGISTRY" wget -T 2 -q -O /dev/null http://127.0.0.1:5000/v2/; then
                     break
                 fi
                 sleep 1
             done
-            docker exec "$COPA_TEST_OPENSSL_REGISTRY" wget -q -O /dev/null http://127.0.0.1:5000/v2/
-            docker load --input "${COPA_TEST_OPENSSL_DIR}/image.tar"
-            docker push "$COPA_TEST_OPENSSL_TAG"
-            expected="${COPA_TEST_OPENSSL_TAG%:*}@${COPA_TEST_OPENSSL_IMAGE##*@}"
-            docker image inspect "$COPA_TEST_OPENSSL_TAG" --format '{{json .RepoDigests}}' |
-                jq -e --arg expected "$expected" 'index($expected) != null'
+            timeout 5s docker exec "$COPA_TEST_OPENSSL_REGISTRY" wget -T 2 -q -O /dev/null http://127.0.0.1:5000/v2/
+            expected="${COPA_TEST_OPENSSL_IMAGE##*@}"
+            actual="sha256:$(timeout 10s docker exec "$COPA_TEST_OPENSSL_REGISTRY" wget -T 5 -q -O - \
+                --header='Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+                "http://127.0.0.1:5000/v2/copa-openssl/manifests/${expected}" | sha256sum | cut -d ' ' -f 1)"
+            if [[ "$actual" != "$expected" ]]; then
+                echo "Mirrored fixture digest mismatch: expected ${expected}, got ${actual}" >&2
+                exit 1
+            fi
+            echo "Mirrored fixture manifest ${actual}"
         fi
         ;;
     cleanup)
@@ -84,7 +93,7 @@ case "${1:-}" in
             if timeout 10s docker --host "$host" buildx inspect "$COPA_TEST_BUILDX_BUILDER" >/dev/null 2>&1; then
                 timeout 30s docker --host "$host" buildx rm "$COPA_TEST_BUILDX_BUILDER" || true
             fi
-            timeout 30s docker --host "$host" rm -f "$COPA_TEST_OPENSSL_REGISTRY" || true
+            timeout 30s docker --host "$host" rm -fv "$COPA_TEST_OPENSSL_REGISTRY" || true
             if [[ -n "${COPA_TEST_OPENSSL_TAG:-}" ]]; then
                 timeout 30s docker --host "$host" image rm "$COPA_TEST_OPENSSL_TAG" || true
             fi
