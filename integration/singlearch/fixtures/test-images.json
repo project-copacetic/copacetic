@@ -199,15 +199,6 @@
         "isManifestList": false
     },
     {
-        "image": "docker.io/sozercan/copa-test-openssl",
-        "tag": "test-debian12",
-        "digest": "sha256:3b8cb0a05ec19ae4556bde0b3b735764ea44dbd6fa4cd71c430854e5b0755363",
-        "distro": "Google Distroless",
-        "description": "Custom dpkg/status.d with text names, no apt, libssl3, custom openssl.cnf",
-        "ignoreErrors": false,
-        "isManifestList": false
-    },
-    {
         "image": "registry.suse.com/bci/bci-micro",
         "tag": "15.7-42.1",
         "digest": "sha256:995231c41ed26a5cb630b485485ea10b4d794ee65eea9f2b7886ab5d84677ec0",

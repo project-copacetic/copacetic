@@ -25,9 +25,33 @@ setuptools, and wheel updates to exercise library patching. Multi-platform
 runtime tests use `mcr.microsoft.com/dotnet/runtime:8.0.11-bookworm-slim` for
 ARMv7 and ARM64 coverage.
 
-The OpenSSL fixture is published as
-`docker.io/sozercan/copa-test-openssl:test-debian12` for testing.
-To refresh it, build `openssl-test-img-debian/Dockerfile`
-for `linux/amd64` and publish it under a new tag. Record its registry digest in
-`test-images.json` and update the expected patched tag in
-[the build workflow](../../../.github/workflows/build.yml).
+The OpenSSL fixture is built during **every single-architecture CI job** from
+[`openssl-test-img-debian/Dockerfile`](openssl-test-img-debian/Dockerfile).
+The recipe pins an older official Distroless Debian 12 base and copies the exact
+`foo\n` OpenSSL configuration. Keep that base pinned: the test requires fixable
+`libssl3` vulnerabilities before patching.
+
+[The fixture setup script](../../../.github/workflows/scripts/singlearch-fixture.sh)
+builds `linux/amd64`, pushes only to a disposable loopback registry, and exports
+the resulting manifest digest in `COPA_TEST_OPENSSL_IMAGE`. Standalone and buildx
+BuildKit daemons use host networking for these jobs so they can read the same
+registry. The custom-unix Docker job imports the built archive into its nested
+daemon and verifies an identical digest in its own loopback registry. Podman's
+BuildKit already uses host networking. No prepublished OpenSSL image or registry
+credentials are needed.
+
+`TestPatchBuiltOpenSSL` runs in both report-driven and update-all matrices. It
+requires a freshly provisioned digest, confirms the initial vulnerable package,
+rescans the patched image, and verifies exact custom configuration, package
+status records, and runtime image configuration through the selected image
+loader. For Podman, the loaded output is pushed to the same disposable registry
+for rescanning, so Trivy does not require a Podman API socket. Missing setup
+fails with a provisioning instruction rather than skipping the fixture. The
+job's final cleanup step removes its fixture resources even when tests fail.
+
+For local runs, follow the same workflow order: run the script's `build` phase
+with `GITHUB_ENV` pointing to a temporary environment file, export its entries,
+source the selected `buildkitenvs` script, and run `load` before the singlearch
+tests. Run `cleanup` afterward with the recorded environment. The pinned recipe
+is the source of truth; do not add a registry digest for this generated fixture
+to `test-images.json`.
