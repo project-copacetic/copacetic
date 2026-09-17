@@ -185,7 +185,7 @@ func TestOpenRejectsMissingAndAmbiguousSelectors(t *testing.T) {
 	second.Annotations[ocispec.AnnotationRefName] = "same"
 	fixture = newLayoutAt(t, root, []ocispec.Descriptor{first, second})
 	_, err = Open(t.Context(), fixture.path, filepath.Join(t.TempDir(), "output"), "registry.invalid/acme:same")
-	require.ErrorContains(t, err, "2 descriptors matching tag same")
+	require.ErrorContains(t, err, "2 descriptors matching selector registry.invalid/acme:same")
 }
 
 func newLayoutAt(t *testing.T, root string, descriptors []ocispec.Descriptor) layoutFixture {
@@ -1072,4 +1072,45 @@ func TestFutureWritePathsResolveSymlinks(t *testing.T) {
 	require.NoError(t, os.Symlink(a, b))
 	_, err = canonicalTargetPath(filepath.Join(a, "missing"))
 	require.Error(t, err, "symlink cycles must fail")
+}
+
+func TestOpenCombinesAnnotationSelectorMatches(t *testing.T) {
+	tests := []struct {
+		name, selector, imageName, refName string
+	}{
+		{name: "raw", selector: "stable", imageName: "stable", refName: "stable"},
+		{name: "full", selector: "example.com/app:stable", imageName: "example.com/app:stable", refName: "example.com/app:stable"},
+		{name: "normalized", selector: "alpine:stable", imageName: "docker.io/library/alpine:stable", refName: "alpine:stable"},
+		{name: "tag fallback", selector: "example.com/app:stable", imageName: "example.com/app:stable", refName: "stable"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, sameImage := range []bool{false, true} {
+				root := t.TempDir()
+				first := newImageManifest(t, root, &ocispec.Platform{OS: "linux", Architecture: "amd64"}, map[string]string{annotationImageName: test.imageName}, nil)
+				second := first
+				if !sameImage {
+					second = newImageManifest(t, root, &ocispec.Platform{OS: "linux", Architecture: "arm64"}, nil, nil)
+				}
+				second.Annotations = map[string]string{ocispec.AnnotationRefName: test.refName}
+				for _, entries := range [][]ocispec.Descriptor{{first, second}, {second, first}} {
+					fixture := newLayoutAt(t, root, entries)
+					before := snapshotLayout(t, root)
+					source, err := Open(t.Context(), fixture.path, "", test.selector)
+					if sameImage {
+						require.NoError(t, err)
+						assert.Equal(t, first.Digest, source.Descriptor.Digest)
+					} else {
+						require.ErrorContains(t, err, "2 descriptors matching")
+						assert.ErrorContains(t, err, first.Digest.String())
+						assert.ErrorContains(t, err, second.Digest.String())
+					}
+					assert.Equal(t, before, snapshotLayout(t, root))
+				}
+			}
+		})
+	}
+	fixture := newSingleLayout(t, map[string]string{annotationImageName: "stable"})
+	_, err := Open(t.Context(), fixture.path, "", "example.com/app:stable")
+	require.ErrorContains(t, err, "ambiguous or unavailable", "bare-tag fallback belongs only to ref-name annotations")
 }

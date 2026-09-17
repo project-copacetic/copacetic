@@ -310,20 +310,20 @@ func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Des
 	if named != nil {
 		names = append(names, named.String(), reference.FamiliarString(named))
 	}
-	matches := descriptorsMatching(candidates, func(desc ocispec.Descriptor) bool {
-		return desc.Annotations[annotationImageName] != "" && slices.Contains(names, desc.Annotations[annotationImageName])
-	})
-	if len(matches) > 0 {
-		return requireUniqueSelection(matches, "name "+rawSelector, candidates)
-	}
+	var tag string
 	if tagged, ok := named.(reference.Tagged); ok {
-		names = append(names, tagged.Tag())
+		tag = tagged.Tag()
 	}
-	matches = descriptorsMatching(candidates, func(desc ocispec.Descriptor) bool {
-		return desc.Annotations[ocispec.AnnotationRefName] != "" && slices.Contains(names, desc.Annotations[ocispec.AnnotationRefName])
+	matches := descriptorsMatching(candidates, func(desc ocispec.Descriptor) bool {
+		imageName := desc.Annotations[annotationImageName]
+		refName := desc.Annotations[ocispec.AnnotationRefName]
+		// Count each descriptor once across both keys. Bare-tag fallback is
+		// specific to ref-name annotations and must not broaden image names.
+		return (imageName != "" && slices.Contains(names, imageName)) ||
+			(refName != "" && (slices.Contains(names, refName) || refName == tag))
 	})
 	if len(matches) > 0 {
-		return requireUniqueSelection(matches, "tag "+names[len(names)-1], candidates)
+		return requireUniqueSelection(matches, "selector "+rawSelector, candidates)
 	}
 	return ocispec.Descriptor{}, fmt.Errorf("OCI layout selector %q is ambiguous or unavailable; choose one of: %s", rawSelector, availableDescriptors(candidates))
 }

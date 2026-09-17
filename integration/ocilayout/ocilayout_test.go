@@ -189,6 +189,34 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		})
 	}
 
+	t.Run("same image selected across annotation keys", func(t *testing.T) {
+		input := t.TempDir()
+		out, err := layout.Write(input, empty.Index)
+		require.NoError(t, err)
+		for _, key := range []string{"io.containerd.image.name", ocispec.AnnotationRefName} {
+			require.NoError(t, out.AppendImage(images[amd64Arch], layout.WithAnnotations(map[string]string{key: logicalName})))
+		}
+		inputIndex, err := out.ImageIndex()
+		require.NoError(t, err)
+		inputManifest, err := inputIndex.IndexManifest()
+		require.NoError(t, err)
+		require.Len(t, inputManifest.Manifests, 2, "exercise two annotation aliases for the same image")
+		require.Equal(t, inputManifest.Manifests[0].Digest, inputManifest.Manifests[1].Digest)
+		before := snapshot(t, input)
+		output := filepath.Join(t.TempDir(), "output")
+		opts := options(input, output)
+		opts.Image = logicalName
+		opts.Report = writeReport(t, amd64Arch)
+		require.NoError(t, patch.Patch(t.Context(), opts))
+		assert.Equal(t, before, snapshot(t, input))
+		source := openLayout(t, output)
+		selected, err := source.PlatformDescriptor(t.Context(), &ocispec.Platform{OS: linuxOS, Architecture: amd64Arch})
+		require.NoError(t, err)
+		original, err := images[amd64Arch].Digest()
+		require.NoError(t, err)
+		assert.NotEqual(t, original.String(), selected.Digest.String(), "the selected image was actually patched")
+	})
+
 	t.Run("full platform metadata survives export", func(t *testing.T) {
 		config, err := images[amd64Arch].ConfigFile()
 		require.NoError(t, err)
@@ -941,4 +969,29 @@ func TestOCILayoutRejectsDanglingWriteLinks(t *testing.T) {
 			assert.True(t, os.IsNotExist(err))
 		})
 	}
+}
+
+func TestOCILayoutRejectsCrossAnnotationSelectorAmbiguity(t *testing.T) {
+	input := t.TempDir()
+	out, err := layout.Write(input, empty.Index)
+	require.NoError(t, err)
+	for i, key := range []string{"io.containerd.image.name", ocispec.AnnotationRefName} {
+		config, err := empty.Image.ConfigFile()
+		require.NoError(t, err)
+		config.OS, config.Architecture = linuxOS, []string{amd64Arch, "arm64"}[i]
+		img, err := mutate.ConfigFile(empty.Image, config)
+		require.NoError(t, err)
+		require.NoError(t, out.AppendImage(img, layout.WithAnnotations(map[string]string{key: logicalName})))
+	}
+	before := snapshot(t, input)
+	output := filepath.Join(t.TempDir(), "output")
+	err = patch.Patch(t.Context(), &types.Options{
+		InputOCILayout: input, Image: logicalName, OCIDir: output, PatchedTag: outputName,
+		BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, Progress: progressui.QuietMode,
+		PkgTypes: "os", LibraryPatchLevel: "patch",
+	})
+	require.ErrorContains(t, err, "2 descriptors matching")
+	assert.Equal(t, before, snapshot(t, input))
+	_, err = os.Stat(output)
+	assert.True(t, os.IsNotExist(err))
 }
