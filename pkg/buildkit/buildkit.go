@@ -292,7 +292,7 @@ func InitializeBuildkitConfig(
 
 	// Use the source metadata API so resolve mode survives gateway transport.
 	// BuildKit's legacy ResolveImageConfig adapter can drop prefer-local mode.
-	resolver := sourceresolver.NewImageMetaResolver(c)
+	resolver := &gatewayImageResolver{ImageMetaResolver: sourceresolver.NewImageMetaResolver(c), client: c}
 	// Resolve and pull the config for the target image
 	resolveOpt := sourceresolver.Opt{
 		ImageOpt: &sourceresolver.ResolveImageOpt{
@@ -970,7 +970,7 @@ func resolveRecordedIndexOrigin(
 	if opt.ImageOpt == nil || opt.ImageOpt.Platform == nil {
 		return "", "", nil, errors.New("cannot verify immutable BaseImage index without a platform")
 	}
-	source, err := ResolveImageSource(ctx, baseImage)
+	source, err := resolveOriginIndex(ctx, c, baseImage)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("resolve immutable BaseImage index: %w", err)
 	}

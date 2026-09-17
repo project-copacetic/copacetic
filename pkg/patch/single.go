@@ -284,10 +284,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 			&targetPlatform.Platform,
 		)
 		if captureErr != nil {
-			if errors.Is(captureErr, errRecordedIndexOrigin) {
-				return nil, captureErr
-			}
-			log.Warnf("Unable to capture source manifest identity for %s; lineage annotations will be omitted: %v", image, captureErr)
+			return nil, fmt.Errorf("capture source manifest identity for %s: %w", image, captureErr)
 		} else if expectedSourceDigest.Validate() == nil {
 			log.Debugf("Captured platform source digest %s for lineage validation; preserving BuildKit source reference %s", expectedSourceDigest, buildkitImageRef)
 		}
