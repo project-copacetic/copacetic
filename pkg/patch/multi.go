@@ -97,11 +97,24 @@ func patchMultiPlatformImage(
 
 	source, err := captureMultiPlatformSource(ctx, image)
 	if err != nil {
-		if errors.Is(err, errRecordedIndexOrigin) {
-			return err
+		return fmt.Errorf("capture source index metadata for %s: %w", image, err)
+	}
+
+	// Pin every selected platform before any platform can publish. A source
+	// selection failure cannot fall back to a later mutable-tag lookup.
+	sourceImages := make(map[string]string, len(platforms))
+	sourceDescriptors := make(map[string]*ispec.Descriptor, len(platforms))
+	for _, p := range platforms {
+		key := buildkit.PlatformKey(p.Platform)
+		ref, err := platformSourceReference(source.Current, &p.Platform)
+		if err != nil {
+			return fmt.Errorf("capture source platform %s: %w", key, err)
 		}
-		log.Warnf("Unable to capture multi-platform source lineage for %s; lineage annotations will be omitted where identity is unknown: %v", image, err)
-		source = nil
+		desc, err := source.Current.PlatformDescriptor(&p.Platform)
+		if err != nil {
+			return fmt.Errorf("capture source descriptor %s: %w", key, err)
+		}
+		sourceImages[key], sourceDescriptors[key] = ref, desc
 	}
 
 	// Display styled patching plan before starting
@@ -252,16 +265,8 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			var sourceImage string
-			if source != nil && source.Current != nil {
-				var sourceErr error
-				sourceImage, sourceErr = platformSourceReference(source.Current, &p.Platform)
-				if sourceErr != nil {
-					log.Warnf("Unable to pin source platform %s for lineage: %v", platformKey, sourceErr)
-				}
-			}
-
-			res, err := patchSingleArchImageWithSource(gctx, &patchOpts, p, true, sharedProgressCh, sourceImage)
+			res, err := patchSingleArchImageWithSource(gctx, &patchOpts, p, true, sharedProgressCh,
+				sourceImages[platformKey], sourceDescriptors[platformKey].Annotations)
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {
@@ -272,6 +277,9 @@ func patchMultiPlatformImage(
 			defer mu.Unlock()
 			if err != nil {
 				if errors.Is(err, types.ErrNoUpdatesFound) {
+					if res != nil {
+						res.PatchedDesc = sourceDescriptors[platformKey]
+					}
 					patchResults = append(patchResults, *res)
 					markPlatformPreserved(platforms, platformKey)
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
@@ -624,7 +632,7 @@ func commonBaseIndexLineage(source *multiPlatformSource, items []types.PatchResu
 			lineage := sourceLineageFromAnnotations(item.PatchedDesc.Annotations)
 			if !lineage.Valid() || lineage.Kind != source.IndexLineage.Kind ||
 				!sameOriginRepository(lineage.Name, source.IndexLineage.Name) ||
-				lineage.Digest != expected.Digest {
+				(lineage.Digest != expected.Digest && lineage.Digest != source.IndexLineage.Digest) {
 				log.Debugf("Omitting index source lineage: patched platform %s does not map to source descriptor %s", buildkit.PlatformKey(*item.PatchedDesc.Platform), expected.Digest)
 				return nil
 			}

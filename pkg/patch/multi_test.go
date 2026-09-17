@@ -282,6 +282,9 @@ func TestCommonBaseIndexLineage(t *testing.T) {
 
 	assert.Equal(t, lineage, commonBaseIndexLineage(source, items))
 
+	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = indexDigest.String()
+	assert.Equal(t, lineage, commonBaseIndexLineage(source, items), "a verified frontend index origin is also a common origin")
+
 	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = digest.FromString("different-base").String()
 	assert.Nil(t, commonBaseIndexLineage(source, items), "a child mismatch must omit index lineage")
 

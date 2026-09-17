@@ -260,7 +260,7 @@ func TestOriginRoundTrip(t *testing.T) {
 			{"386-index", repo + "@" + originalIndexHash.String(), "linux/386"},
 		} {
 			t.Run(scenario.name, func(t *testing.T) {
-				arch := "amd64"
+				arch := originAMD64
 				if scenario.platform == "linux/386" {
 					arch = "386"
 				}
@@ -351,6 +351,7 @@ func TestOriginRoundTrip(t *testing.T) {
 			})
 		}
 	})
+	testOriginSnapshotFollowups(t, ctx, addr, repo, images, application)
 	t.Run("partial-repatch-index", func(t *testing.T) {
 		for _, recorded := range []bool{true, false} {
 			inputIndex := indexOut
@@ -394,7 +395,7 @@ func TestOriginRoundTrip(t *testing.T) {
 		}
 	})
 	t.Run("inconsistent-recorded-index", func(t *testing.T) {
-		for _, surface := range []string{"descriptor", "manifest", "config"} {
+		for _, surface := range []string{"descriptor", originManifestSurface, originConfigSurface} {
 			for _, mismatch := range []string{"repository", "digest"} {
 				t.Run(surface+"-"+mismatch, func(t *testing.T) {
 					child, err := remote.Image(originTestReference(t, repo+":p1-amd64"), remote.WithContext(ctx))
@@ -409,9 +410,9 @@ func TestOriginRoundTrip(t *testing.T) {
 					switch surface {
 					case "descriptor":
 						descriptorAnnotations = claims
-					case "manifest":
+					case originManifestSurface:
 						child = originAnnotatedImage(t, child, claims)
-					case "config":
+					case originConfigSurface:
 						cfg, err := child.ConfigFile()
 						require.NoError(t, err)
 						maps.Copy(cfg.Config.Labels, claims)

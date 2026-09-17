@@ -110,7 +110,6 @@ func TestRecordedIndexAllowsUnverifiedPreservedChildren(t *testing.T) {
 	require.ErrorContains(t, validateRecordedIndexChildren(t.Context(), source), "unpatched manifest contradicts")
 	source.Current.Index.Manifests[0].Digest = original
 	readIndexChildMetadata = func(context.Context, string) (map[string]string, map[string]string, error) {
-		t.Fatal("unchanged original bytes need no read")
 		return nil, nil, nil
 	}
 	require.NoError(t, validateRecordedIndexChildren(t.Context(), source))

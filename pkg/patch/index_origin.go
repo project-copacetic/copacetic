@@ -45,10 +45,6 @@ func validateRecordedIndexChildren(ctx context.Context, source *multiPlatformSou
 		if err := check(child.Annotations); err != nil {
 			return err
 		}
-		// Exact original bytes need no ancestry assertion or extra lookup.
-		if expectedErr == nil && child.Digest == expected.Digest {
-			continue
-		}
 		ref, err := platformSourceReference(source.Current, child.Platform)
 		if err != nil {
 			return err
@@ -63,10 +59,11 @@ func validateRecordedIndexChildren(ctx context.Context, source *multiPlatformSou
 		if err := check(labels); err != nil {
 			return err
 		}
-		// An unpatched child is its own origin. A different manifest cannot
+		// An exact original child needs no BaseImage label, but its recorded
+		// metadata above must still agree. A different manifest cannot
 		// satisfy a recorded index claim merely by having no origin labels.
 		// Legacy patched children still have an unverified BaseImage locator.
-		if labels["BaseImage"] == "" {
+		if labels["BaseImage"] == "" && (expectedErr != nil || child.Digest != expected.Digest) {
 			return fmt.Errorf("platform %s unpatched manifest contradicts the recorded original index", buildkit.PlatformKey(*child.Platform))
 		}
 	}
