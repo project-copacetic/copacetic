@@ -1567,7 +1567,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	// Use BuildKit Go client to create OCI layout
 	ctx := exportOpts.state.context
 
-	c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts)
+	c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts, len(exportOpts.state.sources) > 0)
 	if err != nil {
 		return fmt.Errorf("failed to create BuildKit client: %w", err)
 	}
@@ -1576,8 +1576,13 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 }
 
-func newOCIExportClient(ctx context.Context, opts *Opts) (*client.Client, error) {
-	if opts != nil && (opts.Addr != "" || opts.CACertPath != "" || opts.CertPath != "" || opts.KeyPath != "") {
+// Named-image export follows the patch client's Docker-first selection. OCI
+// sources can prefer buildx because their content travels through the session.
+func newOCIExportClient(ctx context.Context, opts *Opts, hasOCISource bool) (*client.Client, error) {
+	if opts == nil {
+		opts = &Opts{}
+	}
+	if !hasOCISource || opts.Addr != "" || opts.CACertPath != "" || opts.CertPath != "" || opts.KeyPath != "" {
 		return NewClient(ctx, *opts)
 	}
 
@@ -1600,9 +1605,6 @@ func newOCIExportClient(ctx context.Context, opts *Opts) (*client.Client, error)
 	}
 
 	log.Debug("Falling back to auto-detection for BuildKit client")
-	if opts == nil {
-		opts = &Opts{}
-	}
 	return NewClient(ctx, *opts)
 }
 
@@ -2198,19 +2200,7 @@ func createMixedOCILayout(
 		}
 		defer os.RemoveAll(patchedTempDir)
 
-		// Named-image mixed export keeps the patch client's Docker-first default.
-		// OCI sources may use the OCI export helper, with explicit connections
-		// still taking precedence over auto-detection.
-		var c *client.Client
-		if len(exportOpts.state.sources) > 0 {
-			c, err = newOCIExportClient(ctx, exportOpts.BuildkitOpts)
-		} else {
-			opts := Opts{}
-			if exportOpts.BuildkitOpts != nil {
-				opts = *exportOpts.BuildkitOpts
-			}
-			c, err = NewClient(ctx, opts)
-		}
+		c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts, len(exportOpts.state.sources) > 0)
 		if err != nil {
 			return fmt.Errorf("failed to create BuildKit client for mixed layout: %w", err)
 		}

@@ -5,10 +5,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,11 +29,13 @@ import (
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/util/progress/progressui"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/patch"
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
@@ -115,4 +121,93 @@ func TestNamedMixedExportKeepsDockerConnection(t *testing.T) {
 	originalManifest, err := index.IndexManifest()
 	require.NoError(t, err)
 	assert.Equal(t, originalManifest.Manifests[1].Digest, outManifest.Manifests[1].Digest)
+}
+
+func TestNamedSinglePatchKeepsDockerConnection(t *testing.T) {
+	if os.Getenv("COPA_OCI_TEST_NAMED") != "1" || os.Getenv("COPA_OCI_TEST_ADDR") == "" {
+		t.Skip("requires isolated active buildx, Docker, and COPA_OCI_TEST_NAMED=1")
+	}
+	server := httptest.NewServer(registry.New())
+	defer server.Close()
+	serverURL, err := url.Parse(server.URL)
+	require.NoError(t, err)
+	imageName := fmt.Sprintf("localhost:%s/copa-1677/single-%d:original", serverURL.Port(), time.Now().UnixNano())
+	ref, err := name.NewTag(imageName, name.Insecure)
+	require.NoError(t, err)
+	baseRef, err := name.ParseReference(alpineIndex)
+	require.NoError(t, err)
+	base, err := remote.Image(baseRef, remote.WithPlatform(v1.Platform{OS: linuxOS, Architecture: amd64Arch}), remote.WithContext(t.Context()))
+	require.NoError(t, err)
+	require.NoError(t, remote.Write(ref, base, remote.WithContext(t.Context())))
+
+	isolated, err := buildkit.NewClient(t.Context(), buildkit.Opts{Addr: os.Getenv("COPA_OCI_TEST_ADDR")})
+	require.NoError(t, err)
+	defer isolated.Close()
+	unreachableCtx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	_, err = isolated.Build(unreachableCtx, client.SolveOpt{}, "copa-1677-single-network-proof", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
+		def, err := llb.Image(imageName, llb.Platform(ocispec.Platform{OS: linuxOS, Architecture: amd64Arch})).Marshal(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return gateway.Solve(ctx, gwclient.SolveRequest{Definition: def.ToPB(), Evaluate: true})
+	}, nil)
+	cancel()
+	require.Error(t, err, "the active buildx worker must not resolve the Docker-accessible source")
+
+	for _, address := range []string{"", "docker://"} {
+		t.Run("address="+address, func(t *testing.T) {
+			patchedName := strings.TrimSuffix(imageName, ":original") + ":patched"
+			t.Cleanup(func() {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				data, err := exec.CommandContext(cleanupCtx, "docker", "image", "rm", patchedName).CombinedOutput()
+				assert.NoError(t, err, "remove only the unique image loaded by this test: %s", data)
+			})
+			output := filepath.Join(t.TempDir(), "output")
+			err := patch.Patch(t.Context(), &types.Options{
+				Image: imageName, OCIDir: output, PatchedTag: "patched", Report: writeReport(t, amd64Arch),
+				Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch", Format: "openvex",
+				BkAddr: address, Timeout: 4 * time.Minute, Progress: progressui.QuietMode,
+			})
+			data, inspectErr := exec.CommandContext(t.Context(), "docker", "image", "inspect", patchedName).CombinedOutput()
+			require.NoError(t, inspectErr, "patch/load must complete before the OCI export result is checked: %s", data)
+			require.NoError(t, err)
+			out, err := layout.FromPath(output)
+			require.NoError(t, err)
+			index, err := out.ImageIndex()
+			require.NoError(t, err)
+			manifest, err := index.IndexManifest()
+			require.NoError(t, err)
+			require.Len(t, manifest.Manifests, 1)
+			image, err := index.Image(manifest.Manifests[0].Digest)
+			require.NoError(t, err)
+			config, err := image.ConfigFile()
+			require.NoError(t, err)
+			assert.Equal(t, linuxOS, config.OS)
+			assert.Equal(t, amd64Arch, config.Architecture)
+			reader := mutate.Extract(image)
+			defer reader.Close()
+			archive := tar.NewReader(reader)
+			found := false
+			for {
+				header, err := archive.Next()
+				if err == io.EOF {
+					break
+				}
+				require.NoError(t, err)
+				if strings.TrimPrefix(header.Name, "/") != "lib/apk/db/installed" {
+					continue
+				}
+				installed, err := io.ReadAll(archive)
+				require.NoError(t, err)
+				for _, record := range strings.Split(string(installed), "\n\n") {
+					if strings.Contains("\n"+record, "\nP:busybox\n") {
+						found = true
+						assert.NotContains(t, record, "V:1.37.0-r8\n", "the exported image must contain the patched package")
+					}
+				}
+			}
+			require.True(t, found, "read the actual exported busybox package record")
+		})
+	}
 }
