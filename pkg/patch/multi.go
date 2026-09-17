@@ -125,7 +125,7 @@ func patchMultiPlatformImage(
 			continue
 		}
 		key := buildkit.PlatformKey(p.Platform)
-		annotations, err := captureSourceAnnotations(ctx, image, sourceImages[key], sourceDescriptors[key].Annotations, &p.Platform)
+		annotations, err := captureSourceAnnotations(ctx, image, sourceImages[key], sourceDescriptors[key], &p.Platform)
 		if err != nil {
 			return fmt.Errorf("capture source annotations for platform %s: %w", key, err)
 		}

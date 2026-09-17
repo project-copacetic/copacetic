@@ -57,7 +57,7 @@ func TestCaptureSourceAnnotationsUsesIndexedLocalSource(t *testing.T) {
 				}
 				return &specs.Descriptor{Digest: selected}, true, nil
 			}
-			got, err := captureSourceAnnotations(ctx, "127.0.0.1:1/local:index", "127.0.0.1:1/local@"+child.String(), annotations, platform)
+			got, err := captureSourceAnnotations(ctx, "127.0.0.1:1/local:index", "127.0.0.1:1/local@"+child.String(), &specs.Descriptor{Digest: child, Annotations: annotations}, platform)
 			switch scenario {
 			case "local":
 				require.NoError(t, err, "the child is not independently available from this registry")
@@ -134,7 +134,8 @@ func TestCaptureLocalManifestAnnotations(t *testing.T) {
 				}
 				return body, nil
 			}
-			got, err := captureSourceAnnotations(t.Context(), "127.0.0.1:1/local:parent", "127.0.0.1:1/local@"+child.String(), origin, &specs.Platform{OS: "linux", Architecture: "amd64"})
+			got, err := captureSourceAnnotations(t.Context(), "127.0.0.1:1/local:parent", "127.0.0.1:1/local@"+child.String(),
+				&specs.Descriptor{Digest: child, Annotations: origin}, &specs.Platform{OS: "linux", Architecture: "amd64"})
 			if scenario == sourceOriginValid {
 				require.NoError(t, err)
 				require.Equal(t, body, got)

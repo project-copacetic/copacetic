@@ -27,10 +27,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const sourceDescriptorGateway = "gateway"
+
 // Publish exact index bytes rather than letting an image library repair the
-// malformed child descriptors. Only host access is blocked; public Patch must
-// capture the source through the real BuildKit metadata and blob transports.
-func TestGatewayChildDescriptor(t *testing.T) {
+// malformed child descriptors. All capture/export transports are real; gateway
+// cases deny host input access to require BuildKit metadata and blob capture.
+func TestSourceChildDescriptor(t *testing.T) {
+	for _, route := range []string{"registry-single", "registry-multi", sourceDescriptorGateway} {
+		t.Run(route, func(t *testing.T) { testSourceChildDescriptorRoute(t, route) })
+	}
+}
+
+func testSourceChildDescriptorRoute(t *testing.T, route string) {
+	t.Helper()
 	addr := os.Getenv("COPA_ORIGIN_BUILDKIT_ADDR")
 	if addr == "" || strings.HasPrefix(addr, "docker://") {
 		t.Skip("requires the serialized BuildKit proof lane with image-blob support")
@@ -128,16 +137,33 @@ func TestGatewayChildDescriptor(t *testing.T) {
 			transport := remote.DefaultTransport
 			t.Cleanup(func() { remote.DefaultTransport = transport })
 			blocked := &sourceSessionTransport{RoundTripper: transport, inputPath: "/v2/source/"}
-			remote.DefaultTransport = blocked
+			if route == sourceDescriptorGateway {
+				remote.DefaultTransport = blocked
+			}
+			report := originTestReport(t, originAMD64)
+			if route == "registry-multi" {
+				data, err := os.ReadFile(report)
+				require.NoError(t, err)
+				report = t.TempDir()
+				require.NoError(t, os.WriteFile(report+"/amd64.json", data, 0o600))
+			}
 			err = Patch(ctx, &types.Options{
-				Image: input, Report: originTestReport(t, originAMD64), Scanner: "trivy", Push: true, PatchedTag: output,
+				Image: input, Report: report, Scanner: "trivy", Push: true, PatchedTag: output,
 				BkAddr: addr, PkgTypes: "os", IgnoreError: true, Progress: "quiet", Timeout: 2 * time.Minute,
 			})
-			require.Positive(t, blocked.denied.Load(), "capture must cross the actual gateway boundary")
+			if route == sourceDescriptorGateway {
+				require.Positive(t, blocked.denied.Load(), "capture must cross the actual gateway boundary")
+			} else {
+				require.Zero(t, blocked.denied.Load())
+			}
 			patched, readErr := remote.Image(originTestReference(t, output), remote.WithContext(ctx))
 			if scenario != sourceOriginMatching && scenario != docker && scenario != omittedMediaType {
 				assert.Error(t, err, "malformed selected descriptor must fail even when its child is cached")
-				assert.Error(t, readErr, "invalid gateway capture must leave no output")
+				assert.Error(t, readErr, "invalid capture must leave no output")
+				if route == "registry-multi" {
+					_, childErr := remote.Get(originTestReference(t, output+"-amd64"), remote.WithContext(ctx))
+					assert.Error(t, childErr, "invalid capture must leave no child output")
+				}
 				return
 			}
 			require.NoError(t, err)

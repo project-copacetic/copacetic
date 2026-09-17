@@ -113,9 +113,12 @@ func testOriginSnapshotFollowups(t *testing.T, ctx context.Context, addr, repo s
 		replacement := originAnnotatedImage(t, images[originAMD64], map[string]string{"com.example.snapshot": "moved tag", "com.example.moved-only": "unrelated"})
 		require.NoError(t, remote.Write(originTestReference(t, mutable), replacement, remote.WithContext(ctx)))
 		descriptorAnnotations := map[string]string{"com.example.snapshot": "parent descriptor", "com.example.descriptor-only": "captured parent"}
+		raw, err := child.RawManifest()
+		require.NoError(t, err)
+		descriptor := &specs.Descriptor{Digest: digest.Digest(captured.String()), Size: int64(len(raw)), MediaType: specs.MediaTypeImageManifest, Annotations: descriptorAnnotations}
 		opts := &types.Options{Image: mutable, Report: originTestReport(t, originAMD64), Scanner: "trivy", Push: true, PatchedTag: "annotations-captured", BkAddr: addr, PkgTypes: "os", Progress: "quiet"}
 		result, err := patchSingleArchImageWithSource(ctx, opts,
-			types.PatchPlatform{Platform: specs.Platform{OS: "linux", Architecture: originAMD64}}, true, nil, repo+"@"+captured.String(), descriptorAnnotations)
+			types.PatchPlatform{Platform: specs.Platform{OS: "linux", Architecture: originAMD64}}, true, nil, repo+"@"+captured.String(), descriptor)
 		require.NoError(t, err)
 		output, err := remote.Image(originTestReference(t, result.PatchedRef.String()), remote.WithContext(ctx))
 		require.NoError(t, err)

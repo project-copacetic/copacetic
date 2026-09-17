@@ -81,9 +81,9 @@ func patchSingleArchImageWithSource(
 	multiPlatform bool,
 	sharedProgressCh chan<- *client.SolveStatus,
 	sourceImage string,
-	sourceAnnotations map[string]string,
+	sourceDescriptor *ispec.Descriptor,
 ) (*types.PatchResult, error) {
-	annotations, err := captureSourceAnnotations(ctx, opts.Image, sourceImage, sourceAnnotations, &targetPlatform.Platform)
+	annotations, err := captureSourceAnnotations(ctx, opts.Image, sourceImage, sourceDescriptor, &targetPlatform.Platform)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,8 @@ func patchSingleArchImageWithSourceAndUpdates(
 	requireBaseManifest := multiPlatform
 	if !multiPlatform && sourceImage == "" {
 		var captureErr error
-		buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, sourceAnnotations, captureErr = captureSinglePlatformSource(
+		var capturedDescriptor *ispec.Descriptor
+		buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, capturedDescriptor, captureErr = captureSinglePlatformSource(
 			ctx,
 			image,
 			imageName,
@@ -266,7 +267,10 @@ func patchSingleArchImageWithSourceAndUpdates(
 				if err != nil {
 					return nil, err
 				}
-				buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, sourceAnnotations, err = singlePlatformSnapshot(ctx, source, imageName, &targetPlatform.Platform)
+				buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, capturedDescriptor, err = singlePlatformSnapshot(ctx, source, imageName, &targetPlatform.Platform)
+				if err == nil {
+					sourceAnnotations = maps.Clone(capturedDescriptor.Annotations)
+				}
 				return gwclient.NewResult(), err
 			}, nil)
 			if gatewayErr != nil {
@@ -275,7 +279,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 				captureErr = nil
 			}
 		} else if captureErr == nil && expectedSourceDigest != "" {
-			sourceAnnotations, captureErr = captureSourceAnnotations(ctx, image, buildkitImageRef.String(), sourceAnnotations, &targetPlatform.Platform)
+			sourceAnnotations, captureErr = captureSourceAnnotations(ctx, image, buildkitImageRef.String(), capturedDescriptor, &targetPlatform.Platform)
 		}
 		if captureErr != nil {
 			return nil, fmt.Errorf("capture source manifest identity for %s: %w", image, captureErr)
@@ -467,7 +471,7 @@ func captureSinglePlatformSource(
 	image string,
 	buildkitImageRef reference.Named,
 	platform *ispec.Platform,
-) (reference.Named, digest.Digest, bool, digest.Digest, map[string]string, error) {
+) (reference.Named, digest.Digest, bool, digest.Digest, *ispec.Descriptor, error) {
 	source, err := resolveSinglePlatformSource(ctx, image, buildkitImageRef)
 	if err != nil {
 		return buildkitImageRef, "", true, "", nil, err
@@ -477,7 +481,7 @@ func captureSinglePlatformSource(
 
 func singlePlatformSnapshot(
 	ctx context.Context, source *buildkit.ImageSource, ref reference.Named, platform *ispec.Platform,
-) (reference.Named, digest.Digest, bool, digest.Digest, map[string]string, error) {
+) (reference.Named, digest.Digest, bool, digest.Digest, *ispec.Descriptor, error) {
 	descriptor := &source.Descriptor
 	if source.Index != nil {
 		if _, err := captureIndexSource(ctx, source); err != nil {
@@ -499,7 +503,9 @@ func singlePlatformSnapshot(
 	if err != nil {
 		return ref, "", true, "", nil, fmt.Errorf("pin source platform manifest: %w", err)
 	}
-	return child, descriptor.Digest, true, source.Descriptor.Digest, maps.Clone(descriptor.Annotations), nil
+	captured := *descriptor
+	captured.Annotations = maps.Clone(descriptor.Annotations)
+	return child, descriptor.Digest, true, source.Descriptor.Digest, &captured, nil
 }
 
 // Locally built indexes may have no distribution-source association for their

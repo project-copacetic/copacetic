@@ -38,7 +38,7 @@ func TestCaptureSourceAnnotationsWithoutPlatformMetadata(t *testing.T) {
 				return &buildkit.ImageSource{Name: ref, Descriptor: specs.Descriptor{Digest: selected}}, nil
 			}
 			annotations := map[string]string{"com.example.application": "preserved"}
-			got, err := captureSourceAnnotations(t.Context(), "127.0.0.1:1/local:source", "127.0.0.1:1/local@"+original.String(), annotations, platform)
+			got, err := captureSourceAnnotations(t.Context(), "127.0.0.1:1/local:source", "127.0.0.1:1/local@"+original.String(), &specs.Descriptor{Digest: original, Annotations: annotations}, platform)
 			if scenario == "stable" {
 				require.NoError(t, err)
 				require.Equal(t, annotations, got)
