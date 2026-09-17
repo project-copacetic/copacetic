@@ -355,6 +355,10 @@ func TestOriginRoundTrip(t *testing.T) {
 	testAuthenticatedIndexOrigin(t, ctx, bk, repo, application)
 	testSourceAnnotationFollowups(t, ctx, addr, repo, images, application)
 	testCapturedSourceDigest(t, ctx, bk, addr, repo, images[originAMD64], application)
+	testLocallyBuiltSource(t, ctx, application)
+	testLegacyGatewaySource(t, ctx, images[originAMD64], application)
+	testRemoteBuilderSource(t, ctx, addr, repo, images[originAMD64], application)
+	testLegacyOriginFallback(t, ctx, addr, repo, application)
 	t.Run("partial-repatch-index", func(t *testing.T) {
 		for _, recorded := range []bool{true, false} {
 			inputIndex := indexOut

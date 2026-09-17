@@ -24,6 +24,32 @@ type gatewayImageResolver struct {
 // resolveSourceIndex returns nil only when the server lacks the blob source.
 // Native lookup and validation errors must not trigger another auth path.
 func (r *gatewayImageResolver) resolveSourceIndex(ctx context.Context, ref string) (*ImageSource, error) {
+	data, err := r.sourceBlob(ctx, ref)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	named, err := reference.ParseNormalizedNamed(ref)
+	if err != nil {
+		return nil, err
+	}
+	pinned, ok := named.(reference.Digested)
+	if !ok {
+		return nil, fmt.Errorf("original index reference must contain a digest")
+	}
+	root := pinned.Digest()
+	var index specs.Index
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, fmt.Errorf("parse BuildKit source index: %w", err)
+	}
+	if index.SchemaVersion != 2 || index.Manifests == nil || (index.MediaType != "" && !v1types.MediaType(index.MediaType).IsIndex()) {
+		return nil, fmt.Errorf("BuildKit source content is not an image index")
+	}
+	return &ImageSource{Name: ref, Descriptor: specs.Descriptor{Digest: root, MediaType: index.MediaType, Size: int64(len(data))}, Index: &index}, nil
+}
+
+// sourceBlob reads an immutable manifest or index through the active session.
+// A nil blob means the server requires the existing client compatibility path.
+func (r *gatewayImageResolver) sourceBlob(ctx context.Context, ref string) ([]byte, error) {
 	buildOpts := r.client.BuildOpts()
 	if err := buildOpts.LLBCaps.Supports(pb.CapSourceImageBlob); err != nil {
 		return nil, nil
@@ -64,14 +90,7 @@ func (r *gatewayImageResolver) resolveSourceIndex(ctx context.Context, ref strin
 	if root.Algorithm().FromBytes(data) != root {
 		return nil, fmt.Errorf("BuildKit source index content does not match its digest")
 	}
-	var index specs.Index
-	if err := json.Unmarshal(data, &index); err != nil {
-		return nil, fmt.Errorf("parse BuildKit source index: %w", err)
-	}
-	if index.SchemaVersion != 2 || index.Manifests == nil || (index.MediaType != "" && !v1types.MediaType(index.MediaType).IsIndex()) {
-		return nil, fmt.Errorf("BuildKit source content is not an image index")
-	}
-	return &ImageSource{Name: ref, Descriptor: specs.Descriptor{Digest: root, MediaType: index.MediaType, Size: int64(len(data))}, Index: &index}, nil
+	return data, nil
 }
 
 func resolveOriginIndex(ctx context.Context, resolver sourceresolver.ImageMetaResolver, ref string) (*ImageSource, error) {

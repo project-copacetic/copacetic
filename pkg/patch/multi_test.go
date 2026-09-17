@@ -410,7 +410,7 @@ func TestPatchMultiPlatformImageRejectsUnrecoverableIndexOrigin(t *testing.T) {
 			require.ErrorIs(t, err, errRecordedIndexOrigin, "recorded-origin failure must not become omitted ancestry")
 			inputRef, err := reference.ParseNormalizedNamed(input)
 			require.NoError(t, err)
-			_, _, _, err = captureSinglePlatformSource(t.Context(), input, inputRef, &v1.Platform{OS: "linux", Architecture: "amd64"})
+			_, _, _, _, _, err = captureSinglePlatformSource(t.Context(), input, inputRef, &v1.Platform{OS: "linux", Architecture: "amd64"})
 			require.ErrorIs(t, err, errRecordedIndexOrigin, "single-platform dispatch must validate the index too")
 			var builds atomic.Int32
 			bkNewClient = func(context.Context, buildkit.Opts) (*client.Client, error) {

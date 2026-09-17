@@ -8,10 +8,14 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
+	"github.com/moby/buildkit/client/llb/sourceresolver"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +46,7 @@ func TestCaptureSinglePlatformSourceUsesIncompleteLocalIndex(t *testing.T) {
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
 	child := digest.FromString("available child")
 	root := digest.FromString("original root")
-	for _, scenario := range []string{"available", "missing child", recordedOriginCase, immutableCase, "canceled", "invalid root"} {
+	for _, scenario := range []string{"available", "missing child", recordedOriginCase, immutableCase, sourceAnnotationsCanceled, "invalid root"} {
 		t.Run(scenario, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -66,14 +70,14 @@ func TestCaptureSinglePlatformSourceUsesIncompleteLocalIndex(t *testing.T) {
 					index.Manifests = nil
 				case recordedOriginCase:
 					index.Annotations = (&types.SourceLineage{Kind: types.PatchOriginImage, Name: input, Digest: root}).Annotations()
-				case "canceled":
+				case sourceAnnotationsCanceled:
 					cancel()
 				case "invalid root":
 					top.Digest = ""
 				}
 				return index, top, false, true, nil
 			}
-			got, expected, requireManifest, err := captureSinglePlatformSource(ctx, input, ref, platform)
+			got, expected, requireManifest, _, _, err := captureSinglePlatformSource(ctx, input, ref, platform)
 			switch scenario {
 			case "available":
 				require.NoError(t, err)
@@ -87,7 +91,7 @@ func TestCaptureSinglePlatformSourceUsesIncompleteLocalIndex(t *testing.T) {
 				require.ErrorIs(t, err, remoteFailure)
 			case immutableCase:
 				require.ErrorIs(t, err, remoteFailure)
-			case "canceled":
+			case sourceAnnotationsCanceled:
 				require.ErrorIs(t, err, context.Canceled)
 			case "invalid root":
 				require.ErrorContains(t, err, "index digest is invalid")
@@ -97,6 +101,38 @@ func TestCaptureSinglePlatformSourceUsesIncompleteLocalIndex(t *testing.T) {
 			} else {
 				require.Zero(t, remoteReads)
 			}
+		})
+	}
+}
+
+func TestPrimeLocalSourceChecksCapturedIdentity(t *testing.T) {
+	root, child := digest.FromString("captured root"), digest.FromString("captured child")
+	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
+	for _, scenario := range []string{"root", "child", sourceAnnotationsChanged, sourceAnnotationsCanceled} {
+		t.Run(scenario, func(t *testing.T) {
+			resolved := root
+			var failure error
+			switch scenario {
+			case "child":
+				resolved = child
+			case sourceAnnotationsChanged:
+				resolved = digest.FromString("replacement source")
+			case sourceAnnotationsCanceled:
+				failure = context.Canceled
+			}
+			gateway := &mocks.MockGWClient{}
+			opt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{Platform: platform, ResolveMode: llb.ResolveModePreferLocal.String()}}
+			gateway.On("ResolveImageConfig", mock.Anything, "example.com/local:built", opt).Return("example.com/local:built", resolved, []byte(`{}`), failure).Once()
+			err := primeLocalSource(t.Context(), &testBuildkitBuildClient{gateway: gateway}, "example.com/local:built", root, child, platform)
+			switch scenario {
+			case sourceAnnotationsChanged:
+				require.ErrorContains(t, err, "changed after capture")
+			case sourceAnnotationsCanceled:
+				require.ErrorIs(t, err, context.Canceled)
+			default:
+				require.NoError(t, err)
+			}
+			gateway.AssertExpectations(t)
 		})
 	}
 }

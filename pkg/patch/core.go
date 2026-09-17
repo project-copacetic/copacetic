@@ -337,7 +337,7 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 }
 
 func sourceLineageForPatch(config *buildkit.Config, opts *Options) (*types.SourceLineage, error) {
-	if opts.RequireBaseManifest && (config == nil || config.PatchedConfigData == nil) {
+	if opts.RequireBaseManifest && (config == nil || config.PatchedConfigData == nil) && !isUnverifiedLegacyFallback(config) {
 		var resolved digest.Digest
 		if config != nil && config.SourceLineage.Valid() {
 			resolved = config.SourceLineage.Digest
@@ -369,6 +369,20 @@ func sourceLineageForPatch(config *buildkit.Config, opts *Options) (*types.Sourc
 		}
 	}
 	return &lineage, nil
+}
+
+// Original input labels distinguish legacy fallback from a first patch. The
+// fallback deliberately keeps current layers without claiming verified origin.
+func isUnverifiedLegacyFallback(config *buildkit.Config) bool {
+	if config == nil || config.PatchedConfigData != nil || config.SourceLineage != nil || config.ImageLabels["BaseImage"] == "" {
+		return false
+	}
+	for _, key := range []string{types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
+		if _, present := config.ImageLabels[key]; present {
+			return false
+		}
+	}
+	return true
 }
 
 func sourceLineageAnnotations(lineage *types.SourceLineage) map[string]string {

@@ -739,7 +739,7 @@ func TestCaptureSinglePlatformSourcePinsLocalIndexChild(t *testing.T) {
 	buildkitRef, err := reference.ParseNormalizedNamed(imageRef)
 	require.NoError(t, err)
 
-	gotBuildkitRef, expectedDigest, requireManifest, err := captureSinglePlatformSource(
+	gotBuildkitRef, expectedDigest, requireManifest, _, _, err := captureSinglePlatformSource(
 		t.Context(),
 		index.Name,
 		buildkitRef,
@@ -766,7 +766,7 @@ func TestCaptureSinglePlatformSourcePinsImmutableIndexChild(t *testing.T) {
 	}
 	input, err := reference.ParseNormalizedNamed(imageRef)
 	require.NoError(t, err)
-	got, expected, requireManifest, err := captureSinglePlatformSource(t.Context(), imageRef, input, platform)
+	got, expected, requireManifest, _, _, err := captureSinglePlatformSource(t.Context(), imageRef, input, platform)
 	require.NoError(t, err)
 	require.True(t, requireManifest)
 	assert.Equal(t, childDigest, expected)

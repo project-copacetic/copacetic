@@ -72,12 +72,12 @@ func testCapturedSourceDigest(t *testing.T, ctx context.Context, bk *client.Clie
 		for _, scenario := range []string{"stable", "moved"} {
 			t.Run(scenario, func(t *testing.T) {
 				input, output := repo+":single-index-"+scenario, repo+":single-index-output-"+scenario
-				makeIndex := func(image v1.Image) v1.ImageIndex {
+				makeIndex := func(image v1.Image, annotations map[string]string) v1.ImageIndex {
 					return mutate.IndexMediaType(mutate.AppendManifests(empty.Index, mutate.IndexAddendum{
-						Add: image, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: originAMD64}},
+						Add: image, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: originAMD64}, Annotations: annotations},
 					}), v1types.OCIImageIndex)
 				}
-				require.NoError(t, remote.WriteIndex(originTestReference(t, input), makeIndex(original), remote.WithContext(ctx)))
+				require.NoError(t, remote.WriteIndex(originTestReference(t, input), makeIndex(original, map[string]string{"com.example.captured-descriptor": "original"}), remote.WithContext(ctx)))
 				resolver := resolveImageSource
 				t.Cleanup(func() { resolveImageSource = resolver })
 				captures := 0
@@ -94,7 +94,8 @@ func testCapturedSourceDigest(t *testing.T, ctx context.Context, bk *client.Clie
 						config.Config.Labels["com.example.snapshot"] = "replacement"
 						replacement, err := mutate.ConfigFile(original, config)
 						require.NoError(t, err)
-						require.NoError(t, remote.WriteIndex(originTestReference(t, input), makeIndex(replacement), remote.WithContext(ctx)))
+						replacementAnnotations := map[string]string{"com.example.captured-descriptor": "replacement", types.AnnotationPatchOriginKind: types.PatchOriginOCI}
+						require.NoError(t, remote.WriteIndex(originTestReference(t, input), makeIndex(replacement, replacementAnnotations), remote.WithContext(ctx)))
 					}
 					return source, nil
 				}
@@ -109,6 +110,12 @@ func testCapturedSourceDigest(t *testing.T, ctx context.Context, bk *client.Clie
 				require.NoError(t, err)
 				require.Equal(t, hash.String(), config.Config.Labels[types.AnnotationPatchOriginDigest])
 				require.NotContains(t, config.Config.Labels, "com.example.snapshot", "patch must use the captured child")
+				manifest, err := image.Manifest()
+				require.NoError(t, err)
+				require.Equal(t, "original", manifest.Annotations["com.example.captured-descriptor"])
+				for key, value := range application {
+					require.Equal(t, value, manifest.Annotations[key])
+				}
 				verifyOriginBlobs(t, image)
 			})
 		}

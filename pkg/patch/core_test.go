@@ -995,6 +995,27 @@ func TestSourceLineageForPatch(t *testing.T) {
 	}
 }
 
+func TestLegacyFallbackCaptureGuard(t *testing.T) {
+	opts := &Options{RequireBaseManifest: true, ExpectedSourceDigest: digest.FromString("captured legacy")}
+	for _, marker := range []string{"BaseImage", "", types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
+		t.Run(marker, func(t *testing.T) {
+			labels := map[string]string{"BaseImage": "example.com/missing:original"}
+			if marker == "" {
+				delete(labels, "BaseImage")
+			} else if marker != "BaseImage" {
+				labels[marker] = ""
+			}
+			lineage, err := sourceLineageForPatch(&buildkit.Config{ImageLabels: labels}, opts)
+			require.Nil(t, lineage)
+			if marker == "BaseImage" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "captured source manifest")
+			}
+		})
+	}
+}
+
 func TestSourceLineageAnnotationsAreAtomic(t *testing.T) {
 	assert.Nil(t, sourceLineageAnnotations(nil))
 	assert.Nil(t, sourceLineageAnnotations(&types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20"}))

@@ -71,7 +71,7 @@ func TestRecordedIndexRejectsContradictoryChildrenBeforePatching(t *testing.T) {
 				require.ErrorIs(t, err, errRecordedIndexOrigin)
 				inputRef, err := reference.ParseNormalizedNamed(input)
 				require.NoError(t, err)
-				_, _, _, err = captureSinglePlatformSource(t.Context(), input, inputRef, &platform)
+				_, _, _, _, _, err = captureSinglePlatformSource(t.Context(), input, inputRef, &platform)
 				require.ErrorIs(t, err, errRecordedIndexOrigin)
 				err = patchMultiPlatformImage(t.Context(), &types.Options{Image: input, IgnoreError: true}, []types.PatchPlatform{{Platform: platform}})
 				require.ErrorIs(t, err, errRecordedIndexOrigin)
