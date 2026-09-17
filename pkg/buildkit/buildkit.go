@@ -193,11 +193,11 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 				descriptor.Digest = sourceDigest
 				return imageSourceFromRemoteDescriptor(named.String(), descriptor)
 			}
-			// A daemon can expose a selected child for an immutable index. If the
-			// materialized descriptor digest differs from the daemon's top-level
-			// source digest, verify and use the exact remote index instead.
+			// Docker save can reconstruct different manifest bytes, and a daemon
+			// can expose a child of an immutable index. Verify the exact source
+			// descriptor without assuming that either mismatch denotes an index.
 			if descriptor.Digest.String() != sourceDigest.String() {
-				descriptor, err = GetVerifiedRemoteIndexWithContext(ctx, immutable)
+				descriptor, err = getVerifiedRemoteDescriptor(ctx, immutable)
 				if err != nil {
 					return nil, fmt.Errorf("resolve immutable source descriptor %q: %w", named.String(), err)
 				}
@@ -207,6 +207,10 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 
 		descriptor.Digest = sourceDigest
 		return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+	}
+	var archiveErr *localArchiveError
+	if errors.As(localErr, &archiveErr) {
+		return nil, archiveErr
 	}
 	log.Debugf("Failed to resolve image source %s from local daemon: %v", named.String(), localErr)
 
@@ -256,6 +260,17 @@ func GetVerifiedRemoteIndex(ref name.Digest) (*remote.Descriptor, error) {
 
 // GetVerifiedRemoteIndexWithContext fetches and verifies an immutable index while honoring cancellation.
 func GetVerifiedRemoteIndexWithContext(ctx context.Context, ref name.Digest) (*remote.Descriptor, error) {
+	desc, err := getVerifiedRemoteDescriptor(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	if !desc.MediaType.IsIndex() {
+		return nil, fmt.Errorf("remote descriptor for %q is not an image index", ref.String())
+	}
+	return desc, nil
+}
+
+func getVerifiedRemoteDescriptor(ctx context.Context, ref name.Digest) (*remote.Descriptor, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -266,8 +281,8 @@ func GetVerifiedRemoteIndexWithContext(ctx context.Context, ref name.Digest) (*r
 	if desc == nil {
 		return nil, fmt.Errorf("registry returned no descriptor for %q", ref.String())
 	}
-	if !desc.MediaType.IsIndex() {
-		return nil, fmt.Errorf("remote descriptor for %q is not an image index", ref.String())
+	if !desc.MediaType.IsIndex() && !desc.MediaType.IsImage() {
+		return nil, fmt.Errorf("remote descriptor for %q is not an image or index", ref.String())
 	}
 	if desc.Digest.String() != ref.DigestStr() {
 		return nil, fmt.Errorf(
@@ -517,6 +532,18 @@ func getManifestFromLocal(ctx context.Context, ref name.Reference) (*remote.Desc
 			Annotations: index.Annotations,
 		}
 		return &remote.Descriptor{Descriptor: descriptor, Manifest: rawManifest}, sourceDigest, complete, nil
+	}
+
+	if localDescriptor == nil {
+		descriptor, err := localArchiveDescriptor(ctx, imageName)
+		if err != nil {
+			return nil, v1.Hash{}, false, &localArchiveError{fmt.Errorf("read original local source manifest: %w", err)}
+		}
+		if descriptor != nil {
+			// Unlike inspection's partial reconstruction, the archive contains
+			// the full original index metadata even when some blobs are absent.
+			return descriptor, descriptor.Digest, true, nil
+		}
 	}
 
 	img, err := getImageFromDaemon(ref, daemon.WithContext(ctx))

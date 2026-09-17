@@ -39,6 +39,24 @@ func captureSourceAnnotations(ctx context.Context, image, child string, descript
 		if err != nil {
 			return nil, err
 		}
+		if local == nil {
+			// Older Docker APIs cannot expose per-platform descriptors. Recheck
+			// the captured identity through the same local-first resolver instead
+			// of treating unavailable metadata as evidence of source movement.
+			source, err := resolveImageSource(ctx, image)
+			if err != nil {
+				return nil, fmt.Errorf("recheck local source identity: %w", err)
+			}
+			if source != nil {
+				local = &source.Descriptor
+				if source.Index != nil {
+					local, err = source.PlatformDescriptor(platform)
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		if local == nil || local.Digest != pinned.Digest() {
 			return nil, fmt.Errorf("local source platform changed after capture")
 		}
