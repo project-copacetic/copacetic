@@ -41,6 +41,8 @@ const (
 	testImageSourcePrefix   = "docker-image://"
 )
 
+var testNativeSuppliedDigestRef = "docker.io/example/native-patched@" + digest.FromString(testNativeSuppliedImage).String()
+
 type recordedBaseNativePatchedGateway struct {
 	gwclient.Client
 	inspectedImage string
@@ -52,15 +54,17 @@ func (c *recordedBaseNativePatchedGateway) ResolveImageConfig(
 	_ sourceresolver.Opt,
 ) (string, digest.Digest, []byte, error) {
 	var config []byte
+	resolved := digest.FromString(ref)
 	switch ref {
-	case testNativeSuppliedImage:
+	case testNativeSuppliedImage, testNativeSuppliedDigestRef:
+		resolved = digest.FromString(testNativeSuppliedImage)
 		config = []byte(`{"config":{"labels":{"BaseImage":"` + testRecordedBaseImage + `"}}}`)
 	case testRecordedBaseImage:
 		config = []byte(`{"config":{"labels":{}}}`)
 	default:
 		return "", "", nil, errors.New("unexpected image config reference: " + ref)
 	}
-	return ref, digest.FromString(ref), config, nil
+	return ref, resolved, config, nil
 }
 
 //nolint:gocritic // The gateway Client interface requires SolveRequest by value.
@@ -82,7 +86,7 @@ func (c *recordedBaseNativePatchedGateway) Solve(
 	}
 
 	result := gwclient.NewResult()
-	result.SetRef(&nativeManifestTestReference{exists: c.inspectedImage == testNativeSuppliedImage})
+	result.SetRef(&nativeManifestTestReference{exists: c.inspectedImage == testNativeSuppliedDigestRef})
 	return result, nil
 }
 
@@ -613,7 +617,7 @@ func TestPreflightReportForNativeChiselUsesNativeSuppliedPatchedImage(t *testing
 	})
 
 	require.EqualError(t, err, pkgmgr.NativeChiselTargetedPatchError)
-	assert.Equal(t, testNativeSuppliedImage, client.inspectedImage)
+	assert.Equal(t, testNativeSuppliedDigestRef, client.inspectedImage)
 }
 
 func TestPreflightReportForNativeChiselFailsClosedOnInspectionError(t *testing.T) {

@@ -648,7 +648,7 @@ func TestEmptyReportPreflightUsesNativeSuppliedPatchedImage(t *testing.T) {
 	)
 
 	require.ErrorIs(t, err, errNativeChiselTargetedPatch)
-	assert.Equal(t, testNativeSuppliedImage, gateway.inspectedImage)
+	assert.Equal(t, testNativeSuppliedDigestRef, gateway.inspectedImage)
 }
 
 func TestAugmentPatchedDescriptorIncludesManagerAnnotations(t *testing.T) {

@@ -91,7 +91,7 @@ func testOriginSnapshotFollowups(t *testing.T, ctx context.Context, addr, repo s
 						return nil, errors.New("test connection failure")
 					}
 				}
-				result, err := patchSingleArchImageWithSourceAndUpdates(ctx, opts, types.PatchPlatform{Platform: specs.Platform{OS: "linux", Architecture: originAMD64}}, true, nil, updates, source, nil)
+				result, err := patchSingleArchImageWithSourceAndUpdates(ctx, opts, types.PatchPlatform{Platform: specs.Platform{OS: "linux", Architecture: originAMD64}}, true, nil, updates, source, nil, "")
 				require.ErrorIs(t, err, types.ErrNoUpdatesFound)
 				require.NotNil(t, result)
 				require.NotNil(t, result.PatchedDesc)

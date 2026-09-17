@@ -54,37 +54,42 @@ func testLocallyBuiltSource(t *testing.T, ctx context.Context, application map[s
 			Image: input, Report: originTestReport(t, originAMD64), Scanner: "trivy", PatchedTag: output,
 			BkAddr: "docker://", PkgTypes: "os", Progress: "quiet", Timeout: 2 * time.Minute,
 		}))
-		archive := filepath.Join(t.TempDir(), "patched.tar")
-		//nolint:gosec // Save only the generated output tag into the fixture directory.
-		out, err = exec.CommandContext(ctx, "docker", "image", "save", "--output", archive, output).CombinedOutput()
-		require.NoError(t, err, string(out))
-		patched, err := tarball.ImageFromPath(archive, nil)
-		require.NoError(t, err)
-		config, err := patched.ConfigFile()
-		require.NoError(t, err)
-		require.Equal(t, child.Digest.String(), config.Config.Labels[types.AnnotationPatchOriginDigest])
-		require.Equal(t, input, config.Config.Labels["com.example.built-source"])
-		for key, value := range application {
-			require.Equal(t, value, config.Config.Labels[key])
-		}
-		// Docker save reconstructs manifest bytes, so verify the loaded config
-		// and uncompressed layer content against its RootFS identities instead.
-		rawConfig, err := patched.RawConfigFile()
-		require.NoError(t, err)
-		configDigest, err := patched.ConfigName()
-		require.NoError(t, err)
-		require.Equal(t, configDigest.String(), digest.FromBytes(rawConfig).String())
-		layers, err := patched.Layers()
-		require.NoError(t, err)
-		require.Len(t, layers, len(config.RootFS.DiffIDs))
-		for i, layer := range layers {
-			reader, err := layer.Uncompressed()
-			require.NoError(t, err)
-			digester := digest.SHA256.Digester()
-			_, err = io.Copy(digester.Hash(), reader)
-			require.NoError(t, err)
-			require.NoError(t, reader.Close())
-			require.Equal(t, config.RootFS.DiffIDs[i].String(), digester.Digest().String())
-		}
+		verifyLocalBuiltOutput(t, ctx, input, output, child.Digest, application)
 	})
+}
+
+func verifyLocalBuiltOutput(t *testing.T, ctx context.Context, input, output string, expected digest.Digest, application map[string]string) {
+	t.Helper()
+	archive := filepath.Join(t.TempDir(), "patched.tar")
+	//nolint:gosec // Save only the generated output tag into the fixture directory.
+	out, err := exec.CommandContext(ctx, "docker", "image", "save", "--output", archive, output).CombinedOutput()
+	require.NoError(t, err, string(out))
+	patched, err := tarball.ImageFromPath(archive, nil)
+	require.NoError(t, err)
+	config, err := patched.ConfigFile()
+	require.NoError(t, err)
+	require.Equal(t, expected.String(), config.Config.Labels[types.AnnotationPatchOriginDigest])
+	require.Equal(t, input, config.Config.Labels["com.example.built-source"])
+	for key, value := range application {
+		require.Equal(t, value, config.Config.Labels[key])
+	}
+	// Docker save reconstructs manifest bytes, so verify the loaded config
+	// and uncompressed layer content against its RootFS identities instead.
+	rawConfig, err := patched.RawConfigFile()
+	require.NoError(t, err)
+	configDigest, err := patched.ConfigName()
+	require.NoError(t, err)
+	require.Equal(t, configDigest.String(), digest.FromBytes(rawConfig).String())
+	layers, err := patched.Layers()
+	require.NoError(t, err)
+	require.Len(t, layers, len(config.RootFS.DiffIDs))
+	for i, layer := range layers {
+		reader, err := layer.Uncompressed()
+		require.NoError(t, err)
+		digester := digest.SHA256.Digester()
+		_, err = io.Copy(digester.Hash(), reader)
+		require.NoError(t, err)
+		require.NoError(t, reader.Close())
+		require.Equal(t, config.RootFS.DiffIDs[i].String(), digester.Digest().String())
+	}
 }

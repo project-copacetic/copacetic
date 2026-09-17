@@ -329,7 +329,14 @@ func InitializeBuildkitConfig(
 	if platform != nil {
 		imageOpts = append(imageOpts, llb.Platform(*platform))
 	}
-	config.ImageState, err = llb.Image(baseImage, imageOpts...).WithImageConfig(config.ConfigData)
+	baseSource := baseImage
+	if config.SourceLineage.Valid() {
+		baseSource, err = resolvedImageReference(baseImage, config.SourceLineage.Digest)
+		if err != nil {
+			return nil, err
+		}
+	}
+	config.ImageState, err = llb.Image(baseSource, imageOpts...).WithImageConfig(config.ConfigData)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +352,11 @@ func InitializeBuildkitConfig(
 		if platform != nil {
 			patchedImageOpts = append(patchedImageOpts, llb.Platform(*platform))
 		}
-		config.PatchedImageState, err = llb.Image(userImage, patchedImageOpts...).WithImageConfig(config.PatchedConfigData)
+		patchedSource, err := resolvedImageReference(userImage, userImageDigest)
+		if err != nil {
+			return nil, err
+		}
+		config.PatchedImageState, err = llb.Image(patchedSource, patchedImageOpts...).WithImageConfig(config.PatchedConfigData)
 		if err != nil {
 			return nil, err
 		}
@@ -358,6 +369,21 @@ func InitializeBuildkitConfig(
 	config.ImageLabels = extractLabelsFromConfig(configData)
 
 	return &config, nil
+}
+
+// Config resolution does not pin llb.Image's source operation. Keep the
+// original locator in labels, but read content through its verified digest so
+// a later tag move cannot change the image being patched.
+func resolvedImageReference(image string, resolved digest.Digest) (string, error) {
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return "", err
+	}
+	pinned, err := reference.WithDigest(reference.TrimNamed(named), resolved)
+	if err != nil {
+		return "", fmt.Errorf("pin resolved image %s: %w", image, err)
+	}
+	return pinned.String(), nil
 }
 
 // extractLabelsFromConfig parses OCI image config JSON and returns the labels map.

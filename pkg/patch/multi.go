@@ -281,7 +281,7 @@ func patchMultiPlatformImage(
 			mu.Unlock()
 
 			res, err := patchSingleArchImageWithSourceAndUpdates(gctx, &patchOpts, p, true, sharedProgressCh, nil,
-				sourceImages[platformKey], sourceAnnotations[platformKey])
+				sourceImages[platformKey], sourceAnnotations[platformKey], source.Current.Descriptor.Digest)
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {

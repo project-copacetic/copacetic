@@ -1977,7 +1977,7 @@ func (c *originMetadataGateway) ResolveImageConfig(context.Context, string, sour
 
 func (c *originMetadataGateway) ResolveSourceMetadata(_ context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
 	c.calls++
-	require.Equal(c.t, "docker-image://example.com/app:local", op.Identifier)
+	require.Contains(c.t, []string{"docker-image://example.com/app:local", "docker-image://example.com/app@" + digest.FromString("local image").String()}, op.Identifier)
 	require.NotNil(c.t, opt.ImageOpt)
 	require.Equal(c.t, llb.ResolveModePreferLocal.String(), opt.ImageOpt.ResolveMode)
 	require.Equal(c.t, c.platform, opt.ImageOpt.Platform)

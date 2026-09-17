@@ -87,7 +87,7 @@ func patchSingleArchImageWithSource(
 	if err != nil {
 		return nil, err
 	}
-	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil, sourceImage, annotations)
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil, sourceImage, annotations, "")
 }
 
 func patchSingleArchImageWithUpdates(
@@ -99,7 +99,7 @@ func patchSingleArchImageWithUpdates(
 	sharedProgressCh chan<- *client.SolveStatus,
 	updates *unversioned.UpdateManifest,
 ) (*types.PatchResult, error) {
-	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, updates, "", nil)
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, updates, "", nil, "")
 }
 
 func patchSingleArchImageWithSourceAndUpdates(
@@ -112,6 +112,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 	updates *unversioned.UpdateManifest,
 	sourceImage string,
 	sourceAnnotations map[string]string,
+	capturedRoot digest.Digest,
 ) (*types.PatchResult, error) {
 	// Extract options
 	image := opts.Image
@@ -286,7 +287,6 @@ func patchSingleArchImageWithSourceAndUpdates(
 	requireBaseManifest := multiPlatform
 	if !multiPlatform && sourceImage == "" {
 		var captureErr error
-		var capturedRoot digest.Digest
 		buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, sourceAnnotations, captureErr = captureSinglePlatformSource(
 			ctx,
 			image,
@@ -313,15 +313,17 @@ func patchSingleArchImageWithSourceAndUpdates(
 		} else if captureErr == nil && expectedSourceDigest != "" {
 			sourceAnnotations, captureErr = captureSourceAnnotations(ctx, image, buildkitImageRef.String(), sourceAnnotations, &targetPlatform.Platform)
 		}
-		if captureErr == nil && capturedRoot != "" && capturedRoot != expectedSourceDigest {
-			if _, local, _ := localPlatformDescriptor(ctx, image, &targetPlatform.Platform); local {
-				captureErr = primeLocalSource(ctx, bkClient, image, capturedRoot, expectedSourceDigest, &targetPlatform.Platform)
-			}
-		}
 		if captureErr != nil {
 			return nil, fmt.Errorf("capture source manifest identity for %s: %w", image, captureErr)
 		} else if expectedSourceDigest.Validate() == nil {
 			log.Debugf("Captured platform source digest %s for lineage validation; preserving BuildKit source reference %s", expectedSourceDigest, buildkitImageRef)
+		}
+	}
+	if capturedRoot != "" && expectedSourceDigest != "" {
+		if _, local, _ := localPlatformDescriptor(ctx, image, &targetPlatform.Platform); local {
+			if err := primeLocalSource(ctx, bkClient, image, capturedRoot, expectedSourceDigest, &targetPlatform.Platform); err != nil {
+				return nil, fmt.Errorf("prepare captured local source for %s: %w", image, err)
+			}
 		}
 	}
 	if sourceImage == "" && multiPlatform {
@@ -473,10 +475,6 @@ func captureSinglePlatformSource(
 	source, err := resolveSinglePlatformSource(ctx, image, buildkitImageRef)
 	if err != nil {
 		return buildkitImageRef, "", true, "", nil, err
-	}
-	if source.Index == nil {
-		// Direct-image identity is resolved by the core's gateway session.
-		return buildkitImageRef, "", false, "", nil, nil
 	}
 	return singlePlatformSnapshot(ctx, source, buildkitImageRef, platform)
 }

@@ -360,6 +360,8 @@ func TestOriginRoundTrip(t *testing.T) {
 	testRemoteBuilderSource(t, ctx, addr, repo, images[originAMD64], application)
 	testLegacyOriginFallback(t, ctx, addr, repo, application)
 	testUnclaimedIndexOrigin(t, ctx, addr, repo, images, application)
+	testSourceLocatorRaces(t, ctx, bk, addr, repo, images[originAMD64], application)
+	testLocallyBuiltMultiSource(t, ctx, application)
 	t.Run("partial-repatch-index", func(t *testing.T) {
 		for _, recorded := range []bool{true, false} {
 			inputIndex := indexOut

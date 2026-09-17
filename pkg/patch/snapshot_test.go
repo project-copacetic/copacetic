@@ -109,7 +109,7 @@ func TestNoUpdatesRetainsCapturedSource(t *testing.T) {
 			}
 			result, err := patchSingleArchImageWithSourceAndUpdates(t.Context(), &types.Options{
 				Image: input, Report: "already-parsed", PkgTypes: "os", Progress: "quiet",
-			}, platform, true, nil, &unversioned.UpdateManifest{}, source, nil)
+			}, platform, true, nil, &unversioned.UpdateManifest{}, source, nil, digest.FromString("captured index"))
 			require.ErrorIs(t, err, types.ErrNoUpdatesFound)
 			require.NotNil(t, result)
 			require.Equal(t, source, lookup)
