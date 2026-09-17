@@ -141,6 +141,12 @@ func preflightReportForNativeChisel(
 // ExecutePatchCore executes the core patching logic that can be used by both
 // the patch command and a buildkit frontend.
 func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
+	return executePatchCoreWithSourceAnnotations(patchCtx, opts, nil)
+}
+
+// Keep source validation internal so existing core callers and public options
+// retain their API while the CLI can supply captured manifest metadata.
+func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sourceAnnotations map[string]string) (*Result, error) {
 	ctx := patchCtx.Context
 	c := patchCtx.Client
 	workingFolder := opts.WorkingFolder
@@ -150,6 +156,10 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Configure buildctl/client for use by package manager
 	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
 	if err != nil {
+		trySendError(opts.ErrorChannel, err)
+		return nil, err
+	}
+	if err := validateSourceOriginAnnotations(sourceAnnotations, config.SourceLineage); err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}

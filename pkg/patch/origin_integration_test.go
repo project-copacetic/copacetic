@@ -353,6 +353,7 @@ func TestOriginRoundTrip(t *testing.T) {
 	})
 	testOriginSnapshotFollowups(t, ctx, addr, repo, images, application)
 	testAuthenticatedIndexOrigin(t, ctx, bk, repo, application)
+	testSourceAnnotationFollowups(t, ctx, addr, repo, images, application)
 	t.Run("partial-repatch-index", func(t *testing.T) {
 		for _, recorded := range []bool{true, false} {
 			inputIndex := indexOut

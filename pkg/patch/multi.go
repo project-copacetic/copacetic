@@ -117,6 +117,21 @@ func patchMultiPlatformImage(
 		sourceImages[key], sourceDescriptors[key] = ref, desc
 	}
 
+	// Capture annotations through the locally named index, or through the
+	// immutable remote child, before any platform can publish or move the tag.
+	sourceAnnotations := make(map[string]map[string]string, len(platforms))
+	for _, p := range platforms {
+		if p.ShouldPreserve {
+			continue
+		}
+		key := buildkit.PlatformKey(p.Platform)
+		annotations, err := captureSourceAnnotations(ctx, image, sourceImages[key], sourceDescriptors[key].Annotations, &p.Platform)
+		if err != nil {
+			return fmt.Errorf("capture source annotations for platform %s: %w", key, err)
+		}
+		sourceAnnotations[key] = annotations
+	}
+
 	// Display styled patching plan before starting
 	plan := buildPatchingPlan(opts, platforms)
 	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
@@ -265,8 +280,8 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImageWithSource(gctx, &patchOpts, p, true, sharedProgressCh,
-				sourceImages[platformKey], sourceDescriptors[platformKey].Annotations)
+			res, err := patchSingleArchImageWithSourceAndUpdates(gctx, &patchOpts, p, true, sharedProgressCh, nil,
+				sourceImages[platformKey], sourceAnnotations[platformKey])
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {
