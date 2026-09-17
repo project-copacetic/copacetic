@@ -7,6 +7,7 @@ import (
 
 	"github.com/distribution/reference"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
@@ -47,8 +48,7 @@ func captureSourceAnnotations(ctx context.Context, image, child string, descript
 	if err != nil {
 		return nil, fmt.Errorf("read captured source manifest annotations: %w", err)
 	}
-	maps.Copy(annotations, manifestAnnotations)
-	return annotations, nil
+	return buildkit.MergeImageSourceAnnotations(annotations, manifestAnnotations)
 }
 
 // Existing origin metadata is a recovery claim, including partial tuples.

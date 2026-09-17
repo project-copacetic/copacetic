@@ -13,15 +13,16 @@ import (
 )
 
 const (
-	sourceOriginMatching      = "matching"
-	sourceOriginRepository    = "repository"
-	sourceOriginDigest        = "digest"
-	sourceOriginPartial       = "partial"
-	sourceOriginAbsent        = "absent"
-	sourceOriginDifferentTag  = "different tag"
-	sourceAnnotationsCanceled = "canceled"
-	sourceAnnotationsChanged  = "changed"
-	sourceAnnotationKey       = "com.example.source"
+	sourceOriginOtherRepository = "example.com/another:original"
+	sourceOriginMatching        = "matching"
+	sourceOriginRepository      = "repository"
+	sourceOriginDigest          = "digest"
+	sourceOriginPartial         = "partial"
+	sourceOriginAbsent          = "absent"
+	sourceOriginDifferentTag    = "different tag"
+	sourceAnnotationsCanceled   = "canceled"
+	sourceAnnotationsChanged    = "changed"
+	sourceAnnotationKey         = "com.example.source"
 )
 
 func TestCaptureSourceAnnotationsUsesIndexedLocalSource(t *testing.T) {
@@ -80,7 +81,7 @@ func TestValidateSourceOriginAnnotations(t *testing.T) {
 			case sourceOriginDigest:
 				values[types.AnnotationPatchOriginDigest] = digest.FromString("other").String()
 			case sourceOriginRepository:
-				values[types.AnnotationPatchOriginName] = "example.com/another:original"
+				values[types.AnnotationPatchOriginName] = sourceOriginOtherRepository
 			case "kind":
 				values[types.AnnotationPatchOriginKind] = types.PatchOriginOCI
 			case sourceOriginPartial:

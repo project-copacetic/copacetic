@@ -354,6 +354,7 @@ func TestOriginRoundTrip(t *testing.T) {
 	testOriginSnapshotFollowups(t, ctx, addr, repo, images, application)
 	testAuthenticatedIndexOrigin(t, ctx, bk, repo, application)
 	testSourceAnnotationFollowups(t, ctx, addr, repo, images, application)
+	testSourceOriginSurfaces(t, ctx, addr, repo, application)
 	testCapturedSourceDigest(t, ctx, bk, addr, repo, images[originAMD64], application)
 	testLocallyBuiltSource(t, ctx, application)
 	testLegacyGatewaySource(t, ctx, images[originAMD64], application)

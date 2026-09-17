@@ -46,7 +46,7 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 				case sourceOriginDigest:
 					annotations[types.AnnotationPatchOriginDigest] = digest.FromString("different original").String()
 				case sourceOriginRepository:
-					annotations[types.AnnotationPatchOriginName] = "example.com/another:original"
+					annotations[types.AnnotationPatchOriginName] = sourceOriginOtherRepository
 				case "kind":
 					annotations[types.AnnotationPatchOriginKind] = types.PatchOriginOCI
 				case sourceOriginPartial:
@@ -81,7 +81,11 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 					require.Equal(t, origin.Digest.String(), manifest.Annotations[types.AnnotationPatchOriginDigest])
 					verifyOriginBlobs(t, result)
 				} else {
-					require.ErrorContains(t, err, "contradicts the recovered config origin")
+					if scenario == sourceOriginPartial {
+						require.ErrorContains(t, err, "invalid patch origin annotation tuple")
+					} else {
+						require.ErrorContains(t, err, "contradicts the recovered config origin")
+					}
 					_, readErr := remote.Get(originTestReference(t, output), remote.WithContext(ctx))
 					require.Error(t, readErr, "inconsistent origin must fail before export even with IgnoreError")
 				}

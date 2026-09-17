@@ -86,11 +86,10 @@ func ResolveImageSourceWithClient(ctx context.Context, c gwclient.Client, image 
 	}
 	for i := range source.Index.Manifests {
 		if source.Index.Manifests[i].Digest == child.Digest {
-			annotations := maps.Clone(source.Index.Manifests[i].Annotations)
-			if annotations == nil {
-				annotations = map[string]string{}
+			annotations, err := MergeImageSourceAnnotations(source.Index.Manifests[i].Annotations, manifest.Descriptor.Annotations)
+			if err != nil {
+				return nil, fmt.Errorf("invalid BuildKit source platform annotations: %w", err)
 			}
-			maps.Copy(annotations, manifest.Descriptor.Annotations)
 			source.Index.Manifests[i].Annotations = annotations
 		}
 	}
