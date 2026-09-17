@@ -1021,3 +1021,55 @@ func TestOpenValidatesSelectedBodyMediaTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestFutureWritePathsResolveSymlinks(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	input := filepath.Join(root, "input")
+	external := filepath.Join(root, "external")
+	require.NoError(t, os.MkdirAll(filepath.Join(input, "child"), 0o755))
+	require.NoError(t, os.Mkdir(external, 0o755))
+	target := filepath.Join(input, "missing", "vex.json")
+	absolute := filepath.Join(external, "absolute")
+	relative := filepath.Join(external, "relative")
+	chain := filepath.Join(external, "chain")
+	directory := filepath.Join(external, "directory")
+	parent := filepath.Join(external, "parent")
+	require.NoError(t, os.Symlink(target, absolute))
+	require.NoError(t, os.Symlink(filepath.Join("..", "input", "missing", "vex.json"), relative))
+	require.NoError(t, os.Symlink("relative", chain))
+	require.NoError(t, os.Symlink(filepath.Join("..", "input", "missing"), directory))
+	require.NoError(t, os.Symlink(filepath.Join(input, "child"), parent))
+	source := &Source{Path: input}
+	before := snapshotLayout(t, input)
+	for _, path := range []string{absolute, relative, chain, filepath.Join(directory, "vex.json")} {
+		resolved, err := canonicalTargetPath(path)
+		require.NoError(t, err)
+		assert.Equal(t, target, resolved)
+		require.ErrorContains(t, source.ValidateWritePath(path), "must not overlap OCI layout input")
+	}
+	// Keep the raw .. after the link: lexical cleaning would change its meaning.
+	dotdot := parent + string(filepath.Separator) + ".." + string(filepath.Separator) + "vex.json"
+	resolved, err := canonicalTargetPath(dotdot)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(input, "vex.json"), resolved)
+	require.ErrorContains(t, source.ValidateWritePath(dotdot), "must not overlap OCI layout input")
+	output := filepath.Join(root, "output")
+	futureOutput := filepath.Join(external, "future-output")
+	require.NoError(t, os.Symlink(filepath.Join(output, "index.json"), futureOutput))
+	require.ErrorContains(t, ValidateOutputWritePath(output, futureOutput), "must not be inside OCI layout output")
+	safe := filepath.Join(external, "safe")
+	require.NoError(t, os.Symlink("safe-vex.json", safe))
+	require.NoError(t, source.ValidateWritePath(safe))
+	require.NoError(t, ValidateOutputWritePath(output, safe))
+	assert.Equal(t, before, snapshotLayout(t, input))
+	_, err = os.Stat(output)
+	assert.True(t, os.IsNotExist(err), "canonicalization must not create the output")
+	_, err = os.Stat(filepath.Join(external, "safe-vex.json"))
+	assert.True(t, os.IsNotExist(err), "canonicalization must not create a symlink target")
+	a, b := filepath.Join(external, "cycle-a"), filepath.Join(external, "cycle-b")
+	require.NoError(t, os.Symlink(b, a))
+	require.NoError(t, os.Symlink(a, b))
+	_, err = canonicalTargetPath(filepath.Join(a, "missing"))
+	require.Error(t, err, "symlink cycles must fail")
+}

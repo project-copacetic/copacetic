@@ -16,6 +16,7 @@ import (
 
 	"github.com/containerd/containerd/v2/core/content"
 	contentlocal "github.com/containerd/containerd/v2/plugins/content/local"
+	continuityfs "github.com/containerd/continuity/fs"
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
@@ -232,36 +233,18 @@ func canonicalExistingDirectory(path string) (string, error) {
 }
 
 func canonicalTargetPath(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	abs = filepath.Clean(abs)
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		return filepath.Clean(resolved), nil
-	} else if !os.IsNotExist(err) {
-		return "", err
-	}
-
-	parent := filepath.Dir(abs)
-	for {
-		resolvedParent, err := filepath.EvalSymlinks(parent)
-		if err == nil {
-			rel, relErr := filepath.Rel(parent, abs)
-			if relErr != nil {
-				return "", relErr
-			}
-			return filepath.Clean(filepath.Join(resolvedParent, rel)), nil
-		}
-		if !os.IsNotExist(err) {
+	if !filepath.IsAbs(path) {
+		cwd, err := os.Getwd()
+		if err != nil {
 			return "", err
 		}
-		next := filepath.Dir(parent)
-		if next == parent {
-			return "", err
-		}
-		parent = next
+		// Do not clean before resolving links: link/.. follows the target's
+		// parent, which can differ from the link's lexical parent.
+		path = cwd + string(filepath.Separator) + path
 	}
+	// RootPath follows existing links even when their final target is missing.
+	// The filesystem root bounds absolute links without changing their meaning.
+	return continuityfs.RootPath(string(filepath.Separator), path)
 }
 
 func pathsOverlap(left, right string) bool {

@@ -99,8 +99,11 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		opts := options(input, output)
 		opts.Report = writeReport(t, amd64Arch)
 		opts.Platforms = []string{"linux/amd64", "linux/x86_64", "linux/amd64"}
-		opts.Output = filepath.Join(t.TempDir(), "vex.json")
+		vexTarget := filepath.Join(t.TempDir(), "vex.json")
+		opts.Output = filepath.Join(t.TempDir(), "vex-link")
+		require.NoError(t, os.Symlink(vexTarget, opts.Output))
 		require.NoError(t, patch.Patch(t.Context(), opts))
+		require.FileExists(t, vexTarget, "safe external dangling VEX links remain supported")
 		assert.Equal(t, before, snapshot(t, input))
 		source := openLayout(t, output)
 		platform := &ocispec.Platform{OS: linuxOS, Architecture: amd64Arch}
@@ -141,6 +144,48 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 			if multi {
 				assertPreserved(t, input, opts.OCIDir, "386")
 			}
+		})
+	}
+
+	for _, multi := range []bool{false, true} {
+		t.Run(fmt.Sprintf("new parent work directory retains output multi=%v", multi), func(t *testing.T) {
+			input := writeLayout(t, images, multi, false)
+			before := snapshot(t, input)
+			workRoot := filepath.Join(t.TempDir(), "new-work")
+			opts := options(input, filepath.Join(workRoot, "output"))
+			opts.WorkingFolder = workRoot
+			opts.Report = writeReport(t, amd64Arch)
+			require.NoError(t, patch.Patch(t.Context(), opts))
+			openLayout(t, opts.OCIDir)
+			assert.Equal(t, before, snapshot(t, input))
+			if multi {
+				assertPreserved(t, input, opts.OCIDir, "386")
+			}
+		})
+	}
+
+	for _, protected := range []string{"input", "output"} {
+		t.Run("dangling VEX link cannot mutate "+protected, func(t *testing.T) {
+			input := writeLayout(t, images, false, false)
+			before := snapshot(t, input)
+			opts := options(input, filepath.Join(t.TempDir(), "output"))
+			target := filepath.Join(input, "vex.json")
+			if protected == "output" {
+				target = filepath.Join(opts.OCIDir, "index.json")
+			}
+			opts.Output = filepath.Join(t.TempDir(), "vex-link")
+			require.NoError(t, os.Symlink(target, opts.Output))
+			opts.Report = writeReport(t, amd64Arch)
+			err := patch.Patch(t.Context(), opts)
+			assert.ErrorContains(t, err, "write path")
+			if err == nil {
+				data, readErr := os.ReadFile(target)
+				assert.NoError(t, readErr)
+				assert.Contains(t, string(data), "statements", "unexpected success wrote VEX into the protected layout")
+			}
+			assert.Equal(t, before, snapshot(t, input), "input must remain immutable")
+			_, err = os.Stat(opts.OCIDir)
+			assert.True(t, os.IsNotExist(err), "reject before output publication or VEX mutation")
 		})
 	}
 
@@ -861,6 +906,36 @@ func TestOCILayoutRejectsConflictingBodyMediaTypes(t *testing.T) {
 			})
 			require.ErrorContains(t, err, "mediaType")
 			require.ErrorContains(t, err, "expected")
+			assert.Equal(t, before, snapshot(t, input))
+			_, err = os.Stat(output)
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
+func TestOCILayoutRejectsDanglingWriteLinks(t *testing.T) {
+	config, err := empty.Image.ConfigFile()
+	require.NoError(t, err)
+	config.OS, config.Architecture = linuxOS, amd64Arch
+	img, err := mutate.ConfigFile(empty.Image, config)
+	require.NoError(t, err)
+	for _, protected := range []string{"input", "output"} {
+		t.Run(protected, func(t *testing.T) {
+			input := writeLayout(t, map[string]v1.Image{amd64Arch: img}, false, false)
+			output := filepath.Join(t.TempDir(), "output")
+			target := filepath.Join(input, "vex.json")
+			if protected == "output" {
+				target = filepath.Join(output, "index.json")
+			}
+			link := filepath.Join(t.TempDir(), "vex-link")
+			require.NoError(t, os.Symlink(target, link))
+			before := snapshot(t, input)
+			err := patch.Patch(t.Context(), &types.Options{
+				InputOCILayout: input, OCIDir: output, PatchedTag: outputName, Output: link,
+				Report: writeReport(t, amd64Arch), Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch",
+				BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, Progress: progressui.QuietMode,
+			})
+			require.ErrorContains(t, err, "write path")
 			assert.Equal(t, before, snapshot(t, input))
 			_, err = os.Stat(output)
 			assert.True(t, os.IsNotExist(err))
