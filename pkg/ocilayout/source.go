@@ -116,6 +116,17 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 	if err != nil {
 		return nil, err
 	}
+	// Validate every alias of the selected content, including aliases with a
+	// different name or filtered media/artifact type. Selection must not hide
+	// contradictory declarations by choosing the first descriptor.
+	aliases := descriptorsMatching(index.Manifests, func(alias ocispec.Descriptor) bool { return alias.Digest == desc.Digest })
+	compatible, err := requireUniqueSelection(aliases, "digest "+desc.Digest.String(), index.Manifests)
+	if err != nil {
+		return nil, err
+	}
+	if desc.Platform == nil {
+		desc.Platform = compatible.Platform
+	}
 	if !isImageManifest(desc.MediaType) && !isImageIndex(desc.MediaType) {
 		return nil, fmt.Errorf("selected descriptor %s has unsupported image mediaType %q", desc.Digest, desc.MediaType)
 	}
@@ -271,7 +282,7 @@ func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Des
 			}
 		}
 		if len(images) == 1 {
-			return images[0], nil
+			return requireUniqueSelection(candidates, "implicit image", candidates)
 		}
 		return ocispec.Descriptor{}, fmt.Errorf("OCI layout contains %d top-level images; use --image to select one of: %s", len(images), availableDescriptors(images))
 	}
@@ -351,13 +362,29 @@ func descriptorsMatching(descriptors []ocispec.Descriptor, match func(ocispec.De
 }
 
 func requireUniqueSelection(matches []ocispec.Descriptor, selector string, all []ocispec.Descriptor) (ocispec.Descriptor, error) {
-	if len(matches) > 0 && slices.IndexFunc(matches, func(desc ocispec.Descriptor) bool {
+	var declared *ocispec.Platform
+	compatible := len(matches) > 0
+	for _, desc := range matches {
 		first := matches[0]
-		return desc.Digest != first.Digest || desc.MediaType != first.MediaType ||
-			desc.ArtifactType != first.ArtifactType || desc.Size != first.Size
-	}) == -1 {
-		// Several producer names may point to the same verified image.
-		return matches[0], nil
+		if desc.Digest != first.Digest || desc.MediaType != first.MediaType ||
+			desc.ArtifactType != first.ArtifactType || desc.Size != first.Size {
+			compatible = false
+		}
+		if desc.Platform != nil {
+			if declared != nil && !platformEqual(declared, desc.Platform) {
+				compatible = false
+			}
+			declared = desc.Platform
+		}
+	}
+	if compatible {
+		// All declared platforms agree. Carry one through config validation
+		// even when the first alias supplies only annotations.
+		selected := matches[0]
+		if selected.Platform == nil {
+			selected.Platform = declared
+		}
+		return selected, nil
 	}
 	if len(matches) == 0 {
 		return ocispec.Descriptor{}, fmt.Errorf("OCI layout contains no descriptor matching %s; available descriptors: %s", selector, availableDescriptors(all))

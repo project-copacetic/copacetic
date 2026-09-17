@@ -561,3 +561,37 @@ func TestOCIOutputNaming(t *testing.T) {
 		})
 	}
 }
+
+func TestOCIReportDeduplicatesResolvedSelectors(t *testing.T) {
+	arm := types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "arm64", OSVersion: "1", OSFeatures: []string{"feature"}}}
+	amd := types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
+	for _, test := range []struct {
+		name       string
+		targets    []string
+		reportArch string
+		wantError  string
+	}{
+		{"equivalent aliases", []string{"linux/arm64", "linux/aarch64", "linux/arm64"}, "arm64", ""},
+		{"aliases without report metadata", []string{"linux/arm64", "linux/aarch64"}, "", ""},
+		{"distinct targets", []string{"linux/arm64", "linux/amd64"}, "arm64", "only one platform"},
+		{"conflicting report", []string{"linux/arm64", "linux/aarch64"}, "amd64", "report platform conflicts"},
+		{"unsupported report", []string{"linux/arm64", "linux/aarch64"}, "mips64le", "unsupported scan report platform"},
+		{"unavailable target", []string{"linux/arm64", "linux/386"}, "arm64", "matches 0 platforms"},
+		{"invalid target", []string{"linux/arm64", "bad/platform/spec/value"}, "arm64", "parse platform"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			updates := &unversioned.UpdateManifest{Metadata: unversioned.Metadata{Config: unversioned.Config{Arch: test.reportArch}}}
+			got, err := resolveOCIReportPlatform([]types.PatchPlatform{arm, amd}, test.targets, updates)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, arm, got)
+		})
+	}
+	other := arm
+	other.OSVersion = "2"
+	_, err := resolveOCIReportPlatform([]types.PatchPlatform{arm, other}, []string{"linux/arm64", "linux/aarch64"}, nil)
+	require.ErrorContains(t, err, "matches 2 platforms")
+}

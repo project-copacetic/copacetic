@@ -22,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const nonImageMediaType = "application/example"
+
 type layoutFixture struct {
 	path      string
 	manifests []ocispec.Descriptor
@@ -400,15 +402,15 @@ func TestOpenRejectsSelectedArtifacts(t *testing.T) {
 				if index {
 					body := ocispec.Index{Versioned: specs.Versioned{SchemaVersion: 2}, Manifests: []ocispec.Descriptor{desc}}
 					if inBody {
-						body.ArtifactType = "application/example"
+						body.ArtifactType = nonImageMediaType
 					}
 					desc = writeBlob(t, fixture.path, ocispec.MediaTypeImageIndex, marshalJSON(t, body))
 				} else if inBody {
-					body := ocispec.Manifest{Versioned: specs.Versioned{SchemaVersion: 2}, ArtifactType: "application/example"}
+					body := ocispec.Manifest{Versioned: specs.Versioned{SchemaVersion: 2}, ArtifactType: nonImageMediaType}
 					desc = writeBlob(t, fixture.path, ocispec.MediaTypeImageManifest, marshalJSON(t, body))
 				}
 				if !inBody {
-					desc.ArtifactType = "application/example"
+					desc.ArtifactType = nonImageMediaType
 				}
 				newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc})
 				before := snapshotLayout(t, fixture.path)
@@ -428,12 +430,12 @@ func TestPlatformArtifactFiltering(t *testing.T) {
 			artifact := ocispec.Descriptor{
 				MediaType:    ocispec.MediaTypeImageManifest,
 				Digest:       digest.FromString("absent-artifact"),
-				ArtifactType: "application/example",
+				ArtifactType: nonImageMediaType,
 				Platform:     image.Platform,
 			}
 			if inBody {
 				artifact = writeBlob(t, fixture.path, ocispec.MediaTypeImageManifest, marshalJSON(t, ocispec.Manifest{
-					Versioned: specs.Versioned{SchemaVersion: 2}, ArtifactType: "application/example",
+					Versioned: specs.Versioned{SchemaVersion: 2}, ArtifactType: nonImageMediaType,
 				}))
 				artifact.Platform = image.Platform
 			}
@@ -507,8 +509,8 @@ func TestOCIPlatformIdentity(t *testing.T) {
 func TestOptionalSelectorCountsImages(t *testing.T) {
 	fixture := newSingleLayout(t, nil)
 	image := fixture.manifests[0]
-	artifact := ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest, ArtifactType: "application/example", Digest: digest.FromString("artifact")}
-	unknown := ocispec.Descriptor{MediaType: "application/example", Digest: digest.FromString("unknown")}
+	artifact := ocispec.Descriptor{MediaType: ocispec.MediaTypeImageManifest, ArtifactType: nonImageMediaType, Digest: digest.FromString("artifact")}
+	unknown := ocispec.Descriptor{MediaType: nonImageMediaType, Digest: digest.FromString("unknown")}
 	alias := image
 	alias.Annotations = map[string]string{ocispec.AnnotationRefName: "alias"}
 	newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, unknown, image, alias})
@@ -606,7 +608,7 @@ func TestImageDescriptorConfigArtifactTypeMustMatchManifest(t *testing.T) {
 	_, err := Open(t.Context(), fixture.path, "", "")
 	require.ErrorContains(t, err, "conflicts with config mediaType")
 
-	body := ocispec.Manifest{Versioned: specs.Versioned{SchemaVersion: 2}, ArtifactType: "application/example"}
+	body := ocispec.Manifest{Versioned: specs.Versioned{SchemaVersion: 2}, ArtifactType: nonImageMediaType}
 	desc = writeBlob(t, fixture.path, ocispec.MediaTypeImageManifest, marshalJSON(t, body))
 	desc.ArtifactType = ocispec.MediaTypeImageConfig
 	newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc})
@@ -627,7 +629,7 @@ func TestSelectorsIgnoreArtifactAliases(t *testing.T) {
 			fixture := newSingleLayout(t, annotations)
 			image := fixture.manifests[0]
 			artifact := ocispec.Descriptor{
-				MediaType: ocispec.MediaTypeImageManifest, ArtifactType: "application/example",
+				MediaType: ocispec.MediaTypeImageManifest, ArtifactType: nonImageMediaType,
 				Digest: digest.FromString("absent-artifact"), Annotations: annotations,
 			}
 			newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, image})
@@ -799,7 +801,7 @@ func TestSelectorsIgnoreBodyArtifactAliases(t *testing.T) {
 			fixture := newSingleLayout(t, annotations)
 			image := fixture.manifests[0]
 			artifact := writeBlob(t, fixture.path, mediaType, marshalJSON(t, map[string]any{
-				"schemaVersion": 2, "mediaType": mediaType, "artifactType": "application/example",
+				"schemaVersion": 2, "mediaType": mediaType, "artifactType": nonImageMediaType,
 			}))
 			artifact.Annotations = annotations
 			newLayoutAt(t, fixture.path, []ocispec.Descriptor{artifact, image})
@@ -860,4 +862,84 @@ func TestCandidateClassificationPropagatesCancellation(t *testing.T) {
 	source.store = &cancelingContentStore{Store: source.store, target: fixture.manifests[0].Digest, onOpen: 1, cancel: cancel}
 	_, err = source.selectDescriptor(ctx, fixture.manifests, "", nil)
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestOpenValidatesAllSelectedAliases(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*ocispec.Descriptor)
+	}{
+		{"media type", func(d *ocispec.Descriptor) { d.MediaType = dockerMediaTypeManifest }},
+		{"unknown media type", func(d *ocispec.Descriptor) { d.MediaType = nonImageMediaType }},
+		{"size", func(d *ocispec.Descriptor) { d.Size++ }},
+		{"artifact type", func(d *ocispec.Descriptor) { d.ArtifactType = ocispec.MediaTypeImageConfig }},
+		{"nonimage artifact type", func(d *ocispec.Descriptor) { d.ArtifactType = nonImageMediaType }},
+		{"architecture", func(d *ocispec.Descriptor) { d.Platform.Architecture = "arm64" }},
+		{"variant", func(d *ocispec.Descriptor) { d.Platform.Variant = "v3" }},
+		{"os version", func(d *ocispec.Descriptor) { d.Platform.OSVersion = "conflict" }},
+		{"os features", func(d *ocispec.Descriptor) { d.Platform.OSFeatures = []string{"conflict"} }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newSingleLayout(t, map[string]string{annotationImageName: "example.com/app:stable", ocispec.AnnotationRefName: "stable"})
+			original := fixture.manifests[0]
+			alias := original
+			platform := *original.Platform
+			alias.Platform = &platform
+			alias.Annotations = map[string]string{ocispec.AnnotationRefName: "other-name"}
+			test.mutate(&alias)
+			for _, descriptors := range [][]ocispec.Descriptor{{original, alias}, {alias, original}} {
+				newLayoutAt(t, fixture.path, descriptors)
+				before := snapshotLayout(t, fixture.path)
+				for _, selector := range []string{"", "example.com/app:stable", "stable", original.Digest.String()} {
+					_, err := Open(t.Context(), fixture.path, "", selector)
+					require.Error(t, err, "selector %q must validate every alias", selector)
+				}
+				assert.Equal(t, before, snapshotLayout(t, fixture.path))
+			}
+		})
+	}
+}
+
+func TestOpenAllowsCompatibleAliasPlatforms(t *testing.T) {
+	fixture := newSingleLayout(t, map[string]string{ocispec.AnnotationRefName: "stable"})
+	original := fixture.manifests[0]
+	alias := original
+	alias.Platform = nil
+	alias.Annotations = map[string]string{ocispec.AnnotationRefName: "annotation-only"}
+	equivalent := original
+	equivalent.Platform = &ocispec.Platform{OS: "linux", Architecture: "x86_64"}
+	for _, descriptors := range [][]ocispec.Descriptor{{alias, original, equivalent}, {equivalent, original, alias}} {
+		newLayoutAt(t, fixture.path, descriptors)
+		for _, selector := range []string{"", "stable", "annotation-only", original.Digest.String()} {
+			source, err := Open(t.Context(), fixture.path, "", selector)
+			require.NoError(t, err)
+			found, err := source.Platforms(t.Context())
+			require.NoError(t, err)
+			require.Len(t, found, 1)
+			assert.Equal(t, *original.Platform, found[0])
+		}
+	}
+
+	// A nil platform on the chosen alias must not hide a wrong declaration
+	// on the only alias carrying platform metadata.
+	wrong := original
+	wrong.Platform = &ocispec.Platform{OS: "linux", Architecture: "arm64"}
+	newLayoutAt(t, fixture.path, []ocispec.Descriptor{alias, wrong})
+	for _, selector := range []string{"", "annotation-only", original.Digest.String()} {
+		_, err := Open(t.Context(), fixture.path, "", selector)
+		require.ErrorContains(t, err, "conflicts with image config platform")
+	}
+}
+
+func TestAliasValidationIsScopedToSelectedDigest(t *testing.T) {
+	fixture := newSingleLayout(t, map[string]string{ocispec.AnnotationRefName: "selected"})
+	other := newImageManifest(t, fixture.path, &ocispec.Platform{OS: "linux", Architecture: "arm64"}, nil, nil)
+	conflicting := other
+	conflicting.Size++
+	newLayoutAt(t, fixture.path, append(fixture.manifests, other, conflicting))
+	before := snapshotLayout(t, fixture.path)
+	source, err := Open(t.Context(), fixture.path, "", "selected")
+	require.NoError(t, err)
+	assert.Equal(t, fixture.manifests[0].Digest, source.Descriptor.Digest)
+	assert.Equal(t, before, snapshotLayout(t, fixture.path))
 }

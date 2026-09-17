@@ -260,14 +260,6 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		}
 	}
 	var patchPlatform types.PatchPlatform
-	if parsedUpdates == nil {
-		patchPlatform, err = resolveSingleReportPlatform(targetPlatforms)
-	} else {
-		patchPlatform, err = resolveSingleReportPlatformWithUpdates(targetPlatforms, parsedUpdates)
-	}
-	if err != nil {
-		return err
-	}
 	if opts.OCISource != nil {
 		discoveredPlatforms, discoverErr := discoverPlatformsForOptions(ctx, opts)
 		if discoverErr != nil {
@@ -283,6 +275,11 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 				return prepareErr
 			}
 			return patchPreparedMultiPlatformImage(ctx, opts, platforms)
+		}
+	} else {
+		patchPlatform, err = resolveSingleReportPlatformWithUpdates(targetPlatforms, parsedUpdates)
+		if err != nil {
+			return err
 		}
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
@@ -354,10 +351,6 @@ func exportSinglePlatformOCI(ctx context.Context, opts *types.Options, result *t
 		return fmt.Errorf("failed to create OCI layout: %w", err)
 	}
 	return writeOCIVEX(ctx, opts, []types.PatchResult{*result}, outputReference)
-}
-
-func resolveSingleReportPlatform(targetPlatforms []string) (types.PatchPlatform, error) {
-	return resolveSingleReportPlatformWithUpdates(targetPlatforms, nil)
 }
 
 func resolveSingleReportPlatformWithUpdates(targetPlatforms []string, updates *unversioned.UpdateManifest) (types.PatchPlatform, error) {
@@ -477,13 +470,25 @@ func resolveOCIReportPlatform(discovered []types.PatchPlatform, targets []string
 		}
 		return discovered[0], nil
 	}
-	target, err := resolveSingleReportPlatformWithUpdates(targets, updates)
-	if err != nil {
-		return types.PatchPlatform{}, err
-	}
-	resolved, err := resolveOCIPlatform(discovered, &target.Platform)
-	if err != nil {
-		return types.PatchPlatform{}, err
+	var resolved types.PatchPlatform
+	if len(targets) > 0 {
+		selected, err := filterOCIPlatforms(discovered, targets)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
+		if len(selected) != 1 {
+			return types.PatchPlatform{}, fmt.Errorf("a single report file can target only one platform; got %d after resolving: %s", len(selected), strings.Join(targets, ", "))
+		}
+		resolved = selected[0]
+	} else {
+		target, err := resolveSingleReportPlatformWithUpdates(nil, updates)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
+		resolved, err = resolveOCIPlatform(discovered, &target.Platform)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
 	}
 	if len(targets) > 0 && updates != nil && strings.TrimSpace(updates.Metadata.Config.Arch) != "" {
 		reportTarget, err := resolveSingleReportPlatformWithUpdates(nil, updates)

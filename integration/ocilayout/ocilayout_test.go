@@ -79,11 +79,25 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 
 	t.Run("unnamed single manifest and final VEX identity", func(t *testing.T) {
 		input := writeLayout(t, images, false, false)
+		// The first alias has no platform declaration; another supplies an
+		// equivalent architecture spelling that must be checked against config.
+		indexPath := filepath.Join(input, "index.json")
+		indexData, err := os.ReadFile(indexPath)
+		require.NoError(t, err)
+		var aliases ocispec.Index
+		require.NoError(t, json.Unmarshal(indexData, &aliases))
+		alias := aliases.Manifests[0]
+		alias.Platform = &ocispec.Platform{OS: linuxOS, Architecture: "x86_64"}
+		aliases.Manifests = append(aliases.Manifests, alias)
+		indexData, err = json.Marshal(aliases)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(indexPath, indexData, 0o600))
 		addBodyArtifactAliases(t, input)
 		before := snapshot(t, input)
 		output := filepath.Join(t.TempDir(), "output")
 		opts := options(input, output)
 		opts.Report = writeReport(t, amd64Arch)
+		opts.Platforms = []string{"linux/amd64", "linux/x86_64", "linux/amd64"}
 		opts.Output = filepath.Join(t.TempDir(), "vex.json")
 		require.NoError(t, patch.Patch(t.Context(), opts))
 		assert.Equal(t, before, snapshot(t, input))
@@ -196,6 +210,20 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "index", annotations["example.index"])
 		assert.Contains(t, annotations, "sh.copa.patched")
+	})
+
+	t.Run("single report deduplicates selectors and preserves sibling", func(t *testing.T) {
+		input := writeLayout(t, images, true, false)
+		before := snapshot(t, input)
+		opts := options(input, filepath.Join(t.TempDir(), "output"))
+		opts.Report = writeReport(t, amd64Arch)
+		opts.Platforms = []string{"linux/amd64", "linux/x86_64", "linux/amd64"}
+		require.NoError(t, patch.Patch(t.Context(), opts))
+		assert.Equal(t, before, snapshot(t, input))
+		assertPreserved(t, input, opts.OCIDir, "386")
+		found, err := openLayout(t, opts.OCIDir).Platforms(t.Context())
+		require.NoError(t, err)
+		require.Len(t, found, 2)
 	})
 
 	t.Run("report directory preserves platform without report", func(t *testing.T) {
@@ -595,5 +623,40 @@ func TestOCILayoutRejectsUnsupportedSingleReport(t *testing.T) {
 		assert.Equal(t, before, snapshot(t, input))
 		_, err := os.Stat(opts.OCIDir)
 		assert.True(t, os.IsNotExist(err))
+	}
+}
+
+func TestOCILayoutSingleReportRejectsDistinctTargetsAndConflicts(t *testing.T) {
+	images := make(map[string]v1.Image)
+	for _, arch := range []string{amd64Arch, "386"} {
+		config, err := empty.Image.ConfigFile()
+		require.NoError(t, err)
+		config.OS, config.Architecture = linuxOS, arch
+		img, err := mutate.ConfigFile(empty.Image, config)
+		require.NoError(t, err)
+		images[arch] = img
+	}
+	input := writeLayout(t, images, true, false)
+	before := snapshot(t, input)
+	for _, test := range []struct {
+		name       string
+		targets    []string
+		reportArch string
+		wantError  string
+	}{
+		{"distinct targets", []string{"linux/amd64", "linux/386"}, amd64Arch, "only one platform"},
+		{"conflicting report", []string{"linux/amd64", "linux/x86_64"}, "386", "report platform conflicts"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			opts := &types.Options{
+				InputOCILayout: input, OCIDir: filepath.Join(t.TempDir(), "output"), PatchedTag: outputName,
+				Report: writeReport(t, test.reportArch), Platforms: test.targets, Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch",
+				BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, Progress: progressui.QuietMode,
+			}
+			require.ErrorContains(t, patch.Patch(t.Context(), opts), test.wantError)
+			assert.Equal(t, before, snapshot(t, input))
+			_, err := os.Stat(opts.OCIDir)
+			assert.True(t, os.IsNotExist(err))
+		})
 	}
 }
