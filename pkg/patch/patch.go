@@ -2,6 +2,7 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -99,6 +101,42 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	targetPlatforms := opts.Platforms
 	pkgTypes := opts.PkgTypes
 
+	if opts.InputOCILayout != "" {
+		if opts.OCIDir == "" {
+			return fmt.Errorf("--input-oci-layout requires --oci-dir")
+		}
+		if opts.Push {
+			return fmt.Errorf("--input-oci-layout cannot be used with --push")
+		}
+		if opts.Loader != "" {
+			return fmt.Errorf("--input-oci-layout cannot be used with --loader")
+		}
+		source, err := ocilayout.Open(ctx, opts.InputOCILayout, opts.OCIDir, image)
+		if err != nil {
+			return err
+		}
+		if err := source.ValidateTempDir(os.TempDir()); err != nil {
+			return err
+		}
+		for _, path := range []string{opts.Output, opts.WorkingFolder} {
+			if err := source.ValidateWritePath(path); err != nil {
+				return err
+			}
+			if err := ocilayout.ValidateOutputWritePath(opts.OCIDir, path); err != nil {
+				return err
+			}
+		}
+		opts.OCISource = source
+		opts.Image = ""
+		if source.Reference != nil {
+			opts.Image = source.Reference.String()
+		}
+		image = opts.Image
+		if _, _, _, err := resolvePatchNames(opts); err != nil {
+			return err
+		}
+	}
+
 	// Parse and validate package types early
 	pkgTypesList, err := parsePkgTypes(pkgTypes)
 	if err != nil {
@@ -114,8 +152,11 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	// Handle empty report path - check if image is manifest list or single platform
 	if reportPath == "" {
 		// Discover platforms from the image reference to determine if it's multi-platform
-		discoveredPlatforms, err := buildkit.DiscoverPlatformsFromReference(image)
+		discoveredPlatforms, err := discoverPlatformsForOptions(ctx, opts)
 		if err != nil {
+			if opts.OCISource != nil {
+				return fmt.Errorf("discover platforms in OCI layout input: %w", err)
+			}
 			// Failed to discover platforms - treat as single-platform image
 			log.Warnf("Failed to discover platforms for image %s (treating as single-platform): %v", image, err)
 			if len(targetPlatforms) > 0 {
@@ -138,6 +179,10 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
 			}
+			if err == nil || (opts.OCISource != nil && errors.Is(err, types.ErrNoUpdatesFound)) {
+				patchPlatform.ShouldPreserve = errors.Is(err, types.ErrNoUpdatesFound)
+				err = exportSinglePlatformOCI(ctx, opts, result, &patchPlatform)
+			}
 			return err
 		}
 
@@ -145,7 +190,13 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			// Single-platform image or multi-platform with only one valid platform
 			log.Debugf("Detected single-platform image or multi-platform with single valid platform")
 			if len(targetPlatforms) > 0 {
-				log.Info("Platform flag ignored for single-platform image")
+				if opts.OCISource != nil {
+					if _, err := filterOCIPlatforms(discoveredPlatforms, targetPlatforms); err != nil {
+						return err
+					}
+				} else {
+					log.Info("Platform flag ignored for single-platform image")
+				}
 			}
 
 			var patchPlatform types.PatchPlatform
@@ -170,6 +221,10 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			}
 			if err == nil && result != nil && result.PatchedRef != nil {
 				log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef)
+			}
+			if err == nil || (opts.OCISource != nil && errors.Is(err, types.ErrNoUpdatesFound)) {
+				patchPlatform.ShouldPreserve = errors.Is(err, types.ErrNoUpdatesFound)
+				err = exportSinglePlatformOCI(ctx, opts, result, &patchPlatform)
 			}
 			return err
 		}
@@ -201,34 +256,104 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 	// Handle file - single-platform patching
 	log.Debugf("Using report file: %s", reportPath)
 	var parsedUpdates *unversioned.UpdateManifest
-	if len(targetPlatforms) == 0 {
+	if len(targetPlatforms) == 0 || opts.OCISource != nil {
 		parsedUpdates, err = report.TryParseScanReport(reportPath, opts.Scanner, pkgTypes, opts.LibraryPatchLevel)
 		if err != nil {
 			return err
 		}
 	}
 	var patchPlatform types.PatchPlatform
-	if parsedUpdates == nil {
-		patchPlatform, err = resolveSingleReportPlatform(targetPlatforms)
+	if opts.OCISource != nil {
+		discoveredPlatforms, discoverErr := discoverPlatformsForOptions(ctx, opts)
+		if discoverErr != nil {
+			return fmt.Errorf("discover platforms in OCI layout input: %w", discoverErr)
+		}
+		patchPlatform, err = resolveOCIReportPlatform(discoveredPlatforms, targetPlatforms, parsedUpdates)
+		if err != nil {
+			return err
+		}
+		if len(discoveredPlatforms) > 1 {
+			platforms, prepareErr := platformsForSingleReport(discoveredPlatforms, &patchPlatform, reportPath)
+			if prepareErr != nil {
+				return prepareErr
+			}
+			return patchPreparedMultiPlatformImage(ctx, opts, platforms)
+		}
 	} else {
 		patchPlatform, err = resolveSingleReportPlatformWithUpdates(targetPlatforms, parsedUpdates)
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
 	result, err := patchSingleArchImageWithUpdates(ctx, opts, patchPlatform, false, nil, parsedUpdates)
 	if result != nil {
 		logPatchSummary(result.Summary)
 	}
-	if err == nil && result != nil {
+	if err == nil && result != nil && result.PatchedRef != nil {
 		log.Infof("Patched image (%s): %s\n", patchPlatform.OS+"/"+patchPlatform.Architecture, result.PatchedRef.String())
+	}
+	if err == nil || (opts.OCISource != nil && errors.Is(err, types.ErrNoUpdatesFound)) {
+		patchPlatform.ShouldPreserve = errors.Is(err, types.ErrNoUpdatesFound)
+		err = exportSinglePlatformOCI(ctx, opts, result, &patchPlatform)
 	}
 	return err
 }
 
-func resolveSingleReportPlatform(targetPlatforms []string) (types.PatchPlatform, error) {
-	return resolveSingleReportPlatformWithUpdates(targetPlatforms, nil)
+func discoverPlatformsForOptions(ctx context.Context, opts *types.Options) ([]types.PatchPlatform, error) {
+	if opts.OCISource == nil {
+		return buildkit.DiscoverPlatformsFromReference(opts.Image)
+	}
+	discovered, err := opts.OCISource.Platforms(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]types.PatchPlatform, 0, len(discovered))
+	hasPatchTarget := false
+	for _, platform := range discovered {
+		supported := isSupportedPatchPlatform(&platform)
+		hasPatchTarget = hasPatchTarget || supported
+		result = append(result, types.PatchPlatform{Platform: platform, ShouldPreserve: !supported})
+	}
+	if !hasPatchTarget {
+		return nil, fmt.Errorf("no supported patch platforms found in selected OCI image")
+	}
+	return result, nil
+}
+
+func exportSinglePlatformOCI(ctx context.Context, opts *types.Options, result *types.PatchResult, platform *types.PatchPlatform) error {
+	if opts.OCIDir == "" || opts.Push || result == nil {
+		return nil
+	}
+	compression := opts.Compression
+	if compression == "" {
+		compression = DefaultLocalExportCompression
+	}
+	_, outputName, outputTag, err := resolvePatchNames(opts)
+	if err != nil {
+		return err
+	}
+	outputReference := outputName + ":" + outputTag
+	if err := buildkit.CreateOCILayoutFromResultsWithOptions(
+		opts.OCIDir,
+		[]types.PatchResult{*result},
+		[]types.PatchPlatform{*platform},
+		buildkit.OCILayoutExportOptions{
+			Compression:      compression,
+			ForceCompression: opts.ForceCompression,
+			OutputReference:  outputReference,
+			BuildkitOpts: &buildkit.Opts{
+				Addr:       opts.BkAddr,
+				CACertPath: opts.BkCACertPath,
+				CertPath:   opts.BkCertPath,
+				KeyPath:    opts.BkKeyPath,
+			},
+			Atomic: opts.OCISource != nil,
+		}.WithContext(ctx),
+	); err != nil {
+		return fmt.Errorf("failed to create OCI layout: %w", err)
+	}
+	return writeOCIVEX(ctx, opts, []types.PatchResult{*result}, outputReference)
 }
 
 func resolveSingleReportPlatformWithUpdates(targetPlatforms []string, updates *unversioned.UpdateManifest) (types.PatchPlatform, error) {
@@ -279,10 +404,8 @@ func logPatchSummary(summary *unversioned.PatchSummary) {
 func displaySingleArchPlan(opts *types.Options, platform *types.PatchPlatform) {
 	// Use the same resolution logic as the actual patching to get accurate name
 	patchedName := opts.Image + "-patched" // fallback
-	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
-		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
-			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
-		}
+	if _, imageName, tag, err := resolvePatchNames(opts); err == nil {
+		patchedName = fmt.Sprintf("%s:%s", imageName, tag)
 	}
 
 	plan := tui.PatchingPlan{
@@ -341,4 +464,75 @@ func getErrorInfo(err error) tui.ErrorInfo {
 // containsIgnoreCase checks if s contains substr (case-insensitive).
 func containsIgnoreCase(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func resolveOCIReportPlatform(discovered []types.PatchPlatform, targets []string, updates *unversioned.UpdateManifest) (types.PatchPlatform, error) {
+	if len(targets) == 0 && (updates == nil || strings.TrimSpace(updates.Metadata.Config.Arch) == "") {
+		if len(discovered) != 1 {
+			return types.PatchPlatform{}, fmt.Errorf("scan report has no platform metadata; use --platform to select one of %d OCI image platforms", len(discovered))
+		}
+		return discovered[0], nil
+	}
+	var resolved types.PatchPlatform
+	if len(targets) > 0 {
+		selected, err := filterOCIPlatforms(discovered, targets)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
+		if len(selected) != 1 {
+			return types.PatchPlatform{}, fmt.Errorf("a single report file can target only one platform; got %d after resolving: %s", len(selected), strings.Join(targets, ", "))
+		}
+		resolved = selected[0]
+	} else {
+		target, err := resolveSingleReportPlatformWithUpdates(nil, updates)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
+		resolved, err = resolveOCIPlatform(discovered, &target.Platform)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
+	}
+	if len(targets) > 0 && updates != nil && strings.TrimSpace(updates.Metadata.Config.Arch) != "" {
+		reportTarget, err := resolveSingleReportPlatformWithUpdates(nil, updates)
+		if err != nil {
+			return types.PatchPlatform{}, err
+		}
+		reportMatch, err := resolveOCIPlatform([]types.PatchPlatform{resolved}, &reportTarget.Platform)
+		if err != nil {
+			return types.PatchPlatform{}, fmt.Errorf("report platform conflicts with --platform: %w", err)
+		}
+		resolved = reportMatch
+	}
+	return resolved, nil
+}
+
+// resolvePatchNames separates the selected source's optional name from the
+// required output identity. In OCI mode, --image has already selected content.
+func resolvePatchNames(opts *types.Options) (reference.Named, string, string, error) {
+	var sourceName reference.Named
+	var err error
+	if opts.OCISource != nil {
+		sourceName = opts.OCISource.Reference
+		if sourceName == nil && !strings.ContainsAny(opts.PatchedTag, ":@") {
+			return nil, "", "", fmt.Errorf("selected OCI image has no unambiguous usable name; provide a full tagged output reference with --tag (for example example.com/app:patched)")
+		}
+	} else {
+		sourceName, err = reference.ParseNormalizedNamed(opts.Image)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to parse reference: %w", err)
+		}
+	}
+	name, tag, err := common.ResolvePatchedImageName(sourceName, opts.PatchedTag, opts.Suffix)
+	return sourceName, name, tag, err
+}
+
+func sourceDisplayName(opts *types.Options) string {
+	if opts.Image != "" {
+		return opts.Image
+	}
+	if opts.OCISource != nil {
+		return opts.OCISource.Descriptor.Digest.String()
+	}
+	return ""
 }

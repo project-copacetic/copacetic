@@ -82,6 +82,43 @@ Update all platforms with the latest patches:
 copa patch --image $IMAGE --tag nginx:1.25.0-patched
 ```
 
+### OCI Image Layout Input
+
+Copa can patch an image directly from a local [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) without importing the source into Docker or Podman or publishing it to a registry:
+
+```bash
+# Select the only top-level image, including a multi-platform index.
+# Name the output explicitly if the input has no usable image name.
+copa patch \
+  --input-oci-layout ./input-layout \
+  --tag example.com/acme/app:patched \
+  --oci-dir ./patched-layout
+
+# Select one image from a layout containing multiple images.
+copa patch \
+  --input-oci-layout ./input-layout \
+  --image example.com/acme/app:1.0 \
+  --oci-dir ./patched-layout
+```
+
+`--image` selects source content. It is optional when there is one unambiguous top-level image; a multi-platform index counts as one image. With multiple images, supply a full image name (`io.containerd.image.name`), a tag (`org.opencontainers.image.ref.name`), or a digest such as `--image sha256:...`. An explicit selector must match one image unambiguously across both annotation keys; Copa lists available selectors on failure. Aliases sharing the selected digest must agree on media type, size, artifact type, and any declared platform; annotation-only aliases are allowed. Descriptors identifying non-image artifacts do not make a single image ambiguous. Standard OCI and Docker image config types in descriptor `artifactType` are accepted when they agree with the referenced image config.
+
+Output naming is separate. When the selected image has an unambiguous usable name, the usual `--tag` and `--suffix` rules apply. A bare ref-name tag such as `latest` does not provide a repository name. If the source name is missing or ambiguous, provide a full tagged output reference with `--tag`, as in the first example. This names only the output and does not cause a registry push or invent a source provenance name. For report-based patches, VEX identifies the actual exported platform manifest digests and claims remediation only for validated updates on those platforms.
+
+For a selected multi-platform index, omit `--platform` to patch every supported image platform, or pass platforms to patch a subset and preserve the other descriptors and blobs byte-for-byte. A single report and a report directory also preserve platforms without a matching report. Reports that target an unsupported platform are rejected; unsupported OS reports in a report directory are not silently skipped. Explicit and report-derived targets must match the source even when it has only one platform. If a single report has no platform metadata, Copa uses the sole verified source platform; a multi-platform source needs an explicit target. Equivalent selectors are deduplicated after resolving against the source, including with a single report; a single report must still target exactly one platform. Ambiguous platform constraints fail rather than choosing the first match.
+
+Unsupported platforms, including Windows, are preserved; a source containing no supported patch platform is rejected before connecting to BuildKit. With `--ignore-errors`, a failed platform is also preserved when another patch succeeds. If every patch attempt fails, no output is published. Preserved platforms receive no VEX remediation claim, and reportless patches do not generate VEX even when `--output` is set.
+
+OCI layout input has these restrictions:
+
+- `--oci-dir` is required and must name a new directory that does not overlap the input layout. Copa publishes the completed output atomically and fails if the destination already exists or another writer creates it during export; existing directories and symlinks remain unchanged. Keep `--working-folder` and VEX `--output` outside this directory, including through symlinks whose targets do not yet exist. Parent work directories remain supported; work cleanup completes before output publication.
+- `--push`, `--loader`, `--config`, and `--chart` are not supported with `--input-oci-layout`. The source image is never resolved through Docker, Podman, or a registry.
+- Local and remote BuildKit addresses are supported because Copa transfers the client-side content store through the BuildKit session; the remote daemon needs no filesystem access to the input path.
+- The input layout remains unchanged. Do not set `TMPDIR` to the input directory or a directory inside it, including through a symlink. Missing or corrupt selected blobs, artifact inputs, unsupported image media types, nonempty manifest/index body media types that disagree with their descriptors, and descriptor platform metadata that conflicts with the image config fail with an error.
+- An ordinary top-level multi-platform index is supported. An image index nested below that selected index is rejected before patching; recursive index preservation is not included initially.
+- Index, manifest-body, and descriptor annotations retain their scopes, including different values for the same key. Copa updates its patch metadata and documented mutable image metadata.
+- In-place updates, `copa generate`/BuildKit frontend input parity, direct registry push, and additional signature, attestation, or referrer preservation are not included. Tooling images and package repositories may still require network access.
+
 ## Multi-Platform Command Reference
 
 ### Platform-Specific Flags
@@ -94,7 +131,8 @@ These flags are essential for multi-platform patching:
 | `--report`        | One report file or a directory of platform-specific reports      | `--report ./platform-reports/`       |
 | `--ignore-errors` | Continue patching other platforms if one fails                  | `--ignore-errors`                    |
 | `--push`          | Push all manifests and index/manifest list to registry          | `--push`                             |
-| `--oci-dir`       | Export multi-platform index/manifest as OCI layout directory    | `--oci-dir ./output-directory`       |
+| `--input-oci-layout` | Read the source image from a local OCI Image Layout          | `--input-oci-layout ./input-layout`  |
+| `--oci-dir`       | Export a single- or multi-platform OCI Image Layout              | `--oci-dir ./output-directory`       |
 
 ## Multi-Platform Behavior
 

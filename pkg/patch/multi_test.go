@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -170,12 +172,80 @@ func TestMarkPlatformPreserved(t *testing.T) {
 		{Platform: platformSpec("linux", "arm64", "v8")},
 	}
 
-	markPlatformPreserved(platforms, "linux/arm64/v8")
+	markPlatformPreserved(platforms, buildkit.PlatformKey(platformSpec("linux", "arm64", "")))
 
 	assert.False(t, platforms[0].ShouldPreserve)
 	assert.True(t, platforms[1].ShouldPreserve)
 }
 
+func TestPlatformsForSingleReport(t *testing.T) {
+	t.Parallel()
+
+	discovered := []types.PatchPlatform{
+		{Platform: platformSpec("linux", "amd64", "")},
+		{Platform: platformSpec("linux", "arm64", "v8")},
+	}
+
+	platforms, err := platformsForSingleReport(
+		discovered,
+		&types.PatchPlatform{Platform: platformSpec("linux", "amd64", "")},
+		"trivy-amd64.json",
+	)
+	require.NoError(t, err)
+	require.Len(t, platforms, 2)
+	assert.Equal(t, "trivy-amd64.json", platforms[0].ReportFile)
+	assert.False(t, platforms[0].ShouldPreserve)
+	assert.Empty(t, platforms[1].ReportFile)
+	assert.True(t, platforms[1].ShouldPreserve)
+
+	_, err = platformsForSingleReport(
+		discovered,
+		&types.PatchPlatform{Platform: platformSpec("linux", "s390x", "")},
+		"trivy-s390x.json",
+	)
+	require.ErrorContains(t, err, "target platform linux/s390x matches 0 platforms")
+	assert.ErrorContains(t, err, "linux/amd64")
+	assert.ErrorContains(t, err, "linux/arm64")
+}
+
 func platformSpec(os, arch, variant string) v1.Platform {
 	return v1.Platform{OS: os, Architecture: arch, Variant: variant}
+}
+
+func TestBuildPatchingPlanUnnamedOCIOutput(t *testing.T) {
+	plan := buildPatchingPlan(&types.Options{
+		OCISource: &ocilayout.Source{}, PatchedTag: "registry.invalid/output:patched",
+	}, []types.PatchPlatform{{Platform: platformSpec("linux", "amd64", "")}})
+	assert.Equal(t, "registry.invalid/output:patched", plan.PatchedImageName)
+}
+
+func TestPlatformsForSingleReportRejectsUnsupportedTarget(t *testing.T) {
+	for _, platform := range []v1.Platform{
+		{OS: "linux", Architecture: "mips64le"},
+		{OS: "windows", Architecture: "amd64"},
+	} {
+		t.Run(platform.OS+"/"+platform.Architecture, func(t *testing.T) {
+			target := types.PatchPlatform{Platform: platform, ShouldPreserve: true}
+			discovered := []types.PatchPlatform{{Platform: platformSpec("linux", "amd64", "")}, target}
+			_, err := platformsForSingleReport(discovered, &target, "report.json")
+			require.ErrorContains(t, err, "unsupported scan report platform")
+			assert.True(t, discovered[1].ShouldPreserve)
+		})
+	}
+}
+
+func TestPlatformKeysKeepReportAndPreservationSeparate(t *testing.T) {
+	first := types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64", OSVersion: `1+["x"]`}}
+	second := types.PatchPlatform{Platform: v1.Platform{OS: "linux", Architecture: "amd64", OSVersion: "1", OSFeatures: []string{"x"}}}
+	discovered := []types.PatchPlatform{first, second}
+	prepared, err := platformsForSingleReport(discovered, &second, "report.json")
+	require.NoError(t, err)
+	require.Len(t, prepared, 2)
+	assert.True(t, prepared[0].ShouldPreserve)
+	assert.Empty(t, prepared[0].ReportFile)
+	assert.False(t, prepared[1].ShouldPreserve)
+	assert.Equal(t, "report.json", prepared[1].ReportFile)
+	markPlatformPreserved(discovered, buildkit.PlatformKey(second.Platform))
+	assert.False(t, discovered[0].ShouldPreserve)
+	assert.True(t, discovered[1].ShouldPreserve)
 }

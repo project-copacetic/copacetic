@@ -1,11 +1,15 @@
 package vex
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	openvex "github.com/openvex/go-vex/pkg/vex"
+	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
@@ -214,5 +218,27 @@ func TestWriteVEXDocumentFileUpdatesExistingFileWithoutDirectoryWrite(t *testing
 	}
 	if string(got) != updatedContent {
 		t.Fatalf("output file content = %q, want %q", got, updatedContent)
+	}
+}
+
+func TestTryOutputVexDocumentsKeepsPlatformSubjectsSeparate(t *testing.T) {
+	updates := &unversioned.UpdateManifest{
+		Metadata:  unversioned.Metadata{OS: unversioned.OS{Type: "alpine", Version: "3.21"}},
+		OSUpdates: unversioned.UpdatePackages{{Name: "busybox", InstalledVersion: "1", FixedVersion: "2", VulnerabilityID: "CVE-2025-46394"}},
+	}
+	file := filepath.Join(t.TempDir(), "vex.json")
+	inputs := []DocumentInput{
+		{Updates: updates, PackageType: "apk", Image: "registry.invalid/output@sha256:aaa"},
+		{Updates: updates, PackageType: "apk", Image: "registry.invalid/output@sha256:bbb"},
+	}
+	require.NoError(t, TryOutputVexDocuments(inputs, "openvex", file))
+	data, err := os.ReadFile(file)
+	require.NoError(t, err)
+	var document openvex.VEX
+	require.NoError(t, json.Unmarshal(data, &document))
+	require.Len(t, document.Statements, 2)
+	for i, statement := range document.Statements {
+		require.Len(t, statement.Products, 1)
+		require.Equal(t, "pkg:oci/"+inputs[i].Image, statement.Products[0].ID)
 	}
 }
