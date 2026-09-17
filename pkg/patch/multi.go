@@ -132,6 +132,29 @@ func patchMultiPlatformImage(
 		sourceAnnotations[key] = annotations
 	}
 
+	// Preserve report errors and no-update exits, while validating every child
+	// that can actually patch before starting any worker or exporter.
+	patchInputs := make(map[string]platformPatchInput, len(platforms))
+	for _, p := range platforms {
+		if p.ShouldPreserve {
+			continue
+		}
+		key := buildkit.PlatformKey(p.Platform)
+		patchOpts := *opts
+		patchOpts.Report = p.ReportFile
+		if reportDir == "" {
+			patchOpts.Report = ""
+		}
+		updates, reportErr := preparePatchUpdates(&patchOpts, &p, nil)
+		patchInputs[key] = platformPatchInput{
+			image: sourceImages[key], digest: sourceDescriptors[key].Digest,
+			annotations: sourceAnnotations[key], updates: updates, reportErr: reportErr,
+		}
+	}
+	if err := preflightMultiPlatformOrigins(ctx, opts, platforms, patchInputs, source.Current.Descriptor.Digest); err != nil {
+		return err
+	}
+
 	// Display styled patching plan before starting
 	plan := buildPatchingPlan(opts, platforms)
 	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))
@@ -280,8 +303,13 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImageWithSourceAndUpdates(gctx, &patchOpts, p, true, sharedProgressCh, nil,
-				sourceImages[platformKey], sourceAnnotations[platformKey], source.Current.Descriptor.Digest)
+			input := patchInputs[platformKey]
+			var res *types.PatchResult
+			err := input.reportErr
+			if err == nil {
+				res, err = patchSingleArchImageWithSourceAndUpdates(gctx, &patchOpts, p, true, sharedProgressCh, input.updates,
+					input.image, input.annotations, source.Current.Descriptor.Digest)
+			}
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {

@@ -153,22 +153,12 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 	ignoreError := opts.IgnoreError
 	updates := opts.Updates
 
-	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	// Configure buildctl/client for use by package manager.
+	config, err := initializePatchConfig(ctx, c, opts, sourceAnnotations)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
-	if err := validateSourceOriginAnnotations(sourceAnnotations, config.SourceLineage); err != nil {
-		trySendError(opts.ErrorChannel, err)
-		return nil, err
-	}
-	sourceLineage, err := sourceLineageForPatch(config, opts)
-	if err != nil {
-		trySendError(opts.ErrorChannel, err)
-		return nil, err
-	}
-	config.SourceLineage = sourceLineage
 
 	if err := preflightReportForNativeChisel(ctx, c, config, opts.TargetPlatform, updates); err != nil {
 		trySendError(opts.ErrorChannel, err)
@@ -267,7 +257,7 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 	if resultAnnotations == nil {
 		resultAnnotations = make(map[string]string)
 	}
-	maps.Copy(resultAnnotations, sourceLineageAnnotations(sourceLineage))
+	maps.Copy(resultAnnotations, sourceLineageAnnotations(config.SourceLineage))
 
 	// Preserve the state and config for potential OCI export use. Mirror the
 	// annotations into image-config labels as well as manifest annotations so
@@ -334,6 +324,21 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 		PatchedState:     preservedState,  // Always preserve for OCI export
 		ConfigData:       preservedConfig, // Always preserve for OCI export
 	}, nil
+}
+
+// Use identical config recovery and origin checks before multi-platform exports
+// and inside each patch build. This includes recovering the recorded original,
+// not just validating the shape of its labels.
+func initializePatchConfig(ctx context.Context, c gwclient.Client, opts *Options, annotations map[string]string) (*buildkit.Config, error) {
+	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
+		return nil, err
+	}
+	config.SourceLineage, err = sourceLineageForPatch(config, opts)
+	return config, err
 }
 
 func sourceLineageForPatch(config *buildkit.Config, opts *Options) (*types.SourceLineage, error) {

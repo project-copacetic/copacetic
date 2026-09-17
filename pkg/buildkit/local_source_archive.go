@@ -26,6 +26,24 @@ type localArchiveError struct{ error }
 func (err *localArchiveError) Unwrap() error { return err.error }
 
 func descriptorFromLocalArchive(ctx context.Context, image string) (*remote.Descriptor, error) {
+	return descriptorFromLocalArchiveForManifest(ctx, image, "")
+}
+
+// LocalImageManifestAnnotations reads the exact selected manifest through its
+// locally named parent. It never replaces missing local bytes with a registry
+// lookup. Classic Docker-save archives have no native manifest annotations.
+func LocalImageManifestAnnotations(ctx context.Context, image string, selected digest.Digest) (map[string]string, error) {
+	if err := selected.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid selected local manifest: %w", err)
+	}
+	desc, err := descriptorFromLocalArchiveForManifest(ctx, image, selected)
+	if err != nil || desc == nil {
+		return nil, err
+	}
+	return desc.Annotations, nil
+}
+
+func descriptorFromLocalArchiveForManifest(ctx context.Context, image string, selected digest.Digest) (*remote.Descriptor, error) {
 	cli, err := dockerclient.New(dockerclient.FromEnv)
 	if err != nil {
 		return nil, err
@@ -36,10 +54,14 @@ func descriptorFromLocalArchive(ctx context.Context, image string) (*remote.Desc
 		return nil, err
 	}
 	defer stream.Close()
-	return readArchiveDescriptor(ctx, stream)
+	return readArchiveDescriptorForManifest(ctx, stream, selected)
 }
 
 func readArchiveDescriptor(ctx context.Context, stream io.Reader) (*remote.Descriptor, error) {
+	return readArchiveDescriptorForManifest(ctx, stream, "")
+}
+
+func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, selected digest.Digest) (*remote.Descriptor, error) {
 	// Retain only small manifest JSON, never image layers or extracted paths.
 	const indexFile = "index.json"
 	const maxManifestSize = 4 << 20
@@ -111,6 +133,34 @@ func readArchiveDescriptor(ctx context.Context, stream io.Reader) (*remote.Descr
 		return nil, err
 	}
 	root.Annotations = metadata.Annotations
+	if selected != "" {
+		chosen := root
+		if root.MediaType.IsIndex() {
+			chosen = v1.Descriptor{}
+			for i := range metadata.Manifests {
+				child := &metadata.Manifests[i]
+				if child.Digest.String() == selected.String() {
+					chosen = *child
+					break
+				}
+			}
+		}
+		if chosen.Digest.String() != selected.String() || !chosen.MediaType.IsImage() {
+			return nil, fmt.Errorf("local image archive does not contain selected manifest %s", selected)
+		}
+		body, err := archiveManifest(blobs, &chosen)
+		if err != nil {
+			return nil, err
+		}
+		var manifest v1.Manifest
+		if err := json.Unmarshal(body, &manifest); err != nil {
+			return nil, err
+		}
+		// Return raw body annotations for validation against the separately
+		// captured descriptor, without hiding a partial tuple.
+		chosen.Annotations = manifest.Annotations
+		return &remote.Descriptor{Descriptor: chosen, Manifest: body}, nil
+	}
 	if root.MediaType.IsIndex() {
 		for i := range metadata.Manifests {
 			child := &metadata.Manifests[i]

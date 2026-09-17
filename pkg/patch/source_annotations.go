@@ -12,6 +12,8 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
+var localManifestAnnotations = buildkit.LocalImageManifestAnnotations
+
 // A daemon can name only an index even though all of its children are present.
 // Read local metadata through that locator and verify the captured selection;
 // requiring the synthesized child name to exist would spuriously go remote.
@@ -60,7 +62,11 @@ func captureSourceAnnotations(ctx context.Context, image, child string, descript
 		if local == nil || local.Digest != pinned.Digest() {
 			return nil, fmt.Errorf("local source platform changed after capture")
 		}
-		return annotations, nil
+		manifestAnnotations, err := localManifestAnnotations(ctx, image, pinned.Digest())
+		if err != nil {
+			return nil, fmt.Errorf("read captured local manifest annotations: %w", err)
+		}
+		return buildkit.MergeImageSourceAnnotations(annotations, manifestAnnotations)
 	}
 	manifestAnnotations, err := utils.GetPlatformManifestAnnotations(ctx, child, platform)
 	if err != nil {

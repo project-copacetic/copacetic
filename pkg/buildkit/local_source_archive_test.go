@@ -177,3 +177,39 @@ func TestLocalArchiveUnsupportedWrapper(t *testing.T) {
 	}))
 	require.ErrorContains(t, err, "must identify exactly one source")
 }
+
+func TestLocalArchiveSelectedManifest(t *testing.T) {
+	bodyAnnotations := map[string]string{"com.example.body": "kept", types.AnnotationPatchOriginKind: types.PatchOriginImage}
+	child, manifest := archiveTestManifest(t, v1.Manifest{
+		SchemaVersion: 2, MediaType: v1types.OCIManifestSchema1,
+		Config:      v1.Descriptor{Digest: v1.Hash{Algorithm: "sha256", Hex: digest.FromString("config").Encoded()}},
+		Annotations: bodyAnnotations,
+	}, v1types.OCIManifestSchema1)
+	child.Annotations = (&types.SourceLineage{Kind: types.PatchOriginImage, Name: "example.com/original:source", Digest: digest.FromString("original")}).Annotations()
+	sibling := child
+	sibling.Digest, _ = v1.NewHash(digest.FromString("unavailable sibling").String())
+	root, index := archiveTestManifest(t, v1.IndexManifest{SchemaVersion: 2, MediaType: v1types.OCIImageIndex, Manifests: []v1.Descriptor{child, sibling}}, v1types.OCIImageIndex)
+	_, wrapper := archiveTestManifest(t, v1.IndexManifest{SchemaVersion: 2, Manifests: []v1.Descriptor{root}}, v1types.OCIImageIndex)
+	files := map[string][]byte{"index.json": wrapper, archiveBlobPath(root.Digest): index, archiveBlobPath(child.Digest): manifest}
+	selected := digest.Digest(child.Digest.String())
+	got, err := readArchiveDescriptorForManifest(t.Context(), archiveTestStream(t, files), selected)
+	require.NoError(t, err)
+	require.Equal(t, child.Digest, got.Digest)
+	require.Equal(t, bodyAnnotations, got.Annotations, "raw partial tuple must not be completed by the descriptor")
+	_, err = MergeImageSourceAnnotations(child.Annotations, got.Annotations)
+	require.ErrorContains(t, err, "invalid patch origin")
+	_, err = readArchiveDescriptorForManifest(t.Context(), archiveTestStream(t, files), digest.Digest(sibling.Digest.String()))
+	require.ErrorContains(t, err, "does not match descriptor", "selected bytes are required even when its descriptor exists")
+	_, err = readArchiveDescriptorForManifest(t.Context(), archiveTestStream(t, files), digest.FromString("unrelated"))
+	require.ErrorContains(t, err, "does not contain selected manifest")
+	files[archiveBlobPath(child.Digest)] = append(manifest, ' ')
+	_, err = readArchiveDescriptorForManifest(t.Context(), archiveTestStream(t, files), selected)
+	require.ErrorContains(t, err, "does not match descriptor")
+	_, singleWrapper := archiveTestManifest(t, v1.IndexManifest{SchemaVersion: 2, Manifests: []v1.Descriptor{child}}, v1types.OCIImageIndex)
+	got, err = readArchiveDescriptorForManifest(t.Context(), archiveTestStream(t, map[string][]byte{"index.json": singleWrapper, archiveBlobPath(child.Digest): manifest}), selected)
+	require.NoError(t, err)
+	require.Equal(t, bodyAnnotations, got.Annotations)
+	got, err = readArchiveDescriptorForManifest(t.Context(), archiveTestStream(t, map[string][]byte{"manifest.json": []byte(`[]`)}), selected)
+	require.NoError(t, err)
+	require.Nil(t, got, "classic archives have no raw OCI metadata")
+}

@@ -120,7 +120,6 @@ func patchSingleArchImageWithSourceAndUpdates(
 	patchedTag := opts.PatchedTag
 	suffix := opts.Suffix
 	workingFolder := opts.WorkingFolder
-	scanner := opts.Scanner
 	format := opts.Format
 	output := opts.Output
 	loader := opts.Loader
@@ -132,8 +131,6 @@ func patchSingleArchImageWithSourceAndUpdates(
 		CertPath:   opts.BkCertPath,
 		KeyPath:    opts.BkKeyPath,
 	}
-	pkgTypes := opts.PkgTypes
-	libraryPatchLevel := opts.LibraryPatchLevel
 	toolchainPatchLevel := opts.ToolchainPatchLevel
 	goVCSURL := opts.GoVCSURL
 	chiselRelease := opts.ChiselRelease
@@ -183,42 +180,9 @@ func patchSingleArchImageWithSourceAndUpdates(
 	}
 	defer cleanup()
 
-	// Parse report for update packages unless the single-report orchestration
-	// already parsed it to derive an implicit target platform.
-	if reportFile != "" {
-		if updates == nil {
-			updates, err = report.TryParseScanReport(reportFile, scanner, pkgTypes, libraryPatchLevel)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if err := validateReportPlatform(updates, &targetPlatform); err != nil {
-			return nil, err
-		}
-
-		// Filter updates based on package types
-		pkgTypesList, err := parsePkgTypes(pkgTypes)
-		if err != nil {
-			return nil, fmt.Errorf("invalid package types: %w", err)
-		}
-
-		if updates != nil {
-			// Filter OS updates
-			if !shouldIncludeOSUpdates(pkgTypesList) {
-				log.Debugf("Filtering out OS updates based on pkg-types: %v", pkgTypesList)
-				updates.OSUpdates = []unversioned.UpdatePackage{}
-			}
-
-			// Filter library updates
-			if !shouldIncludeLibraryUpdates(pkgTypesList) {
-				log.Debugf("Filtering out library updates based on pkg-types: %v", pkgTypesList)
-				updates.LangUpdates = []unversioned.UpdatePackage{}
-			}
-
-			log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
-		}
-
-		log.Debugf("updates to apply: %v", updates)
+	updates, err = preparePatchUpdates(opts, &targetPlatform, updates)
+	if err != nil {
+		return nil, err
 	}
 
 	reportHasNoUpdates := updates != nil && len(updates.OSUpdates) == 0 && len(updates.LangUpdates) == 0
@@ -462,6 +426,38 @@ func patchSingleArchImageWithSourceAndUpdates(
 	return result, nil
 }
 
+// Parse and filter once before deciding whether a platform can export. Callers
+// can pass the same manifest into its worker so preflight and patching agree.
+func preparePatchUpdates(opts *types.Options, targetPlatform *types.PatchPlatform, updates *unversioned.UpdateManifest) (*unversioned.UpdateManifest, error) {
+	if opts.Report == "" {
+		return updates, nil
+	}
+	if updates == nil {
+		var err error
+		updates, err = report.TryParseScanReport(opts.Report, opts.Scanner, opts.PkgTypes, opts.LibraryPatchLevel)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := validateReportPlatform(updates, targetPlatform); err != nil {
+		return nil, err
+	}
+	pkgTypesList, err := parsePkgTypes(opts.PkgTypes)
+	if err != nil {
+		return nil, fmt.Errorf("invalid package types: %w", err)
+	}
+	if updates != nil {
+		if !shouldIncludeOSUpdates(pkgTypesList) {
+			updates.OSUpdates = []unversioned.UpdatePackage{}
+		}
+		if !shouldIncludeLibraryUpdates(pkgTypesList) {
+			updates.LangUpdates = []unversioned.UpdatePackage{}
+		}
+		log.Debugf("Filtered updates to apply: OS=%d, Lang=%d", len(updates.OSUpdates), len(updates.LangUpdates))
+	}
+	return updates, nil
+}
+
 type sourceLookupError struct{ error }
 
 func (err *sourceLookupError) Unwrap() error { return err.error }
@@ -511,18 +507,25 @@ func singlePlatformSnapshot(
 // verify it still identifies the captured source before using the pinned child.
 func primeLocalSource(ctx context.Context, bk buildkitBuildClient, image string, root, child digest.Digest, platform *ispec.Platform) error {
 	_, err := bk.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-		_, resolved, _, err := sourceresolver.NewImageMetaResolver(c).ResolveImageConfig(ctx, image, sourceresolver.Opt{
-			ImageOpt: &sourceresolver.ResolveImageOpt{Platform: platform, ResolveMode: llb.ResolveModePreferLocal.String()},
-		})
-		if err != nil {
+		if err := primeLocalSourceWithClient(ctx, c, image, root, child, platform); err != nil {
 			return nil, err
-		}
-		if resolved != root && resolved != child {
-			return nil, fmt.Errorf("local source changed after capture")
 		}
 		return gwclient.NewResult(), nil
 	}, nil)
 	return err
+}
+
+func primeLocalSourceWithClient(ctx context.Context, c gwclient.Client, image string, root, child digest.Digest, platform *ispec.Platform) error {
+	_, resolved, _, err := sourceresolver.NewImageMetaResolver(c).ResolveImageConfig(ctx, image, sourceresolver.Opt{
+		ImageOpt: &sourceresolver.ResolveImageOpt{Platform: platform, ResolveMode: llb.ResolveModePreferLocal.String()},
+	})
+	if err != nil {
+		return err
+	}
+	if resolved != root && resolved != child {
+		return fmt.Errorf("local source changed after capture")
+	}
+	return nil
 }
 
 // A mutable local tag can expose only the pulled child of an index. Single-
@@ -781,6 +784,19 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 
 	log.Debugf("Getting image descriptor for %s...", patchedImageName)
 	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
+	if patchedDesc == nil && err == nil && runtime == imageloader.Docker {
+		// Older Docker inspection succeeds without exposing a descriptor.
+		// Recover the exported image's exact native archive identity, just as
+		// source capture does, so index assembly retains a real child digest.
+		var source *buildkit.ImageSource
+		source, err = resolveImageSource(ctx, patchedImageName)
+		if err == nil && source != nil {
+			patchedDesc = &source.Descriptor
+			if source.Index != nil {
+				patchedDesc, err = source.PlatformDescriptor(&targetPlatform.Platform)
+			}
+		}
+	}
 	if err != nil {
 		if err := ctx.Err(); err != nil {
 			return nil, err

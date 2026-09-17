@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	sourceOriginValid           = "valid"
+	sourceOriginUnavailable     = "unavailable"
 	sourceOriginOtherRepository = "example.com/another:original"
 	sourceOriginMatching        = "matching"
 	sourceOriginRepository      = "repository"
@@ -26,8 +28,13 @@ const (
 )
 
 func TestCaptureSourceAnnotationsUsesIndexedLocalSource(t *testing.T) {
-	local := localPlatformDescriptor
-	t.Cleanup(func() { localPlatformDescriptor = local })
+	local, archive := localPlatformDescriptor, localManifestAnnotations
+	t.Cleanup(func() { localPlatformDescriptor, localManifestAnnotations = local, archive })
+	localManifestAnnotations = func(_ context.Context, image string, selected digest.Digest) (map[string]string, error) {
+		require.Equal(t, "127.0.0.1:1/local:index", image)
+		require.Equal(t, digest.FromString("local child"), selected)
+		return nil, nil
+	}
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
 	child := digest.FromString("local child")
 	annotations := map[string]string{sourceAnnotationKey: "captured"}
@@ -97,6 +104,43 @@ func TestValidateSourceOriginAnnotations(t *testing.T) {
 				require.ErrorContains(t, err, "contradicts the recovered config origin")
 			}
 			require.Equal(t, before, values)
+		})
+	}
+}
+
+func TestCaptureLocalManifestAnnotations(t *testing.T) {
+	local, archive := localPlatformDescriptor, localManifestAnnotations
+	t.Cleanup(func() { localPlatformDescriptor, localManifestAnnotations = local, archive })
+	child := digest.FromString("captured child")
+	localPlatformDescriptor = func(context.Context, string, *specs.Platform) (*specs.Descriptor, bool, error) {
+		return &specs.Descriptor{Digest: child}, true, nil
+	}
+	origin := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: "example.com/original:source", Digest: digest.FromString("original")}).Annotations()
+	for _, scenario := range []string{sourceOriginValid, sourceOriginPartial, "contradictory", sourceOriginUnavailable} {
+		t.Run(scenario, func(t *testing.T) {
+			body := maps.Clone(origin)
+			body["com.example.body"] = "preserved"
+			if scenario == sourceOriginPartial {
+				delete(body, types.AnnotationPatchOriginDigest)
+			}
+			if scenario == "contradictory" {
+				body[types.AnnotationPatchOriginDigest] = digest.FromString("different").String()
+			}
+			localManifestAnnotations = func(_ context.Context, image string, selected digest.Digest) (map[string]string, error) {
+				require.Equal(t, "127.0.0.1:1/local:parent", image)
+				require.Equal(t, child, selected)
+				if scenario == sourceOriginUnavailable {
+					return nil, errors.New("selected manifest bytes unavailable")
+				}
+				return body, nil
+			}
+			got, err := captureSourceAnnotations(t.Context(), "127.0.0.1:1/local:parent", "127.0.0.1:1/local@"+child.String(), origin, &specs.Platform{OS: "linux", Architecture: "amd64"})
+			if scenario == sourceOriginValid {
+				require.NoError(t, err)
+				require.Equal(t, body, got)
+			} else {
+				require.Error(t, err)
+			}
 		})
 	}
 }

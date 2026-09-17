@@ -12,8 +12,15 @@ import (
 )
 
 func TestCaptureSourceAnnotationsWithoutPlatformMetadata(t *testing.T) {
-	oldLocal, oldResolve := localPlatformDescriptor, resolveImageSource
-	t.Cleanup(func() { localPlatformDescriptor, resolveImageSource = oldLocal, oldResolve })
+	oldLocal, oldResolve, oldArchive := localPlatformDescriptor, resolveImageSource, localManifestAnnotations
+	t.Cleanup(func() {
+		localPlatformDescriptor, resolveImageSource, localManifestAnnotations = oldLocal, oldResolve, oldArchive
+	})
+	localManifestAnnotations = func(_ context.Context, image string, selected digest.Digest) (map[string]string, error) {
+		require.Equal(t, "127.0.0.1:1/local:source", image)
+		require.Equal(t, digest.FromString("original classic source"), selected)
+		return nil, nil // Classic archives lack native manifest annotations.
+	}
 	original := digest.FromString("original classic source")
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
 	for _, scenario := range []string{"stable", "changed", "unavailable"} {
