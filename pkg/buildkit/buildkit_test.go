@@ -1787,3 +1787,87 @@ func TestEnsureAuthSessionAttachesDockerCredentials(t *testing.T) {
 		assert.NotPanics(t, func() { ensureAuthSession(nil) })
 	})
 }
+
+func TestOCIPublicationPreservesConcurrentDestination(t *testing.T) {
+	for _, kind := range []string{"directory", "file", "dangling symlink", "directory symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			source, _, _ := newOCIInputTestSource(t)
+			parent := t.TempDir()
+			output := filepath.Join(parent, "output")
+			target := filepath.Join(t.TempDir(), "target")
+			var before os.FileInfo
+			err := createAtomicOCILayout(t.Context(), output, func(staging string) error {
+				// Complete a real layout before another writer claims the destination.
+				if err := CreateOCILayoutFromResultsWithOptions(staging,
+					[]types.PatchResult{{OCISource: source, PatchedDesc: &source.Descriptor}},
+					[]types.PatchPlatform{{Platform: *source.Descriptor.Platform, ShouldPreserve: true}},
+					OCILayoutExportOptions{OutputReference: "example.com/app:patched"},
+				); err != nil {
+					return err
+				}
+				_, err := ocilayout.Open(t.Context(), staging, "", "")
+				require.NoError(t, err)
+				switch kind {
+				case "directory":
+					require.NoError(t, os.Mkdir(output, 0o700))
+				case "file":
+					require.NoError(t, os.WriteFile(output, []byte("keep"), 0o600))
+				case "dangling symlink":
+					require.NoError(t, os.Symlink(target, output))
+				case "directory symlink":
+					require.NoError(t, os.Mkdir(target, 0o700))
+					require.NoError(t, os.Symlink(target, output))
+				}
+				before, err = os.Lstat(output)
+				require.NoError(t, err)
+				return nil
+			})
+			require.NotNil(t, before, "the competing destination was created after the initial check")
+			assert.Error(t, err)
+			after, err := os.Lstat(output)
+			require.NoError(t, err)
+			assert.True(t, os.SameFile(before, after), "publication must not replace the competing destination")
+			assert.Equal(t, before.Mode(), after.Mode())
+			switch kind {
+			case "directory":
+				entries, err := os.ReadDir(output)
+				require.NoError(t, err)
+				assert.Empty(t, entries)
+			case "file":
+				data, err := os.ReadFile(output)
+				require.NoError(t, err)
+				assert.Equal(t, "keep", string(data))
+			default:
+				actualTarget, err := os.Readlink(output)
+				require.NoError(t, err)
+				assert.Equal(t, target, actualTarget)
+			}
+			entries, err := os.ReadDir(parent)
+			require.NoError(t, err)
+			require.Len(t, entries, 1, "publication failure removes only its staging directory")
+			assert.Equal(t, "output", entries[0].Name())
+		})
+	}
+}
+
+func TestOCIPublicationRejectsExistingDanglingSymlink(t *testing.T) {
+	parent := t.TempDir()
+	output, target := filepath.Join(parent, "output"), filepath.Join(parent, "missing")
+	require.NoError(t, os.Symlink(target, output))
+	called := false
+	err := createAtomicOCILayout(t.Context(), output, func(string) error {
+		called = true
+		return nil
+	})
+	assert.ErrorContains(t, err, "already exists")
+	assert.False(t, called, "an existing symlink must reject before the writer runs")
+	actualTarget, err := os.Readlink(output)
+	require.NoError(t, err)
+	assert.Equal(t, target, actualTarget)
+	_, err = os.Lstat(target)
+	assert.True(t, os.IsNotExist(err))
+	entries, err := os.ReadDir(parent)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "output", entries[0].Name())
+}

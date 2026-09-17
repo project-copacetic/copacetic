@@ -1337,7 +1337,7 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 // createAtomicOCILayout owns the staging directory and publishes it only after
 // the writer completes successfully and the caller still permits publication.
 func createAtomicOCILayout(ctx context.Context, outputDir string, write func(string) error) error {
-	if _, err := os.Stat(outputDir); err == nil {
+	if _, err := os.Lstat(outputDir); err == nil {
 		return fmt.Errorf("OCI layout output directory %q already exists; choose a new path", outputDir)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat OCI layout output directory: %w", err)
@@ -1357,8 +1357,8 @@ func createAtomicOCILayout(ctx context.Context, outputDir string, write func(str
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("OCI layout export canceled before publication: %w", err)
 	}
-	if err := os.Rename(tempDir, outputDir); err != nil {
-		return fmt.Errorf("publish OCI layout output atomically: %w", err)
+	if err := renameDirectoryNoReplace(tempDir, outputDir); err != nil {
+		return fmt.Errorf("publish OCI layout output atomically without replacing an existing path: %w", err)
 	}
 	return nil
 }

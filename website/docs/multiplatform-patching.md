@@ -111,7 +111,7 @@ Unsupported platforms, including Windows, are preserved; a source containing no 
 
 OCI layout input has these restrictions:
 
-- `--oci-dir` is required and must name a new directory that does not overlap the input layout. Copa publishes the completed output atomically. Keep `--working-folder` and VEX `--output` outside this directory, including through symlinks whose targets do not yet exist. Parent work directories remain supported; work cleanup completes before output publication.
+- `--oci-dir` is required and must name a new directory that does not overlap the input layout. Copa publishes the completed output atomically and fails if the destination already exists or another writer creates it during export; existing directories and symlinks remain unchanged. Keep `--working-folder` and VEX `--output` outside this directory, including through symlinks whose targets do not yet exist. Parent work directories remain supported; work cleanup completes before output publication.
 - `--push`, `--loader`, `--config`, and `--chart` are not supported with `--input-oci-layout`. The source image is never resolved through Docker, Podman, or a registry.
 - Local and remote BuildKit addresses are supported because Copa transfers the client-side content store through the BuildKit session; the remote daemon needs no filesystem access to the input path.
 - The input layout remains unchanged. Do not set `TMPDIR` to the input directory or a directory inside it, including through a symlink. Missing or corrupt selected blobs, artifact inputs, unsupported image media types, nonempty manifest/index body media types that disagree with their descriptors, and descriptor platform metadata that conflicts with the image config fail with an error.
