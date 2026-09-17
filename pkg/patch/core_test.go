@@ -915,10 +915,11 @@ func TestAddResultAnnotations(t *testing.T) {
 func TestSourceLineageForPatch(t *testing.T) {
 	dgst := digest.FromString("selected-base")
 	tests := []struct {
-		name   string
-		config *buildkit.Config
-		opts   *Options
-		want   *types.SourceLineage
+		name    string
+		config  *buildkit.Config
+		opts    *Options
+		want    *types.SourceLineage
+		wantErr bool
 	}{
 		{
 			name: "first multi-platform patch uses logical source name",
@@ -931,13 +932,26 @@ func TestSourceLineageForPatch(t *testing.T) {
 			want: &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: dgst},
 		},
 		{
-			name: "unverified first multi-platform patch is omitted",
+			name: "unverified first multi-platform patch is rejected",
 			config: &buildkit.Config{SourceLineage: &types.SourceLineage{
 				Kind:   types.PatchOriginImage,
 				Name:   "docker.io/library/alpine:3.20",
 				Digest: dgst,
 			}},
-			opts: &Options{SourceImageName: "alpine:3.20", RequireBaseManifest: true},
+			opts:    &Options{SourceImageName: "alpine:3.20", RequireBaseManifest: true},
+			wantErr: true,
+		},
+		{
+			name:    "mismatched captured child is rejected",
+			config:  &buildkit.Config{SourceLineage: &types.SourceLineage{Kind: types.PatchOriginImage, Name: "alpine:3.20", Digest: dgst}},
+			opts:    &Options{ExpectedSourceDigest: digest.FromString("different child"), RequireBaseManifest: true},
+			wantErr: true,
+		},
+		{
+			name:    "missing resolved lineage is rejected when captured",
+			config:  &buildkit.Config{},
+			opts:    &Options{ExpectedSourceDigest: dgst, RequireBaseManifest: true},
+			wantErr: true,
 		},
 		{
 			name: "validated re-patch retains recorded original name",
@@ -970,7 +984,13 @@ func TestSourceLineageForPatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, sourceLineageForPatch(tt.config, tt.opts))
+			got, err := sourceLineageForPatch(tt.config, tt.opts)
+			if tt.wantErr {
+				require.ErrorContains(t, err, "captured source manifest")
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

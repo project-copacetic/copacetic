@@ -452,7 +452,7 @@ func captureSinglePlatformSource(
 	buildkitImageRef reference.Named,
 	platform *ispec.Platform,
 ) (reference.Named, digest.Digest, bool, error) {
-	source, localChild, err := resolveSinglePlatformSource(ctx, image, buildkitImageRef)
+	source, err := resolveSinglePlatformSource(ctx, image, buildkitImageRef)
 	if err != nil {
 		return buildkitImageRef, "", true, err
 	}
@@ -469,47 +469,43 @@ func captureSinglePlatformSource(
 	if err := descriptor.Digest.Validate(); err != nil {
 		return buildkitImageRef, "", true, fmt.Errorf("captured platform source digest is invalid: %w", err)
 	}
-	// Narrow immutable indexes and incomplete local snapshots to their verified
-	// child. The daemon builder can resolve locally stored child content even
-	// when only its parent is named. Other mutable locators remain unchanged.
-	pinned, immutable := buildkitImageRef.(reference.Digested)
-	if immutable || localChild {
-		if immutable && source.Descriptor.Digest != pinned.Digest() {
-			return buildkitImageRef, "", true, errors.New("captured source does not match immutable image reference")
-		}
-		child, err := reference.WithDigest(reference.TrimNamed(buildkitImageRef), descriptor.Digest)
-		if err != nil {
-			return buildkitImageRef, "", true, fmt.Errorf("pin source platform manifest: %w", err)
-		}
-		return child, descriptor.Digest, true, nil
+	// Freeze every captured index selection before BuildKit resolves it. Native
+	// daemon builders can read unnamed child content through its digest, while
+	// keeping a mutable parent would allow a moved tag or parent digest to
+	// disagree with the selected manifest.
+	if pinned, immutable := buildkitImageRef.(reference.Digested); immutable && source.Descriptor.Digest != pinned.Digest() {
+		return buildkitImageRef, "", true, errors.New("captured source does not match immutable image reference")
 	}
-	return buildkitImageRef, descriptor.Digest, true, nil
+	child, err := reference.WithDigest(reference.TrimNamed(buildkitImageRef), descriptor.Digest)
+	if err != nil {
+		return buildkitImageRef, "", true, fmt.Errorf("pin source platform manifest: %w", err)
+	}
+	return child, descriptor.Digest, true, nil
 }
 
 // A mutable local tag can expose only the pulled child of an index. Single-
 // platform patching needs that child, not unavailable siblings or a remote copy
 // of the parent. Recorded index origins still pass captureIndexSource above.
-func resolveSinglePlatformSource(ctx context.Context, image string, ref reference.Named) (*buildkit.ImageSource, bool, error) {
+func resolveSinglePlatformSource(ctx context.Context, image string, ref reference.Named) (*buildkit.ImageSource, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if _, immutable := ref.(reference.Digested); !immutable {
 		index, top, complete, found, err := localSourceIndex(ctx, image)
 		if ctx.Err() != nil {
-			return nil, false, ctx.Err()
+			return nil, ctx.Err()
 		}
 		if found && err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if found && !complete && index != nil && top != nil {
 			if err := top.Digest.Validate(); err != nil {
-				return nil, false, fmt.Errorf("local source index digest is invalid: %w", err)
+				return nil, fmt.Errorf("local source index digest is invalid: %w", err)
 			}
-			return &buildkit.ImageSource{Name: image, Descriptor: *top, Index: index}, true, nil
+			return &buildkit.ImageSource{Name: image, Descriptor: *top, Index: index}, nil
 		}
 	}
-	source, err := resolveImageSource(ctx, image)
-	return source, false, err
+	return resolveImageSource(ctx, image)
 }
 
 // selectPatchWaitError preserves the package-manager no-update sentinel when

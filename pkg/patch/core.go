@@ -163,7 +163,11 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
 	}
-	sourceLineage := sourceLineageForPatch(config, opts)
+	sourceLineage, err := sourceLineageForPatch(config, opts)
+	if err != nil {
+		trySendError(opts.ErrorChannel, err)
+		return nil, err
+	}
 	config.SourceLineage = sourceLineage
 
 	if err := preflightReportForNativeChisel(ctx, c, config, opts.TargetPlatform, updates); err != nil {
@@ -332,16 +336,21 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 	}, nil
 }
 
-func sourceLineageForPatch(config *buildkit.Config, opts *Options) *types.SourceLineage {
+func sourceLineageForPatch(config *buildkit.Config, opts *Options) (*types.SourceLineage, error) {
+	if opts.RequireBaseManifest && (config == nil || config.PatchedConfigData == nil) {
+		var resolved digest.Digest
+		if config != nil && config.SourceLineage.Valid() {
+			resolved = config.SourceLineage.Digest
+		}
+		if opts.ExpectedSourceDigest.Validate() != nil || resolved != opts.ExpectedSourceDigest {
+			return nil, fmt.Errorf("BuildKit source does not match captured source manifest: expected %q, resolved %q", opts.ExpectedSourceDigest, resolved)
+		}
+	}
 	if config == nil || !config.SourceLineage.Valid() {
-		return nil
+		return nil, nil
 	}
 	if opts.RequireBaseManifest && config.PatchedConfigData != nil && !config.SourceLineageValidated {
-		return nil
-	}
-	if opts.RequireBaseManifest && config.PatchedConfigData == nil &&
-		(opts.ExpectedSourceDigest.Validate() != nil || config.SourceLineage.Digest != opts.ExpectedSourceDigest) {
-		return nil
+		return nil, nil
 	}
 
 	lineage := *config.SourceLineage
@@ -353,13 +362,13 @@ func sourceLineageForPatch(config *buildkit.Config, opts *Options) *types.Source
 			if pinned, ok := sourceName.(reference.Digested); ok && pinned.Digest() != lineage.Digest {
 				sourceName, err = reference.WithDigest(reference.TrimNamed(sourceName), lineage.Digest)
 				if err != nil {
-					return nil
+					return nil, nil
 				}
 			}
 			lineage.Name = sourceName.String()
 		}
 	}
-	return &lineage
+	return &lineage, nil
 }
 
 func sourceLineageAnnotations(lineage *types.SourceLineage) map[string]string {

@@ -88,9 +88,10 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 			})
 		}
 	})
-	for _, scenario := range []string{"daemon-index-source", "daemon-partial-index-source"} {
+	for _, scenario := range []string{"daemon-index-source", "daemon-partial-index-source", "daemon-single-index-source"} {
 		t.Run(scenario, func(t *testing.T) {
 			partial := scenario == "daemon-partial-index-source"
+			single := scenario != "daemon-index-source"
 			var offline atomic.Bool
 			var deniedReads atomic.Int64
 			handler := registry.New(registry.Logger(log.New(io.Discard, "", 0)))
@@ -110,6 +111,9 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 			var children []mutate.IndexAddendum
 			expected := map[string]v1.Hash{}
 			for _, arch := range []string{originAMD64, "386"} {
+				if single && !partial && arch == "386" {
+					continue
+				}
 				image := images[arch]
 				if partial && arch == "386" {
 					// Give the unpulled sibling a unique config so previous runtime
@@ -140,7 +144,7 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 				}
 			})
 			pulled := []string{originAMD64, "386"}
-			if partial {
+			if single {
 				pulled = pulled[:1]
 			}
 			for _, arch := range pulled {
@@ -161,7 +165,7 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 			} else {
 				captured, err := buildkit.ResolveImageSource(ctx, input)
 				require.NoError(t, err)
-				require.Len(t, captured.Index.Manifests, 2)
+				require.Len(t, captured.Index.Manifests, len(pulled))
 			}
 			for _, hash := range expected {
 				child := host + "/local-input@" + hash.String()
@@ -178,14 +182,14 @@ func testSourceAnnotationFollowups(t *testing.T, ctx context.Context, addr, repo
 				require.NoError(t, os.WriteFile(filepath.Join(reports, arch+".json"), data, 0o600))
 			}
 			reportInput := reports
-			if partial {
+			if single {
 				reportInput = originTestReport(t, originAMD64)
 			}
 			require.NoError(t, Patch(ctx, &types.Options{
 				Image: input, Report: reportInput, Scanner: "trivy", Push: true, PatchedTag: output,
 				BkAddr: "docker://", PkgTypes: "os", Progress: "quiet", Timeout: 3 * time.Minute,
 			}))
-			if partial {
+			if single {
 				patched, err := remote.Image(originTestReference(t, output), remote.WithContext(ctx))
 				require.NoError(t, err)
 				config, err := patched.ConfigFile()

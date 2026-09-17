@@ -716,7 +716,7 @@ func TestWithoutSourceLineageAnnotations(t *testing.T) {
 	assert.Contains(t, original, types.AnnotationPatchOriginName, "source map must not be mutated")
 }
 
-func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t *testing.T) {
+func TestCaptureSinglePlatformSourcePinsLocalIndexChild(t *testing.T) {
 	const imageRef = "registry.invalid/project/copa-e2e-local-only:latest"
 
 	childDigest := digest.FromString("source-amd64")
@@ -747,8 +747,7 @@ func TestCaptureSinglePlatformSourcePreservesRegistryUnavailableBuildReference(t
 	)
 	require.NoError(t, err)
 	assert.True(t, requireManifest)
-	assert.Equal(t, buildkitRef, gotBuildkitRef)
-	assert.Equal(t, imageRef, gotBuildkitRef.String(), "capturing lineage must not turn a daemon-only tag into a registry digest pull")
+	assert.Equal(t, "registry.invalid/project/copa-e2e-local-only@"+childDigest.String(), gotBuildkitRef.String())
 	assert.Equal(t, childDigest, expectedDigest)
 }
 
