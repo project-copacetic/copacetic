@@ -276,6 +276,9 @@ func pathWithin(root, target string) bool {
 func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Descriptor, rawSelector string, named reference.Named) (ocispec.Descriptor, error) {
 	var candidates []ocispec.Descriptor
 	for _, desc := range descriptors {
+		if err := ctx.Err(); err != nil {
+			return ocispec.Descriptor{}, err
+		}
 		if isArtifactDescriptor(&desc) || (!isImageManifest(desc.MediaType) && !isImageIndex(desc.MediaType)) {
 			continue
 		}
@@ -476,6 +479,9 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 		if err := s.readJSONBlob(ctx, desc, &index); err != nil {
 			return fmt.Errorf("read image index: %w", err)
 		}
+		if index.MediaType != "" && index.MediaType != desc.MediaType {
+			return fmt.Errorf("image index %s has mediaType %q (expected %q)", desc.Digest, index.MediaType, desc.MediaType)
+		}
 		if index.SchemaVersion != 2 {
 			return fmt.Errorf("image index %s has schemaVersion %d (expected 2)", desc.Digest, index.SchemaVersion)
 		}
@@ -512,6 +518,9 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 		var manifest ocispec.Manifest
 		if err := s.readJSONBlob(ctx, desc, &manifest); err != nil {
 			return fmt.Errorf("read image manifest: %w", err)
+		}
+		if manifest.MediaType != "" && manifest.MediaType != desc.MediaType {
+			return fmt.Errorf("image manifest %s has mediaType %q (expected %q)", desc.Digest, manifest.MediaType, desc.MediaType)
 		}
 		if manifest.SchemaVersion != 2 {
 			return fmt.Errorf("image manifest %s has schemaVersion %d (expected 2)", desc.Digest, manifest.SchemaVersion)

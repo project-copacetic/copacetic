@@ -956,3 +956,68 @@ func TestOutputWritePathsKeepExternalWorkRoots(t *testing.T) {
 	_, err := os.Stat(output)
 	assert.True(t, os.IsNotExist(err), "validation must not create the destination")
 }
+
+func TestFilteredCandidateClassificationObservesCancellation(t *testing.T) {
+	for _, desc := range []ocispec.Descriptor{
+		{MediaType: nonImageMediaType},
+		{MediaType: ocispec.MediaTypeImageManifest, ArtifactType: nonImageMediaType},
+	} {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		_, err := (&Source{}).selectDescriptor(ctx, []ocispec.Descriptor{desc}, "", nil)
+		require.ErrorIs(t, err, context.Canceled, "filtered candidates must still observe cancellation")
+	}
+}
+
+func TestOpenValidatesSelectedBodyMediaTypes(t *testing.T) {
+	for _, mediaType := range []string{ocispec.MediaTypeImageIndex, dockerMediaTypeIndex, ocispec.MediaTypeImageManifest, dockerMediaTypeManifest} {
+		conflictingType := map[string]string{
+			ocispec.MediaTypeImageIndex: dockerMediaTypeIndex, dockerMediaTypeIndex: ocispec.MediaTypeImageIndex,
+			ocispec.MediaTypeImageManifest: dockerMediaTypeManifest, dockerMediaTypeManifest: ocispec.MediaTypeImageManifest,
+		}[mediaType]
+		for _, bodyType := range []string{"", mediaType, nonImageMediaType, conflictingType} {
+			for _, child := range []bool{false, true} {
+				if child && isImageIndex(mediaType) {
+					continue // Nested indexes are a separately rejected contract.
+				}
+				t.Run(fmt.Sprintf("%s/body=%s/child=%v", mediaType, bodyType, child), func(t *testing.T) {
+					fixture := newSingleLayout(t, map[string]string{ocispec.AnnotationRefName: "valid"})
+					original := fixture.manifests[0]
+					var body any
+					if isImageIndex(mediaType) {
+						body = ocispec.Index{Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: bodyType, Manifests: fixture.manifests}
+					} else {
+						data, err := os.ReadFile(filepath.Join(fixture.path, "blobs", original.Digest.Algorithm().String(), original.Digest.Encoded()))
+						require.NoError(t, err)
+						var manifest ocispec.Manifest
+						require.NoError(t, json.Unmarshal(data, &manifest))
+						manifest.MediaType = bodyType
+						manifest.Annotations = map[string]string{"example.fixture": "distinct-body"}
+						body = manifest
+					}
+					desc := writeBlob(t, fixture.path, mediaType, marshalJSON(t, body))
+					desc.Platform = original.Platform
+					if child {
+						desc = writeBlob(t, fixture.path, ocispec.MediaTypeImageIndex, marshalJSON(t, ocispec.Index{
+							Versioned: specs.Versioned{SchemaVersion: 2}, MediaType: ocispec.MediaTypeImageIndex, Manifests: []ocispec.Descriptor{desc},
+						}))
+					}
+					newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc})
+					before := snapshotLayout(t, fixture.path)
+					_, err := Open(t.Context(), fixture.path, "", "")
+					if bodyType == "" || bodyType == mediaType {
+						require.NoError(t, err)
+					} else {
+						require.ErrorContains(t, err, "mediaType")
+						require.ErrorContains(t, err, "expected")
+						newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc, original})
+						_, err = Open(t.Context(), fixture.path, "", "valid")
+						require.NoError(t, err, "unselected media type conflicts must remain scoped")
+						newLayoutAt(t, fixture.path, []ocispec.Descriptor{desc})
+					}
+					assert.Equal(t, before, snapshotLayout(t, fixture.path))
+				})
+			}
+		}
+	}
+}

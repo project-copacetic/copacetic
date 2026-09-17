@@ -125,6 +125,25 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		openLayout(t, repatch.OCIDir)
 	})
 
+	for _, multi := range []bool{false, true} {
+		t.Run(fmt.Sprintf("omitted body media types multi=%v", multi), func(t *testing.T) {
+			input := writeLayout(t, images, multi, false)
+			setLayoutBodyMediaType(t, input, false, "")
+			if multi {
+				setLayoutBodyMediaType(t, input, true, "")
+			}
+			before := snapshot(t, input)
+			opts := options(input, filepath.Join(t.TempDir(), "output"))
+			opts.Report = writeReport(t, amd64Arch)
+			require.NoError(t, patch.Patch(t.Context(), opts))
+			openLayout(t, opts.OCIDir)
+			assert.Equal(t, before, snapshot(t, input))
+			if multi {
+				assertPreserved(t, input, opts.OCIDir, "386")
+			}
+		})
+	}
+
 	t.Run("full platform metadata survives export", func(t *testing.T) {
 		config, err := images[amd64Arch].ConfigFile()
 		require.NoError(t, err)
@@ -775,5 +794,76 @@ func TestOCILayoutRejectsOutputWriteConflicts(t *testing.T) {
 				assert.True(t, os.IsNotExist(err))
 			})
 		}
+	}
+}
+
+func setLayoutBodyMediaType(t *testing.T, root string, child bool, mediaType string) {
+	t.Helper()
+	path := filepath.Join(root, ocispec.ImageIndexFile)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var top ocispec.Index
+	require.NoError(t, json.Unmarshal(data, &top))
+	desc := &top.Manifests[0]
+	write := func(target *ocispec.Descriptor, body any) {
+		encoded, err := json.Marshal(body)
+		require.NoError(t, err)
+		target.Digest, target.Size = digest.FromBytes(encoded), int64(len(encoded))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "blobs", target.Digest.Algorithm().String(), target.Digest.Encoded()), encoded, 0o600))
+	}
+	change := func(target *ocispec.Descriptor) {
+		var body map[string]any
+		readJSONBlob(t, root, target, &body)
+		if mediaType == "" {
+			delete(body, "mediaType")
+		} else {
+			body["mediaType"] = mediaType
+		}
+		write(target, body)
+	}
+	if child {
+		var index ocispec.Index
+		readJSONBlob(t, root, desc, &index)
+		found := false
+		for i := range index.Manifests {
+			if index.Manifests[i].Platform != nil && index.Manifests[i].Platform.Architecture == amd64Arch {
+				change(&index.Manifests[i])
+				found = true
+				break
+			}
+		}
+		require.True(t, found, "media-type fixture must modify the patched amd64 manifest")
+		write(desc, index)
+	} else {
+		change(desc)
+	}
+	data, err = json.Marshal(top)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+}
+
+func TestOCILayoutRejectsConflictingBodyMediaTypes(t *testing.T) {
+	config, err := empty.Image.ConfigFile()
+	require.NoError(t, err)
+	config.OS, config.Architecture = linuxOS, amd64Arch
+	img, err := mutate.ConfigFile(empty.Image, config)
+	require.NoError(t, err)
+	for _, kind := range []string{"manifest", "index", "child"} {
+		t.Run(kind, func(t *testing.T) {
+			input := writeLayout(t, map[string]v1.Image{amd64Arch: img}, kind != "manifest", false)
+			setLayoutBodyMediaType(t, input, kind == "child", "application/example")
+			before := snapshot(t, input)
+			output := filepath.Join(t.TempDir(), "output")
+			err := patch.Patch(t.Context(), &types.Options{
+				InputOCILayout: input, OCIDir: output, PatchedTag: outputName,
+				Report: writeReport(t, amd64Arch), Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch",
+				BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, Progress: progressui.QuietMode,
+			})
+			require.ErrorContains(t, err, "mediaType")
+			require.ErrorContains(t, err, "expected")
+			assert.Equal(t, before, snapshot(t, input))
+			_, err = os.Stat(output)
+			assert.True(t, os.IsNotExist(err))
+		})
 	}
 }
