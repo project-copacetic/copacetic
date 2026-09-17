@@ -120,3 +120,28 @@ func readImmutableImageMetadata(ctx context.Context, image string) (map[string]s
 	}
 	return inspect(img)
 }
+
+// Descriptor equality only proves unchanged content. Docker lists can lose
+// index annotations, and legacy children retain their patch marker in config.
+// Unavailable metadata leaves this optional common-origin claim unverified.
+func unpatchedIndexChild(ctx context.Context, source *buildkit.ImageSource, child *specs.Descriptor) bool {
+	ref, err := platformSourceReference(source, child.Platform)
+	if err != nil {
+		return false
+	}
+	manifest, labels, err := readIndexChildMetadata(ctx, ref)
+	if err != nil {
+		return false
+	}
+	for _, values := range []map[string]string{child.Annotations, manifest, labels} {
+		for _, key := range []string{
+			"BaseImage", types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest,
+			copaAnnotationKeyPrefix + ".patched", copaAnnotationKeyPrefix + ".image.patched",
+		} {
+			if _, present := values[key]; present {
+				return false
+			}
+		}
+	}
+	return true
+}

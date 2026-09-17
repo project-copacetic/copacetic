@@ -104,7 +104,8 @@ func TestRecordedIndexAllowsUnverifiedPreservedChildren(t *testing.T) {
 			return claims, labels, nil
 		}
 		require.NoError(t, validateRecordedIndexChildren(t.Context(), source))
-		require.Nil(t, commonBaseIndexLineage(source, []types.PatchResult{{PatchedDesc: &source.Current.Index.Manifests[0]}}), "matching unverified ancestry remains insufficient for output common claim")
+		require.Nil(t, commonBaseIndexLineage(t.Context(), source, []types.PatchResult{{PatchedDesc: &source.Current.Index.Manifests[0]}}),
+			"matching unverified ancestry remains insufficient for output common claim")
 	}
 	readIndexChildMetadata = func(context.Context, string) (map[string]string, map[string]string, error) { return nil, nil, nil }
 	require.ErrorContains(t, validateRecordedIndexChildren(t.Context(), source), "unpatched manifest contradicts")

@@ -246,6 +246,9 @@ func TestCaptureMultiPlatformSourceUsesRecordedOriginalBase(t *testing.T) {
 }
 
 func TestCommonBaseIndexLineage(t *testing.T) {
+	reader := readIndexChildMetadata
+	t.Cleanup(func() { readIndexChildMetadata = reader })
+	readIndexChildMetadata = func(context.Context, string) (map[string]string, map[string]string, error) { return nil, nil, nil }
 	indexDigest := digest.FromString("source-index")
 	amdDigest := digest.FromString("source-amd64")
 	armDigest := digest.FromString("source-arm64")
@@ -280,17 +283,17 @@ func TestCommonBaseIndexLineage(t *testing.T) {
 		},
 	}
 
-	assert.Equal(t, lineage, commonBaseIndexLineage(source, items))
+	assert.Equal(t, lineage, commonBaseIndexLineage(t.Context(), source, items))
 
 	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = indexDigest.String()
-	assert.Equal(t, lineage, commonBaseIndexLineage(source, items), "a verified frontend index origin is also a common origin")
+	assert.Equal(t, lineage, commonBaseIndexLineage(t.Context(), source, items), "a verified frontend index origin is also a common origin")
 
 	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = digest.FromString("different-base").String()
-	assert.Nil(t, commonBaseIndexLineage(source, items), "a child mismatch must omit index lineage")
+	assert.Nil(t, commonBaseIndexLineage(t.Context(), source, items), "a child mismatch must omit index lineage")
 
 	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginDigest] = amdDigest.String()
 	items[0].PatchedDesc.Annotations[types.AnnotationPatchOriginName] = "registry.example.com/different/app:1.0"
-	assert.Nil(t, commonBaseIndexLineage(source, items), "a base-name mismatch must omit index lineage")
+	assert.Nil(t, commonBaseIndexLineage(t.Context(), source, items), "a base-name mismatch must omit index lineage")
 }
 
 func TestCommonBaseIndexLineageOmitsUnverifiedPreservedAncestry(t *testing.T) {
@@ -320,7 +323,7 @@ func TestCommonBaseIndexLineageOmitsUnverifiedPreservedAncestry(t *testing.T) {
 		},
 	}
 
-	assert.Nil(t, commonBaseIndexLineage(
+	assert.Nil(t, commonBaseIndexLineage(t.Context(),
 		&multiPlatformSource{Current: base, Base: base, IndexLineage: lineage},
 		[]types.PatchResult{item},
 	))

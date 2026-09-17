@@ -121,7 +121,7 @@ func TestOriginRoundTrip(t *testing.T) {
 	}
 	// Both patched platforms corroborate the common original index.
 	pair := []types.PatchResult{*first["amd64"], *first["386"]}
-	common := commonBaseIndexLineage(source, pair)
+	common := commonBaseIndexLineage(ctx, source, pair)
 	require.NotNil(t, common)
 	require.Equal(t, source.IndexLineage.Digest, common.Digest)
 	outputRef, err := reference.ParseNormalizedNamed(repo + ":p1")
@@ -233,7 +233,7 @@ func TestOriginRoundTrip(t *testing.T) {
 			assertOriginFixture(t, ctx, second, images[arch], application, true)
 			secondPair = append(secondPair, *second)
 		}
-		secondOrigin := commonBaseIndexLineage(repatchSource, secondPair)
+		secondOrigin := commonBaseIndexLineage(ctx, repatchSource, secondPair)
 		require.Equal(t, common, secondOrigin)
 		ref, err := reference.ParseNormalizedNamed(repo + ":p2-index")
 		require.NoError(t, err)
@@ -359,6 +359,7 @@ func TestOriginRoundTrip(t *testing.T) {
 	testLegacyGatewaySource(t, ctx, images[originAMD64], application)
 	testRemoteBuilderSource(t, ctx, addr, repo, images[originAMD64], application)
 	testLegacyOriginFallback(t, ctx, addr, repo, application)
+	testUnclaimedIndexOrigin(t, ctx, addr, repo, images, application)
 	t.Run("partial-repatch-index", func(t *testing.T) {
 		for _, recorded := range []bool{true, false} {
 			inputIndex := indexOut
@@ -522,7 +523,7 @@ func TestOriginRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	preservedDesc := source.Current.Index.Manifests[1]
 	mixed := []types.PatchResult{*first["amd64"], {OriginalRef: preservedRef, PatchedRef: preservedRef, PatchedDesc: &preservedDesc}}
-	mixedOrigin := commonBaseIndexLineage(source, mixed)
+	mixedOrigin := commonBaseIndexLineage(ctx, source, mixed)
 	require.NotNil(t, mixedOrigin)
 	require.NoError(t, remote.WriteIndex(originalTag, mutate.AppendManifests(empty.Index, mutate.IndexAddendum{Add: images["amd64"]}), remote.WithContext(ctx)))
 	dir := filepath.Join(t.TempDir(), "mixed")

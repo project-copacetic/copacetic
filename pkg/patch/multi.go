@@ -415,7 +415,7 @@ func patchMultiPlatformImage(
 	if source != nil && source.Current != nil && source.Current.Index != nil {
 		originalIndexAnnotations = source.Current.Index.Annotations
 	}
-	indexLineage := commonBaseIndexLineage(source, patchResults)
+	indexLineage := commonBaseIndexLineage(ctx, source, patchResults)
 
 	if opts.Push {
 		err = createMultiPlatformManifest(ctx, patchedImageName, patchResults, originalIndexAnnotations, indexLineage)
@@ -539,6 +539,8 @@ func captureIndexSource(ctx context.Context, current *buildkit.ImageSource) (*mu
 	_, hasDigest := annotations[types.AnnotationPatchOriginDigest]
 	if !hasKind && !hasName && !hasDigest {
 		// Legacy and deliberately omitted common origins are not recovery claims.
+		// An unmarked index is only a candidate original; final aggregation
+		// must verify unchanged children before publishing a common origin.
 		if _, repatch := annotations[copaAnnotationKeyPrefix+".patched"]; !repatch {
 			source.Base = current
 			source.IndexLineage = &types.SourceLineage{Kind: types.PatchOriginImage, Name: current.Name, Digest: current.Descriptor.Digest}
@@ -625,7 +627,7 @@ func platformSourceReference(source *buildkit.ImageSource, platform *ispec.Platf
 	return pinned.String(), nil
 }
 
-func commonBaseIndexLineage(source *multiPlatformSource, items []types.PatchResult) *types.SourceLineage {
+func commonBaseIndexLineage(ctx context.Context, source *multiPlatformSource, items []types.PatchResult) *types.SourceLineage {
 	if source == nil || source.Base == nil || !source.IndexLineage.Valid() || len(items) == 0 {
 		log.Debug("Omitting index source lineage: source index identity is incomplete")
 		return nil
@@ -654,6 +656,10 @@ func commonBaseIndexLineage(source *multiPlatformSource, items []types.PatchResu
 			continue
 		}
 		if item.PatchedDesc.Digest == expected.Digest {
+			if !unpatchedIndexChild(ctx, source.Base, expected) {
+				log.Debugf("Omitting index source lineage: unchanged platform %s has unverified original ancestry", buildkit.PlatformKey(*item.PatchedDesc.Platform))
+				return nil
+			}
 			continue
 		}
 		// Preserved descriptor annotations are unverified ancestry assertions.
