@@ -512,7 +512,10 @@ func primeLocalSource(ctx context.Context, bk buildkitBuildClient, image string,
 		}
 		return gwclient.NewResult(), nil
 	}, nil)
-	return err
+	if err != nil {
+		return fmt.Errorf("%w: %w", errOriginIntegrity, err)
+	}
+	return nil
 }
 
 func primeLocalSourceWithClient(ctx context.Context, c gwclient.Client, image string, root, child digest.Digest, platform *ispec.Platform) error {
@@ -567,8 +570,16 @@ func resolveSinglePlatformSource(ctx context.Context, image string, ref referenc
 // empty export stream. BuildKit's file-sync session can serialize that sentinel
 // through Docker's HTTP request-body error before the gateway build returns,
 // leaving patchBuildErr as context cancellation instead of the typed error.
-// Other loader errors remain authoritative.
+// Origin-integrity failures take precedence; other loader errors remain authoritative.
 func selectPatchWaitError(waitErr, patchBuildErr error) error {
+	// The loader/progress goroutines can observe cancellation before Build
+	// returns the integrity failure that caused it. Preserve that cause.
+	if errors.Is(patchBuildErr, errOriginIntegrity) {
+		return patchBuildErr
+	}
+	if errors.Is(waitErr, errOriginIntegrity) {
+		return waitErr
+	}
 	if errors.Is(patchBuildErr, types.ErrNoUpdatesFound) {
 		return patchBuildErr
 	}
@@ -905,6 +916,7 @@ func executePatchBuild(
 ) (*Result, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
+	var originErr error
 	var patchResult *Result // Store the patch result with preserved states
 
 	if updates != nil {
@@ -951,6 +963,9 @@ func executePatchBuild(
 		// Execute the core patching logic
 		result, err := executePatchCoreWithSourceAnnotations(patchCtx, patchOpts, sourceAnnotations)
 		if err != nil {
+			if errors.Is(err, errOriginIntegrity) {
+				originErr = err
+			}
 			return nil, err
 		}
 
@@ -980,6 +995,13 @@ func executePatchBuild(
 
 		return result.Result, nil
 	}, buildChannel)
+
+	// BuildKit can serialize callback errors and lose Go error identity.
+	// Build waits for the callback; retain its typed integrity failure locally
+	// so the caller cannot downgrade it to an ignorable platform failure.
+	if originErr != nil {
+		return nil, originErr
+	}
 
 	// Currently can only validate updates if updating via scanner
 	var patchedImageDigest string

@@ -52,3 +52,17 @@ func TestOriginPreflightRequiresOnlyPatchingPlatforms(t *testing.T) {
 		})
 	}
 }
+
+func TestOriginIntegrityWinsConcurrentErrors(t *testing.T) {
+	cause := errors.New("recorded original vanished")
+	integrity := errors.Join(errOriginIntegrity, cause)
+	for _, other := range []error{context.Canceled, errors.New("loader stream failed"), types.ErrNoUpdatesFound, nil} {
+		got := selectPatchWaitError(other, integrity)
+		require.ErrorIs(t, got, errOriginIntegrity)
+		require.ErrorIs(t, got, cause)
+		got = selectPatchWaitError(integrity, other)
+		require.ErrorIs(t, got, errOriginIntegrity)
+	}
+	ordinary := errors.New("package update failed")
+	require.Same(t, ordinary, selectPatchWaitError(ordinary, nil))
+}

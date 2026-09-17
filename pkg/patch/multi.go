@@ -319,6 +319,9 @@ func patchMultiPlatformImage(
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
+				if errors.Is(err, errOriginIntegrity) {
+					return fmt.Errorf("platform %s: %w", platformKey, err)
+				}
 				if errors.Is(err, types.ErrNoUpdatesFound) {
 					if res != nil {
 						res.PatchedDesc = sourceDescriptors[platformKey]
@@ -372,12 +375,9 @@ func patchMultiPlatformImage(
 		})
 	}
 
-	// Wait for all goroutines to complete (don't fail early on errors if ignoring errors)
-	if err := g.Wait(); err != nil && !ignoreError {
-		// g.Wait() will return the first non-nil error from any goroutine
-		// But since we're now returning nil from all goroutines, this should only
-		// happen if context is canceled
-		// Ensure the progress channel is closed on early exit
+	// Origin-integrity and context failures abort remaining workers even with
+	// ignore-errors. Ordinary platform failures were recorded above.
+	if err := g.Wait(); err != nil {
 		closeProgressOnce.Do(func() { close(sharedProgressCh) })
 		_ = displayEg.Wait()
 		return err
