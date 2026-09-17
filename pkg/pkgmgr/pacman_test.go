@@ -82,6 +82,33 @@ func TestValidatePacmanPackageVersions(t *testing.T) {
 			ignoreErrors: false,
 		},
 		{
+			// dpkg.go reports this as an error; pacman treated it as a benign
+			// uninstall, so a package that failed to patch came back clean.
+			name: "installed package absent from the patch result",
+			updates: []unversioned.UpdatePackage{
+				{Name: "neovim", InstalledVersion: "0.9.4-1", FixedVersion: "0.9.5-2"},
+				{Name: "go", InstalledVersion: "2:1.21.5-1", FixedVersion: "2:1.21.6-1"},
+				{Name: "openssl", InstalledVersion: "3.1.4-1", FixedVersion: "3.1.5-1"},
+			},
+			cmp:                     pacmanComparer,
+			resultBytes:             pacmanValid,
+			ignoreErrors:            false,
+			expectedErrorSubstrings: []string{"installed package openssl was not present in the patch result"},
+			expectedErrPkgs:         []string{"openssl"},
+		},
+		{
+			// A package the scanner never saw installed is still a benign uninstall.
+			name: "package absent from the patch result and never installed",
+			updates: []unversioned.UpdatePackage{
+				{Name: "neovim", FixedVersion: "0.9.5-2"},
+				{Name: "go", FixedVersion: "2:1.21.6-1"},
+				{Name: "openssl", FixedVersion: "3.1.5-1"},
+			},
+			cmp:          pacmanComparer,
+			resultBytes:  pacmanValid,
+			ignoreErrors: false,
+		},
+		{
 			name: "invalid version",
 			updates: []unversioned.UpdatePackage{
 				{Name: "neovim", FixedVersion: "1.0"},
