@@ -943,3 +943,16 @@ func TestAliasValidationIsScopedToSelectedDigest(t *testing.T) {
 	assert.Equal(t, fixture.manifests[0].Digest, source.Descriptor.Digest)
 	assert.Equal(t, before, snapshotLayout(t, fixture.path))
 }
+
+func TestOutputWritePathsKeepExternalWorkRoots(t *testing.T) {
+	parent := t.TempDir()
+	output := filepath.Join(parent, "output")
+	for _, path := range []string{"", parent, filepath.Join(parent, "output-sibling"), filepath.Join(parent, "vex.json")} {
+		require.NoError(t, ValidateOutputWritePath(output, path))
+	}
+	link := filepath.Join(t.TempDir(), "parent-link")
+	require.NoError(t, os.Symlink(parent, link))
+	require.NoError(t, ValidateOutputWritePath(output, link))
+	_, err := os.Stat(output)
+	assert.True(t, os.IsNotExist(err), "validation must not create the destination")
+}

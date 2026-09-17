@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -215,7 +216,10 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 	t.Run("single report deduplicates selectors and preserves sibling", func(t *testing.T) {
 		input := writeLayout(t, images, true, false)
 		before := snapshot(t, input)
-		opts := options(input, filepath.Join(t.TempDir(), "output"))
+		workRoot := t.TempDir()
+		require.NoError(t, os.Chmod(workRoot, 0o744))
+		opts := options(input, filepath.Join(workRoot, "output"))
+		opts.WorkingFolder = workRoot
 		opts.Report = writeReport(t, amd64Arch)
 		opts.Platforms = []string{"linux/amd64", "linux/x86_64", "linux/amd64"}
 		require.NoError(t, patch.Patch(t.Context(), opts))
@@ -309,6 +313,17 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 				}
 			})
 		}
+		t.Run("report directory rejects unsupported sibling report", func(t *testing.T) {
+			opts := options(input, filepath.Join(t.TempDir(), "output"))
+			opts.Report = filepath.Dir(writeReport(t, amd64Arch))
+			data, err := os.ReadFile(writeReport(t, "mips64le"))
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(opts.Report, "unsupported.json"), data, 0o600))
+			assert.ErrorContains(t, patch.Patch(t.Context(), opts), "unsupported scan report")
+			assert.Equal(t, before, snapshot(t, input))
+			_, err = os.Stat(opts.OCIDir)
+			assert.True(t, os.IsNotExist(err), "unsupported report must prevent publication")
+		})
 		for _, target := range []string{"windows/amd64", "linux/mips64le"} {
 			opts := options(input, filepath.Join(t.TempDir(), "output"))
 			opts.Platforms = []string{target}
@@ -386,6 +401,18 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 			_, err := os.Stat(opts.OCIDir)
 			assert.True(t, os.IsNotExist(err))
 		}
+	})
+
+	t.Run("working folder inside output fails before patching", func(t *testing.T) {
+		input := writeLayout(t, images, false, false)
+		before := snapshot(t, input)
+		opts := options(input, filepath.Join(t.TempDir(), "output"))
+		opts.WorkingFolder = filepath.Join(opts.OCIDir, "work")
+		opts.Report = writeReport(t, amd64Arch)
+		require.ErrorContains(t, patch.Patch(t.Context(), opts), "must not be inside OCI layout output")
+		assert.Equal(t, before, snapshot(t, input))
+		_, err := os.Stat(opts.OCIDir)
+		assert.True(t, os.IsNotExist(err), "rejection must precede working-folder creation")
 	})
 
 	t.Run("failed source unpack leaves input and output untouched", func(t *testing.T) {
@@ -658,5 +685,95 @@ func TestOCILayoutSingleReportRejectsDistinctTargetsAndConflicts(t *testing.T) {
 			_, err := os.Stat(opts.OCIDir)
 			assert.True(t, os.IsNotExist(err))
 		})
+	}
+}
+
+func TestOCILayoutRejectsUnsupportedDirectoryReports(t *testing.T) {
+	for _, platform := range []ocispec.Platform{{OS: linuxOS, Architecture: "mips64le"}, {OS: "windows", Architecture: amd64Arch}} {
+		t.Run(platform.OS+"/"+platform.Architecture, func(t *testing.T) {
+			images := make(map[string]v1.Image)
+			for _, identity := range []ocispec.Platform{{OS: linuxOS, Architecture: amd64Arch}, platform} {
+				config, err := empty.Image.ConfigFile()
+				require.NoError(t, err)
+				config.OS, config.Architecture = identity.OS, identity.Architecture
+				img, err := mutate.ConfigFile(empty.Image, config)
+				require.NoError(t, err)
+				images[identity.OS+"/"+identity.Architecture] = img
+			}
+			input := writeLayout(t, images, true, false)
+			before := snapshot(t, input)
+			for _, mixed := range []bool{false, true} {
+				for _, ignore := range []bool{false, true} {
+					reportFile := writeReport(t, platform.Architecture)
+					if platform.OS == "windows" {
+						data, err := os.ReadFile(reportFile)
+						require.NoError(t, err)
+						data = []byte(strings.ReplaceAll(string(data), `"Family":"alpine"`, `"Family":"windows"`))
+						require.NoError(t, os.WriteFile(reportFile, data, 0o600))
+					}
+					if platform.OS == "windows" {
+						ordinary, err := buildkit.DiscoverPlatformsFromReport(filepath.Dir(reportFile), "trivy")
+						require.NoError(t, err)
+						assert.Empty(t, ordinary, "named-image discovery retains its unsupported OS policy")
+					}
+					if mixed {
+						data, err := os.ReadFile(writeReport(t, amd64Arch))
+						require.NoError(t, err)
+						require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(reportFile), "supported.json"), data, 0o600))
+					}
+					opts := &types.Options{
+						InputOCILayout: input, OCIDir: filepath.Join(t.TempDir(), "output"), PatchedTag: outputName,
+						Report: filepath.Dir(reportFile), Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch",
+						BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, IgnoreError: ignore, Progress: progressui.QuietMode,
+					}
+					err := patch.Patch(t.Context(), opts)
+					assert.ErrorContains(t, err, "unsupported scan report", "mixed=%v ignore=%v", mixed, ignore)
+					assert.Equal(t, before, snapshot(t, input))
+					_, err = os.Stat(opts.OCIDir)
+					assert.True(t, os.IsNotExist(err), "no output for rejected report")
+				}
+			}
+		})
+	}
+}
+
+func TestOCILayoutRejectsOutputWriteConflicts(t *testing.T) {
+	config, err := empty.Image.ConfigFile()
+	require.NoError(t, err)
+	config.OS, config.Architecture = linuxOS, amd64Arch
+	img, err := mutate.ConfigFile(empty.Image, config)
+	require.NoError(t, err)
+	input := writeLayout(t, map[string]v1.Image{amd64Arch: img}, false, false)
+	before := snapshot(t, input)
+	for _, kind := range []string{"working folder", "VEX file"} {
+		for _, relation := range []string{"equal", "nested", "symlink"} {
+			t.Run(kind+"/"+relation, func(t *testing.T) {
+				parent := t.TempDir()
+				output := filepath.Join(parent, "output")
+				writePath := output
+				switch relation {
+				case "nested":
+					writePath = filepath.Join(output, "auxiliary")
+				case "symlink":
+					link := filepath.Join(t.TempDir(), "output-parent")
+					require.NoError(t, os.Symlink(parent, link))
+					writePath = filepath.Join(link, "output", "auxiliary")
+				}
+				opts := &types.Options{
+					InputOCILayout: input, OCIDir: output, PatchedTag: outputName,
+					Report: writeReport(t, amd64Arch), Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch",
+					BkAddr: "tcp://127.0.0.1:1", Timeout: time.Second, Progress: progressui.QuietMode,
+				}
+				if kind == "working folder" {
+					opts.WorkingFolder = writePath
+				} else {
+					opts.Output = writePath
+				}
+				require.ErrorContains(t, patch.Patch(t.Context(), opts), "must not be inside OCI layout output")
+				assert.Equal(t, before, snapshot(t, input))
+				_, err := os.Stat(output)
+				assert.True(t, os.IsNotExist(err))
+			})
+		}
 	}
 }

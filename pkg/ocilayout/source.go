@@ -157,6 +157,28 @@ func (s *Source) ValidateWritePath(path string) error {
 	return nil
 }
 
+// ValidateOutputWritePath keeps auxiliary writes outside an exported layout.
+// Working directories inside it create the destination before atomic export;
+// VEX files inside it could overwrite the completed graph. Ancestor work roots
+// remain valid because they do not create the destination itself.
+func ValidateOutputWritePath(outputPath, path string) error {
+	if path == "" {
+		return nil
+	}
+	output, err := canonicalTargetPath(outputPath)
+	if err != nil {
+		return fmt.Errorf("resolve OCI layout output %q: %w", outputPath, err)
+	}
+	target, err := canonicalTargetPath(path)
+	if err != nil {
+		return fmt.Errorf("resolve write path %q: %w", path, err)
+	}
+	if pathWithin(output, target) {
+		return fmt.Errorf("write path %q must not be inside OCI layout output %q", path, outputPath)
+	}
+	return nil
+}
+
 // ValidateTempDir checks a shared temporary root without rejecting an ancestor
 // of the source: exclusive temporary allocations alongside the input are safe.
 func (s *Source) ValidateTempDir(path string) error {

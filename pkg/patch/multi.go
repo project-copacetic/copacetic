@@ -46,7 +46,7 @@ func patchMultiPlatformImage(
 			if err != nil {
 				return err
 			}
-			reportPlatforms, err := buildkit.DiscoverPlatformsFromReport(reportDir, opts.Scanner)
+			reportPlatforms, err := buildkit.DiscoverPlatformsFromReportStrict(reportDir, opts.Scanner)
 			if err != nil {
 				return err
 			}
@@ -55,6 +55,9 @@ func patchMultiPlatformImage(
 				match, err := resolveOCIPlatform(platforms, &platform.Platform)
 				if err != nil {
 					return fmt.Errorf("report %s: %w", platform.ReportFile, err)
+				}
+				if !isSupportedPatchPlatform(&match.Platform) {
+					return fmt.Errorf("unsupported scan report platform %q in report %s", buildkit.FormatPlatform(match.Platform), platform.ReportFile)
 				}
 				key := buildkit.PlatformKey(match.Platform)
 				if _, exists := reportFiles[key]; exists {

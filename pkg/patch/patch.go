@@ -122,6 +122,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			if err := source.ValidateWritePath(path); err != nil {
 				return err
 			}
+			if err := ocilayout.ValidateOutputWritePath(opts.OCIDir, path); err != nil {
+				return err
+			}
 		}
 		opts.OCISource = source
 		opts.Image = ""

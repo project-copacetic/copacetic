@@ -261,6 +261,16 @@ func extractLabelsFromConfig(configData []byte) map[string]string {
 }
 
 func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatform, error) {
+	return discoverPlatformsFromReport(reportDir, scanner, false)
+}
+
+// DiscoverPlatformsFromReportStrict rejects reports that ordinary named-image
+// discovery skips. OCI input must not silently preserve a requested target.
+func DiscoverPlatformsFromReportStrict(reportDir, scanner string) ([]types.PatchPlatform, error) {
+	return discoverPlatformsFromReport(reportDir, scanner, true)
+}
+
+func discoverPlatformsFromReport(reportDir, scanner string, strict bool) ([]types.PatchPlatform, error) {
 	var platforms []types.PatchPlatform
 
 	reportNames, err := os.ReadDir(reportDir)
@@ -280,6 +290,9 @@ func DiscoverPlatformsFromReport(reportDir, scanner string) ([]types.PatchPlatfo
 
 		// use this to confirm that os type (ex/Debian) is linux based and supported since report.Metadata.OS.Type gives specific like "debian" rather than "linux"
 		if !isSupportedOsType(report.Metadata.OS.Type) {
+			if strict {
+				return nil, fmt.Errorf("unsupported scan report OS %q in report %s", report.Metadata.OS.Type, filePath)
+			}
 			continue
 		}
 
