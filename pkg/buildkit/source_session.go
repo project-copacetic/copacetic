@@ -84,6 +84,9 @@ func ResolveImageSourceWithClient(ctx context.Context, c gwclient.Client, image 
 	if manifest.Index != nil {
 		return nil, fmt.Errorf("BuildKit source platform is another index")
 	}
+	if manifest.Descriptor.Size != child.Size || (manifest.Descriptor.MediaType != "" && manifest.Descriptor.MediaType != child.MediaType) {
+		return nil, fmt.Errorf("BuildKit source platform manifest does not match selected descriptor")
+	}
 	for i := range source.Index.Manifests {
 		if source.Index.Manifests[i].Digest == child.Digest {
 			annotations, err := MergeImageSourceAnnotations(source.Index.Manifests[i].Annotations, manifest.Descriptor.Annotations)

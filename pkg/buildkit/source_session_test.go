@@ -33,11 +33,17 @@ func TestSourceSessionCapture(t *testing.T) {
 	const indexCase = "index"
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
 	config := []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{}}}`)
-	for _, scenario := range []string{"manifest", indexCase, "corrupt blob", "wrong config", "wrong child", "canceled", "old server"} {
+	for _, scenario := range []string{
+		"manifest", indexCase, "corrupt blob", "wrong config", "wrong child", "missing size", "wrong size",
+		"negative size", "wrong media type", "missing manifest media type", "canceled", "old server",
+	} {
 		t.Run(scenario, func(t *testing.T) {
 			manifest := specs.Manifest{
 				Versioned: specsgo.Versioned{SchemaVersion: 2}, MediaType: specs.MediaTypeImageManifest,
 				Config: specs.Descriptor{Digest: digest.FromBytes(config), Size: int64(len(config))}, Annotations: map[string]string{"com.example.manifest": "preserved"},
+			}
+			if scenario == "missing manifest media type" {
+				manifest.MediaType = ""
 			}
 			if scenario == "wrong config" {
 				manifest.Config.Digest = digest.FromString("another config")
@@ -47,10 +53,23 @@ func TestSourceSessionCapture(t *testing.T) {
 			child := digest.FromBytes(data)
 			root := child
 			blobs := map[digest.Digest][]byte{child: data}
-			if scenario == indexCase || scenario == "wrong child" {
+			if scenario == indexCase || scenario == "wrong child" || strings.Contains(scenario, "size") || strings.Contains(scenario, "media type") {
 				index := specs.Index{
 					Versioned: specsgo.Versioned{SchemaVersion: 2}, MediaType: specs.MediaTypeImageIndex,
-					Manifests: []specs.Descriptor{{Digest: child, MediaType: specs.MediaTypeImageManifest, Platform: platform, Annotations: map[string]string{"com.example.descriptor": "preserved"}}},
+					Manifests: []specs.Descriptor{{
+						Digest: child, Size: int64(len(data)), MediaType: specs.MediaTypeImageManifest,
+						Platform: platform, Annotations: map[string]string{"com.example.descriptor": "preserved"},
+					}},
+				}
+				switch scenario {
+				case "missing size":
+					index.Manifests[0].Size = 0
+				case "wrong size":
+					index.Manifests[0].Size++
+				case "negative size":
+					index.Manifests[0].Size = -1
+				case "wrong media type":
+					index.Manifests[0].MediaType = "application/vnd.docker.distribution.manifest.v2+json"
 				}
 				indexData, err := json.Marshal(index)
 				require.NoError(t, err)
@@ -97,7 +116,7 @@ func TestSourceSessionCapture(t *testing.T) {
 			}
 			source, err := ResolveImageSourceWithClient(t.Context(), gateway, "example.com/source:mutable", platform)
 			switch scenario {
-			case "manifest", indexCase, "old server":
+			case "manifest", indexCase, "old server", "missing manifest media type":
 				require.NoError(t, err)
 				require.Equal(t, root, source.Descriptor.Digest)
 				if scenario == indexCase {
