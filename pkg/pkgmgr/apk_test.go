@@ -158,6 +158,33 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			ignoreErrors: true,
 		},
 		{
+			// dpkg.go reports this as an error; apk treated it as a benign uninstall,
+			// so a package that failed to patch came back as a clean result.
+			name: "installed package absent from the patch result",
+			updates: []unversioned.UpdatePackage{
+				{Name: "apk-tools", InstalledVersion: "2.12.6-r0", FixedVersion: "2.12.7-r0"},
+				{Name: "busybox", InstalledVersion: "1.33.1-r7", FixedVersion: "1.33.1-r8"},
+				{Name: "openssl", InstalledVersion: "1.1.1t-r0", FixedVersion: "1.1.1u-r0"},
+			},
+			cmp:             apkComparer,
+			resultsBytes:    apkValid,
+			ignoreErrors:    false,
+			expectedError:   "installed package openssl was not present in the patch result",
+			expectedErrPkgs: []string{"openssl"},
+		},
+		{
+			// A package the scanner never saw installed is still a benign uninstall.
+			name: "package absent from the patch result and never installed",
+			updates: []unversioned.UpdatePackage{
+				{Name: "apk-tools", FixedVersion: "2.12.7-r0"},
+				{Name: "busybox", FixedVersion: "1.33.1-r8"},
+				{Name: "openssl", FixedVersion: "1.1.1u-r0"},
+			},
+			cmp:          apkComparer,
+			resultsBytes: apkValid,
+			ignoreErrors: false,
+		},
+		{
 			name:          "expected 1 updates, installed 2",
 			updates:       []unversioned.UpdatePackage{{Name: "apk-tools", FixedVersion: "2.12.7-r0"}},
 			cmp:           apkComparer,

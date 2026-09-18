@@ -1261,6 +1261,17 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	for _, update := range updates {
 		expectedPrefix := update.Name + "\t"
 		if lineIndex >= len(lines) || !strings.HasPrefix(lines[lineIndex], expectedPrefix) {
+			// A package the scanner reported as installed, that is absent from the
+			// post-patch manifest, was not patched. dpkg.go:2167-2183 already splits
+			// these two cases; treating both as a benign uninstall here lets a failed
+			// patch return a clean result.
+			if update.InstalledVersion != "" {
+				err := fmt.Errorf("installed package %s was not present in the patch result", update.Name)
+				log.Error(err)
+				errorPkgs = append(errorPkgs, update.Name)
+				allErrors = multierror.Append(allErrors, err)
+				continue
+			}
 			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
 			continue
 		}

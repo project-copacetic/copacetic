@@ -343,6 +343,33 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 			ignoreErrors: false,
 		},
 		{
+			// dpkg.go reports this as an error; rpm treated it as a benign uninstall,
+			// so a package that failed to patch came back as a clean result.
+			name: "installed package absent from the patch result",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", InstalledVersion: "1.1.1k-20.cm2", FixedVersion: "1.1.1k-21.cm2"},
+				{Name: "openssl-libs", InstalledVersion: "1.1.1k-20.cm2", FixedVersion: "1.1.1k-21.cm2"},
+				{Name: "zlib", InstalledVersion: "1.2.12-1.cm2", FixedVersion: "1.2.13-1.cm2"},
+			},
+			cmp:             rpmComparer,
+			resultsBytes:    rpmValidManifest,
+			ignoreErrors:    false,
+			expectedError:   "installed package zlib was not present in the patch result",
+			expectedErrPkgs: []string{"zlib"},
+		},
+		{
+			// A package the scanner never saw installed is still a benign uninstall.
+			name: "package absent from the patch result and never installed",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
+				{Name: "openssl-libs", FixedVersion: "1.1.1k-21.cm2"},
+				{Name: "zlib", FixedVersion: "1.2.13-1.cm2"},
+			},
+			cmp:          rpmComparer,
+			resultsBytes: rpmValidManifest,
+			ignoreErrors: false,
+		},
+		{
 			name: "downloaded package version lower than required",
 			updates: unversioned.UpdatePackages{
 				{Name: "openssl", FixedVersion: "3.1.1k-21.cm2"},
