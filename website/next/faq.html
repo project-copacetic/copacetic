@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.bbb483a2.css">
-<script src="/copacetic/website/assets/js/runtime~main.ffb24e16.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.8ef55f5f.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.052dd6aa.js" defer="defer"></script>
 </head>
 <body>
@@ -50,6 +50,27 @@
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="dpkg">DPKG<a href="#dpkg" class="hash-link" aria-label="Direct link to DPKG" title="Direct link to DPKG" translate="no">​</a></h3>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="debian">Debian<a href="#debian" class="hash-link" aria-label="Direct link to Debian" title="Direct link to Debian" translate="no">​</a></h4>
 <p>All debian-based images have their <code>minor.patch</code> versioning stripped and <code>-slim</code> appended. e.g. if <code>nginx:1.21.6</code> is being patched, <code>ghcr.io/project-copacetic/copacetic/debian:11-slim</code> is used as the tooling image.</p>
+<p>For Distroless images with <code>/var/lib/dpkg/status.d</code>, Copa uses the tooling image
+to run package maintainer scripts. If the target has no Debconf configuration,
+Copa supplies temporary configuration and databases so packages such as <code>tzdata</code>
+can finish installing. This temporary state is removed before exporting the
+patched image. Existing Debconf configuration is preserved, including a custom
+path selected by the target image&#x27;s <code>DEBCONF_SYSTEMRC</code> environment variable.
+The conventional value <code>DEBCONF_SYSTEMRC=1</code> skips the user&#x27;s configuration and
+selects <code>/etc/debconf.conf</code> or <code>/usr/share/debconf/debconf.conf</code>. Copa passes the
+validated absolute path to Debconf; a relative file named <code>1</code> is not used.
+Package configuration continues to use that configuration&#x27;s saved answers.
+Configuration and database paths must be absolute, contain no <code>.</code> or <code>..</code>
+components, and resolve inside the target image. Environment substitutions such
+as <code>${DEBCONF_DB_DIR}</code> and per-database <code>Root:</code> overrides (including an empty
+<code>Root:</code>) in Debconf configuration are not supported. Copa rejects these before
+installing packages because they can redirect saved answers outside the target
+image&#x27;s databases. Debconf state under
+<code>/var/lib/dpkg</code> is rejected because that directory is rebuilt temporarily during
+patching. Absolute symlinks in configuration or database paths are also rejected;
+relative links must stay within the mounted target root. Copa preserves an
+existing regular <code>/etc/localtime</code> file when <code>/etc/timezone</code> is absent, including
+when a Debconf configuration exists but has no saved timezone answers.</p>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="ubuntu">Ubuntu<a href="#ubuntu" class="hash-link" aria-label="Direct link to Ubuntu" title="Direct link to Ubuntu" translate="no">​</a></h4>
 <p>Copa selects DPKG tooling from the target&#x27;s detected Ubuntu version. For
 example, patching <code>tomcat:10.1.17-jre17-temurin-jammy</code> uses
