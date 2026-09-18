@@ -160,7 +160,11 @@ func TestSetupBuildkitConfigAndManagerWithOptionsPreservesOSReleaseErrors(t *tes
 			client := new(mocks.MockGWClient)
 			client.On("ResolveImageConfig", mock.Anything, image, mock.Anything).
 				Return(image, digest.FromString(image), []byte(`{"config":{}}`), nil).
-				Twice()
+				Once()
+			pinned := "docker.io/example/os-release-test@" + digest.FromString(image).String()
+			client.On("ResolveImageConfig", mock.Anything, pinned, mock.Anything).
+				Return(pinned, digest.FromString(image), []byte(`{"config":{}}`), nil).
+				Once()
 			client.On("Solve", mock.Anything, mock.Anything).Return(result, nil).Once()
 
 			_, _, err := SetupBuildkitConfigAndManagerWithOptions(

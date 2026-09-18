@@ -217,6 +217,12 @@ fi
 docker build -t nginx:patched - < "$CACHE_FILE"
 ```
 
+### Patch origin metadata
+
+Frontend outputs record `sh.copa.patch.origin.{kind,name,digest}` in image-config labels and OCI manifest annotations. The tuple identifies the original non-Copa source resolved by BuildKit. For an index input, BuildKit can return the original index digest together with the selected platform config; the frontend preserves that source identity. Both first and subsequent patches point directly to the same original source. Re-patching these outputs with the CLI preserves their recorded origin.
+
+Application-owned `org.opencontainers.image.base.*` config labels remain unchanged. Legacy `BaseImage`-only images without a verified origin omit the origin tuple. Source resolution uses BuildKit's client authentication session. When the server supports image blob sources, immutable OCI-index and Docker manifest-list recovery uses that session as well. Older servers retain the compatibility recovery path, which requires the Copa process to access the original index.
+
 ## Troubleshooting
 
 ### "No local sources enabled" Error

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/opencontainers/go-digest"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/exp/slices"
 
@@ -27,6 +30,16 @@ type Options struct {
 	// Image and platform information
 	ImageName      string
 	TargetPlatform *types.PatchPlatform
+	// SourceImageName retains the user's normalized image reference when a
+	// multi-platform child is pinned by digest for BuildKit resolution.
+	SourceImageName string
+	// ExpectedSourceDigest is the captured child-manifest digest that the
+	// BuildKit resolution must match on a first multi-platform patch.
+	ExpectedSourceDigest digest.Digest
+	// RequireBaseManifest omits unverified lineage on older re-patched
+	// multi-platform children rather than publishing a top-level index digest as
+	// though it were the selected child-manifest digest.
+	RequireBaseManifest bool
 
 	// Update information
 	Updates          *unversioned.UpdateManifest
@@ -128,14 +141,20 @@ func preflightReportForNativeChisel(
 // ExecutePatchCore executes the core patching logic that can be used by both
 // the patch command and a buildkit frontend.
 func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
+	return executePatchCoreWithSourceAnnotations(patchCtx, opts, nil)
+}
+
+// Keep source validation internal so existing core callers and public options
+// retain their API while the CLI can supply captured manifest metadata.
+func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sourceAnnotations map[string]string) (*Result, error) {
 	ctx := patchCtx.Context
 	c := patchCtx.Client
 	workingFolder := opts.WorkingFolder
 	ignoreError := opts.IgnoreError
 	updates := opts.Updates
 
-	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	// Configure buildctl/client for use by package manager.
+	config, err := initializePatchConfig(ctx, c, opts, sourceAnnotations)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
@@ -234,11 +253,16 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	// Collect optional package-manager metadata after installation, when values
 	// such as resolved release and tool versions are available.
 	managerAnnotations := pkgmgr.GetPackageManagerAnnotations(manager)
+	resultAnnotations := maps.Clone(managerAnnotations)
+	if resultAnnotations == nil {
+		resultAnnotations = make(map[string]string)
+	}
+	maps.Copy(resultAnnotations, sourceLineageAnnotations(config.SourceLineage))
 
 	// Preserve the state and config for potential OCI export use. Mirror the
 	// annotations into image-config labels as well as manifest annotations so
 	// frontends and exporters that consume config metadata retain the provenance.
-	preservedConfig, err := imageConfigWithAnnotations(config, managerAnnotations)
+	preservedConfig, err := imageConfigWithAnnotations(config, resultAnnotations)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
@@ -256,7 +280,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 			PackageType:      packageType(manager),
 			ErroredPackages:  errPkgs,
 			ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
-			Annotations:      managerAnnotations,
+			Annotations:      resultAnnotations,
 			PatchedState:     preservedState,
 			ConfigData:       preservedConfig,
 		}, nil
@@ -287,7 +311,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		return nil, err
 	}
 	res.AddMeta(exptypes.ExporterImageConfigKey, fixed)
-	addPackageManagerAnnotations(res, managerAnnotations)
+	addResultAnnotations(res, resultAnnotations)
 
 	// Return result with BOTH the solved result AND preserved states
 	// This enables Docker export (from result) AND OCI layout (from states)
@@ -296,10 +320,83 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 		PackageType:      packageType(manager),
 		ErroredPackages:  errPkgs,
 		ValidatedUpdates: getValidatedUpdates(opts.Updates, errPkgs),
-		Annotations:      managerAnnotations,
+		Annotations:      resultAnnotations,
 		PatchedState:     preservedState,  // Always preserve for OCI export
 		ConfigData:       preservedConfig, // Always preserve for OCI export
 	}, nil
+}
+
+var errOriginIntegrity = errors.New("patch origin integrity validation failed")
+
+// Use identical config recovery and origin checks before multi-platform exports
+// and inside each patch build. This includes recovering the recorded original,
+// not just validating the shape of its labels.
+func initializePatchConfig(ctx context.Context, c gwclient.Client, opts *Options, annotations map[string]string) (*buildkit.Config, error) {
+	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+	}
+	if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
+		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+	}
+	config.SourceLineage, err = sourceLineageForPatch(config, opts)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+	}
+	return config, nil
+}
+
+func sourceLineageForPatch(config *buildkit.Config, opts *Options) (*types.SourceLineage, error) {
+	if opts.RequireBaseManifest && (config == nil || config.PatchedConfigData == nil) && !isUnverifiedLegacyFallback(config) {
+		var resolved digest.Digest
+		if config != nil && config.SourceLineage.Valid() {
+			resolved = config.SourceLineage.Digest
+		}
+		if opts.ExpectedSourceDigest.Validate() != nil || resolved != opts.ExpectedSourceDigest {
+			return nil, fmt.Errorf("BuildKit source does not match captured source manifest: expected %q, resolved %q", opts.ExpectedSourceDigest, resolved)
+		}
+	}
+	if config == nil || !config.SourceLineage.Valid() {
+		return nil, nil
+	}
+	if opts.RequireBaseManifest && config.PatchedConfigData != nil && !config.SourceLineageValidated {
+		return nil, nil
+	}
+
+	lineage := *config.SourceLineage
+	if config.PatchedConfigData == nil && opts.SourceImageName != "" {
+		if sourceName, err := reference.ParseNormalizedNamed(opts.SourceImageName); err == nil {
+			if reference.IsNameOnly(sourceName) {
+				sourceName = reference.TagNameOnly(sourceName)
+			}
+			if pinned, ok := sourceName.(reference.Digested); ok && pinned.Digest() != lineage.Digest {
+				sourceName, err = reference.WithDigest(reference.TrimNamed(sourceName), lineage.Digest)
+				if err != nil {
+					return nil, nil
+				}
+			}
+			lineage.Name = sourceName.String()
+		}
+	}
+	return &lineage, nil
+}
+
+// Original input labels distinguish legacy fallback from a first patch. The
+// fallback deliberately keeps current layers without claiming verified origin.
+func isUnverifiedLegacyFallback(config *buildkit.Config) bool {
+	if config == nil || config.PatchedConfigData != nil || config.SourceLineage != nil || config.ImageLabels["BaseImage"] == "" {
+		return false
+	}
+	for _, key := range []string{types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
+		if _, present := config.ImageLabels[key]; present {
+			return false
+		}
+	}
+	return true
+}
+
+func sourceLineageAnnotations(lineage *types.SourceLineage) map[string]string {
+	return lineage.Annotations()
 }
 
 func preservedImageState(state *llb.State, config []byte) (*llb.State, error) {
@@ -322,11 +419,21 @@ func imageConfigWithAnnotations(config *buildkit.Config, annotations map[string]
 		}
 		configData = merged
 	}
+	var err error
+	configData, err = buildkit.RemoveImageConfigLabels(
+		configData,
+		types.AnnotationPatchOriginKind,
+		types.AnnotationPatchOriginName,
+		types.AnnotationPatchOriginDigest,
+	)
+	if err != nil {
+		return nil, err
+	}
 	return common.AddImageConfigLabels(configData, annotations)
 }
 
-// addPackageManagerAnnotations exposes manager-provided OCI annotations to the exporter.
-func addPackageManagerAnnotations(result *gwclient.Result, annotations map[string]string) {
+// addResultAnnotations exposes patch metadata as OCI manifest annotations to the exporter.
+func addResultAnnotations(result *gwclient.Result, annotations map[string]string) {
 	if result == nil {
 		return
 	}

@@ -52,10 +52,10 @@ func authenticatedSolveOpt() client.SolveOpt {
 // the unpatched version (matches the index-level rewrite in
 // pkg/patch/manifest.go).
 //
-// Note: BuildKit's Docker exporter (--load and Docker schema 2 push) writes a
-// manifest format that has no `annotations` field; the annotation.* attrs are
-// silently dropped there. Annotations are preserved end-to-end only on OCI
-// exports. This matches the pre-existing behavior of the
+// Note: BuildKit's Docker exporter (--load and Docker schema 2 push) uses a
+// format that does not standardize `annotations`; consumers may discard them
+// even when an exporter includes them. Portable manifest annotations are
+// guaranteed only on OCI exports, including the existing
 // sh.copa.image.patched annotation.
 func createBuildConfig(
 	patchedImageName string,
@@ -77,7 +77,7 @@ func createBuildConfig(
 	// Forward original manifest annotations into the exporter so the pushed/
 	// loaded manifest preserves them. Copa's own annotations below always win
 	// when their keys collide because we set them last.
-	for k, v := range originalAnnotations {
+	for k, v := range withoutSourceLineageAnnotations(originalAnnotations) {
 		attrs["annotation."+k] = v
 	}
 	// Copa-specific annotations: bump the OCI created time and stamp our patched marker.
