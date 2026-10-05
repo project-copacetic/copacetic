@@ -131,21 +131,26 @@ func TestClassifyDPKGInstallationMode(t *testing.T) {
 		errContains []string
 	}{
 		{
-			name: "native manifest wins over full status and tools",
+			name: "full status wins over native manifest when both present",
 			probe: dpkgProbeResult{
 				hasManifest: true,
 				hasStatus:   true,
 			},
-			want: dpkgInstallationModeNativeChisel,
+			want: dpkgInstallationModeTargetTools,
 		},
 		{
-			name: "native manifest wins over every other format",
+			name: "full status missing tools wins over native manifest",
 			probe: dpkgProbeResult{
-				hasManifest:            true,
-				hasStatus:              true,
-				hasStatusDirectory:     true,
-				hasAdministrativeState: true,
-				missingTools:           []string{"apt-get", "sh"},
+				hasManifest:  true,
+				hasStatus:    true,
+				missingTools: []string{"tee"},
+			},
+			want: dpkgInstallationModeExternalFullStatus,
+		},
+		{
+			name: "pure native manifest without status uses native chisel",
+			probe: dpkgProbeResult{
+				hasManifest: true,
 			},
 			want: dpkgInstallationModeNativeChisel,
 		},
