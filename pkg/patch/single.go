@@ -281,16 +281,18 @@ func patchSingleArchImageWithUpdates(
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
+	var patchVEX *types.PlatformVEX
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+		result, vexData, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
 		patchBuildErr = err
 		if err != nil {
 			return err
 		}
 		patchResult = result
+		patchVEX = vexData
 		log.Debugf("BuildKit build completed for %s", patchedImageName)
 		return nil
 	})
@@ -339,6 +341,7 @@ func patchSingleArchImageWithUpdates(
 	if err != nil {
 		return nil, err
 	}
+	result.VEX = patchVEX
 	if updates != nil {
 		result.Summary = updates.CombinedSummary()
 	}
@@ -641,7 +644,7 @@ func executePatchBuild(
 	toolchainPatchLevel string,
 	goVCSURL string,
 	chiselRelease string,
-) (*Result, error) {
+) (*Result, *types.PlatformVEX, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
 	var patchResult *Result // Store the patch result with preserved states
@@ -723,17 +726,26 @@ func executePatchBuild(
 		digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 		patchedImageDigest = digest
 	}
-	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+	var platformVEX *types.PlatformVEX
+	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil &&
+		(len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 		nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
-		// vex document must contain at least one statement
-		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
+		platformVEX = &types.PlatformVEX{
+			Updates:         validatedManifest,
+			PkgType:         pkgType,
+			NameDigestOrTag: nameDigestOrTag,
+		}
+		// Single-platform runs write the document here. Multi-platform runs clear
+		// Output on the per-platform options so this write is skipped; one document
+		// is written after every platform finishes.
+		if output != "" {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
-	return patchResult, err
+	return patchResult, platformVEX, err
 }
 
 // shouldIncludeOSUpdates returns true if OS updates should be included based on package types.
