@@ -2,10 +2,15 @@ package patch
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -174,6 +179,117 @@ func TestMarkPlatformPreserved(t *testing.T) {
 
 	assert.False(t, platforms[0].ShouldPreserve)
 	assert.True(t, platforms[1].ShouldPreserve)
+}
+
+func TestPlatformBuildOptionsClearsSharedVEXOutput(t *testing.T) {
+	t.Parallel()
+
+	opts := &types.Options{
+		Image:       "docker.io/library/nginx:1.25",
+		Output:      "vex.json",
+		Format:      "openvex",
+		Report:      "reports",
+		IgnoreError: true,
+	}
+
+	got := platformBuildOptions(opts, "reports/linux-amd64.json")
+
+	require.NotNil(t, got)
+	assert.Equal(t, "reports/linux-amd64.json", got.Report)
+	assert.Empty(t, got.Output)
+	assert.Equal(t, "openvex", got.Format)
+	assert.True(t, got.IgnoreError)
+	assert.Equal(t, "docker.io/library/nginx:1.25", got.Image)
+	assert.Equal(t, "vex.json", opts.Output)
+	assert.Equal(t, "reports", opts.Report)
+}
+
+func TestWriteMultiPlatformVEX(t *testing.T) {
+	t.Parallel()
+
+	amd64 := platformSpec("linux", "amd64", "")
+	arm64 := platformSpec("linux", "arm64", "")
+	ppc64le := platformSpec("linux", "ppc64le", "")
+	platforms := []types.PatchPlatform{
+		{Platform: amd64},
+		{Platform: ppc64le, ShouldPreserve: true},
+		{Platform: arm64},
+	}
+	// Filled in reverse completion order. ppc64le is preserved and has no entry.
+	vexByPlatform := map[string]*types.PlatformVEX{
+		buildkit.PlatformKey(arm64): platformVEX(t, "nginx@sha256:arm64", "arm64"),
+		buildkit.PlatformKey(amd64): platformVEX(t, "nginx@sha256:amd64", "amd64"),
+	}
+
+	t.Run("writes one document in platform order", func(t *testing.T) {
+		t.Parallel()
+
+		outputPath := filepath.Join(t.TempDir(), "vex.json")
+		err := writeMultiPlatformVEX(platforms, vexByPlatform, "openvex", outputPath)
+		require.NoError(t, err)
+
+		body, err := os.ReadFile(outputPath)
+		require.NoError(t, err)
+
+		var doc struct {
+			Statements []struct {
+				Products []struct {
+					ID            string `json:"@id"`
+					Subcomponents []struct {
+						ID string `json:"@id"`
+					} `json:"subcomponents"`
+				} `json:"products"`
+			} `json:"statements"`
+		}
+		require.NoError(t, json.Unmarshal(body, &doc))
+		require.Len(t, doc.Statements, 1)
+		require.Len(t, doc.Statements[0].Products, 2)
+		assert.Equal(t, "pkg:oci/nginx@sha256:amd64", doc.Statements[0].Products[0].ID)
+		assert.Equal(t, "pkg:oci/nginx@sha256:arm64", doc.Statements[0].Products[1].ID)
+		require.NotEmpty(t, doc.Statements[0].Products[0].Subcomponents)
+		require.NotEmpty(t, doc.Statements[0].Products[1].Subcomponents)
+		assert.Contains(t, doc.Statements[0].Products[0].Subcomponents[0].ID, "arch=amd64")
+		assert.Contains(t, doc.Statements[0].Products[1].Subcomponents[0].ID, "arch=arm64")
+		assert.NotContains(t, string(body), "ppc64le")
+	})
+
+	t.Run("returns an error when the VEX file cannot be written", func(t *testing.T) {
+		t.Parallel()
+
+		outputPath := filepath.Join(t.TempDir(), "missing", "vex.json")
+		err := writeMultiPlatformVEX(platforms, vexByPlatform, "openvex", outputPath)
+		require.Error(t, err)
+	})
+
+	t.Run("writes nothing when no platform has VEX data", func(t *testing.T) {
+		t.Parallel()
+
+		outputPath := filepath.Join(t.TempDir(), "vex.json")
+		err := writeMultiPlatformVEX(platforms, map[string]*types.PlatformVEX{}, "openvex", outputPath)
+		require.NoError(t, err)
+		_, err = os.Stat(outputPath)
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
+func platformVEX(t *testing.T, nameDigest, arch string) *types.PlatformVEX {
+	t.Helper()
+	return &types.PlatformVEX{
+		Updates: &unversioned.UpdateManifest{
+			Metadata: unversioned.Metadata{
+				OS:     unversioned.OS{Type: "debian", Version: "12"},
+				Config: unversioned.Config{Arch: arch},
+			},
+			OSUpdates: []unversioned.UpdatePackage{{
+				Name:             "openssl",
+				InstalledVersion: "3.0.0",
+				FixedVersion:     "3.0.1",
+				VulnerabilityID:  "CVE-2024-1111",
+			}},
+		},
+		PkgType:         "deb",
+		NameDigestOrTag: nameDigest,
+	}
 }
 
 func platformSpec(os, arch, variant string) v1.Platform {
