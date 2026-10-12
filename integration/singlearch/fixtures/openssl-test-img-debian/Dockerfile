@@ -1,2 +1,2 @@
-FROM docker.io/openpolicyagent/opa:0.46.0@sha256:c4b11c9b86eaba41276ae682bb6875332316242010b7523efe30f365ad0c3cb8
+FROM gcr.io/distroless/base-debian12@sha256:5eae9ef0b97acf7de819f936e12b24976b2d54333a2cf329615366e16ba598cd
 COPY openssl.cnf /etc/ssl/openssl.cnf

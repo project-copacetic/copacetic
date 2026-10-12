@@ -76,6 +76,16 @@
     "chiselRelease": "ubuntu-24.04"
   },
   {
+    "id": "distroless-reloader-tzdata",
+    "layout": "external-status-directory",
+    "reference": "ghcr.io/stakater/reloader:v1.2.1@sha256:68ea220b5a42c97513dccb106b904dd4a4092723b0744cd4ee449a755ced6e1a",
+    "platform": "linux/amd64",
+    "expectedUpgradePackages": [
+      "tzdata"
+    ],
+    "preserveTree": "manager"
+  },
+  {
     "id": "distroless-status-directory",
     "layout": "external-status-directory",
     "reference": "gcr.io/distroless/base-debian12@sha256:5eae9ef0b97acf7de819f936e12b24976b2d54333a2cf329615366e16ba598cd",

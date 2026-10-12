@@ -4,9 +4,15 @@
 : "${BUILDKIT_PORT:=30321}"
 : "${BUILDKIT_VERSION=0.12.0}"
 
-_buildkit_direct_tcp_id="$(docker run --detach --rm --privileged -p 127.0.0.1::${BUILDKIT_PORT}/tcp  --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr tcp://0.0.0.0:${BUILDKIT_PORT})"
-_buildkitd_tcp_addr="$(docker port ${_buildkit_direct_tcp_id} ${BUILDKIT_PORT})"
-export COPA_BUILDKIT_ADDR="tcp://${_buildkitd_tcp_addr}"
+if [ -n "${COPA_TEST_OPENSSL_IMAGE:-}" ]; then
+    # The singlearch fixture registry listens on the CI host's loopback interface.
+    _buildkit_direct_tcp_id="$(docker run --detach --rm --privileged --network host --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr "tcp://127.0.0.1:${BUILDKIT_PORT}")"
+    export COPA_BUILDKIT_ADDR="tcp://127.0.0.1:${BUILDKIT_PORT}"
+else
+    _buildkit_direct_tcp_id="$(docker run --detach --rm --privileged -p "127.0.0.1::${BUILDKIT_PORT}/tcp" --entrypoint buildkitd "moby/buildkit:v$BUILDKIT_VERSION" --addr "tcp://0.0.0.0:${BUILDKIT_PORT}")"
+    _buildkitd_tcp_addr="$(docker port "${_buildkit_direct_tcp_id}" "${BUILDKIT_PORT}")"
+    export COPA_BUILDKIT_ADDR="tcp://${_buildkitd_tcp_addr}"
+fi
 
 _cleanup() {
     docker rm -f "${_buildkit_direct_tcp_id}"
@@ -15,10 +21,16 @@ _cleanup() {
 trap '_cleanup' EXIT
 
 _check_buildkitd_tcp() {
-    buildctl --addr ${COPA_BUILDKIT_ADDR} debug info
+    buildctl --addr "${COPA_BUILDKIT_ADDR}" debug info
 }
 
 echo "[INFO] Wait for buildkitd to be ready @ ${COPA_BUILDKIT_ADDR}"
+_buildkit_ready_attempt=0
 while ! _check_buildkitd_tcp; do
+    _buildkit_ready_attempt=$((_buildkit_ready_attempt + 1))
+    if [ "$_buildkit_ready_attempt" -ge 60 ]; then
+        echo "BuildKit did not become ready within 60 attempts" >&2
+        exit 1
+    fi
     sleep 1
 done
