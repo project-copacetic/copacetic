@@ -321,8 +321,11 @@ func discoverPlatformsForOptions(ctx context.Context, opts *types.Options) ([]ty
 	return result, nil
 }
 
+// exportSinglePlatformOCI writes the OCI layout for a single-platform patch of
+// OCI layout input. Named single-platform images keep their existing behavior:
+// they are loaded into the local runtime and --oci-dir is not written for them.
 func exportSinglePlatformOCI(ctx context.Context, opts *types.Options, result *types.PatchResult, platform *types.PatchPlatform) error {
-	if opts.OCIDir == "" || opts.Push || result == nil {
+	if opts.OCISource == nil || opts.OCIDir == "" || opts.Push || result == nil {
 		return nil
 	}
 	compression := opts.Compression

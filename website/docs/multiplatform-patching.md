@@ -132,7 +132,7 @@ These flags are essential for multi-platform patching:
 | `--ignore-errors` | Continue patching other platforms if one fails                  | `--ignore-errors`                    |
 | `--push`          | Push all manifests and index/manifest list to registry          | `--push`                             |
 | `--input-oci-layout` | Read the source image from a local OCI Image Layout          | `--input-oci-layout ./input-layout`  |
-| `--oci-dir`       | Export a single- or multi-platform OCI Image Layout              | `--oci-dir ./output-directory`       |
+| `--oci-dir`       | Export multi-platform index/manifest as OCI layout directory    | `--oci-dir ./output-directory`       |
 
 ## Multi-Platform Behavior
 

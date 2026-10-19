@@ -107,9 +107,7 @@ func TestNewPatchCmdOCILayoutFlags(t *testing.T) {
 	input := cmd.Flags().Lookup("input-oci-layout")
 	require.NotNil(t, input)
 	assert.Contains(t, input.Usage, "requires --oci-dir")
-	output := cmd.Flags().Lookup("oci-dir")
-	require.NotNil(t, output)
-	assert.NotContains(t, output.Usage, "multi-platform")
+	require.NotNil(t, cmd.Flags().Lookup("oci-dir"))
 }
 
 func TestNewPatchCmdChiselReleaseFlag(t *testing.T) {

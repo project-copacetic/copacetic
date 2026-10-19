@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
 	digest "github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/ocilayout"
+	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
 func writeSolveTestBlob(t *testing.T, root, mediaType string, data []byte) ispec.Descriptor {
@@ -72,4 +74,19 @@ func TestPrepareOCISourceSolveDoesNotNameWorkerImage(t *testing.T) {
 	assert.NotContains(t, export.Attrs, "push")
 	assert.Equal(t, "true", export.Attrs["oci-mediatypes"])
 	assert.Contains(t, buildConfig.SolveOpt.OCIStores, source.StoreID, "the solve must read the layout through the session store")
+}
+
+func TestSinglePlatformOCIExportOnlyForLayoutInput(t *testing.T) {
+	original, err := reference.ParseNormalizedNamed("example.com/acme/app:1.0")
+	require.NoError(t, err)
+	patched, err := reference.ParseNormalizedNamed("example.com/acme/app:1.0-patched")
+	require.NoError(t, err)
+	output := filepath.Join(t.TempDir(), "output")
+	opts := &types.Options{Image: original.String(), OCIDir: output, PatchedTag: "1.0-patched"}
+	result := &types.PatchResult{OriginalRef: original, PatchedRef: patched}
+	platform := &types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
+
+	require.NoError(t, exportSinglePlatformOCI(t.Context(), opts, result, platform))
+	_, err = os.Lstat(output)
+	assert.True(t, os.IsNotExist(err), "a named single-platform patch keeps its load-only behavior and does not write --oci-dir")
 }
