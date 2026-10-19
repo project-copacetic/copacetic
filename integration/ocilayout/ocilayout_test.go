@@ -121,6 +121,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		assert.Contains(t, string(vexData), desc.Digest.String())
 		require.Contains(t, string(vexData), "pkg:oci/output@"+desc.Digest.String())
 		assert.NotContains(t, string(vexData), "registry.invalid/copa-1677/input")
+		assertInputPathAbsent(t, input, output, opts.Output)
 		t.Logf("final manifest %s; top-level index %s; VEX verified", desc.Digest, source.Descriptor.Digest)
 		// The exported graph must transfer through another OCI-backed solve.
 		repatch := options(output, filepath.Join(t.TempDir(), "repatched"))
@@ -329,6 +330,7 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		opts.Output = filepath.Join(t.TempDir(), "vex.json")
 		require.NoError(t, patch.Patch(t.Context(), opts))
 		assertPreserved(t, input, opts.OCIDir, "386")
+		assertInputPathAbsent(t, input, opts.OCIDir, opts.Output)
 	})
 
 	t.Run("all platforms with digest selector", func(t *testing.T) {
@@ -580,6 +582,40 @@ func snapshot(t *testing.T, root string) map[string]string {
 		return nil
 	}))
 	return result
+}
+
+// assertInputPathAbsent checks that no output records the local layout path,
+// which is not portable. Every regular file is searched, including layer blobs.
+func assertInputPathAbsent(t *testing.T, input string, outputs ...string) {
+	t.Helper()
+	paths := []string{input}
+	if resolved, err := filepath.EvalSymlinks(input); err == nil && resolved != input {
+		paths = append(paths, resolved)
+	}
+	check := func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, inputPath := range paths {
+			assert.NotContains(t, string(data), inputPath, "%s records the local input path", path)
+		}
+		return nil
+	}
+	for _, output := range outputs {
+		info, err := os.Stat(output)
+		require.NoError(t, err)
+		if info.Mode().IsRegular() {
+			require.NoError(t, check(output))
+			continue
+		}
+		require.NoError(t, filepath.WalkDir(output, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || !entry.Type().IsRegular() {
+				return err
+			}
+			return check(path)
+		}))
+	}
 }
 
 func readJSONBlob(t *testing.T, root string, desc *ocispec.Descriptor, target any) {
