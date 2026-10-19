@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/containerd/containerd/v2/core/content"
-	contentlocal "github.com/containerd/containerd/v2/plugins/content/local"
 	continuityfs "github.com/containerd/continuity/fs"
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
@@ -108,11 +107,7 @@ func Open(ctx context.Context, inputPath, outputPath, selector string) (*Source,
 	if selector != "" {
 		named, _ = reference.ParseNormalizedNamed(selector)
 	}
-	store, err := contentlocal.NewStore(input)
-	if err != nil {
-		return nil, fmt.Errorf("open OCI layout content store: %w", err)
-	}
-	source := &Source{Path: input, store: store}
+	source := &Source{Path: input, store: newReadOnlyStore(input)}
 	desc, err := source.selectDescriptor(ctx, index.Manifests, selector, named)
 	if err != nil {
 		return nil, err
@@ -611,24 +606,8 @@ func (s *Source) validateBlob(ctx context.Context, desc *ocispec.Descriptor) err
 }
 
 func (s *Source) validateBlobPath(dgst digest.Digest) error {
-	blobPath := filepath.Join(s.Path, "blobs", dgst.Algorithm().String(), dgst.Encoded())
-	resolved, err := filepath.EvalSymlinks(blobPath)
-	if err != nil {
-		return fmt.Errorf("resolve blob path %s: %w", dgst, err)
-	}
-	blobRoot := filepath.Join(s.Path, "blobs")
-	rel, err := filepath.Rel(blobRoot, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("blob %s resolves outside OCI layout blob directory", dgst)
-	}
-	info, err := os.Stat(resolved)
-	if err != nil {
-		return fmt.Errorf("stat blob path %s: %w", dgst, err)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("blob %s is not a regular file", dgst)
-	}
-	return nil
+	_, err := resolveLayoutBlob(s.Path, dgst)
+	return err
 }
 
 func (s *Source) readJSONBlob(ctx context.Context, desc *ocispec.Descriptor, target any) error {
