@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,7 +30,6 @@ import (
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
-	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
 	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -1567,7 +1565,7 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	// Use BuildKit Go client to create OCI layout
 	ctx := exportOpts.state.context
 
-	c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts, len(exportOpts.state.sources) > 0)
+	c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts)
 	if err != nil {
 		return fmt.Errorf("failed to create BuildKit client: %w", err)
 	}
@@ -1576,35 +1574,12 @@ func createOCILayoutFromStates(outputDir string, results []types.PatchResult, pl
 	return solveMultiPlatformOCI(ctx, c, outputDir, platformStates, platformSpecs, platformMetadata, exportOpts)
 }
 
-// Named-image export follows the patch client's Docker-first selection. OCI
-// sources can prefer buildx because their content travels through the session.
-func newOCIExportClient(ctx context.Context, opts *Opts, hasOCISource bool) (*client.Client, error) {
+// OCI export uses the same client selection as patching so the validated state
+// is not re-solved on a different default worker.
+func newOCIExportClient(ctx context.Context, opts *Opts) (*client.Client, error) {
 	if opts == nil {
 		opts = &Opts{}
 	}
-	if !hasOCISource || opts.Addr != "" || opts.CACertPath != "" || opts.CertPath != "" || opts.KeyPath != "" {
-		return NewClient(ctx, *opts)
-	}
-
-	h, err := connhelpers.Buildx(&url.URL{})
-	if err == nil {
-		c, clientErr := client.New(ctx, "", client.WithContextDialer(h.ContextDialer))
-		if clientErr == nil {
-			validateErr := ValidateClient(ctx, c)
-			if validateErr == nil {
-				log.Debug("Using buildx driver for OCI layout export")
-				return c, nil
-			}
-			c.Close()
-			log.WithError(validateErr).Debug("Buildx driver validation failed")
-		} else {
-			log.WithError(clientErr).Debug("Could not create Buildx client")
-		}
-	} else {
-		log.WithError(err).Debug("Could not get buildx helper")
-	}
-
-	log.Debug("Falling back to auto-detection for BuildKit client")
 	return NewClient(ctx, *opts)
 }
 
@@ -2200,7 +2175,7 @@ func createMixedOCILayout(
 		}
 		defer os.RemoveAll(patchedTempDir)
 
-		c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts, len(exportOpts.state.sources) > 0)
+		c, err := newOCIExportClient(ctx, exportOpts.BuildkitOpts)
 		if err != nil {
 			return fmt.Errorf("failed to create BuildKit client for mixed layout: %w", err)
 		}

@@ -39,7 +39,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
-func TestNamedMixedExportKeepsDockerConnection(t *testing.T) {
+func TestExportKeepsDockerConnection(t *testing.T) {
 	if os.Getenv("COPA_OCI_TEST_NAMED") != "1" || os.Getenv("COPA_OCI_TEST_ADDR") == "" {
 		t.Skip("requires isolated active buildx, Docker, and COPA_OCI_TEST_NAMED=1")
 	}
@@ -62,6 +62,7 @@ func TestNamedMixedExportKeepsDockerConnection(t *testing.T) {
 	base, err := mutate.AppendLayers(empty.Image, static.NewLayer(buf.Bytes(), v1types.OCIUncompressedLayer))
 	require.NoError(t, err)
 	var additions []mutate.IndexAddendum
+	images := make(map[string]v1.Image)
 	var configData []byte
 	for _, arch := range []string{"amd64", "386"} {
 		config, err := base.ConfigFile()
@@ -73,14 +74,15 @@ func TestNamedMixedExportKeepsDockerConnection(t *testing.T) {
 			configData, err = json.Marshal(config)
 			require.NoError(t, err)
 		}
+		images[arch] = image
 		additions = append(additions, mutate.IndexAddendum{Add: image, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: arch}}})
 	}
 	index := mutate.AppendManifests(empty.Index, additions...)
 	require.NoError(t, remote.WriteIndex(ref, index, remote.WithContext(t.Context())))
 	platform := ocispec.Platform{OS: "linux", Architecture: "amd64"}
 	state := llb.Image(imageName, llb.Platform(platform)).File(llb.Mkfile("/copa-1677-patched", 0o644, []byte("patched")))
-	solve := func(ctx context.Context, c *client.Client) error {
-		_, err := c.Build(ctx, client.SolveOpt{}, "copa-1677-network-proof", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
+	solve := func(ctx context.Context, c *client.Client, state llb.State, opts client.SolveOpt) error {
+		_, err := c.Build(ctx, opts, "copa-1677-network-proof", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
 			def, err := state.Marshal(ctx)
 			if err != nil {
 				return nil, err
@@ -93,13 +95,13 @@ func TestNamedMixedExportKeepsDockerConnection(t *testing.T) {
 	require.NoError(t, err)
 	defer isolated.Close()
 	unreachableCtx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
-	err = solve(unreachableCtx, isolated)
+	err = solve(unreachableCtx, isolated, state, client.SolveOpt{})
 	cancel()
 	require.Error(t, err, "fixture must be unreachable from the other worker's loopback")
 	docker, err := buildkit.NewClient(t.Context(), buildkit.Opts{Addr: "docker://"})
 	require.NoError(t, err)
 	defer docker.Close()
-	require.NoError(t, solve(t.Context(), docker), "initial patch state must resolve through Docker")
+	require.NoError(t, solve(t.Context(), docker, state, client.SolveOpt{}), "initial patch state must resolve through Docker")
 
 	original, err := reference.ParseNormalizedNamed(imageName)
 	require.NoError(t, err)
@@ -121,6 +123,47 @@ func TestNamedMixedExportKeepsDockerConnection(t *testing.T) {
 	originalManifest, err := index.IndexManifest()
 	require.NoError(t, err)
 	assert.Equal(t, originalManifest.Manifests[1].Digest, outManifest.Manifests[1].Digest)
+
+	for _, mixed := range []bool{false, true} {
+		for _, address := range []string{"", "docker://"} {
+			t.Run(fmt.Sprintf("OCI mixed=%v address=%s", mixed, address), func(t *testing.T) {
+				input := writeLayout(t, images, mixed, false)
+				before := snapshot(t, input)
+				source := openLayout(t, input)
+				ociState, err := source.State(t.Context(), &platform, configData)
+				require.NoError(t, err)
+				// Keep a real OCI source and a worker-local network dependency in
+				// the state, as package-manager helper images can introduce.
+				ociState = ociState.File(llb.Copy(llb.Image(imageName, llb.Platform(platform)), "/source", "/copa-1677-patched"))
+				var solveOpts client.SolveOpt
+				source.AddToSolveOpt(&solveOpts)
+				require.NoError(t, solve(t.Context(), docker, ociState, solveOpts), "validate the OCI-backed state on the patch worker")
+				desc, err := source.PlatformDescriptor(t.Context(), &platform)
+				require.NoError(t, err)
+				platforms := []types.PatchPlatform{{Platform: platform}}
+				if mixed {
+					platforms = append(platforms, types.PatchPlatform{Platform: ocispec.Platform{OS: linuxOS, Architecture: "386"}, ShouldPreserve: true})
+				}
+				output := filepath.Join(t.TempDir(), "output")
+				err = buildkit.CreateOCILayoutFromResultsWithOptions(output,
+					[]types.PatchResult{{OCISource: source, PatchedState: &ociState, PatchedDesc: desc, ConfigData: configData}},
+					platforms,
+					buildkit.OCILayoutExportOptions{BuildkitOpts: &buildkit.Opts{Addr: address}, Atomic: true, OutputReference: outputName}.WithContext(t.Context()),
+				)
+				assert.Equal(t, before, snapshot(t, input), "export must preserve the local source")
+				if err != nil {
+					_, statErr := os.Stat(output)
+					assert.True(t, os.IsNotExist(statErr), "failed export must not publish output")
+				}
+				require.NoError(t, err, "OCI export must use the same default client policy as the successful patch solve")
+				if mixed {
+					assertPreserved(t, input, output, "386")
+				}
+				assert.Equal(t, "source", readImageFile(t, exportedImage(t, output), "source"))
+				assert.Equal(t, "source", readImageFile(t, exportedImage(t, output), "copa-1677-patched"))
+			})
+		}
+	}
 }
 
 func TestNamedSinglePatchKeepsDockerConnection(t *testing.T) {
@@ -209,5 +252,72 @@ func TestNamedSinglePatchKeepsDockerConnection(t *testing.T) {
 			}
 			require.True(t, found, "read the actual exported busybox package record")
 		})
+	}
+}
+
+func TestOCIPatchKeepsDockerConnection(t *testing.T) {
+	if os.Getenv("COPA_OCI_TEST_NAMED") != "1" || os.Getenv("COPA_OCI_TEST_ADDR") == "" {
+		t.Skip("requires isolated active buildx, Docker, and COPA_OCI_TEST_NAMED=1")
+	}
+	ref, err := name.ParseReference(alpineIndex)
+	require.NoError(t, err)
+	base, err := remote.Image(ref, remote.WithPlatform(v1.Platform{OS: linuxOS, Architecture: amd64Arch}), remote.WithContext(t.Context()))
+	require.NoError(t, err)
+	for _, address := range []string{"", "docker://"} {
+		t.Run("address="+address, func(t *testing.T) {
+			input := writeLayout(t, map[string]v1.Image{amd64Arch: base}, false, false)
+			before := snapshot(t, input)
+			output := filepath.Join(t.TempDir(), "output")
+			require.NoError(t, patch.Patch(t.Context(), &types.Options{
+				InputOCILayout: input, OCIDir: output, PatchedTag: outputName, Report: writeReport(t, amd64Arch),
+				Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch", Format: "openvex",
+				BkAddr: address, Timeout: 4 * time.Minute, Progress: progressui.QuietMode,
+			}))
+			assert.Equal(t, before, snapshot(t, input))
+			installed := readImageFile(t, exportedImage(t, output), "lib/apk/db/installed")
+			found := false
+			for _, record := range strings.Split(installed, "\n\n") {
+				if strings.Contains("\n"+record, "\nP:busybox\n") {
+					found = true
+					assert.NotContains(t, record, "V:1.37.0-r8\n", "the exported image must contain the patched package")
+				}
+			}
+			require.True(t, found, "read the actual exported busybox package record")
+		})
+	}
+}
+
+func exportedImage(t *testing.T, output string) v1.Image {
+	t.Helper()
+	desc, err := openLayout(t, output).PlatformDescriptor(t.Context(), &ocispec.Platform{OS: linuxOS, Architecture: amd64Arch})
+	require.NoError(t, err)
+	out, err := layout.FromPath(output)
+	require.NoError(t, err)
+	// OCI input output wraps the platform index in one named top-level index.
+	root, err := out.ImageIndex()
+	require.NoError(t, err)
+	rootManifest, err := root.IndexManifest()
+	require.NoError(t, err)
+	require.Len(t, rootManifest.Manifests, 1)
+	selected, err := root.ImageIndex(rootManifest.Manifests[0].Digest)
+	require.NoError(t, err)
+	image, err := selected.Image(v1.Hash{Algorithm: desc.Digest.Algorithm().String(), Hex: desc.Digest.Encoded()})
+	require.NoError(t, err)
+	return image
+}
+
+func readImageFile(t *testing.T, image v1.Image, path string) string {
+	t.Helper()
+	reader := mutate.Extract(image)
+	defer reader.Close()
+	archive := tar.NewReader(reader)
+	for {
+		header, err := archive.Next()
+		require.NoError(t, err, "expected file %s in exported image", path)
+		if strings.TrimPrefix(header.Name, "/") == path {
+			data, err := io.ReadAll(archive)
+			require.NoError(t, err)
+			return string(data)
+		}
 	}
 }
