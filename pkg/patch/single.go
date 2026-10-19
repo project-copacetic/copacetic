@@ -260,11 +260,7 @@ func patchSingleArchImageWithUpdates(
 		return nil, err
 	}
 	if opts.OCISource != nil {
-		opts.OCISource.AddToSolveOpt(&buildConfig.SolveOpt)
-		// Keep the patched image in the selected BuildKit worker's content store
-		// for this solve; the final OCI layout is produced from PatchedState below.
-		buildConfig.SolveOpt.Exports[0].Type = client.ExporterImage
-		buildConfig.SolveOpt.Exports[0].Output = nil
+		prepareOCISourceSolve(&buildConfig.SolveOpt, opts.OCISource)
 	}
 
 	// Create channels for build coordination.
@@ -535,6 +531,20 @@ func validateReportPlatform(updates *unversioned.UpdateManifest, targetPlatform 
 	}
 
 	return nil
+}
+
+// prepareOCISourceSolve binds the layout store to the patch solve and keeps the
+// result inside the BuildKit worker; the OCI layout is exported later from
+// PatchedState. The image exporter gets no name: a name would create or replace
+// that tag in the worker's image store (Docker's, with the default driver),
+// which is a daemon load that OCI layout input does not perform.
+func prepareOCISourceSolve(solveOpt *client.SolveOpt, source *ocilayout.Source) {
+	source.AddToSolveOpt(solveOpt)
+	for i := range solveOpt.Exports {
+		solveOpt.Exports[i].Type = client.ExporterImage
+		solveOpt.Exports[i].Output = nil
+		delete(solveOpt.Exports[i].Attrs, string(exptypes.OptKeyName))
+	}
 }
 
 func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuildClient, image string, platform *ispec.Platform, source *ocilayout.Source) error {

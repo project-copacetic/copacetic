@@ -268,12 +268,25 @@ func TestOCIPatchKeepsDockerConnection(t *testing.T) {
 			input := writeLayout(t, map[string]v1.Image{amd64Arch: base}, false, false)
 			before := snapshot(t, input)
 			output := filepath.Join(t.TempDir(), "output")
+			// A unique output name shows whether the patch created a Docker image
+			// record for it; OCI layout input must not load into the daemon.
+			patchedName := fmt.Sprintf("localhost/copa-1688-oci-output-%d:patched", time.Now().UnixNano())
+			t.Cleanup(func() {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				if exec.CommandContext(cleanupCtx, "docker", "image", "inspect", patchedName).Run() == nil {
+					data, err := exec.CommandContext(cleanupCtx, "docker", "image", "rm", patchedName).CombinedOutput()
+					assert.NoError(t, err, "remove only the unique image named by this test: %s", data)
+				}
+			})
 			require.NoError(t, patch.Patch(t.Context(), &types.Options{
-				InputOCILayout: input, OCIDir: output, PatchedTag: outputName, Report: writeReport(t, amd64Arch),
+				InputOCILayout: input, OCIDir: output, PatchedTag: patchedName, Report: writeReport(t, amd64Arch),
 				Scanner: "trivy", PkgTypes: "os", LibraryPatchLevel: "patch", Format: "openvex",
 				BkAddr: address, Timeout: 4 * time.Minute, Progress: progressui.QuietMode,
 			}))
 			assert.Equal(t, before, snapshot(t, input))
+			data, err := exec.CommandContext(t.Context(), "docker", "image", "inspect", patchedName).CombinedOutput()
+			assert.Error(t, err, "OCI layout input must not create or replace a Docker image tag: %s", data)
 			installed := readImageFile(t, exportedImage(t, output), "lib/apk/db/installed")
 			found := false
 			for _, record := range strings.Split(installed, "\n\n") {
