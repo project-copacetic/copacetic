@@ -57,7 +57,11 @@ func captureSourceAnnotations(ctx context.Context, image, child string, descript
 			if err != nil {
 				return nil, fmt.Errorf("recheck local source identity: %w", err)
 			}
-			if source != nil {
+			if source != nil && source.Registry {
+				// A classic Docker image store keeps no manifests; the builder
+				// reads this source from its registry, so read it there too.
+				found = false
+			} else if source != nil {
 				local = &source.Descriptor
 				if source.Index != nil {
 					local, err = source.PlatformDescriptor(platform)
@@ -67,6 +71,8 @@ func captureSourceAnnotations(ctx context.Context, image, child string, descript
 				}
 			}
 		}
+	}
+	if found {
 		if local == nil || local.Digest != pinned.Digest() {
 			return nil, fmt.Errorf("local source platform changed after capture")
 		}

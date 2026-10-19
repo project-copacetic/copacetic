@@ -94,24 +94,28 @@ const (
 
 // for testing.
 var (
-	readDir                  = os.ReadDir
-	readFile                 = os.ReadFile
-	lookPath                 = exec.LookPath
-	localImagePlatforms      = utils.LocalImagePlatforms
-	localImageIndex          = utils.LocalImageIndex
-	getRemoteImageDescriptor = remote.Get
-	getImageFromDaemon       = daemon.Image
-	tryGetManifestFromLocal  = getManifestFromLocal
+	readDir                       = os.ReadDir
+	readFile                      = os.ReadFile
+	lookPath                      = exec.LookPath
+	localImagePlatforms           = utils.LocalImagePlatforms
+	localImageIndex               = utils.LocalImageIndex
+	localImageStoreKeepsManifests = utils.LocalImageStoreKeepsManifests
+	getRemoteImageDescriptor      = remote.Get
+	getImageFromDaemon            = daemon.Image
+	tryGetManifestFromLocal       = getManifestFromLocal
 )
 
 // ImageSource captures the immutable identity and, for indexes, the platform
 // descriptors of one locally or remotely resolved image reference. A local
-// mutable tag is authoritative and is never replaced with same-named remote
-// content.
+// mutable tag in an image store that keeps manifests is authoritative and is
+// never replaced with same-named remote content.
 type ImageSource struct {
 	Name       string
 	Descriptor specs.Descriptor
 	Index      *specs.Index
+	// Registry is true when the identity was read from a registry: the image
+	// is not local, or the local store cannot provide its original manifests.
+	Registry bool
 }
 
 // PlatformDescriptor returns the one image manifest matching platform.
@@ -146,7 +150,9 @@ func (source *ImageSource) PlatformDescriptor(platform *specs.Platform) (*specs.
 // ResolveImageSource resolves top-level and platform descriptor identity using
 // the same local-first policy as Copa's platform discovery. The returned top
 // digest is the daemon's source descriptor digest, not a digest recomputed from
-// a possibly incomplete locally reconstructed index.
+// a possibly incomplete locally reconstructed index. A classic Docker image
+// store keeps no manifests, so its images are identified from the registry
+// content that a supported builder actually reads.
 func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -166,6 +172,13 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 	descriptor, sourceDigest, complete, localErr := tryGetManifestFromLocal(ctx, ref)
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if localErr == nil && descriptor != nil && complete && sourceDigest.Algorithm == "" && sourceDigest.Hex == "" {
+		// A classic Docker image store found the image but can only
+		// reconstruct its manifest. Supported builders cannot read that store
+		// and patch the registry content, so capture the registry identity.
+		log.Debugf("Local daemon cannot provide the original manifest of %s; resolving its identity from the registry", named.String())
+		localErr = errLocalManifestUnavailable
 	}
 	if localErr == nil {
 		if descriptor == nil {
@@ -221,7 +234,12 @@ func ResolveImageSource(ctx context.Context, imageRef string) (*ImageSource, err
 	if descriptor == nil {
 		return nil, fmt.Errorf("registry returned no descriptor for %q", named.String())
 	}
-	return imageSourceFromRemoteDescriptor(named.String(), descriptor)
+	source, err := imageSourceFromRemoteDescriptor(named.String(), descriptor)
+	if err != nil {
+		return nil, err
+	}
+	source.Registry = true
+	return source, nil
 }
 
 func imageSourceFromRemoteDescriptor(sourceName string, descriptor *remote.Descriptor) (*ImageSource, error) {
@@ -534,14 +552,31 @@ func getManifestFromLocal(ctx context.Context, ref name.Reference) (*remote.Desc
 		return &remote.Descriptor{Descriptor: descriptor, Manifest: rawManifest}, sourceDigest, complete, nil
 	}
 
+	// Docker's classic graph-driver store has no descriptor and keeps no
+	// manifests. Its `docker save` index and go-containerregistry's daemon
+	// image both describe reconstructed manifests that no registry has served,
+	// so they can describe local content but cannot identify a source.
+	keepsManifests := localDescriptor != nil
 	if localDescriptor == nil {
+		keepsManifests, err = localImageStoreKeepsManifests(ctx)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, v1.Hash{}, false, ctxErr
+			}
+			log.Debugf("Could not determine whether the local image store keeps manifests: %v", err)
+			keepsManifests = false
+		}
+	}
+
+	if localDescriptor == nil && keepsManifests {
 		descriptor, err := localArchiveDescriptor(ctx, imageName)
 		if err != nil {
 			return nil, v1.Hash{}, false, &localArchiveError{fmt.Errorf("read original local source manifest: %w", err)}
 		}
 		if descriptor != nil {
-			// Unlike inspection's partial reconstruction, the archive contains
-			// the full original index metadata even when some blobs are absent.
+			// Unlike inspection's partial reconstruction, a containerd-store
+			// archive contains the full original index metadata even when some
+			// blobs are absent.
 			return descriptor, descriptor.Digest, true, nil
 		}
 	}
@@ -568,6 +603,10 @@ func getManifestFromLocal(ctx context.Context, ref name.Reference) (*remote.Desc
 		if err != nil {
 			return nil, v1.Hash{}, false, fmt.Errorf("parse local source descriptor digest: %w", err)
 		}
+	} else if !keepsManifests {
+		// A complete result with no source digest tells ResolveImageSource
+		// that this local manifest is a reconstruction, not an identity.
+		sourceDigest = v1.Hash{}
 	}
 	return &remote.Descriptor{
 		Descriptor: v1.Descriptor{MediaType: mediaType, Size: int64(len(rawManifest)), Digest: digest},

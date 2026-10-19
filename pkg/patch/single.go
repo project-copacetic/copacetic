@@ -807,6 +807,13 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 		// source capture does, so index assembly retains a real child digest.
 		var source *buildkit.ImageSource
 		source, err = resolveImageSource(ctx, patchedImageName)
+		if err == nil && source != nil && source.Registry {
+			// A classic Docker store cannot identify the image just loaded into
+			// it. A same-named registry image is a different object, so keep the
+			// descriptor unknown rather than substitute it.
+			log.Debugf("Local store cannot identify loaded image %s; leaving its descriptor unset", patchedImageName)
+			source = nil
+		}
 		if err == nil && source != nil {
 			patchedDesc = &source.Descriptor
 			if source.Index != nil {

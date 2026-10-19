@@ -115,10 +115,12 @@ func TestLocalArchiveInvalidMetadata(t *testing.T) {
 }
 
 func TestInvalidLocalArchiveNeverFallsBackToRegistry(t *testing.T) {
-	oldIndex, oldArchive, oldRemote := localImageIndex, localArchiveDescriptor, getRemoteImageDescriptor
+	oldIndex, oldArchive, oldRemote, oldStore := localImageIndex, localArchiveDescriptor, getRemoteImageDescriptor, localImageStoreKeepsManifests
 	t.Cleanup(func() {
-		localImageIndex, localArchiveDescriptor, getRemoteImageDescriptor = oldIndex, oldArchive, oldRemote
+		localImageIndex, localArchiveDescriptor, getRemoteImageDescriptor, localImageStoreKeepsManifests = oldIndex, oldArchive, oldRemote, oldStore
 	})
+	// A containerd image store without descriptor inspection saves original manifests.
+	localImageStoreKeepsManifests = func(context.Context) (bool, error) { return true, nil }
 	localImageIndex = func(context.Context, string) (*specs.Index, *specs.Descriptor, bool, bool, error) {
 		return nil, nil, true, true, nil
 	}

@@ -16,14 +16,20 @@ import (
 	"github.com/opencontainers/go-digest"
 )
 
-// Older containerd-backed Docker daemons omit descriptors from inspect, but
-// save the original OCI manifests. Reading those bytes avoids inventing an
-// identity from Docker-save's compatibility manifest.json representation.
+// Containerd-backed Docker daemons older than API 1.48 omit descriptors from
+// inspect, but save the original OCI manifests. Reading those bytes avoids
+// inventing an identity from Docker-save's compatibility manifest.json
+// representation. Classic graph-driver stores never reach this reader: their
+// saved index describes a reconstructed manifest.
 var localArchiveDescriptor = descriptorFromLocalArchive
 
 type localArchiveError struct{ error }
 
 func (err *localArchiveError) Unwrap() error { return err.error }
+
+// errLocalManifestUnavailable means the local daemon has the image but cannot
+// provide its original manifest, so the source identity comes from a registry.
+var errLocalManifestUnavailable = errors.New("local image store does not keep original manifests")
 
 func descriptorFromLocalArchive(ctx context.Context, image string) (*remote.Descriptor, error) {
 	return descriptorFromLocalArchiveForManifest(ctx, image, "")

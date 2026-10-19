@@ -496,6 +496,34 @@ func parseManifestBodyAnnotations(manifestBody []byte) (map[string]string, error
 	return m.Annotations, nil
 }
 
+// containerdSnapshotterDriverType is the driver-type Docker reports when it
+// uses the containerd image store.
+const containerdSnapshotterDriverType = "io.containerd.snapshotter.v1"
+
+// LocalImageStoreKeepsManifests reports whether the local Docker daemon uses
+// the containerd image store, which keeps the original image manifests. The
+// classic graph-driver store keeps only configs and layers: its inspect output
+// has no descriptor, and `docker save` reconstructs a manifest that no
+// registry has ever served.
+func LocalImageStoreKeepsManifests(ctx context.Context) (bool, error) {
+	cli, err := newClient()
+	if err != nil {
+		return false, err
+	}
+	defer cli.Close()
+
+	info, err := cli.Info(ctx, dockerClient.InfoOptions{})
+	if err != nil {
+		return false, err
+	}
+	for _, status := range info.Info.DriverStatus {
+		if status[0] == "driver-type" && status[1] == containerdSnapshotterDriverType {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // inspectLocalImage runs ImageInspect with ImageInspectWithManifests(true) to
 // get the richest possible response (including per-platform manifest entries
 // when the daemon uses a multi-platform image store). If the daemon rejects
