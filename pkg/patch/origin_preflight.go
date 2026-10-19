@@ -14,13 +14,14 @@ import (
 
 type platformPatchInput struct {
 	image       string
+	locator     string
 	digest      digest.Digest
 	annotations map[string]string
 	updates     *unversioned.UpdateManifest
 	reportErr   error
 }
 
-func (input platformPatchInput) needsPatch() bool {
+func (input *platformPatchInput) needsPatch() bool {
 	return input.reportErr == nil && (input.updates == nil || len(input.updates.OSUpdates) > 0 || len(input.updates.LangUpdates) > 0)
 }
 
@@ -68,7 +69,7 @@ func preflightMultiPlatformOrigins(ctx context.Context, opts *types.Options, pla
 				}
 			}
 			_, err := initializePatchConfig(ctx, c, &Options{
-				ImageName: input.image, TargetPlatform: &p, SourceImageName: resolveImageReference(source),
+				ImageName: input.image, BaseImageLocator: input.locator, TargetPlatform: &p, SourceImageName: resolveImageReference(source),
 				ExpectedSourceDigest: input.digest, RequireBaseManifest: true,
 			}, input.annotations)
 			if err != nil {

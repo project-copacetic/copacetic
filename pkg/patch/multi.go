@@ -147,8 +147,8 @@ func patchMultiPlatformImage(
 		}
 		updates, reportErr := preparePatchUpdates(&patchOpts, &p, nil)
 		patchInputs[key] = platformPatchInput{
-			image: sourceImages[key], digest: sourceDescriptors[key].Digest,
-			annotations: sourceAnnotations[key], updates: updates, reportErr: reportErr,
+			image: sourceImages[key], locator: multiPlatformBaseImageLocator(image, source.Current, sourceImages[key]),
+			digest: sourceDescriptors[key].Digest, annotations: sourceAnnotations[key], updates: updates, reportErr: reportErr,
 		}
 	}
 	if err := preflightMultiPlatformOrigins(ctx, opts, platforms, patchInputs, source.Current.Descriptor.Digest); err != nil {
@@ -308,7 +308,7 @@ func patchMultiPlatformImage(
 			err := input.reportErr
 			if err == nil {
 				res, err = patchSingleArchImageWithSourceAndUpdates(gctx, &patchOpts, p, true, sharedProgressCh, input.updates,
-					input.image, input.annotations, source.Current.Descriptor.Digest)
+					input.image, input.locator, input.annotations, source.Current.Descriptor.Digest)
 			}
 
 			// Track completion to know when to close shared channel
@@ -537,6 +537,21 @@ func patchMultiPlatformImage(
 	}
 
 	return nil
+}
+
+// multiPlatformBaseImageLocator returns the BaseImage label for a patched child.
+// Copa has always named the child of a locally inspected index by digest there,
+// because BuildKit may not resolve a local tag for every platform. Other
+// sources keep the supplied locator.
+func multiPlatformBaseImageLocator(image string, current *buildkit.ImageSource, child string) string {
+	if current != nil && !current.Registry {
+		return child
+	}
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return image
+	}
+	return named.String()
 }
 
 type multiPlatformSource struct {

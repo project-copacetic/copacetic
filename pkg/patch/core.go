@@ -33,6 +33,9 @@ type Options struct {
 	// SourceImageName retains the user's normalized image reference when a
 	// multi-platform child is pinned by digest for BuildKit resolution.
 	SourceImageName string
+	// BaseImageLocator is recorded in the BaseImage label of a first patch,
+	// while content is read through ImageName. Empty means ImageName.
+	BaseImageLocator string
 	// ExpectedSourceDigest is the captured child-manifest digest that the
 	// BuildKit resolution must match on a first multi-platform patch.
 	ExpectedSourceDigest digest.Digest
@@ -332,7 +335,7 @@ var errOriginIntegrity = errors.New("patch origin integrity validation failed")
 // and inside each patch build. This includes recovering the recorded original,
 // not just validating the shape of its labels.
 func initializePatchConfig(ctx context.Context, c gwclient.Client, opts *Options, annotations map[string]string) (*buildkit.Config, error) {
-	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	config, err := buildkit.InitializeBuildkitConfigWithBaseImage(ctx, c, opts.ImageName, opts.BaseImageLocator, &opts.TargetPlatform.Platform)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
 	}

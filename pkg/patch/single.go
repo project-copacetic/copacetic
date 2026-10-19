@@ -87,7 +87,7 @@ func patchSingleArchImageWithSource(
 	if err != nil {
 		return nil, err
 	}
-	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil, sourceImage, annotations, "")
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, nil, sourceImage, "", annotations, "")
 }
 
 func patchSingleArchImageWithUpdates(
@@ -99,7 +99,7 @@ func patchSingleArchImageWithUpdates(
 	sharedProgressCh chan<- *client.SolveStatus,
 	updates *unversioned.UpdateManifest,
 ) (*types.PatchResult, error) {
-	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, updates, "", nil, "")
+	return patchSingleArchImageWithSourceAndUpdates(ctx, opts, targetPlatform, multiPlatform, sharedProgressCh, updates, "", "", nil, "")
 }
 
 func patchSingleArchImageWithSourceAndUpdates(
@@ -111,6 +111,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 	sharedProgressCh chan<- *client.SolveStatus,
 	updates *unversioned.UpdateManifest,
 	sourceImage string,
+	baseImageLocator string,
 	sourceAnnotations map[string]string,
 	capturedRoot digest.Digest,
 ) (*types.PatchResult, error) {
@@ -161,6 +162,12 @@ func patchSingleArchImageWithSourceAndUpdates(
 		}
 		capturedDigest = digested.Digest()
 		sourceLookup = sourceRef.String()
+	}
+
+	// Content reads use the captured digest, but BaseImage keeps the locator the
+	// user supplied, which older Copa versions resolve to re-patch.
+	if baseImageLocator == "" {
+		baseImageLocator = imageName.String()
 	}
 
 	// resolve final patched tag
@@ -302,6 +309,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 			buildkitImageRefNamed, err := reference.ParseNormalizedNamed(platformImageRef)
 			if err == nil {
 				buildkitImageRef = buildkitImageRefNamed
+				baseImageLocator = buildkitImageRef.String()
 			}
 		} else {
 			if err := ctx.Err(); err != nil {
@@ -367,7 +375,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 		defer pipeW.Close()
 		result, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease,
-			resolveImageReference(imageName), expectedSourceDigest, requireBaseManifest, originalAnnotations)
+			resolveImageReference(imageName), baseImageLocator, expectedSourceDigest, requireBaseManifest, originalAnnotations)
 		patchBuildErr = err
 		if err != nil {
 			return err
@@ -923,6 +931,7 @@ func executePatchBuild(
 	goVCSURL string,
 	chiselRelease string,
 	sourceImageName string,
+	baseImageLocator string,
 	expectedSourceDigest digest.Digest,
 	requireBaseManifest bool,
 	sourceAnnotations map[string]string,
@@ -960,6 +969,7 @@ func executePatchBuild(
 			ImageName:            imageName.String(),
 			TargetPlatform:       targetPlatform,
 			SourceImageName:      sourceImageName,
+			BaseImageLocator:     baseImageLocator,
 			ExpectedSourceDigest: expectedSourceDigest,
 			RequireBaseManifest:  requireBaseManifest,
 			Updates:              updates,

@@ -317,6 +317,23 @@ func InitializeBuildkitConfig(
 	userImage string,
 	platform *specs.Platform,
 ) (*Config, error) {
+	return InitializeBuildkitConfigWithBaseImage(ctx, c, userImage, userImage, platform)
+}
+
+// InitializeBuildkitConfigWithBaseImage reads the image through userImage,
+// which may be a digest-pinned child, but records baseImageLocator as the
+// BaseImage label of a first patch. Older Copa versions use that label to find
+// the image to rebuild from, so it keeps the locator the user supplied.
+func InitializeBuildkitConfigWithBaseImage(
+	ctx context.Context,
+	c gwclient.Client,
+	userImage string,
+	baseImageLocator string,
+	platform *specs.Platform,
+) (*Config, error) {
+	if baseImageLocator == "" {
+		baseImageLocator = userImage
+	}
 	// Initialize buildkit config for the target image
 	config := Config{
 		ImageName: userImage,
@@ -346,6 +363,7 @@ func InitializeBuildkitConfig(
 		resolver,
 		configData,
 		userImage,
+		baseImageLocator,
 		userImageDigest,
 		platform,
 	)
@@ -945,6 +963,7 @@ func updateImageConfigData(
 	c sourceresolver.ImageMetaResolver,
 	configData []byte,
 	image string,
+	locator string,
 	imageDigest digest.Digest,
 	platform *specs.Platform,
 ) ([]byte, []byte, string, *types.SourceLineage, bool, error) {
@@ -952,7 +971,8 @@ func updateImageConfigData(
 	if err != nil {
 		return nil, nil, "", nil, false, err
 	}
-	baseImage, userImageConfig, err := setupLabels(image, configData)
+	// BaseImage records the supplied locator; content reads use image.
+	baseImage, userImageConfig, err := setupLabels(locator, configData)
 	if err != nil {
 		return nil, nil, "", nil, false, err
 	}
@@ -972,7 +992,9 @@ func updateImageConfigData(
 	}}
 	var baseConfig []byte
 	if hasOrigin {
-		baseImage, _, baseConfig, err = resolveRecordedOrigin(ctx, c, baseImage, recorded, resolveOpt)
+		// Keep the recorded BaseImage locator for the output label. Reads of the
+		// recovered original are pinned to its recorded digest by the caller.
+		_, _, baseConfig, err = resolveRecordedOrigin(ctx, c, baseImage, recorded, resolveOpt)
 		if err != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("cannot recover recorded patch origin; restore the original image before re-patching: %w", err)
 		}
@@ -989,7 +1011,7 @@ func updateImageConfigData(
 		_, _, baseConfig, err = c.ResolveImageConfig(ctx, baseImage, resolveOpt)
 		if err != nil {
 			log.Warnf("Failed to resolve legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, err, image)
-			document.labels["BaseImage"] = image
+			document.labels["BaseImage"] = locator
 			fallback, marshalErr := document.marshal()
 			return fallback, nil, image, nil, false, marshalErr
 		}

@@ -355,6 +355,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			&mocks.MockGWClient{},
 			configData,
 			"alpine:3.20",
+			"alpine:3.20",
 			imageDigest,
 			nil,
 		)
@@ -385,7 +386,8 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			baseDigest,
 		))
 
-		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, "registry.example.com/app:patched", digest.FromString("patched"), platform)
+		const patchedImage = "registry.example.com/app:patched"
+		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, patchedImage, patchedImage, digest.FromString("patched"), platform)
 		require.NoError(t, err)
 		require.NotNil(t, patched)
 		assert.Equal(t, &types.SourceLineage{Kind: types.PatchOriginImage, Name: "docker.io/library/alpine:3.20", Digest: baseDigest}, lineage)
@@ -1399,7 +1401,7 @@ func TestUpdateImageConfigData(t *testing.T) {
 		expectedData := []byte(`{"config": {"labels": {"com.example.label": "value"}, {"BaseImage": "myimage:latest"}}}`)
 		image := "myimage:latest"
 
-		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image), nil)
+		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1426,7 +1428,7 @@ func TestUpdateImageConfigData(t *testing.T) {
 		configData := []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`)
 		image := "rockylinux:latest"
 
-		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, digest.FromString(image), nil)
+		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)
 		}
@@ -1936,7 +1938,7 @@ func TestUpdateImageConfigDataOriginFailurePolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			client := &mocks.MockGWClient{}
 			client.On("ResolveImageConfig", mock.Anything, mock.Anything, mock.Anything).Return("", digest.Digest(""), []byte(nil), errors.New("not found"))
-			got, patched, ref, origin, validated, err := updateImageConfigData(t.Context(), client, tc.config, "example.com/app:patched", digest.FromString("P1"), nil)
+			got, patched, ref, origin, validated, err := updateImageConfigData(t.Context(), client, tc.config, "example.com/app:patched", "example.com/app:patched", digest.FromString("P1"), nil)
 			if tc.modern {
 				require.ErrorContains(t, err, "restore the original image")
 				return
@@ -1953,7 +1955,7 @@ func TestUpdateImageConfigDataOriginFailurePolicy(t *testing.T) {
 		})
 	}
 	malformed := []byte(`{"config":{"Labels":{"BaseImage":"example.com/app:original","sh.copa.patch.origin.kind":"image-ref"}}}`)
-	_, _, _, _, _, err = updateImageConfigData(t.Context(), &mocks.MockGWClient{}, malformed, "example.com/app:patched", digest.FromString("P1"), nil)
+	_, _, _, _, _, err = updateImageConfigData(t.Context(), &mocks.MockGWClient{}, malformed, "example.com/app:patched", "example.com/app:patched", digest.FromString("P1"), nil)
 	require.ErrorContains(t, err, "invalid patch origin metadata")
 }
 

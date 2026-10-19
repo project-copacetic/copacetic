@@ -112,7 +112,7 @@ func TestPatchBuiltOpenSSL(t *testing.T) {
 		beforeConfig.Labels = map[string]string{}
 	}
 	sourceDigest := pinnedRef.Digest()
-	beforeConfig.Labels["BaseImage"] = reference.TrimNamed(ref).Name() + "@" + sourceDigest.String()
+	beforeConfig.Labels["BaseImage"] = image
 	beforeConfig.Labels[types.AnnotationPatchOriginKind] = types.PatchOriginImage
 	beforeConfig.Labels[types.AnnotationPatchOriginName] = ref.String()
 	beforeConfig.Labels[types.AnnotationPatchOriginDigest] = sourceDigest.String()
