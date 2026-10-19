@@ -193,7 +193,8 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 	}
 	flags := patchCmd.Flags()
 	flags.StringVar(&ua.configFile, "config", "", "Path to a bulk patch YAML config file. Cannot be used with --image, --tag, or --chisel-release.")
-	flags.StringVarP(&ua.appImage, "image", "i", "", "Application image name and tag to patch")
+	flags.StringVarP(&ua.appImage, "image", "i", "",
+		"Application image name and tag to patch. With --input-oci-layout, an optional name, tag, or digest selecting the image in the layout")
 	flags.StringVarP(&ua.report, "report", "r", "", "Vulnerability report file or directory of reports")
 	flags.StringVarP(&ua.patchedTag, "tag", "t", "", "Tag for the patched image")
 	flags.StringVar(&ua.chiselRelease, "chisel-release", "", "Chisel release name, local directory, or pinned HTTPS Git URL override")
