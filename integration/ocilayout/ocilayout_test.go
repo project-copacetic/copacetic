@@ -41,14 +41,23 @@ const (
 
 // Run against an isolated BuildKit endpoint with no host layout mounts:
 // COPA_OCI_TEST_ADDR=tcp://127.0.0.1:51677 go test ./integration/ocilayout -v
-// The worker must also advertise linux(fixture.1+a+b)/amd64 for the metadata
-// scenario, alongside native linux/amd64 and linux/386.
+// The worker must advertise linux/amd64 and linux/386. The full platform
+// metadata case also needs linux(fixture.1+a+b)/amd64; it is skipped only when
+// a successful worker query shows that platform is not advertised.
 // The caller owns the daemon/resource lane. Source image fallback through a
 // Docker daemon is disabled; registry.invalid cannot supply the logical source.
+//
+// CI runs the TestOCILayout tests against the direct TCP BuildKit leg. The
+// tests gated by COPA_OCI_TEST_NAMED need Docker plus a separately networked
+// active buildx builder and run only locally.
 func TestOCILayoutRoundTrip(t *testing.T) {
 	addr := os.Getenv("COPA_OCI_TEST_ADDR")
 	if addr == "" {
 		t.Skip("set COPA_OCI_TEST_ADDR to an isolated BuildKit endpoint")
+	}
+	advertised := queryWorkerPlatforms(t, addr)
+	for _, required := range []ocispec.Platform{{OS: linuxOS, Architecture: amd64Arch}, {OS: linuxOS, Architecture: "386"}} {
+		require.True(t, advertised.supports(&required), "BuildKit at %s must advertise %s/%s; it advertises %s", addr, required.OS, required.Architecture, advertised)
 	}
 	t.Setenv("DOCKER_HOST", "unix:///copa-test-no-image-daemon.sock")
 	ref, err := name.ParseReference(alpineIndex)
@@ -244,6 +253,11 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 	})
 
 	t.Run("full platform metadata survives export", func(t *testing.T) {
+		metadataPlatform := ocispec.Platform{OS: linuxOS, Architecture: amd64Arch, OSVersion: "fixture.1", OSFeatures: []string{"a", "b"}}
+		if !advertised.supports(&metadataPlatform) {
+			t.Skipf("BuildKit at %s does not advertise linux(fixture.1+a+b)/amd64 (it advertises %s); "+
+				"start buildkitd with --oci-worker-platform 'linux(fixture.1+a+b)/amd64' to run this case", addr, advertised)
+		}
 		config, err := images[amd64Arch].ConfigFile()
 		require.NoError(t, err)
 		config.OSVersion = "fixture.1"
