@@ -3,6 +3,7 @@ package patch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -84,9 +85,10 @@ func TestCaptureSourceAnnotationsClassicStoreReadsRegistryManifest(t *testing.T)
 }
 
 // After loading a patched image into a classic store, Docker cannot report its
-// descriptor. A same-named registry image is a different object and must not be
-// used for final index assembly.
-func TestCreatePatchResultClassicStoreDoesNotSubstituteRegistryDescriptor(t *testing.T) {
+// descriptor. A same-named registry image is a different object, so a loaded
+// result keeps only its annotations and platform for OCI layout and index
+// assembly. A pushed result is the registry image, so its descriptor is used.
+func TestCreatePatchResultClassicStoreDescriptor(t *testing.T) {
 	daemon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json") {
 			w.Header().Set("Content-Type", "application/json")
@@ -100,29 +102,42 @@ func TestCreatePatchResultClassicStoreDoesNotSubstituteRegistryDescriptor(t *tes
 	t.Setenv("DOCKER_API_VERSION", "1.45")
 	t.Setenv("DOCKER_TLS_VERIFY", "")
 
-	resolver := resolveImageSource
-	t.Cleanup(func() { resolveImageSource = resolver })
-	stale := digest.FromString("unrelated same-named registry image")
-	for _, registrySource := range []bool{true, false} {
-		t.Run(map[bool]string{true: "classic store", false: "manifest-keeping store"}[registrySource], func(t *testing.T) {
+	resolver, store := resolveImageSource, localStoreKeepsManifests
+	t.Cleanup(func() { resolveImageSource, localStoreKeepsManifests = resolver, store })
+	identified := digest.FromString("identified patched image")
+	origin := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: "registry.example.com/app:1.0", Digest: digest.FromString("A")}).Annotations()
+	platform := specs.Platform{OS: "linux", Architecture: "amd64"}
+	for _, tc := range []struct {
+		name        string
+		keeps, push bool
+		storeErr    error
+		wantDigest  digest.Digest
+	}{
+		{name: "classic store load"},
+		{name: "unknown store load", storeErr: errors.New("info unavailable")},
+		{name: "classic store push", push: true, wantDigest: identified},
+		{name: "containerd store without inspect descriptor", keeps: true, wantDigest: identified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			localStoreKeepsManifests = func(context.Context) (bool, error) { return tc.keeps, tc.storeErr }
 			lookups := 0
 			resolveImageSource = func(_ context.Context, got string) (*buildkit.ImageSource, error) {
 				lookups++
 				require.Equal(t, "registry.example.com/app:1.0-patched-amd64", got)
-				return &buildkit.ImageSource{Name: got, Descriptor: specs.Descriptor{MediaType: specs.MediaTypeImageManifest, Digest: stale, Size: 10}, Registry: registrySource}, nil
+				return &buildkit.ImageSource{Name: got, Descriptor: specs.Descriptor{MediaType: specs.MediaTypeImageManifest, Digest: identified, Size: 10}, Registry: !tc.keeps}, nil
 			}
 			original, err := reference.ParseNormalizedNamed("registry.example.com/app:1.0")
 			require.NoError(t, err)
 			result, err := createPatchResultWithStates(t.Context(), original, "registry.example.com/app:1.0-patched-amd64",
-				&types.PatchPlatform{Platform: specs.Platform{OS: "linux", Architecture: "amd64"}}, nil, imageloader.Docker, nil)
+				&types.PatchPlatform{Platform: platform}, nil, imageloader.Docker, tc.push, &Result{Annotations: origin})
 			require.NoError(t, err)
-			require.Equal(t, 1, lookups)
-			if registrySource {
-				require.Nil(t, result.PatchedDesc)
-				return
-			}
+			require.Equal(t, tc.wantDigest != "", lookups == 1, "a loaded classic-store image must not be identified by a registry lookup")
 			require.NotNil(t, result.PatchedDesc)
-			require.Equal(t, stale, result.PatchedDesc.Digest)
+			require.Equal(t, tc.wantDigest, result.PatchedDesc.Digest)
+			require.Equal(t, &platform, result.PatchedDesc.Platform)
+			for key, value := range origin {
+				require.Equal(t, value, result.PatchedDesc.Annotations[key])
+			}
 		})
 	}
 }

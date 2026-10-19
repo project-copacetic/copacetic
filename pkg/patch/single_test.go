@@ -408,6 +408,7 @@ func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T)
 		&types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},
 		nil,
 		imageloader.Docker,
+		false,
 		nil,
 	)
 

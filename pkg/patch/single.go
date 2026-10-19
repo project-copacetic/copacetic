@@ -44,6 +44,7 @@ const (
 var (
 	errNativeChiselTargetedPatch = errors.New(pkgmgr.NativeChiselTargetedPatchError)
 	localSourceIndex             = utils.LocalImageIndex
+	localStoreKeepsManifests     = utils.LocalImageStoreKeepsManifests
 )
 
 type buildkitBuildClient interface {
@@ -428,7 +429,7 @@ func patchSingleArchImageWithSourceAndUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, push, patchResult)
 	if err != nil {
 		return nil, err
 	}
@@ -794,7 +795,7 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 
 // createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
 func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
-	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
+	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, pushed bool, patchResult *Result,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -810,17 +811,20 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 	log.Debugf("Getting image descriptor for %s...", patchedImageName)
 	patchedDesc, err := utils.GetImageDescriptor(ctx, patchedImageName, runtime)
 	if patchedDesc == nil && err == nil && runtime == imageloader.Docker {
-		// Older Docker inspection succeeds without exposing a descriptor.
-		// Recover the exported image's exact native archive identity, just as
-		// source capture does, so index assembly retains a real child digest.
 		var source *buildkit.ImageSource
-		source, err = resolveImageSource(ctx, patchedImageName)
-		if err == nil && source != nil && source.Registry {
-			// A classic Docker store cannot identify the image just loaded into
-			// it. A same-named registry image is a different object, so keep the
-			// descriptor unknown rather than substitute it.
-			log.Debugf("Local store cannot identify loaded image %s; leaving its descriptor unset", patchedImageName)
-			source = nil
+		if keeps, storeErr := localStoreKeepsManifests(ctx); !pushed && (storeErr != nil || !keeps) {
+			// A classic Docker store keeps no manifest for the image just loaded
+			// into it, and a same-named registry image is a different object.
+			// Leave the digest unknown; the annotations added below still
+			// describe the patched platform for OCI layout and index assembly.
+			log.Debugf("Local store cannot identify loaded image %s; leaving its digest unset", patchedImageName)
+			patchedDesc = &ispec.Descriptor{}
+		} else {
+			// Older Docker inspection succeeds without exposing a descriptor.
+			// Recover the exported image's exact native archive identity, just as
+			// source capture does, so index assembly retains a real child digest.
+			// A pushed image is identified by its registry manifest.
+			source, err = resolveImageSource(ctx, patchedImageName)
 		}
 		if err == nil && source != nil {
 			patchedDesc = &source.Descriptor
