@@ -17,6 +17,7 @@ import (
 	v1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/project-copacetic/copacetic/integration/common"
 	"github.com/project-copacetic/copacetic/pkg/imageloader"
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +28,7 @@ func TestPatchBuiltOpenSSL(t *testing.T) {
 	require.NotEmpty(t, image, "build the fixture with .github/workflows/scripts/singlearch-fixture.sh build, export its GITHUB_ENV entries, then run load after selecting the BuildKit backend")
 	ref, err := reference.ParseNormalizedNamed(image)
 	require.NoError(t, err)
-	_, pinned := ref.(reference.Digested)
+	pinnedRef, pinned := ref.(reference.Digested)
 	require.True(t, pinned, "fixture input must include the digest produced by this job")
 	require.True(t, strings.HasPrefix(reference.Domain(ref), "127.0.0.1:"), "fixture must come from the job's loopback registry")
 
@@ -105,12 +106,16 @@ func TestPatchBuiltOpenSSL(t *testing.T) {
 	scanner.Scan(t, patchedImage, false, common.DockerDINDAddress.Env()...)
 	after, afterConfig := inspectOpenSSLFixture(t, loader, patchedImage)
 	require.Equal(t, before, after, "package status record names must be preserved")
-	// Copa records the source reference as provenance; the remaining image
-	// configuration must stay identical to the recipe's output.
+	// Copa records the patch origin and its re-patch locator; the remaining
+	// image configuration must stay identical to the recipe's output.
 	if beforeConfig.Labels == nil {
 		beforeConfig.Labels = map[string]string{}
 	}
-	beforeConfig.Labels["BaseImage"] = image
+	sourceDigest := pinnedRef.Digest()
+	beforeConfig.Labels["BaseImage"] = reference.TrimNamed(ref).Name() + "@" + sourceDigest.String()
+	beforeConfig.Labels[types.AnnotationPatchOriginKind] = types.PatchOriginImage
+	beforeConfig.Labels[types.AnnotationPatchOriginName] = ref.String()
+	beforeConfig.Labels[types.AnnotationPatchOriginDigest] = sourceDigest.String()
 	require.Equal(t, beforeConfig, afterConfig, "runtime image config must be preserved")
 	if reportFile {
 		common.ValidateVEXJSON(t, dir)
