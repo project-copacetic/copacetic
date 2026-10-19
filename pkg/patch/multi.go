@@ -143,6 +143,10 @@ func patchPreparedMultiPlatformImage(
 	ignoreError := opts.IgnoreError
 	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
 
+	if err := rejectPatchedOCITargets(ctx, opts.OCISource, platforms); err != nil {
+		return err
+	}
+
 	// Display styled patching plan before starting
 	plan := buildPatchingPlan(opts, platforms)
 	fmt.Fprintln(os.Stderr, tui.RenderPatchingPlan(plan))

@@ -214,6 +214,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 				}
 			}
 
+			if err := rejectPatchedOCITargets(ctx, opts.OCISource, []types.PatchPlatform{patchPlatform}); err != nil {
+				return err
+			}
 			displaySingleArchPlan(opts, &patchPlatform)
 			result, err := patchSingleArchImage(ctx, opts, patchPlatform, false, nil)
 			if result != nil {
@@ -284,6 +287,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := rejectPatchedOCITargets(ctx, opts.OCISource, []types.PatchPlatform{patchPlatform}); err != nil {
+		return err
 	}
 	displaySingleArchPlan(opts, &patchPlatform)
 	result, err := patchSingleArchImageWithUpdates(ctx, opts, patchPlatform, false, nil, parsedUpdates)

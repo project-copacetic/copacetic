@@ -123,10 +123,35 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		assert.NotContains(t, string(vexData), "registry.invalid/copa-1677/input")
 		assertInputPathAbsent(t, input, output, opts.Output)
 		t.Logf("final manifest %s; top-level index %s; VEX verified", desc.Digest, source.Descriptor.Digest)
-		// The exported graph must transfer through another OCI-backed solve.
+		// Copa does not patch its own output again: the targeted manifest
+		// carries the patch marker, and the original cannot be recovered from
+		// the layout. The rejection happens before BuildKit and leaves P1 intact.
+		outputBefore := snapshot(t, output)
 		repatch := options(output, filepath.Join(t.TempDir(), "repatched"))
-		require.NoError(t, patch.Patch(t.Context(), repatch))
-		openLayout(t, repatch.OCIDir)
+		err = patch.Patch(t.Context(), repatch)
+		require.ErrorContains(t, err, "already patched by Copa (manifest annotation "+copaPatchedAnnotation+")")
+		assert.ErrorContains(t, err, "Patch the original, unpatched layout instead")
+		assert.Equal(t, outputBefore, snapshot(t, output))
+		_, err = os.Stat(repatch.OCIDir)
+		assert.True(t, os.IsNotExist(err))
+
+		// An application built FROM the patched image inherits its config
+		// labels but not its manifest annotations, so it is still patched. Its
+		// inherited BaseImage names an unresolvable image: the patch must use
+		// the layout's own content rather than follow that label.
+		derivedInput := writeLayout(t, map[string]v1.Image{amd64Arch: derivedApplication(t, output)}, false, false)
+		derivedBefore := snapshot(t, derivedInput)
+		derived := options(derivedInput, filepath.Join(t.TempDir(), "derived"))
+		derived.Report = writeReport(t, amd64Arch)
+		require.NoError(t, patch.Patch(t.Context(), derived))
+		assert.Equal(t, derivedBefore, snapshot(t, derivedInput))
+		derivedImage := exportedImage(t, derived.OCIDir)
+		assert.Equal(t, "derived application\n", readImageFile(t, derivedImage, "app/derived.txt"))
+		derivedConfig, err := derivedImage.ConfigFile()
+		require.NoError(t, err)
+		for key, value := range inheritedLabels {
+			assert.Equal(t, value, derivedConfig.Config.Labels[key], "inherited label %s passes through unchanged", key)
+		}
 	})
 
 	for _, multi := range []bool{false, true} {
@@ -304,6 +329,14 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "index", annotations["example.index"])
 		assert.Contains(t, annotations, "sh.copa.patched")
+
+		// The output is consumed again as a BuildKit OCI layout source. Its
+		// patched amd64 manifest carries the Copa marker, but only the preserved
+		// 386 sibling is targeted, so the marker does not block the patch.
+		next := options(opts.OCIDir, filepath.Join(t.TempDir(), "next"))
+		next.Platforms = []string{"linux/386"}
+		require.NoError(t, patch.Patch(t.Context(), next))
+		assertPreserved(t, opts.OCIDir, next.OCIDir, amd64Arch)
 	})
 
 	t.Run("single report deduplicates selectors and preserves sibling", func(t *testing.T) {
