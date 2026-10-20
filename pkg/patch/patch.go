@@ -126,6 +126,15 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 				return err
 			}
 		}
+		if opts.Output != "" {
+			// The VEX writer stages a new file beside its destination. Use the
+			// resolved parent so that link/.. cannot stage it in the input.
+			output, err := ocilayout.CanonicalNewPath(opts.Output)
+			if err != nil {
+				return fmt.Errorf("resolve VEX output path %q: %w", opts.Output, err)
+			}
+			opts.Output = output
+		}
 		opts.OCISource = source
 		opts.Image = ""
 		if source.Reference != nil {

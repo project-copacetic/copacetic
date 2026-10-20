@@ -163,6 +163,50 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("link parent paths resolve before the parent directory", func(t *testing.T) {
+		// base/work/link points to base/images/child, so base/work/link/../layout
+		// names base/images/layout; lexical cleaning would select the decoy at
+		// base/work/layout. The output and VEX paths go through a link inside
+		// the read-only input, so staging beside their lexical parent fails.
+		// Paths with link/.. are concatenated because filepath.Join cleans them.
+		base := t.TempDir()
+		for _, dir := range []string{"images/child", "work", "external/child"} {
+			require.NoError(t, os.MkdirAll(filepath.Join(base, dir), 0o755))
+		}
+		require.NoError(t, os.Symlink(filepath.Join(base, "images", "child"), filepath.Join(base, "work", "link")))
+		labeled := func(value string) v1.Image {
+			config, err := images[amd64Arch].ConfigFile()
+			require.NoError(t, err)
+			config = config.DeepCopy()
+			config.Config.Labels = map[string]string{"example.layout": value}
+			image, err := mutate.ConfigFile(images[amd64Arch], config)
+			require.NoError(t, err)
+			return image
+		}
+		input := filepath.Join(base, "images", "layout")
+		require.NoError(t, os.Rename(writeLayout(t, map[string]v1.Image{amd64Arch: labeled("selected")}, false, false), input))
+		decoy := filepath.Join(base, "work", "layout")
+		require.NoError(t, os.Rename(writeLayout(t, map[string]v1.Image{amd64Arch: labeled("decoy")}, false, false), decoy))
+		require.NoError(t, os.Symlink(filepath.Join(base, "external", "child"), filepath.Join(input, "jump")))
+		before, decoyBefore := snapshot(t, input), snapshot(t, decoy)
+		require.NoError(t, os.Chmod(input, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(input, 0o755) })
+
+		opts := options(base+"/work/link/../layout", input+"/jump/../output")
+		opts.Output = input + "/jump/../vex.json"
+		opts.Report = writeReport(t, amd64Arch)
+		require.NoError(t, patch.Patch(t.Context(), opts))
+		assert.Equal(t, before, snapshot(t, input))
+		assert.Equal(t, decoyBefore, snapshot(t, decoy))
+		output := filepath.Join(base, "external", "output")
+		config, err := exportedImage(t, output).ConfigFile()
+		require.NoError(t, err)
+		assert.Equal(t, "selected", config.Config.Labels["example.layout"], "the layout the kernel resolves was patched")
+		vexData, err := os.ReadFile(filepath.Join(base, "external", "vex.json"))
+		require.NoError(t, err)
+		assert.Contains(t, string(vexData), "pkg:oci/output@")
+	})
+
 	for _, multi := range []bool{false, true} {
 		t.Run(fmt.Sprintf("omitted body media types multi=%v", multi), func(t *testing.T) {
 			input := writeLayout(t, images, multi, false)
@@ -617,11 +661,19 @@ func snapshot(t *testing.T, root string) map[string]string {
 		if err != nil || entry.IsDir() {
 			return err
 		}
-		data, err := os.ReadFile(path)
+		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, path)
+		if entry.Type()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			result[rel] = "symlink:" + target
+			return nil
+		}
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}

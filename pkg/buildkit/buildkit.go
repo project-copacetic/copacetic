@@ -1334,13 +1334,19 @@ func CreateOCILayoutFromResultsWithOptions(outputDir string, results []types.Pat
 
 // createAtomicOCILayout owns the staging directory and publishes it only after
 // the writer completes successfully and the caller still permits publication.
+// Staging uses the resolved parent of outputDir, so a link/.. component cannot
+// place it in a different directory, such as the protected input layout.
 func createAtomicOCILayout(ctx context.Context, outputDir string, write func(string) error) error {
-	if _, err := os.Lstat(outputDir); err == nil {
+	destination, err := ocilayout.CanonicalNewPath(outputDir)
+	if err != nil {
+		return fmt.Errorf("resolve OCI layout output directory: %w", err)
+	}
+	if _, err := os.Lstat(destination); err == nil {
 		return fmt.Errorf("OCI layout output directory %q already exists; choose a new path", outputDir)
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat OCI layout output directory: %w", err)
 	}
-	parent := filepath.Dir(outputDir)
+	parent := filepath.Dir(destination)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return fmt.Errorf("create OCI layout output parent: %w", err)
 	}
@@ -1355,7 +1361,7 @@ func createAtomicOCILayout(ctx context.Context, outputDir string, write func(str
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("OCI layout export canceled before publication: %w", err)
 	}
-	if err := renameDirectoryNoReplace(tempDir, outputDir); err != nil {
+	if err := renameDirectoryNoReplace(tempDir, destination); err != nil {
 		return fmt.Errorf("publish OCI layout output atomically without replacing an existing path: %w", err)
 	}
 	return nil

@@ -209,11 +209,9 @@ func readLayoutMetadata(ctx context.Context, root, name string) ([]byte, error) 
 }
 
 func canonicalExistingDirectory(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
+	// Resolve links before applying "..": link/.. names the link target's
+	// parent, which lexical cleaning would replace with the link's parent.
+	resolved, err := canonicalTargetPath(path)
 	if err != nil {
 		return "", err
 	}
@@ -225,6 +223,27 @@ func canonicalExistingDirectory(path string) (string, error) {
 		return "", fmt.Errorf("path is not a directory")
 	}
 	return filepath.Clean(resolved), nil
+}
+
+// CanonicalNewPath resolves the parent of a path that a caller is about to
+// create, following existing links before applying "..". The final component
+// is kept as given, so the caller can still detect an existing link there.
+// Staging files beside the result therefore lands where the kernel would
+// create the path itself.
+func CanonicalNewPath(path string) (string, error) {
+	trimmed := strings.TrimRight(path, string(filepath.Separator))
+	dir, base := filepath.Split(trimmed)
+	if base == "" || base == "." || base == ".." {
+		return "", fmt.Errorf("path %q must name a new file or directory", path)
+	}
+	if dir == "" {
+		dir = "."
+	}
+	parent, err := canonicalTargetPath(dir)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, base), nil
 }
 
 func canonicalTargetPath(path string) (string, error) {
