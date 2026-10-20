@@ -16,16 +16,25 @@ func writeOCIVEX(ctx context.Context, opts *types.Options, results []types.Patch
 	if opts.OCISource == nil || opts.Output == "" {
 		return nil
 	}
-	var inputs []vex.DocumentInput
-	output, err := ocilayout.Open(ctx, opts.OCIDir, "", "")
-	if err != nil {
-		return fmt.Errorf("read final OCI output for VEX: %w", err)
-	}
+	var eligible []types.PatchResult
 	for _, result := range results {
 		if result.VEX == nil || result.VEX.Updates == nil ||
 			(len(result.VEX.Updates.OSUpdates) == 0 && len(result.VEX.Updates.LangUpdates) == 0) {
 			continue
 		}
+		eligible = append(eligible, result)
+	}
+	// Reading the output validates every exported blob, so skip it when no
+	// result has a validated update to report.
+	if len(eligible) == 0 {
+		return nil
+	}
+	var inputs []vex.DocumentInput
+	output, err := ocilayout.Open(ctx, opts.OCIDir, "", "")
+	if err != nil {
+		return fmt.Errorf("read final OCI output for VEX: %w", err)
+	}
+	for _, result := range eligible {
 		if result.PatchedDesc == nil || result.PatchedDesc.Platform == nil {
 			return fmt.Errorf("OCI VEX result is missing its validated platform")
 		}
