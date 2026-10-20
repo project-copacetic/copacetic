@@ -1802,7 +1802,7 @@ func solveSinglePlatformOCI(
 
 	// Extract tar to OCI layout
 	tarPath := filepath.Join(outputDir, "image.tar")
-	if err := extractTarToDirectory(tarPath, outputDir); err != nil {
+	if err := extractTarToDirectory(ctx, tarPath, outputDir); err != nil {
 		return fmt.Errorf("failed to extract OCI layout: %w", err)
 	}
 
@@ -1939,11 +1939,11 @@ func solveAndCombineAllPlatforms(
 	}
 
 	// Extract and combine all platform tars into multi-platform OCI layout
-	return extractAndCombinePlatformTars(outputDir, platformTars, platformSpecs, exportOpts.state.indexAnnotations)
+	return extractAndCombinePlatformTars(ctx, outputDir, platformTars, platformSpecs, exportOpts.state.indexAnnotations)
 }
 
 // extractAndCombinePlatformTars extracts platform tars and combines them into multi-platform OCI layout.
-func extractAndCombinePlatformTars(outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string) error {
+func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string) error {
 	// Create output directory structure
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -1975,7 +1975,7 @@ func extractAndCombinePlatformTars(outputDir string, platformTars []string, plat
 		defer os.RemoveAll(platformTempDir)
 
 		// Extract tar file
-		if err := extractTarToDirectory(platformTar, platformTempDir); err != nil {
+		if err := extractTarToDirectory(ctx, platformTar, platformTempDir); err != nil {
 			return fmt.Errorf("failed to extract tar for platform: %w", err)
 		}
 
@@ -2021,7 +2021,7 @@ func extractAndCombinePlatformTars(outputDir string, platformTars []string, plat
 
 		// Copy blobs from this platform to the combined layout
 		platformBlobsDir := filepath.Join(platformTempDir, "blobs")
-		if err := copyBlobs(platformBlobsDir, blobsDir, blobsSet); err != nil {
+		if err := copyBlobs(ctx, platformBlobsDir, blobsDir, blobsSet); err != nil {
 			return fmt.Errorf("failed to copy blobs from platform: %w", err)
 		}
 	}
@@ -2049,7 +2049,7 @@ func extractAndCombinePlatformTars(outputDir string, platformTars []string, plat
 }
 
 // copyBlobs copies blob files from source to destination, avoiding duplicates.
-func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error {
+func copyBlobs(ctx context.Context, srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error {
 	// Check if source blobs directory exists
 	if _, err := os.Stat(srcBlobsDir); os.IsNotExist(err) {
 		log.Debugf("Source blobs directory does not exist: %s", srcBlobsDir)
@@ -2059,6 +2059,9 @@ func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error 
 	// Walk through the blobs directory structure (sha256/*)
 	return filepath.Walk(srcBlobsDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
 			return err
 		}
 
@@ -2098,7 +2101,7 @@ func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error 
 		}
 		defer dstFile.Close()
 
-		if _, err := io.Copy(dstFile, srcFile); err != nil {
+		if err := copyWithContext(ctx, dstFile, srcFile); err != nil {
 			return fmt.Errorf("failed to copy blob %s: %w", relPath, err)
 		}
 
@@ -2110,8 +2113,32 @@ func copyBlobs(srcBlobsDir, dstBlobsDir string, blobsSet map[string]bool) error 
 	})
 }
 
-// extractTarToDirectory extracts a tar file to a directory.
-func extractTarToDirectory(tarPath, destDir string) error {
+// copyWithContext copies in bounded reads and stops once ctx is canceled, so
+// a canceled export does not keep copying large blobs.
+func copyWithContext(ctx context.Context, dst io.Writer, src io.Reader) error {
+	buf := make([]byte, 1<<20)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := src.Read(buf)
+		if n > 0 {
+			if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// extractTarToDirectory extracts a tar file to a directory. Cancellation stops
+// the tar process.
+func extractTarToDirectory(ctx context.Context, tarPath, destDir string) error {
 	// Validate and clean paths to prevent path traversal attacks
 	cleanTarPath := filepath.Clean(tarPath)
 	cleanDestDir := filepath.Clean(destDir)
@@ -2136,9 +2163,15 @@ func extractTarToDirectory(tarPath, destDir string) error {
 	}
 
 	// Extract tar file using tar command with validated paths
-	cmd := exec.Command("tar", "-xf", cleanTarPath, "-C", cleanDestDir)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "tar", "-xf", cleanTarPath, "-C", cleanDestDir)
 
 	if output, err := cmd.CombinedOutput(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return fmt.Errorf("extract tar %s: %w", cleanTarPath, ctxErr)
+		}
 		return fmt.Errorf("failed to extract tar %s: %v, output: %s", cleanTarPath, err, string(output))
 	}
 
@@ -2193,7 +2226,7 @@ func createMixedOCILayout(
 		}
 
 		// Copy patched platform blobs to final output directory
-		if err := copyBlobsToOutput(outputDir, patchedTempDir, allBlobs); err != nil {
+		if err := copyBlobsToOutput(ctx, outputDir, patchedTempDir, allBlobs); err != nil {
 			return fmt.Errorf("failed to copy patched platform blobs: %w", err)
 		}
 	}
@@ -2285,7 +2318,7 @@ func exportPatchedPlatformsToTemp(
 			return nil, fmt.Errorf("failed to create extraction directory: %w", err)
 		}
 
-		if err := extractTarToDirectory(platformTarPath, platformExtractDir); err != nil {
+		if err := extractTarToDirectory(ctx, platformTarPath, platformExtractDir); err != nil {
 			return nil, fmt.Errorf("failed to extract platform tar: %w", err)
 		}
 
@@ -2302,7 +2335,7 @@ func exportPatchedPlatformsToTemp(
 }
 
 // copyBlobsToOutput copies all blobs from temporary directory to output directory.
-func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) error {
+func copyBlobsToOutput(ctx context.Context, outputDir, tempDir string, blobsSet map[string]bool) error {
 	// Create output blobs directory
 	outputBlobsDir := filepath.Join(outputDir, "blobs")
 	if err := os.MkdirAll(outputBlobsDir, 0o755); err != nil {
@@ -2317,7 +2350,7 @@ func copyBlobsToOutput(outputDir, tempDir string, blobsSet map[string]bool) erro
 
 		// Look for blobs directories
 		if info.IsDir() && info.Name() == "blobs" {
-			return copyBlobs(path, outputBlobsDir, blobsSet)
+			return copyBlobs(ctx, path, outputBlobsDir, blobsSet)
 		}
 
 		return nil
