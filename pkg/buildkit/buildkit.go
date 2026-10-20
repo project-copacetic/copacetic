@@ -27,6 +27,7 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/auth/authprovider"
+	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
@@ -72,7 +73,10 @@ type OCILayoutExportOptions struct {
 	BuildkitOpts     *Opts
 	Atomic           bool
 	OutputReference  string
-	state            *ociLayoutExportState
+	// SourcePolicy is the policy applied to the patch solve. Export re-solves
+	// the patched states, so it must resolve their sources the same way.
+	SourcePolicy *sourcepolicy.Policy
+	state        *ociLayoutExportState
 }
 
 type ociLayoutExportState struct {
@@ -1441,6 +1445,13 @@ func createOCILayoutFromResultsAt(outputDir string, results []types.PatchResult,
 	return fmt.Errorf("no BuildKit states or preserved platforms available for OCI export, cannot proceed")
 }
 
+// prepareExportSolveOpt gives an export solve the same source bindings and
+// source policy as the patch solve that validated its state.
+func prepareExportSolveOpt(solveOpt *client.SolveOpt, exportOpts OCILayoutExportOptions) { //nolint:gocritic
+	addOCIStores(solveOpt, exportOpts)
+	solveOpt.SourcePolicy = exportOpts.SourcePolicy
+}
+
 func addOCIStores(solveOpt *client.SolveOpt, exportOpts OCILayoutExportOptions) {
 	if exportOpts.state == nil {
 		return
@@ -1794,7 +1805,7 @@ func solveSinglePlatformOCI(
 			},
 		}},
 	}
-	addOCIStores(&solveOpt, exportOpts)
+	prepareExportSolveOpt(&solveOpt, exportOpts)
 
 	if err := solvePlatformOCI(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
 		return fmt.Errorf("BuildKit solve failed: %w", err)
@@ -1931,7 +1942,7 @@ func solveAndCombineAllPlatforms(
 				},
 			}},
 		}
-		addOCIStores(&platformSolveOpt, exportOpts)
+		prepareExportSolveOpt(&platformSolveOpt, exportOpts)
 
 		if err := solvePlatformOCI(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
 			return fmt.Errorf("failed to solve platform: %w", err)
@@ -2306,7 +2317,7 @@ func exportPatchedPlatformsToTemp(
 				},
 			}},
 		}
-		addOCIStores(&solveOpt, exportOpts)
+		prepareExportSolveOpt(&solveOpt, exportOpts)
 
 		if err := solvePlatformOCI(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
 			return nil, fmt.Errorf("failed to solve platform: %w", err)

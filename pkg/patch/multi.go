@@ -495,26 +495,15 @@ func patchPreparedMultiPlatformImage(
 	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
-		compression := opts.Compression
-		if compression == "" {
-			compression = DefaultLocalExportCompression
+		exportOpts, err := ociExportOptions(ctx, opts, patchedImageName.String())
+		if err != nil {
+			return err
 		}
 		if err := buildkit.CreateOCILayoutFromResultsWithOptions(
 			opts.OCIDir,
 			patchResults,
 			platforms,
-			buildkit.OCILayoutExportOptions{
-				Compression:      compression,
-				ForceCompression: opts.ForceCompression,
-				OutputReference:  patchedImageName.String(),
-				BuildkitOpts: &buildkit.Opts{
-					Addr:       opts.BkAddr,
-					CACertPath: opts.BkCACertPath,
-					CertPath:   opts.BkCertPath,
-					KeyPath:    opts.BkKeyPath,
-				},
-				Atomic: opts.OCISource != nil,
-			}.WithContext(ctx),
+			exportOpts,
 		); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)

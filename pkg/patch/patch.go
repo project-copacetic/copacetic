@@ -346,31 +346,20 @@ func exportSinglePlatformOCI(ctx context.Context, opts *types.Options, result *t
 	if opts.OCISource == nil || opts.OCIDir == "" || opts.Push || result == nil {
 		return nil
 	}
-	compression := opts.Compression
-	if compression == "" {
-		compression = DefaultLocalExportCompression
-	}
 	_, outputName, outputTag, err := resolvePatchNames(opts)
 	if err != nil {
 		return err
 	}
 	outputReference := outputName + ":" + outputTag
+	exportOpts, err := ociExportOptions(ctx, opts, outputReference)
+	if err != nil {
+		return err
+	}
 	if err := buildkit.CreateOCILayoutFromResultsWithOptions(
 		opts.OCIDir,
 		[]types.PatchResult{*result},
 		[]types.PatchPlatform{*platform},
-		buildkit.OCILayoutExportOptions{
-			Compression:      compression,
-			ForceCompression: opts.ForceCompression,
-			OutputReference:  outputReference,
-			BuildkitOpts: &buildkit.Opts{
-				Addr:       opts.BkAddr,
-				CACertPath: opts.BkCACertPath,
-				CertPath:   opts.BkCertPath,
-				KeyPath:    opts.BkKeyPath,
-			},
-			Atomic: opts.OCISource != nil,
-		}.WithContext(ctx),
+		exportOpts,
 	); err != nil {
 		return fmt.Errorf("failed to create OCI layout: %w", err)
 	}
@@ -526,6 +515,32 @@ func resolveOCIReportPlatform(discovered []types.PatchPlatform, targets []string
 		resolved = reportMatch
 	}
 	return resolved, nil
+}
+
+// ociExportOptions configures an OCI layout export to resolve sources like the
+// patch solve: the same BuildKit connection options and the same source policy.
+func ociExportOptions(ctx context.Context, opts *types.Options, outputReference string) (buildkit.OCILayoutExportOptions, error) {
+	compression := opts.Compression
+	if compression == "" {
+		compression = DefaultLocalExportCompression
+	}
+	sourcePolicy, err := readSourcePolicy()
+	if err != nil {
+		return buildkit.OCILayoutExportOptions{}, err
+	}
+	return buildkit.OCILayoutExportOptions{
+		Compression:      compression,
+		ForceCompression: opts.ForceCompression,
+		OutputReference:  outputReference,
+		BuildkitOpts: &buildkit.Opts{
+			Addr:       opts.BkAddr,
+			CACertPath: opts.BkCACertPath,
+			CertPath:   opts.BkCertPath,
+			KeyPath:    opts.BkKeyPath,
+		},
+		Atomic:       opts.OCISource != nil,
+		SourcePolicy: sourcePolicy,
+	}.WithContext(ctx), nil
 }
 
 // resolvePatchNames separates the selected source's optional name from the

@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -40,4 +41,30 @@ func TestWriteOCIVEXReadsOutputOnlyForEligibleResults(t *testing.T) {
 		}},
 	})
 	require.ErrorContains(t, writeOCIVEX(t.Context(), opts, eligible, "example.com/app:patched"), "read final OCI output for VEX")
+}
+
+func TestOCIExportOptionsCarrySourcePolicy(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.json")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`{"rules":[{"action":"CONVERT","selector":{"identifier":"docker-image://example.invalid/tooling:1"},`+
+		`"updates":{"identifier":"docker-image://example.com/mirror/tooling:1"}}]}`), 0o600))
+	opts := &types.Options{OCISource: &ocilayout.Source{}, BkAddr: "tcp://127.0.0.1:1"}
+
+	t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", policyPath)
+	exportOpts, err := ociExportOptions(t.Context(), opts, "example.com/app:patched")
+	require.NoError(t, err)
+	require.NotNil(t, exportOpts.SourcePolicy)
+	require.Len(t, exportOpts.SourcePolicy.Rules, 1)
+	assert.Equal(t, "docker-image://example.com/mirror/tooling:1", exportOpts.SourcePolicy.Rules[0].Updates.Identifier)
+	assert.Equal(t, "tcp://127.0.0.1:1", exportOpts.BuildkitOpts.Addr)
+	assert.True(t, exportOpts.Atomic)
+	assert.Equal(t, DefaultLocalExportCompression, exportOpts.Compression)
+
+	t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", filepath.Join(t.TempDir(), "missing.json"))
+	_, err = ociExportOptions(t.Context(), opts, "example.com/app:patched")
+	require.ErrorContains(t, err, "failed to read source policy file")
+
+	t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", "")
+	exportOpts, err = ociExportOptions(t.Context(), opts, "example.com/app:patched")
+	require.NoError(t, err)
+	assert.Nil(t, exportOpts.SourcePolicy)
 }
