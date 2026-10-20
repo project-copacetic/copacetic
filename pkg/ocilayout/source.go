@@ -153,6 +153,42 @@ func (s *Source) ValidateWritePath(path string) error {
 	return nil
 }
 
+// ValidateNotInputFile rejects an existing write target that is the same file
+// as a regular file in the input layout, such as a hard link to a blob or to
+// index.json. Path containment cannot see hard links, and writing an existing
+// file truncates the shared inode. The target's symlinks are followed.
+func (s *Source) ValidateNotInputFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	target, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat write path %q: %w", path, err)
+	}
+	if !target.Mode().IsRegular() {
+		return nil
+	}
+	return filepath.WalkDir(s.Path, func(inputPath string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.Type().IsRegular() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if os.SameFile(info, target) {
+			return fmt.Errorf("write path %q is the same file as OCI layout input file %q; choose a new path", path, inputPath)
+		}
+		return nil
+	})
+}
+
 // ValidateOutputWritePath keeps auxiliary writes outside an exported layout.
 // Working directories inside it create the destination before atomic export;
 // VEX files inside it could overwrite the completed graph. Ancestor work roots

@@ -134,6 +134,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 				return fmt.Errorf("resolve VEX output path %q: %w", opts.Output, err)
 			}
 			opts.Output = output
+			if err := source.ValidateNotInputFile(opts.Output); err != nil {
+				return err
+			}
 		}
 		opts.OCISource = source
 		opts.Image = ""
