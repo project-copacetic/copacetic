@@ -13,7 +13,8 @@ import (
 // TestAtomicOCILayoutStagesBesideResolvedDestination uses an output path whose
 // lexical parent is a protected directory but whose real parent is elsewhere.
 func TestAtomicOCILayoutStagesBesideResolvedDestination(t *testing.T) {
-	base := t.TempDir()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	protected := filepath.Join(base, "input")
 	external := filepath.Join(base, "external")
 	require.NoError(t, os.MkdirAll(filepath.Join(external, "child"), 0o755))

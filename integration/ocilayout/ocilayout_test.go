@@ -397,6 +397,46 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		assertPreserved(t, opts.OCIDir, next.OCIDir, amd64Arch)
 	})
 
+	t.Run("inferred platforms patch and preserve exact sibling descriptors", func(t *testing.T) {
+		input := writeLayout(t, images, true, false)
+		indexPath := filepath.Join(input, ocispec.ImageIndexFile)
+		data, err := os.ReadFile(indexPath)
+		require.NoError(t, err)
+		var root ocispec.Index
+		require.NoError(t, json.Unmarshal(data, &root))
+		var index ocispec.Index
+		readJSONBlob(t, input, &root.Manifests[0], &index)
+		for i := range index.Manifests {
+			index.Manifests[i].Platform = nil
+		}
+		data, err = json.Marshal(index)
+		require.NoError(t, err)
+		root.Manifests[0].Digest = digest.FromBytes(data)
+		root.Manifests[0].Size = int64(len(data))
+		require.NoError(t, os.WriteFile(filepath.Join(input, "blobs", root.Manifests[0].Digest.Algorithm().String(), root.Manifests[0].Digest.Encoded()), data, 0o600))
+		data, err = json.Marshal(root)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(indexPath, data, 0o600))
+
+		before := snapshot(t, input)
+		opts := options(input, filepath.Join(t.TempDir(), "output"))
+		opts.Report = writeReport(t, amd64Arch)
+		opts.Output = filepath.Join(t.TempDir(), "vex.json")
+		require.NoError(t, patch.Patch(t.Context(), opts))
+		assert.Equal(t, before, snapshot(t, input))
+		assertPreserved(t, input, opts.OCIDir, "386")
+		output := openLayout(t, opts.OCIDir)
+		found, err := output.Platforms(t.Context())
+		require.NoError(t, err)
+		require.Len(t, found, 2)
+		patched, err := output.PlatformDescriptor(t.Context(), &ocispec.Platform{OS: linuxOS, Architecture: amd64Arch})
+		require.NoError(t, err)
+		vexData, err := os.ReadFile(opts.Output)
+		require.NoError(t, err)
+		assert.Contains(t, string(vexData), patched.Digest.String())
+		assertInputPathAbsent(t, input, opts.OCIDir, opts.Output)
+	})
+
 	t.Run("single report deduplicates selectors and preserves sibling", func(t *testing.T) {
 		input := writeLayout(t, images, true, false)
 		before := snapshot(t, input)

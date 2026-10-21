@@ -605,6 +605,12 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 		// size because the patched descriptor is produced by the later OCI export.
 		patchedDesc.Digest = ""
 		patchedDesc.Size = 0
+		if patchedDesc.Platform == nil {
+			// Source descriptors may omit platform metadata. Associate the
+			// patched result with the validated, possibly inferred target.
+			platform := targetPlatform.Platform
+			patchedDesc.Platform = &platform
+		}
 	} else {
 		log.Debugf("Getting image descriptor for %s...", patchedImageName)
 		patchedDesc, err = utils.GetImageDescriptor(descriptorCtx, patchedImageName, runtime)

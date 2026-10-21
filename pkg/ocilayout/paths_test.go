@@ -15,7 +15,8 @@ import (
 // filepath.Join cleans them.
 func linkParentFixture(t *testing.T) string {
 	t.Helper()
-	base := t.TempDir()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "images", "child"), 0o755))
 	require.NoError(t, os.MkdirAll(filepath.Join(base, "work"), 0o755))
 	require.NoError(t, os.Symlink(filepath.Join(base, "images", "child"), filepath.Join(base, "work", "link")))

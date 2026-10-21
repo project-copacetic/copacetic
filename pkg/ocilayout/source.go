@@ -367,10 +367,20 @@ func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Des
 	matches := descriptorsMatching(candidates, func(desc ocispec.Descriptor) bool {
 		imageName := desc.Annotations[annotationImageName]
 		refName := desc.Annotations[ocispec.AnnotationRefName]
-		// Count each descriptor once across both keys. Bare-tag fallback is
-		// specific to ref-name annotations and must not broaden image names.
-		return (imageName != "" && slices.Contains(names, imageName)) ||
-			(refName != "" && (slices.Contains(names, refName) || refName == tag))
+		// Count exact matches across both annotation keys, but do not let a
+		// bare ref-name tag select a different explicitly named repository.
+		if (imageName != "" && slices.Contains(names, imageName)) ||
+			(refName != "" && slices.Contains(names, refName)) {
+			return true
+		}
+		if tag == "" || refName != tag {
+			return false
+		}
+		if imageName == "" {
+			return true
+		}
+		imageRef, err := reference.ParseNormalizedNamed(imageName)
+		return err == nil && named != nil && imageRef.Name() == named.Name()
 	})
 	if len(matches) > 0 {
 		return requireUniqueSelection(matches, "selector "+rawSelector, candidates)
@@ -535,11 +545,11 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 				}
 				return fmt.Errorf("nested child image index %s (%s) is not supported; select a top-level index containing platform manifests", child.Digest, child.MediaType)
 			}
-			patchable, err := s.isPlatformImage(ctx, &child)
+			platform, err := s.imagePlatform(ctx, &child)
 			if err != nil {
 				return err
 			}
-			if !patchable {
+			if platform == nil {
 				continue
 			}
 			if err := s.validateReachableImage(ctx, &child); err != nil {
@@ -596,19 +606,36 @@ func (s *Source) validateReachableImage(ctx context.Context, desc *ocispec.Descr
 	}
 }
 
-// isPlatformImage applies identical artifact filtering in validation, discovery,
-// and lookup. Artifact descriptors do not require their image blobs to exist.
-func (s *Source) isPlatformImage(ctx context.Context, desc *ocispec.Descriptor) (bool, error) {
-	if !isImageManifest(desc.MediaType) || isArtifactDescriptor(desc) || desc.Platform == nil ||
-		desc.Platform.OS == "" || desc.Platform.Architecture == "" ||
-		desc.Platform.OS == unknownPlatformField || desc.Platform.Architecture == unknownPlatformField {
-		return false, nil
+// imagePlatform applies identical artifact filtering in validation, discovery,
+// and lookup. Missing platform metadata is resolved from the image config,
+// without changing the descriptor that will be copied for a preserved image.
+func (s *Source) imagePlatform(ctx context.Context, desc *ocispec.Descriptor) (*ocispec.Platform, error) {
+	if !isImageManifest(desc.MediaType) || isArtifactDescriptor(desc) {
+		return nil, nil
+	}
+	platform := desc.Platform
+	if platform != nil && (platform.OS == "" || platform.Architecture == "" ||
+		platform.OS == unknownPlatformField || platform.Architecture == unknownPlatformField) {
+		return nil, nil
 	}
 	manifest, err := s.selectedManifest(ctx, desc)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	return manifest.ArtifactType == "", nil
+	if manifest.ArtifactType != "" {
+		return nil, nil
+	}
+	if platform == nil {
+		resolved, err := s.configPlatform(ctx, &manifest.Config)
+		if err != nil {
+			return nil, err
+		}
+		if resolved.OS == unknownPlatformField || resolved.Architecture == unknownPlatformField {
+			return nil, nil
+		}
+		platform = &resolved
+	}
+	return platform, nil
 }
 
 // contextReader checks cancellation around each bounded copy read, including
@@ -764,14 +791,14 @@ func (s *Source) Platforms(ctx context.Context) ([]ocispec.Platform, error) {
 		}
 		var found []ocispec.Platform
 		for _, desc := range index.Manifests {
-			patchable, err := s.isPlatformImage(ctx, &desc)
+			resolved, err := s.imagePlatform(ctx, &desc)
 			if err != nil {
 				return nil, err
 			}
-			if !patchable {
+			if resolved == nil {
 				continue
 			}
-			platform := platforms.Normalize(*desc.Platform)
+			platform := platforms.Normalize(*resolved)
 			if platform.Architecture == architectureARM64 && platform.Variant == "v8" {
 				platform.Variant = ""
 			}
@@ -792,24 +819,26 @@ func (s *Source) Platforms(ctx context.Context) ([]ocispec.Platform, error) {
 	if err != nil {
 		return nil, err
 	}
-	var image ocispec.Image
-	if err := s.readJSONBlob(ctx, &manifest.Config, &image); err != nil {
-		return nil, fmt.Errorf("read image config platform: %w", err)
+	platform, err := s.configPlatform(ctx, &manifest.Config)
+	if err != nil {
+		return nil, err
 	}
-	platform := platforms.Normalize(ocispec.Platform{
-		OS:           image.OS,
-		Architecture: image.Architecture,
-		Variant:      image.Variant,
-		OSVersion:    image.OSVersion,
-		OSFeatures:   image.OSFeatures,
-	})
+	return []ocispec.Platform{platform}, nil
+}
+
+func (s *Source) configPlatform(ctx context.Context, config *ocispec.Descriptor) (ocispec.Platform, error) {
+	var image ocispec.Image
+	if err := s.readJSONBlob(ctx, config, &image); err != nil {
+		return ocispec.Platform{}, fmt.Errorf("read image config platform: %w", err)
+	}
+	platform := platforms.Normalize(image.Platform)
 	if platform.OS == "" || platform.Architecture == "" {
-		return nil, fmt.Errorf("selected image config %s does not declare os and architecture", manifest.Config.Digest)
+		return ocispec.Platform{}, fmt.Errorf("selected image config %s does not declare os and architecture", config.Digest)
 	}
 	if platform.Architecture == architectureARM64 && platform.Variant == "v8" {
 		platform.Variant = ""
 	}
-	return []ocispec.Platform{platform}, nil
+	return platform, nil
 }
 
 func (s *Source) selectedIndex(ctx context.Context) (*ocispec.Index, error) {
@@ -836,6 +865,8 @@ func (s *Source) selectedManifest(ctx context.Context, desc *ocispec.Descriptor)
 
 // PlatformDescriptor returns the exact selected manifest descriptor for a
 // platform, preserving its digest, media type, size, annotations, and platform.
+// For index children, inferred platforms are used only for matching; the
+// returned descriptor retains an omitted platform field unchanged.
 func (s *Source) PlatformDescriptor(ctx context.Context, target *ocispec.Platform) (*ocispec.Descriptor, error) {
 	if !isImageIndex(s.Descriptor.MediaType) {
 		found, err := s.Platforms(ctx)
@@ -863,14 +894,14 @@ func (s *Source) PlatformDescriptor(ctx context.Context, target *ocispec.Platfor
 	var match *ocispec.Descriptor
 	for i := range index.Manifests {
 		desc := &index.Manifests[i]
-		patchable, err := s.isPlatformImage(ctx, desc)
+		platform, err := s.imagePlatform(ctx, desc)
 		if err != nil {
 			return nil, err
 		}
-		if !patchable {
+		if platform == nil {
 			continue
 		}
-		if platformEqual(desc.Platform, target) {
+		if platformEqual(platform, target) {
 			if match != nil {
 				return nil, fmt.Errorf("selected OCI image index contains multiple descriptors for platform %s", platforms.Format(*target))
 			}
