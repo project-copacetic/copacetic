@@ -296,6 +296,7 @@ func TestOpenVex_PurlPerOSType(t *testing.T) {
 		{name: "oracle->rpm", osType: utils.OSTypeOracle, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/oracle/pkgA@1.0.0?arch=x86_64"},
 		{name: "redhat->rpm", osType: utils.OSTypeRedHat, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/redhat/pkgA@1.0.0?arch=x86_64"},
 		{name: "rocky->rpm", osType: utils.OSTypeRocky, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/rocky/pkgA@1.0.0?arch=x86_64"},
+		{name: "fedora->rpm", osType: utils.OSTypeFedora, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/fedora/pkgA@1.0.0?arch=x86_64"},
 		{name: "amazon->rpm", osType: utils.OSTypeAmazon, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/amazon/pkgA@1.0.0?arch=x86_64"},
 		{name: "alma->rpm", osType: utils.OSTypeAlma, pkgMgrType: "rpm", expectedPurl: "pkg:rpm/alma/pkgA@1.0.0?arch=x86_64"},
 	}

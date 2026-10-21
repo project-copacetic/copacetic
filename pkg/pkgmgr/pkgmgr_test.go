@@ -86,6 +86,12 @@ func TestGetPackageManager(t *testing.T) {
 		assert.IsType(t, &rpmManager{}, manager)
 	})
 
+	t.Run("should return an rpmManager for fedora", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeFedora, "45", config, utils.DefaultTempWorkingFolder)
+		assert.NoError(t, err)
+		assert.IsType(t, &rpmManager{}, manager)
+	})
+
 	t.Run("should return an rpmManager for sles and bci", func(t *testing.T) {
 		// Call the GetPackageManager function with "sles" as osType
 		manager, err := GetPackageManager(utils.OSTypeSLES, "15.7", config, utils.DefaultTempWorkingFolder)

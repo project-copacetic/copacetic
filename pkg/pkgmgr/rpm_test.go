@@ -185,6 +185,13 @@ func TestGetRPMImageName(t *testing.T) {
 			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
 		},
 		{
+			name:      "Fedora 45",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    utils.OSTypeFedora,
+			osVersion: "45",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0",
+		},
+		{
 			name:      "SUSE (SLES and BCI)",
 			manifest:  &unversioned.UpdateManifest{},
 			osType:    "sles",

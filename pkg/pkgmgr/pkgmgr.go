@@ -96,7 +96,7 @@ func GetPackageManagerWithOptions(osType string, osVersion string, config *build
 			osType:        canonicalOSType,
 			chiselRelease: managerOptions.ChiselRelease,
 		}, nil
-	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
+	case utils.OSTypeCBLMariner, utils.OSTypeAzureLinux, utils.OSTypeCentOS, utils.OSTypeOracle, utils.OSTypeRedHat, utils.OSTypeRocky, utils.OSTypeFedora, utils.OSTypeAmazon, utils.OSTypeAlma, utils.OSTypeAlmaLinux:
 		return &rpmManager{
 			config:        config,
 			workingFolder: workingFolder,

@@ -85,7 +85,7 @@ instead.
 
 Azure Linux based images will use `ghcr.io/project-copacetic/copacetic/azurelinux/base/core` with the same version as the image being patched.
 
-#### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux
+#### CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, Fedora, and Amazon Linux
 
 These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`
 
