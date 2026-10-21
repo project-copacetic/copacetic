@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 
@@ -220,7 +221,9 @@ func TestPatchFedora45(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	updates := testenv.CreateUpdateManifest("fedora", "45", "amd64", []testenv.PackageUpdate{
+	// Use the host architecture so the test does not require cross-platform emulation.
+	arch := runtime.GOARCH
+	updates := testenv.CreateUpdateManifest("fedora", "45", arch, []testenv.PackageUpdate{
 		{
 			Name:             "fedora-release-container",
 			InstalledVersion: "45-0",
@@ -231,7 +234,7 @@ func TestPatchFedora45(t *testing.T) {
 
 	err := testEnv.RunPatchTestWithInspection(ctx, t, testenv.PatchTestConfig{
 		ImageName: "docker.io/library/fedora:45",
-		Platform:  &specs.Platform{OS: "linux", Architecture: "amd64"},
+		Platform:  &specs.Platform{OS: "linux", Architecture: arch},
 		Updates:   updates,
 	}, func(ctx context.Context, t *testing.T, _ gwclient.Client, result *patch.Result) {
 		require.Equal(t, "rpm", result.PackageType)
