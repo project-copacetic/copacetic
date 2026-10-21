@@ -167,7 +167,7 @@ jobs:
         with:
           paths: "test-results.xml"
 
-  # Test RPM-based images (Mariner, Azure Linux, Amazon Linux, Rocky, Alma, RHEL)
+  # Test RPM-based images (Mariner, Azure Linux, Amazon Linux, Rocky, Alma, RHEL, Fedora)
   test-gateway-rpm:
     needs: build
     name: Gateway RPM ${{ matrix.buildkit_mode }}
