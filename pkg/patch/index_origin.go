@@ -61,6 +61,15 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 		if err != nil {
 			return fmt.Errorf("inspect platform %s origin: %w", buildkit.PlatformKey(*child.Platform), err)
 		}
+		// A parent may legitimately identify an index or a selected child,
+		// but the three surfaces of one image must agree on that identity.
+		combined, err := buildkit.MergeImageSourceAnnotations(child.Annotations, manifest)
+		if err != nil {
+			return fmt.Errorf("platform %s origin surfaces disagree: %w", buildkit.PlatformKey(*child.Platform), err)
+		}
+		if _, err := buildkit.MergeImageSourceAnnotations(combined, labels); err != nil {
+			return fmt.Errorf("platform %s origin surfaces disagree: %w", buildkit.PlatformKey(*child.Platform), err)
+		}
 		if err := check(manifest); err != nil {
 			return err
 		}
