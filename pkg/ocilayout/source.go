@@ -626,6 +626,12 @@ func (s *Source) imagePlatform(ctx context.Context, desc *ocispec.Descriptor) (*
 		return nil, nil
 	}
 	if platform == nil {
+		// Without a declared platform, only an image config can supply one. A
+		// manifest with another config type is an artifact in the pre-OCI 1.1
+		// style and is skipped, as it was before platform inference.
+		if !isImageConfig(manifest.Config.MediaType) {
+			return nil, nil
+		}
 		resolved, err := s.configPlatform(ctx, &manifest.Config)
 		if err != nil {
 			return nil, err
