@@ -371,6 +371,12 @@ func patchSingleArchImageWithSourceAndUpdates(
 	if err != nil {
 		return nil, err
 	}
+	// The build reads the input by digest; keep a policy's decision for the
+	// requested image applicable to that pinned reference.
+	buildConfig.SolveOpt.SourcePolicy, err = authorizePinnedInput(ctx, buildConfig.SolveOpt.SourcePolicy, image, buildkitImageRef.String())
+	if err != nil {
+		return nil, err
+	}
 
 	// Create channels for build coordination.
 	// Buffer the channel to prevent backpressure from the progress display

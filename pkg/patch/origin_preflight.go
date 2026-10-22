@@ -56,6 +56,14 @@ func preflightMultiPlatformOrigins(ctx context.Context, opts *types.Options, pla
 	if err := validateSourcePolicy(solveOpt.SourcePolicy); err != nil {
 		return err
 	}
+	pinned := make([]string, 0, len(selected))
+	for _, p := range selected {
+		pinned = append(pinned, inputs[buildkit.PlatformKey(p.Platform)].image)
+	}
+	solveOpt.SourcePolicy, err = authorizePinnedInput(ctx, solveOpt.SourcePolicy, opts.Image, pinned...)
+	if err != nil {
+		return err
+	}
 	_, err = bk.Build(ctx, solveOpt, copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		for _, p := range selected {
 			key := buildkit.PlatformKey(p.Platform)

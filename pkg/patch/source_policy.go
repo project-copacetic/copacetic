@@ -2,7 +2,9 @@ package patch
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/distribution/reference"
@@ -77,4 +79,85 @@ func policyPatchOptions(ctx context.Context, opts *types.Options) (*types.Option
 	selected.Image = image
 	selected.PatchedTag = output + ":" + tag
 	return &selected, nil
+}
+
+// authorizePinnedInput carries a source policy's decision for the requested
+// input to the digest-pinned references Copa reads instead. Without it, an
+// exact-tag ALLOW after a wildcard DENY stops matching once the input is pinned.
+// Each pinned reference gets an exact ALLOW rule only when the policy allows the
+// requested input unchanged and would deny that pinned reference. Tooling,
+// recovered originals and every other source keep the policy as written.
+func authorizePinnedInput(
+	ctx context.Context, policy *policytypes.Policy, requested string, pinned ...string,
+) (*policytypes.Policy, error) {
+	if policy == nil || len(pinned) == 0 {
+		return policy, nil
+	}
+	requestedID, err := imageSourceIdentifier(requested)
+	if err != nil {
+		return nil, err
+	}
+	if allowed, err := policyAllowsUnchanged(ctx, policy, requestedID); err != nil || !allowed {
+		// A denied or converted input keeps the policy's own decision.
+		return policy, err
+	}
+	var extra []*policytypes.Rule
+	seen := map[string]struct{}{}
+	for _, ref := range pinned {
+		named, err := reference.ParseNormalizedNamed(ref)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := named.(reference.Digested); !ok {
+			continue // An unpinned reference is matched by the policy as written.
+		}
+		id := imageSourceScheme + named.String()
+		if _, done := seen[id]; done {
+			continue
+		}
+		seen[id] = struct{}{}
+		_, err = sourcepolicy.NewEngine([]*policytypes.Policy{policy}).Evaluate(ctx, imageSourceOp(id))
+		if err == nil {
+			continue // Already allowed, or converted by the policy itself.
+		}
+		if !errors.Is(err, sourcepolicy.ErrSourceDenied) {
+			return nil, fmt.Errorf("evaluate pinned patch input source policy: %w", err)
+		}
+		extra = append(extra, &policytypes.Rule{
+			Action:   policytypes.PolicyAction_ALLOW,
+			Selector: &policytypes.Selector{Identifier: id, MatchType: policytypes.MatchType_EXACT},
+		})
+	}
+	if len(extra) == 0 {
+		return policy, nil
+	}
+	// The last matching ALLOW or DENY wins, so these exact rules go last.
+	return &policytypes.Policy{Version: policy.Version, Rules: append(slices.Clone(policy.Rules), extra...)}, nil
+}
+
+const imageSourceScheme = "docker-image://"
+
+func imageSourceIdentifier(image string) (string, error) {
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return "", err
+	}
+	return imageSourceScheme + reference.TagNameOnly(named).String(), nil
+}
+
+func imageSourceOp(id string) *pb.SourceOp {
+	return &pb.SourceOp{Identifier: id, Attrs: map[string]string{pb.AttrImageResolveMode: llb.ResolveModePreferLocal.String()}}
+}
+
+// policyAllowsUnchanged reports whether the policy allows id without converting it.
+func policyAllowsUnchanged(ctx context.Context, policy *policytypes.Policy, id string) (bool, error) {
+	op := imageSourceOp(id)
+	mutated, err := sourcepolicy.NewEngine([]*policytypes.Policy{policy}).Evaluate(ctx, op)
+	if errors.Is(err, sourcepolicy.ErrSourceDenied) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("evaluate patch input source policy: %w", err)
+	}
+	return !mutated && op.Identifier == id, nil
 }

@@ -144,6 +144,39 @@ func TestOriginContract(t *testing.T) {
 		require.Equal(t, repo+"@"+children[originAMD64], contractLabels(t, result)["BaseImage"])
 	})
 
+	t.Run("source-policy-exact-tag-allowlist", func(t *testing.T) {
+		// Deny the repository except two exact tags. Copa reads the allowed
+		// inputs by digest, which the policy as written would deny.
+		single, multi, denied := repo+":allowlisted", repo+":allowlisted-index", repo+":not-allowlisted"
+		for _, tag := range []string{single, denied} {
+			require.NoError(t, remote.Write(originTestReference(t, tag), originals[originAMD64], remote.WithContext(ctx)))
+		}
+		require.NoError(t, remote.WriteIndex(originTestReference(t, multi), index, remote.WithContext(ctx)))
+		policy := fmt.Sprintf(`{"rules":[`+
+			`{"action":"DENY","selector":{"identifier":%q,"match_type":"WILDCARD"}},`+
+			`{"action":"ALLOW","selector":{"identifier":%q}},{"action":"ALLOW","selector":{"identifier":%q}}]}`,
+			"docker-image://"+repo+"*", "docker-image://"+single, "docker-image://"+multi)
+		policyPath := filepath.Join(t.TempDir(), "source-policy.json")
+		require.NoError(t, os.WriteFile(policyPath, []byte(policy), 0o600))
+		t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", policyPath)
+
+		require.NoError(t, patch(single, "allowlist-single", originTestReport(t, originAMD64), nil))
+		assertContractOrigin(t, contractImage(t, ctx, repo+":allowlist-single"), children[originAMD64], application)
+		require.NoError(t, patch(multi, "allowlist-multi", reports, nil))
+		result, err := remote.Index(originTestReference(t, repo+":allowlist-multi"), remote.WithContext(ctx))
+		require.NoError(t, err)
+		manifest, err := result.IndexManifest()
+		require.NoError(t, err)
+		for _, arch := range arches {
+			assertContractOrigin(t, contractPlatformImage(t, result, manifest, arch), children[arch], application)
+		}
+
+		err = patch(denied, "allowlist-denied", originTestReport(t, originAMD64), nil)
+		require.ErrorContains(t, err, "denied by policy", "a tag the policy denies stays denied")
+		_, err = remote.Get(originTestReference(t, repo+":allowlist-denied"), remote.WithContext(ctx))
+		require.Error(t, err, "a denied input must not publish output")
+	})
+
 	t.Run("preserved-windows-versions", func(t *testing.T) {
 		addenda := []mutate.IndexAddendum{{Add: originals[originAMD64], Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: LINUX, Architecture: originAMD64}}}}
 		for _, version := range []string{"10.0.20348.0", "10.0.26100.0"} {
