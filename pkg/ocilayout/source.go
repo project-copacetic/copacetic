@@ -317,6 +317,9 @@ func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Des
 		}
 		var body struct {
 			ArtifactType string `json:"artifactType"`
+			Config       struct {
+				MediaType string `json:"mediaType"`
+			} `json:"config"`
 		}
 		err := s.readJSONBlob(ctx, &desc, &body)
 		if contextErr := ctx.Err(); contextErr != nil {
@@ -324,8 +327,10 @@ func (s *Source) selectDescriptor(ctx context.Context, descriptors []ocispec.Des
 		}
 		// Only a verified body can establish an artifact. Keep unreadable or
 		// corrupt descriptors as candidates so their validation remains scoped
-		// to selection and cannot silently hide an ambiguous image.
-		if err == nil && body.ArtifactType != "" {
+		// to selection and cannot silently hide an ambiguous image. A manifest
+		// whose config is not an image config is a pre-OCI 1.1 artifact.
+		if err == nil && (body.ArtifactType != "" || (isImageManifest(desc.MediaType) &&
+			body.Config.MediaType != "" && !isImageConfig(body.Config.MediaType))) {
 			continue
 		}
 		candidates = append(candidates, desc)
