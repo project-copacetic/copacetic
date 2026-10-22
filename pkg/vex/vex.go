@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	openvex "github.com/openvex/go-vex/pkg/vex"
+
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
@@ -69,4 +71,40 @@ func writeBufferedVEXDocumentFile(file string, write func(io.Writer) error) erro
 		return err
 	}
 	return os.WriteFile(file, buf.Bytes(), 0o600)
+}
+
+// DocumentInput describes validated updates for one produced image manifest.
+type DocumentInput struct {
+	Updates     *unversioned.UpdateManifest
+	PackageType string
+	Image       string
+}
+
+// TryOutputVexDocuments emits one document while retaining each platform's
+// product identity. Statements never extend to unpatched sibling manifests.
+func TryOutputVexDocuments(inputs []DocumentInput, format, file string) error {
+	if format != "openvex" {
+		return fmt.Errorf("unsupported output format %s specified", format)
+	}
+	var combined *openvex.VEX
+	for _, input := range inputs {
+		doc, err := (&OpenVex{}).createVEXDocument(input.Updates, input.Image, input.PackageType)
+		if err != nil {
+			return err
+		}
+		if combined == nil {
+			combined = doc
+		} else {
+			combined.Statements = append(combined.Statements, doc.Statements...)
+		}
+	}
+	if combined == nil {
+		return nil
+	}
+	id, err := combined.GenerateCanonicalID()
+	if err != nil {
+		return err
+	}
+	combined.ID = id
+	return writeVEXDocumentFile(file, combined.ToJSON)
 }

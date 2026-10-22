@@ -5,6 +5,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
@@ -46,12 +47,15 @@ func (p PatchPlatform) String() string {
 
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalRef  reference.Named
-	PatchedDesc  *ispec.Descriptor
-	PatchedRef   reference.Named
-	PatchedState *llb.State                // BuildKit state for OCI export
-	ConfigData   []byte                    // Image config data
-	Summary      *unversioned.PatchSummary // Patch summary, nil if unavailable
+	VEX                 *VEXData // Validated updates retained until the final OCI artifact exists.
+	OriginalRef         reference.Named
+	PatchedDesc         *ispec.Descriptor
+	PatchedRef          reference.Named
+	PatchedState        *llb.State                // BuildKit state for OCI export
+	ManifestAnnotations map[string]string         // Manifest-body annotations, separate from PatchedDesc for OCI sources
+	ConfigData          []byte                    // Image config data
+	Summary             *unversioned.PatchSummary // Patch summary, nil if unavailable
+	OCISource           *ocilayout.Source         // Source store retained for OCI-backed state re-solves
 }
 
 type MultiPlatformSummary struct {
@@ -59,4 +63,11 @@ type MultiPlatformSummary struct {
 	Status   string
 	Ref      string
 	Message  string
+}
+
+// VEXData carries patch validation evidence without assigning an output identity
+// before the final OCI export has produced its manifest digest.
+type VEXData struct {
+	Updates     *unversioned.UpdateManifest
+	PackageType string
 }

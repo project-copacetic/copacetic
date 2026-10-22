@@ -16,6 +16,7 @@ import (
 	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/langmgr"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -27,6 +28,7 @@ type Options struct {
 	// Image and platform information
 	ImageName      string
 	TargetPlatform *types.PatchPlatform
+	OCISource      *ocilayout.Source
 
 	// Update information
 	Updates          *unversioned.UpdateManifest
@@ -53,6 +55,7 @@ type Options struct {
 
 // Result contains the result of the core patching operation.
 type Result struct {
+	VEX *types.VEXData
 	// BuildKit gateway result (nil if ReturnState is true)
 	Result *gwclient.Result
 
@@ -135,7 +138,7 @@ func ExecutePatchCore(patchCtx *Context, opts *Options) (*Result, error) {
 	updates := opts.Updates
 
 	// Configure buildctl/client for use by package manager
-	config, err := buildkit.InitializeBuildkitConfig(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform)
+	config, err := buildkit.InitializeBuildkitConfigWithSource(ctx, c, opts.ImageName, &opts.TargetPlatform.Platform, opts.OCISource)
 	if err != nil {
 		trySendError(opts.ErrorChannel, err)
 		return nil, err
