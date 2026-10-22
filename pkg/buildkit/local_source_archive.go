@@ -84,6 +84,7 @@ func openLocalImageArchive(ctx context.Context, image string) (io.ReadCloser, er
 }
 
 type localArchiveMetadata struct {
+	present  map[string]struct{}
 	blobs    map[string][]byte
 	root     v1.Descriptor
 	manifest []byte
@@ -97,6 +98,7 @@ func readLocalArchive(ctx context.Context, stream io.Reader, includeConfigs bool
 	const maxManifestSize = 4 << 20
 	const maxMetadataSize = 32 << 20
 	blobs := map[string][]byte{}
+	present := map[string]struct{}{}
 	var index []byte
 	var total int64
 	reader := tar.NewReader(&contextReader{ctx: ctx, reader: stream})
@@ -110,6 +112,18 @@ func readLocalArchive(ctx context.Context, stream io.Reader, includeConfigs bool
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read local image archive: %w", err)
+		}
+		if includeConfigs && strings.HasPrefix(header.Name, "blobs/") {
+			// A presence marker distinguishes an unpulled blob from corrupt,
+			// oversized or non-JSON bytes. Never retain image-layer payloads.
+			total += int64(len(header.Name))
+			if total > maxMetadataSize {
+				return nil, fmt.Errorf("local image archive metadata exceeds %d bytes", maxMetadataSize)
+			}
+			if _, exists := present[header.Name]; exists && !header.FileInfo().IsDir() {
+				return nil, fmt.Errorf("local image archive has duplicate manifest or config blob %q", header.Name)
+			}
+			present[header.Name] = struct{}{}
 		}
 		if header.Name == indexFile && (!header.FileInfo().Mode().IsRegular() || header.Size > maxManifestSize) {
 			return nil, fmt.Errorf("local image archive has an invalid index entry")
@@ -159,7 +173,7 @@ func readLocalArchive(ctx context.Context, stream io.Reader, includeConfigs bool
 	if err != nil {
 		return nil, err
 	}
-	return &localArchiveMetadata{blobs: blobs, root: root, manifest: data}, nil
+	return &localArchiveMetadata{present: present, blobs: blobs, root: root, manifest: data}, nil
 }
 
 func readArchiveDescriptor(ctx context.Context, stream io.Reader) (*remote.Descriptor, error) {

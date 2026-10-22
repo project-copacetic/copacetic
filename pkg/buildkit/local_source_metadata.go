@@ -15,7 +15,7 @@ import (
 // LocalImageMetadata reads an original manifest or index and, for an image, its
 // original config through the locally named parent. Selected must identify the
 // archive root or one of its children. Manifest bytes are never re-marshaled.
-// A missing local source or a classic image store returns nil, nil, nil; invalid
+// An unpulled selected blob, missing source or classic store returns nil, nil, nil; invalid
 // native metadata and cancellation return errors without consulting a registry.
 func LocalImageMetadata(ctx context.Context, parentImage string, selected digest.Digest) (*remote.Descriptor, []byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -113,6 +113,12 @@ func (a *localArchiveMetadata) selectedMetadata(selected digest.Digest) (*remote
 		if chosen.Digest.String() != selected.String() {
 			return nil, nil, fmt.Errorf("local image archive does not contain selected manifest %s", selected)
 		}
+		if (!chosen.MediaType.IsImage() && !chosen.MediaType.IsIndex()) || chosen.Size <= 0 {
+			return nil, nil, fmt.Errorf("local image archive has an invalid selected manifest descriptor")
+		}
+		if _, present := a.present[archiveBlobPath(chosen.Digest)]; !present {
+			return nil, nil, nil // The exact root references an unpulled child.
+		}
 		var err error
 		data, err = archiveManifest(a.blobs, &chosen)
 		if err != nil {
@@ -133,6 +139,13 @@ func (a *localArchiveMetadata) selectedMetadata(selected digest.Digest) (*remote
 	}
 	if !manifest.Config.MediaType.IsConfig() {
 		return nil, nil, fmt.Errorf("local image archive has an invalid config media type")
+	}
+	configDigest := digest.Digest(manifest.Config.Digest.String())
+	if configDigest.Validate() != nil || !configDigest.Algorithm().Available() || manifest.Config.Size <= 0 {
+		return nil, nil, fmt.Errorf("local image archive has an invalid config descriptor")
+	}
+	if _, present := a.present[archiveBlobPath(manifest.Config.Digest)]; !present {
+		return nil, nil, nil // Its immutable config may not have been pulled yet.
 	}
 	config, err := archiveBlob(a.blobs, &manifest.Config, "config")
 	if err != nil {

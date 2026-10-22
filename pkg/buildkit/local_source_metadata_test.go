@@ -178,7 +178,7 @@ func TestLocalImageMetadataSingleRoot(t *testing.T) {
 func TestLocalImageMetadataRejectsInvalidNativeContent(t *testing.T) {
 	for _, scenario := range []string{
 		"manifest-digest", "manifest-size", localMetadataManifestMediaTypeCase, "config-digest", "config-size", "config-media-type",
-		"config-missing", "config-invalid-json", "root-digest", "root-size", "root-media-type", "inspect-mismatch", "not-a-member", "empty-native-archive",
+		"config-invalid-json", "config-oversized", "root-digest", "root-size", "root-media-type", "inspect-mismatch", "not-a-member", "empty-native-archive",
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			fixture := newLocalMetadataFixture(t)
@@ -194,8 +194,8 @@ func TestLocalImageMetadataRejectsInvalidNativeContent(t *testing.T) {
 			case "config-size":
 				key := archiveBlobPath(fixture.config.Digest)
 				fixture.files[key] = append(fixture.files[key], ' ')
-			case "config-missing":
-				delete(fixture.files, archiveBlobPath(fixture.config.Digest))
+			case "config-oversized":
+				fixture.files[archiveBlobPath(fixture.config.Digest)] = bytes.Repeat([]byte("x"), (4<<20)+1)
 			case "config-invalid-json":
 				fixture.files[archiveBlobPath(fixture.config.Digest)] = []byte("{")
 			case localMetadataManifestMediaTypeCase, "config-media-type":
@@ -380,6 +380,29 @@ func TestLocalImageMetadataArchiveBounds(t *testing.T) {
 			require.NoError(t, writer.Close())
 			_, err := readLocalArchive(t.Context(), &buffer, true)
 			require.ErrorContains(t, err, "duplicate manifest")
+		})
+	}
+}
+
+func TestLocalImageMetadataPartialSource(t *testing.T) {
+	const parent = "local:partial"
+	for _, scenario := range []string{"unpulled-child", "unpulled-config"} {
+		t.Run(scenario, func(t *testing.T) {
+			fixture := newLocalMetadataFixture(t)
+			if scenario == "unpulled-child" {
+				delete(fixture.files, archiveBlobPath(fixture.child.Digest))
+			} else {
+				delete(fixture.files, archiveBlobPath(fixture.config.Digest))
+			}
+			mockLocalMetadataArchive(t, parent, &fixture.root, fixture.files)
+			forbidLocalMetadataRegistry(t)
+			got, config, err := LocalImageMetadata(t.Context(), parent, digest.Digest(fixture.child.Digest.String()))
+			require.NoError(t, err, "an unpulled blob must permit immutable recovery through the existing access path")
+			require.Nil(t, got)
+			require.Nil(t, config)
+			root, _, err := LocalImageMetadata(t.Context(), parent, digest.Digest(fixture.root.Digest.String()))
+			require.NoError(t, err)
+			require.Equal(t, fixture.index, root.Manifest, "the exact local parent remains authoritative")
 		})
 	}
 }
