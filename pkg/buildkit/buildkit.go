@@ -1409,14 +1409,22 @@ func ReadFileWithLimit(ctx context.Context, ref gwclient.Reference, path string,
 	}
 }
 
-func platformIdentityEqual(left, right *specs.Platform) bool {
-	normalizedLeft := platforms.Normalize(*left)
-	normalizedRight := platforms.Normalize(*right)
-	return normalizedLeft.OS == normalizedRight.OS &&
-		normalizedLeft.Architecture == normalizedRight.Architecture &&
-		normalizedLeft.Variant == normalizedRight.Variant &&
-		normalizedLeft.OSVersion == normalizedRight.OSVersion &&
-		slices.Equal(normalizedLeft.OSFeatures, normalizedRight.OSFeatures)
+// platformIdentityEqual reports whether a descriptor's platform is the target.
+// Windows OS versions and features identify distinct images, so they must match
+// exactly. Other operating systems can record an informational os.version, such
+// as Azure Linux's "azurelinux-3.0"; there the strict containerd match applies,
+// as for a target taken from a scanner report or --platform.
+func platformIdentityEqual(descriptor, target *specs.Platform) bool {
+	normalizedDescriptor := platforms.Normalize(*descriptor)
+	normalizedTarget := platforms.Normalize(*target)
+	if normalizedTarget.OS != "windows" {
+		return platforms.OnlyStrict(normalizedTarget).Match(normalizedDescriptor)
+	}
+	return normalizedDescriptor.OS == normalizedTarget.OS &&
+		normalizedDescriptor.Architecture == normalizedTarget.Architecture &&
+		normalizedDescriptor.Variant == normalizedTarget.Variant &&
+		normalizedDescriptor.OSVersion == normalizedTarget.OSVersion &&
+		slices.Equal(normalizedDescriptor.OSFeatures, normalizedTarget.OSFeatures)
 }
 
 func imagePlatformSpec(platform *v1.Platform) specs.Platform {
