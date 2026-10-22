@@ -110,7 +110,7 @@ func patchMultiPlatformImage(
 		if err != nil {
 			return fmt.Errorf("capture source platform %s: %w", key, err)
 		}
-		desc, err := source.Current.PlatformDescriptor(&p.Platform)
+		desc, err := sourcePlatformDescriptor(source.Current, &p.Platform)
 		if err != nil {
 			return fmt.Errorf("capture source descriptor %s: %w", key, err)
 		}
@@ -565,12 +565,21 @@ func captureMultiPlatformSource(ctx context.Context, image string) (*multiPlatfo
 	if err != nil {
 		return nil, err
 	}
+	if current.Index == nil {
+		// Report directories also support ordinary single-manifest images.
+		// They have per-image origin metadata, but no original index claim.
+		return &multiPlatformSource{Current: current}, nil
+	}
 	return captureIndexSource(ctx, current)
 }
 
 // captureIndexSource also validates index origins when a one-child index is
 // dispatched through the single-platform patch path.
 func captureIndexSource(ctx context.Context, current *buildkit.ImageSource) (*multiPlatformSource, error) {
+	return captureIndexSourceWithAccess(ctx, current, sourceAccess{resolve: resolveImageSource, readMetadata: readIndexChildMetadata})
+}
+
+func captureIndexSourceWithAccess(ctx context.Context, current *buildkit.ImageSource, access sourceAccess) (*multiPlatformSource, error) {
 	if current.Index == nil {
 		return nil, fmt.Errorf("source %s is not an image index", current.Name)
 	}
@@ -599,16 +608,20 @@ func captureIndexSource(ctx context.Context, current *buildkit.ImageSource) (*mu
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errRecordedIndexOrigin, err)
 	}
-	base, err := resolveImageSource(ctx, pinned)
+	base, err := access.resolve(ctx, pinned)
 	if err != nil {
-		return nil, fmt.Errorf("%w: resolve %s: %w", errRecordedIndexOrigin, pinned, err)
+		return nil, fmt.Errorf("%w: resolve %s: %w", errRecordedIndexOrigin, pinned, &indexLookupError{error: err, source: current})
 	}
 	if base == nil || base.Index == nil || base.Descriptor.Digest != recorded.Digest {
 		return nil, fmt.Errorf("%w: %s did not resolve to the recorded index", errRecordedIndexOrigin, pinned)
 	}
 	source.Base = base
 	source.IndexLineage = recorded
-	if err := validateRecordedIndexChildren(ctx, source); err != nil {
+	if err := validateRecordedIndexChildrenWithReader(ctx, source, access.readMetadata); err != nil {
+		var lookup *indexLookupError
+		if errors.As(err, &lookup) {
+			err = &indexLookupError{error: err, source: current}
+		}
 		return nil, fmt.Errorf("%w: %w", errRecordedIndexOrigin, err)
 	}
 	return source, nil
@@ -651,11 +664,23 @@ func immutableCurrentIndexReference(source *multiPlatformSource) (reference.Cano
 	return pinned, nil
 }
 
+func sourcePlatformDescriptor(source *buildkit.ImageSource, platform *ispec.Platform) (*ispec.Descriptor, error) {
+	if source == nil || platform == nil {
+		return nil, errors.New("source and platform are required")
+	}
+	if source.Index != nil {
+		return source.PlatformDescriptor(platform)
+	}
+	descriptor := source.Descriptor
+	descriptor.Platform = platform
+	return &descriptor, nil
+}
+
 func platformSourceReference(source *buildkit.ImageSource, platform *ispec.Platform) (string, error) {
 	if source == nil {
 		return "", errors.New("source is nil")
 	}
-	descriptor, err := source.PlatformDescriptor(platform)
+	descriptor, err := sourcePlatformDescriptor(source, platform)
 	if err != nil {
 		return "", err
 	}

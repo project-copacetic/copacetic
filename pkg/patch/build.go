@@ -197,6 +197,9 @@ func validateSourcePolicy(sourcePolicy *sourcepolicy.Policy) error {
 	}
 
 	rule := sourcePolicy.Rules[0]
+	if rule == nil || rule.Updates == nil {
+		return nil
+	}
 	identifier := rule.Updates.Identifier
 
 	switch {

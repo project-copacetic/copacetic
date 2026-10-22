@@ -48,8 +48,12 @@ func (r *gatewayImageResolver) resolveSourceIndex(ctx context.Context, ref strin
 }
 
 // sourceBlob reads an immutable manifest or index through the active session.
+// Validated local originals avoid a cold native snapshot fetching a registry.
 // A nil blob means the server requires the existing client compatibility path.
 func (r *gatewayImageResolver) sourceBlob(ctx context.Context, ref string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	buildOpts := r.client.BuildOpts()
 	if err := buildOpts.LLBCaps.Supports(pb.CapSourceImageBlob); err != nil {
 		return nil, nil
@@ -65,6 +69,16 @@ func (r *gatewayImageResolver) sourceBlob(ctx context.Context, ref string) ([]by
 	root := pinned.Digest()
 	if root.Validate() != nil || !root.Algorithm().Available() {
 		return nil, fmt.Errorf("original index reference has an invalid digest")
+	}
+	descriptor, _, err := LocalImageMetadata(ctx, ref, root)
+	if err != nil {
+		return nil, fmt.Errorf("read original local source metadata: %w", err)
+	}
+	if descriptor != nil {
+		if root.Algorithm().FromBytes(descriptor.Manifest) != root {
+			return nil, fmt.Errorf("local source content does not match its digest")
+		}
+		return descriptor.Manifest, nil
 	}
 	// Blob sources require an untagged digest reference. Unlike image metadata,
 	// this source returns the exact bytes of OCI indexes and Docker lists alike.

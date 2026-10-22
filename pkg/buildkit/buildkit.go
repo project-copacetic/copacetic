@@ -128,11 +128,10 @@ func (source *ImageSource) PlatformDescriptor(platform *specs.Platform) (*specs.
 	}
 
 	target := platforms.Normalize(*platform)
-	matcher := platforms.OnlyStrict(target)
 	var matched *specs.Descriptor
 	for i := range source.Index.Manifests {
 		descriptor := &source.Index.Manifests[i]
-		if descriptor.Platform == nil || !matcher.Match(platforms.Normalize(*descriptor.Platform)) {
+		if descriptor.Platform == nil || !platformIdentityEqual(descriptor.Platform, &target) {
 			continue
 		}
 		if matched != nil {
@@ -982,7 +981,7 @@ func updateImageConfigData(
 	hasOrigin := hasKind || hasName || hasDigest
 	recorded := sourceLineageFromConfig(configData)
 	if hasOrigin && (!recorded.Valid() || baseImage == "") {
-		return nil, nil, "", nil, false, errors.New("invalid patch origin metadata: a complete origin and BaseImage locator are required")
+		return nil, nil, "", nil, false, fmt.Errorf("%w: invalid patch origin metadata: a complete origin and BaseImage locator are required", ErrOriginIntegrity)
 	}
 	if baseImage == "" {
 		return userImageConfig, nil, image, newSourceLineage(image, imageDigest), false, nil
@@ -996,14 +995,18 @@ func updateImageConfigData(
 		// recovered original are pinned to its recorded digest by the caller.
 		_, _, baseConfig, err = resolveRecordedOrigin(ctx, c, baseImage, recorded, resolveOpt)
 		if err != nil {
-			return nil, nil, "", nil, false, fmt.Errorf("cannot recover recorded patch origin; restore the original image before re-patching: %w", err)
+			// A sibling failure may cancel recovery without invalidating the origin.
+			if contextErr := ctx.Err(); contextErr != nil {
+				return nil, nil, "", nil, false, contextErr
+			}
+			return nil, nil, "", nil, false, fmt.Errorf("%w: cannot recover recorded patch origin; restore the original image before re-patching: %w", ErrOriginIntegrity, err)
 		}
 		baseDocument, parseErr := parseImageConfigLabels(baseConfig)
 		if parseErr != nil {
-			return nil, nil, "", nil, false, parseErr
+			return nil, nil, "", nil, false, fmt.Errorf("%w: parse recorded patch origin config: %w", ErrOriginIntegrity, parseErr)
 		}
 		if baseDocument.labels["BaseImage"] != "" {
-			return nil, nil, "", nil, false, errors.New("recorded patch origin is itself a Copa-patched image")
+			return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image", ErrOriginIntegrity)
 		}
 	} else {
 		// Legacy images have only a mutable BaseImage locator. Preserve their
@@ -1082,7 +1085,23 @@ func resolveRecordedIndexOrigin(
 	opt sourceresolver.Opt,
 ) (string, digest.Digest, []byte, error) {
 	if opt.ImageOpt == nil || opt.ImageOpt.Platform == nil {
-		return "", "", nil, errors.New("cannot verify immutable BaseImage index without a platform")
+		// The frontend may use BuildKit's default platform. Recover that exact
+		// selection from the already-resolved original config, not the host.
+		var platform specs.Platform
+		if err := json.Unmarshal(config, &platform); err != nil {
+			return "", "", nil, fmt.Errorf("infer immutable BaseImage platform from image config: %w", err)
+		}
+		if platform.OS == "" || platform.Architecture == "" {
+			return "", "", nil, errors.New("cannot verify immutable BaseImage index platform: image config must specify OS and architecture")
+		}
+		platform = platforms.Normalize(platform)
+		// Opt is passed by value, but ImageOpt belongs to the caller.
+		imageOpt := sourceresolver.ResolveImageOpt{}
+		if opt.ImageOpt != nil {
+			imageOpt = *opt.ImageOpt
+		}
+		imageOpt.Platform = &platform
+		opt.ImageOpt = &imageOpt
 	}
 	source, err := resolveOriginIndex(ctx, c, baseImage)
 	if err != nil {

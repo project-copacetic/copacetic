@@ -329,7 +329,7 @@ func executePatchCoreWithSourceAnnotations(patchCtx *Context, opts *Options, sou
 	}, nil
 }
 
-var errOriginIntegrity = errors.New("patch origin integrity validation failed")
+var errOriginIntegrity = buildkit.ErrOriginIntegrity
 
 // Use identical config recovery and origin checks before multi-platform exports
 // and inside each patch build. This includes recovering the recorded original,
@@ -337,7 +337,7 @@ var errOriginIntegrity = errors.New("patch origin integrity validation failed")
 func initializePatchConfig(ctx context.Context, c gwclient.Client, opts *Options, annotations map[string]string) (*buildkit.Config, error) {
 	config, err := buildkit.InitializeBuildkitConfigWithBaseImage(ctx, c, opts.ImageName, opts.BaseImageLocator, &opts.TargetPlatform.Platform)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+		return nil, err
 	}
 	if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
 		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)

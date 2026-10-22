@@ -165,6 +165,8 @@ export EXPERIMENTAL_BUILDKIT_SOURCE_POLICY=source-policy.json
 
 > The tooling image for Debian-based images can be `ghcr.io/project-copacetic/copacetic/debian:11-slim` or `ghcr.io/project-copacetic/copacetic/debian:12-slim` depending on the target image version. RPM-based repos use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`. For more details, see [How does Copa determine what tooling image to use?](#how-does-copa-determine-what-tooling-image-to-use).
 
+Input-image `CONVERT` rules are applied before Copa captures the source digest. The policy-selected image is used for patching and recorded as the recovery locator and patch origin; the requested output repository and tag are unchanged. This also keeps exact tag selectors effective after Copa pins the input by digest.
+
 For more information on source policies, see [Buildkit Source Policies](https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy).
 
 ## Why do package updates fail with expired GPG keys?

@@ -267,15 +267,26 @@ func patchSingleArchImageWithSourceAndUpdates(
 			&targetPlatform.Platform,
 		)
 		var lookupErr *sourceLookupError
-		if errors.As(captureErr, &lookupErr) && ctx.Err() == nil {
+		var indexErr *indexLookupError
+		if (errors.As(captureErr, &lookupErr) || errors.As(captureErr, &indexErr)) && ctx.Err() == nil {
 			// Registry access can belong to a remote builder's network/session.
 			// Do not replace a captured local source or ignore validation errors.
 			_, gatewayErr := bkClient.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
-				source, err := buildkit.ResolveImageSourceWithClient(ctx, c, image, &targetPlatform.Platform)
-				if err != nil {
-					return nil, err
+				var source *buildkit.ImageSource
+				var err error
+				if indexErr != nil {
+					// The host captured the current image successfully. Retry only
+					// recovery/metadata access, without following its mutable tag.
+					source = indexErr.source
+				} else {
+					source, err = buildkit.ResolveImageSourceWithClient(ctx, c, image, &targetPlatform.Platform)
+					if err != nil {
+						return nil, err
+					}
 				}
-				buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, capturedDescriptor, err = singlePlatformSnapshot(ctx, source, imageName, &targetPlatform.Platform)
+				buildkitImageRef, expectedSourceDigest, requireBaseManifest, capturedRoot, capturedDescriptor, err = singlePlatformSnapshotWithAccess(
+					ctx, source, imageName, &targetPlatform.Platform, gatewaySourceAccess(c, &targetPlatform.Platform),
+				)
 				if err == nil {
 					sourceAnnotations = maps.Clone(capturedDescriptor.Annotations)
 				}
@@ -491,9 +502,15 @@ func captureSinglePlatformSource(
 func singlePlatformSnapshot(
 	ctx context.Context, source *buildkit.ImageSource, ref reference.Named, platform *ispec.Platform,
 ) (reference.Named, digest.Digest, bool, digest.Digest, *ispec.Descriptor, error) {
+	return singlePlatformSnapshotWithAccess(ctx, source, ref, platform, sourceAccess{resolve: resolveImageSource, readMetadata: readIndexChildMetadata})
+}
+
+func singlePlatformSnapshotWithAccess(
+	ctx context.Context, source *buildkit.ImageSource, ref reference.Named, platform *ispec.Platform, access sourceAccess,
+) (reference.Named, digest.Digest, bool, digest.Digest, *ispec.Descriptor, error) {
 	descriptor := &source.Descriptor
 	if source.Index != nil {
-		if _, err := captureIndexSource(ctx, source); err != nil {
+		if _, err := captureIndexSourceWithAccess(ctx, source, access); err != nil {
 			return ref, "", true, "", nil, err
 		}
 		var err error

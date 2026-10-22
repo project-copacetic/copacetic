@@ -88,13 +88,17 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 // patchWithContext orchestrates the main patching workflow.
 func patchWithContext(ctx context.Context, opts *types.Options) error {
+	opts, err := policyPatchOptions(ctx, opts)
+	if err != nil {
+		return err
+	}
+	image := opts.Image
 	// Configure EOL API if provided
 	if opts.EOLAPIBaseURL != "" {
 		utils.SetEOLAPIBaseURL(opts.EOLAPIBaseURL)
 		log.Debugf("Configured EOL API base URL: %s", opts.EOLAPIBaseURL)
 	}
 
-	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
 	pkgTypes := opts.PkgTypes

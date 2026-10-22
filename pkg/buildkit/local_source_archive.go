@@ -21,7 +21,10 @@ import (
 // inventing an identity from Docker-save's compatibility manifest.json
 // representation. Classic graph-driver stores never reach this reader: their
 // saved index describes a reconstructed manifest.
-var localArchiveDescriptor = descriptorFromLocalArchive
+var (
+	localArchiveDescriptor = descriptorFromLocalArchive
+	localImageArchive      = openLocalImageArchive
+)
 
 type localArchiveError struct{ error }
 
@@ -50,12 +53,7 @@ func LocalImageManifestAnnotations(ctx context.Context, image string, selected d
 }
 
 func descriptorFromLocalArchiveForManifest(ctx context.Context, image string, selected digest.Digest) (*remote.Descriptor, error) {
-	cli, err := dockerclient.New(dockerclient.FromEnv)
-	if err != nil {
-		return nil, err
-	}
-	defer cli.Close()
-	stream, err := cli.ImageSave(ctx, []string{image})
+	stream, err := localImageArchive(ctx, image)
 	if err != nil {
 		return nil, err
 	}
@@ -63,19 +61,45 @@ func descriptorFromLocalArchiveForManifest(ctx context.Context, image string, se
 	return readArchiveDescriptorForManifest(ctx, stream, selected)
 }
 
-func readArchiveDescriptor(ctx context.Context, stream io.Reader) (*remote.Descriptor, error) {
-	return readArchiveDescriptorForManifest(ctx, stream, "")
+type localArchiveStream struct {
+	io.ReadCloser
+	client *dockerclient.Client
 }
 
-func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, selected digest.Digest) (*remote.Descriptor, error) {
-	// Retain only small manifest JSON, never image layers or extracted paths.
+func (s *localArchiveStream) Close() error {
+	return errors.Join(s.ReadCloser.Close(), s.client.Close())
+}
+
+func openLocalImageArchive(ctx context.Context, image string) (io.ReadCloser, error) {
+	cli, err := dockerclient.New(dockerclient.FromEnv)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := cli.ImageSave(ctx, []string{image})
+	if err != nil {
+		cli.Close()
+		return nil, err
+	}
+	return &localArchiveStream{ReadCloser: stream, client: cli}, nil
+}
+
+type localArchiveMetadata struct {
+	blobs    map[string][]byte
+	root     v1.Descriptor
+	manifest []byte
+}
+
+// readLocalArchive shares the bounded streaming reader between identity and
+// exact metadata lookups. Only the latter needs to retain image configs.
+func readLocalArchive(ctx context.Context, stream io.Reader, includeConfigs bool) (*localArchiveMetadata, error) {
+	// Retain only bounded manifest/config JSON, never layers or extracted paths.
 	const indexFile = "index.json"
 	const maxManifestSize = 4 << 20
 	const maxMetadataSize = 32 << 20
 	blobs := map[string][]byte{}
 	var index []byte
 	var total int64
-	reader := tar.NewReader(stream)
+	reader := tar.NewReader(&contextReader{ctx: ctx, reader: stream})
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -102,7 +126,10 @@ func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, sel
 			if header.Name == indexFile {
 				return nil, fmt.Errorf("local image archive has an invalid index")
 			}
-			continue
+			var config v1.ConfigFile
+			if !includeConfigs || json.Unmarshal(data, &config) != nil || config.OS == "" || config.Architecture == "" {
+				continue
+			}
 		}
 		total += int64(len(data))
 		if total > maxMetadataSize {
@@ -132,6 +159,19 @@ func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, sel
 	if err != nil {
 		return nil, err
 	}
+	return &localArchiveMetadata{blobs: blobs, root: root, manifest: data}, nil
+}
+
+func readArchiveDescriptor(ctx context.Context, stream io.Reader) (*remote.Descriptor, error) {
+	return readArchiveDescriptorForManifest(ctx, stream, "")
+}
+
+func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, selected digest.Digest) (*remote.Descriptor, error) {
+	archive, err := readLocalArchive(ctx, stream, false)
+	if err != nil || archive == nil {
+		return nil, err
+	}
+	blobs, root, data := archive.blobs, archive.root, archive.manifest
 	// The archive's wrapper annotations are Docker locators, not source
 	// manifest annotations. Preserve only metadata from the actual source.
 	var metadata v1.IndexManifest
@@ -203,14 +243,25 @@ func archiveBlobPath(hash v1.Hash) string {
 	return "blobs/" + hash.Algorithm + "/" + hash.Hex
 }
 
-func archiveManifest(blobs map[string][]byte, desc *v1.Descriptor) ([]byte, error) {
+func archiveBlob(blobs map[string][]byte, desc *v1.Descriptor, kind string) ([]byte, error) {
 	hash := digest.Digest(desc.Digest.String())
-	if hash.Validate() != nil || !hash.Algorithm().Available() || (!desc.MediaType.IsImage() && !desc.MediaType.IsIndex()) {
-		return nil, fmt.Errorf("local image archive has an invalid manifest descriptor")
+	if hash.Validate() != nil || !hash.Algorithm().Available() {
+		return nil, fmt.Errorf("local image archive has an invalid %s descriptor", kind)
 	}
 	data, ok := blobs[archiveBlobPath(desc.Digest)]
 	if !ok || int64(len(data)) != desc.Size || hash.Algorithm().FromBytes(data) != hash {
-		return nil, fmt.Errorf("local image archive manifest does not match descriptor %s", hash)
+		return nil, fmt.Errorf("local image archive %s does not match descriptor %s", kind, hash)
+	}
+	return data, nil
+}
+
+func archiveManifest(blobs map[string][]byte, desc *v1.Descriptor) ([]byte, error) {
+	if !desc.MediaType.IsImage() && !desc.MediaType.IsIndex() {
+		return nil, fmt.Errorf("local image archive has an invalid manifest descriptor")
+	}
+	data, err := archiveBlob(blobs, desc, "manifest")
+	if err != nil {
+		return nil, err
 	}
 	var manifest struct {
 		SchemaVersion int               `json:"schemaVersion"`

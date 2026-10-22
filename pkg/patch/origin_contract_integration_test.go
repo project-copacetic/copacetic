@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	v1types "github.com/google/go-containerregistry/pkg/v1/types"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -107,6 +110,63 @@ func TestOriginContract(t *testing.T) {
 		return Patch(ctx, opts)
 	}
 
+	t.Run("report-directory-single-manifest", func(t *testing.T) {
+		input := repo + ":single-manifest"
+		require.NoError(t, remote.Write(originTestReference(t, input), originals[originAMD64], remote.WithContext(ctx)))
+		require.NoError(t, patch(input, "single-manifest-directory-p1", reports, nil))
+		result, err := remote.Index(originTestReference(t, repo+":single-manifest-directory-p1"), remote.WithContext(ctx))
+		require.NoError(t, err)
+		manifest, err := result.IndexManifest()
+		require.NoError(t, err)
+		require.Len(t, manifest.Manifests, 1)
+		require.NotContains(t, manifest.Annotations, types.AnnotationPatchOriginDigest, "an image manifest is not an original index")
+		assertContractOrigin(t, contractPlatformImage(t, result, manifest, originAMD64), children[originAMD64], application)
+	})
+
+	t.Run("source-policy-selected-input", func(t *testing.T) {
+		input := repo + ":policy-input"
+		cfg, err := originals[originAMD64].ConfigFile()
+		require.NoError(t, err)
+		cfg = cfg.DeepCopy()
+		cfg.Config.Labels["com.example.unapproved"] = attrValueTrue
+		unapproved, err := mutate.ConfigFile(originals[originAMD64], cfg)
+		require.NoError(t, err)
+		require.NoError(t, remote.Write(originTestReference(t, input), unapproved, remote.WithContext(ctx)))
+		policy := fmt.Sprintf(`{"rules":[{"action":"CONVERT","selector":{"identifier":%q},"updates":{"identifier":%q}}]}`,
+			"docker-image://"+input, "docker-image://"+repo+"@"+children[originAMD64])
+		policyPath := filepath.Join(t.TempDir(), "source-policy.json")
+		require.NoError(t, os.WriteFile(policyPath, []byte(policy), 0o600))
+		t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", policyPath)
+		require.NoError(t, patch(input, "policy-output", originTestReport(t, originAMD64), nil))
+		result := contractImage(t, ctx, repo+":policy-output")
+		assertContractOrigin(t, result, children[originAMD64], application)
+		require.NotContains(t, contractLabels(t, result), "com.example.unapproved")
+		require.Equal(t, repo+"@"+children[originAMD64], contractLabels(t, result)["BaseImage"])
+	})
+
+	t.Run("preserved-windows-versions", func(t *testing.T) {
+		addenda := []mutate.IndexAddendum{{Add: originals[originAMD64], Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: LINUX, Architecture: originAMD64}}}}
+		for _, version := range []string{"10.0.20348.0", "10.0.26100.0"} {
+			windows, err := mutate.ConfigFile(empty.Image, &v1.ConfigFile{OS: "windows", Architecture: originAMD64, OSVersion: version})
+			require.NoError(t, err)
+			addenda = append(addenda, mutate.IndexAddendum{Add: windows, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "windows", Architecture: originAMD64, OSVersion: version}}})
+		}
+		input := repo + ":windows-source"
+		index := mutate.IndexMediaType(mutate.AppendManifests(empty.Index, addenda...), v1types.OCIImageIndex)
+		require.NoError(t, remote.WriteIndex(originTestReference(t, input), index, remote.WithContext(ctx)))
+		require.NoError(t, patch(input, "windows-preserved", reports, nil))
+		result, err := remote.Index(originTestReference(t, repo+":windows-preserved"), remote.WithContext(ctx))
+		require.NoError(t, err)
+		manifest, err := result.IndexManifest()
+		require.NoError(t, err)
+		require.Len(t, manifest.Manifests, 3)
+		original, err := index.IndexManifest()
+		require.NoError(t, err)
+		for _, expected := range original.Manifests[1:] {
+			require.Contains(t, manifest.Manifests, expected, "preserve each exact Windows descriptor")
+		}
+	})
+
 	locators := []struct{ name, input string }{
 		{"repository", repo},
 		{"tag", repo + ":original"},
@@ -163,6 +223,37 @@ func TestOriginContract(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("gateway-recorded-index", func(t *testing.T) {
+		bk, err := buildkit.NewClient(ctx, buildkit.Opts{Addr: addr})
+		require.NoError(t, err)
+		defer bk.Close()
+		var native bool
+		_, err = bk.Build(ctx, authenticatedSolveOpt(), copaProduct, func(_ context.Context, c gwclient.Client) (*gwclient.Result, error) {
+			buildOpts := c.BuildOpts()
+			native = buildOpts.LLBCaps.Supports(pb.CapSourceImageBlob) == nil
+			return gwclient.NewResult(), nil
+		}, nil)
+		require.NoError(t, err)
+		if !native {
+			t.Skip("gateway-only index metadata requires BuildKit image-blob sources")
+		}
+		require.NoError(t, patch(repo+":original", "gateway-recovery-input", reports, nil))
+		transport := remote.DefaultTransport
+		t.Cleanup(func() { remote.DefaultTransport = transport })
+		blocked := &sourceSessionTransport{
+			RoundTripper: transport,
+			inputPath:    "/v2/" + strings.SplitN(repo, "/", 2)[1] + "/manifests/" + indexHash.String(),
+		}
+		remote.DefaultTransport = blocked
+		// Current input remains host-readable; only the original index needs
+		// the worker session. Recovery must reuse the captured current snapshot.
+		_, err = remote.Get(originTestReference(t, repo+":gateway-recovery-input"), remote.WithContext(ctx))
+		require.NoError(t, err)
+		require.NoError(t, patch(repo+":gateway-recovery-input", "gateway-recovery-output", originTestReport(t, originAMD64), nil))
+		require.Positive(t, blocked.denied.Load())
+		assertContractOrigin(t, contractImage(t, ctx, repo+":gateway-recovery-output"), children[originAMD64], application)
+	})
 
 	t.Run("oci-dir-parity", func(t *testing.T) {
 		require.NoError(t, patch(repo+":original", "registry-output", reports, nil))
