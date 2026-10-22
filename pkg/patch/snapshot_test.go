@@ -45,7 +45,7 @@ func TestRecordedIndexInspectsExactChildren(t *testing.T) {
 	for _, surface := range []string{"claim-free", originManifestSurface, originConfigSurface} {
 		t.Run(surface, func(t *testing.T) {
 			reads := 0
-			readIndexChildMetadata = func(_ context.Context, _ string, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
+			readIndexChildMetadata = func(_ context.Context, _ localSource, _ string, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
 				reads++
 				require.Equal(t, "example.com/app@"+child.String(), image)
 				if surface == originManifestSurface {

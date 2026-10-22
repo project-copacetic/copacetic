@@ -185,6 +185,10 @@ func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, sel
 	if err != nil || archive == nil {
 		return nil, err
 	}
+	return archive.descriptorForManifest(selected)
+}
+
+func (archive *localArchiveMetadata) descriptorForManifest(selected digest.Digest) (*remote.Descriptor, error) {
 	blobs, root, data := archive.blobs, archive.root, archive.manifest
 	// The archive's wrapper annotations are Docker locators, not source
 	// manifest annotations. Preserve only metadata from the actual source.
@@ -245,6 +249,7 @@ func readArchiveDescriptorForManifest(ctx context.Context, stream io.Reader, sel
 		}
 		// Add locally read child metadata without recomputing the captured
 		// root identity; all original index descriptors remain intact.
+		var err error
 		data, err = json.Marshal(metadata)
 		if err != nil {
 			return nil, err

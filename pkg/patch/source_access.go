@@ -31,7 +31,7 @@ func gatewaySourceAccess(c gwclient.Client, platform *specs.Platform) sourceAcce
 		resolve: func(ctx context.Context, image string) (*buildkit.ImageSource, error) {
 			return buildkit.ResolveImageSourceWithClient(ctx, c, image, platform)
 		},
-		readMetadata: func(ctx context.Context, _, image string, platform *specs.Platform) (map[string]string, map[string]string, error) {
+		readMetadata: func(ctx context.Context, _ localSource, _, image string, platform *specs.Platform) (map[string]string, map[string]string, error) {
 			return buildkit.ReadImageMetadataWithClient(ctx, c, image, platform)
 		},
 	}

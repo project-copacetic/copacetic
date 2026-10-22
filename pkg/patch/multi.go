@@ -119,17 +119,9 @@ func patchMultiPlatformImage(
 
 	// Capture annotations through the locally named index, or through the
 	// immutable remote child, before any platform can publish or move the tag.
-	sourceAnnotations := make(map[string]map[string]string, len(platforms))
-	for _, p := range platforms {
-		if p.ShouldPreserve {
-			continue
-		}
-		key := buildkit.PlatformKey(p.Platform)
-		annotations, err := captureSourceAnnotations(ctx, image, sourceImages[key], sourceDescriptors[key], &p.Platform)
-		if err != nil {
-			return fmt.Errorf("capture source annotations for platform %s: %w", key, err)
-		}
-		sourceAnnotations[key] = annotations
+	sourceAnnotations, err := captureSelectedSourceAnnotations(ctx, image, source.local, platforms, sourceImages, sourceDescriptors)
+	if err != nil {
+		return err
 	}
 
 	// Preserve report errors and no-update exits, while validating every child
@@ -539,6 +531,32 @@ func patchMultiPlatformImage(
 	return nil
 }
 
+// captureSelectedSourceAnnotations captures each patching platform's source
+// annotations. A locally named index is read once for all of them through the
+// operation's shared local source.
+func captureSelectedSourceAnnotations(
+	ctx context.Context, image string, local localSource, platforms []types.PatchPlatform,
+	sourceImages map[string]string, sourceDescriptors map[string]*ispec.Descriptor,
+) (map[string]map[string]string, error) {
+	readLocal := localManifestAnnotations
+	if local != nil {
+		readLocal = local.ManifestAnnotations
+	}
+	sourceAnnotations := make(map[string]map[string]string, len(platforms))
+	for _, p := range platforms {
+		if p.ShouldPreserve {
+			continue
+		}
+		key := buildkit.PlatformKey(p.Platform)
+		annotations, err := captureSourceAnnotationsWith(ctx, image, sourceImages[key], sourceDescriptors[key], &p.Platform, readLocal)
+		if err != nil {
+			return nil, fmt.Errorf("capture source annotations for platform %s: %w", key, err)
+		}
+		sourceAnnotations[key] = annotations
+	}
+	return sourceAnnotations, nil
+}
+
 // multiPlatformBaseImageLocator returns the BaseImage label for a patched child.
 // Copa has always named the child of a locally inspected index by digest there,
 // because BuildKit may not resolve a local tag for every platform. Other
@@ -558,6 +576,9 @@ type multiPlatformSource struct {
 	Current      *buildkit.ImageSource
 	Base         *buildkit.ImageSource
 	IndexLineage *types.SourceLineage
+	// local and baseLocal read each locally named source's archive at most
+	// once for the operation, bound to its captured root digest.
+	local, baseLocal localSource
 }
 
 func captureMultiPlatformSource(ctx context.Context, image string) (*multiPlatformSource, error) {
@@ -568,7 +589,7 @@ func captureMultiPlatformSource(ctx context.Context, image string) (*multiPlatfo
 	if current.Index == nil {
 		// Report directories also support ordinary single-manifest images.
 		// They have per-image origin metadata, but no original index claim.
-		return &multiPlatformSource{Current: current}, nil
+		return &multiPlatformSource{Current: current, local: newLocalSource(current.Name, current.Descriptor.Digest)}, nil
 	}
 	return captureIndexSource(ctx, current)
 }
@@ -584,7 +605,7 @@ func captureIndexSourceWithAccess(ctx context.Context, current *buildkit.ImageSo
 		return nil, fmt.Errorf("source %s is not an image index", current.Name)
 	}
 
-	source := &multiPlatformSource{Current: current}
+	source := &multiPlatformSource{Current: current, local: newLocalSource(current.Name, current.Descriptor.Digest)}
 	annotations := current.Index.Annotations
 	_, hasKind := annotations[types.AnnotationPatchOriginKind]
 	_, hasName := annotations[types.AnnotationPatchOriginName]
@@ -594,7 +615,7 @@ func captureIndexSourceWithAccess(ctx context.Context, current *buildkit.ImageSo
 		// An unmarked index is only a candidate original; final aggregation
 		// must verify unchanged children before publishing a common origin.
 		if _, repatch := annotations[copaAnnotationKeyPrefix+".patched"]; !repatch {
-			source.Base = current
+			source.Base, source.baseLocal = current, source.local
 			source.IndexLineage = &types.SourceLineage{Kind: types.PatchOriginImage, Name: current.Name, Digest: current.Descriptor.Digest}
 		}
 		return source, nil
@@ -615,7 +636,7 @@ func captureIndexSourceWithAccess(ctx context.Context, current *buildkit.ImageSo
 	if base == nil || base.Index == nil || base.Descriptor.Digest != recorded.Digest {
 		return nil, fmt.Errorf("%w: %s did not resolve to the recorded index", errRecordedIndexOrigin, pinned)
 	}
-	source.Base = base
+	source.Base, source.baseLocal = base, newLocalSource(base.Name, base.Descriptor.Digest)
 	source.IndexLineage = recorded
 	if err := validateRecordedIndexChildrenWithReader(ctx, source, access.readMetadata); err != nil {
 		var lookup *indexLookupError
@@ -724,7 +745,7 @@ func commonBaseIndexLineage(ctx context.Context, source *multiPlatformSource, it
 			continue
 		}
 		if item.PatchedDesc.Digest == expected.Digest {
-			if !unpatchedIndexChild(ctx, source.Base, expected) {
+			if !unpatchedIndexChild(ctx, source.baseLocal, source.Base, expected) {
 				log.Debugf("Omitting index source lineage: unchanged platform %s has unverified original ancestry", buildkit.PlatformKey(*item.PatchedDesc.Platform))
 				return nil
 			}

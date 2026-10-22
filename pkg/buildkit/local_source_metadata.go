@@ -18,6 +18,12 @@ import (
 // An unpulled selected blob, missing source or classic store returns nil, nil, nil; invalid
 // native metadata and cancellation return errors without consulting a registry.
 func LocalImageMetadata(ctx context.Context, parentImage string, selected digest.Digest) (*remote.Descriptor, []byte, error) {
+	return localImageMetadata(ctx, parentImage, selected, readLocalImageArchive)
+}
+
+func localImageMetadata(
+	ctx context.Context, parentImage string, selected digest.Digest, read func(context.Context, string) (*localArchiveMetadata, error),
+) (*remote.Descriptor, []byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -49,25 +55,16 @@ func LocalImageMetadata(ctx context.Context, parentImage string, selected digest
 			return nil, nil, nil
 		}
 	}
-	stream, err := localImageArchive(ctx, parentImage)
-	if stream != nil {
-		defer stream.Close()
-	}
+	archive, err := read(ctx, parentImage)
 	if canceled := localMetadataCancellation(ctx, err); canceled != nil {
 		return nil, nil, canceled
 	}
-	if err != nil {
-		if errdefs.IsNotFound(err) {
+	var saveErr *localSaveError
+	if errors.As(err, &saveErr) {
+		if errdefs.IsNotFound(saveErr.error) {
 			return nil, nil, nil
 		}
-		return nil, nil, fmt.Errorf("save original local image metadata: %w", err)
-	}
-	if stream == nil {
-		return nil, nil, fmt.Errorf("local native image save returned no archive")
-	}
-	archive, err := readLocalArchive(ctx, stream, true)
-	if canceled := localMetadataCancellation(ctx, err); canceled != nil {
-		return nil, nil, canceled
+		return nil, nil, fmt.Errorf("save original local image metadata: %w", saveErr.error)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -80,6 +77,27 @@ func LocalImageMetadata(ctx context.Context, parentImage string, selected digest
 		return nil, nil, fmt.Errorf("local image archive root does not match inspected descriptor")
 	}
 	return archive.selectedMetadata(selected)
+}
+
+// localSaveError distinguishes a failed image save from invalid saved content.
+type localSaveError struct{ error }
+
+func (err *localSaveError) Unwrap() error { return err.error }
+
+// readLocalImageArchive saves the locally named image and retains only its
+// bounded manifest and config metadata. A classic archive returns nil, nil.
+func readLocalImageArchive(ctx context.Context, image string) (*localArchiveMetadata, error) {
+	stream, err := localImageArchive(ctx, image)
+	if stream != nil {
+		defer stream.Close()
+	}
+	if err != nil {
+		return nil, &localSaveError{err}
+	}
+	if stream == nil {
+		return nil, &localSaveError{errors.New("local native image save returned no archive")}
+	}
+	return readLocalArchive(ctx, stream, true)
 }
 
 // Some Docker errors carry cancellation even before ctx.Err is observable.

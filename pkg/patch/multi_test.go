@@ -248,7 +248,7 @@ func TestCaptureMultiPlatformSourceUsesRecordedOriginalBase(t *testing.T) {
 func TestCommonBaseIndexLineage(t *testing.T) {
 	reader := readIndexChildMetadata
 	t.Cleanup(func() { readIndexChildMetadata = reader })
-	readIndexChildMetadata = func(context.Context, string, string, *v1.Platform) (map[string]string, map[string]string, error) {
+	readIndexChildMetadata = func(context.Context, localSource, string, string, *v1.Platform) (map[string]string, map[string]string, error) {
 		return nil, nil, nil
 	}
 	indexDigest := digest.FromString("source-index")

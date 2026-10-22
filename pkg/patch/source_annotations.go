@@ -11,6 +11,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	v1types "github.com/google/go-containerregistry/pkg/v1/types"
+	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -18,11 +19,30 @@ import (
 
 var localManifestAnnotations = buildkit.LocalImageManifestAnnotations
 
+type localManifestLookup func(context.Context, string, digest.Digest) (map[string]string, error)
+
+// localSource serves one patch operation's local manifest lookups from a
+// single read of the captured source's archive.
+type localSource interface {
+	ManifestAnnotations(context.Context, string, digest.Digest) (map[string]string, error)
+	Metadata(context.Context, string, digest.Digest) (*remote.Descriptor, []byte, error)
+}
+
+var newLocalSource = func(image string, root digest.Digest) localSource {
+	return buildkit.NewLocalSourceArchive(image, root)
+}
+
 // Validate the selected manifest before combining its raw annotations.
 // A daemon can name only an index even though all of its children are present.
 // Read local metadata through that locator and verify the captured selection;
 // requiring the synthesized child name to exist would spuriously go remote.
 func captureSourceAnnotations(ctx context.Context, image, child string, descriptor *specs.Descriptor, platform *specs.Platform) (map[string]string, error) {
+	return captureSourceAnnotationsWith(ctx, image, child, descriptor, platform, localManifestAnnotations)
+}
+
+func captureSourceAnnotationsWith(
+	ctx context.Context, image, child string, descriptor *specs.Descriptor, platform *specs.Platform, readLocal localManifestLookup,
+) (map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -76,7 +96,7 @@ func captureSourceAnnotations(ctx context.Context, image, child string, descript
 		if local == nil || local.Digest != pinned.Digest() {
 			return nil, fmt.Errorf("local source platform changed after capture")
 		}
-		manifestAnnotations, err := localManifestAnnotations(ctx, image, pinned.Digest())
+		manifestAnnotations, err := readLocal(ctx, image, pinned.Digest())
 		if err != nil {
 			return nil, fmt.Errorf("read captured local manifest annotations: %w", err)
 		}

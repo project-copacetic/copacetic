@@ -15,12 +15,11 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
 
-type indexMetadataReader func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error)
+// indexMetadataReader reads a child image through its parent. Local reads of
+// the parent go through local when it is not nil.
+type indexMetadataReader func(ctx context.Context, local localSource, parent, image string, platform *specs.Platform) (map[string]string, map[string]string, error)
 
-var (
-	readIndexChildMetadata indexMetadataReader = readImmutableImageMetadata
-	localImageMetadata                         = buildkit.LocalImageMetadata
-)
+var readIndexChildMetadata indexMetadataReader = readImmutableImageMetadata
 
 // A recorded parent claim must not contradict any child's recorded origin.
 // This is a preflight: platform patchers may export before final index assembly.
@@ -57,7 +56,7 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 		if err != nil {
 			return err
 		}
-		manifest, labels, err := read(ctx, source.Current.Name, ref, child.Platform)
+		manifest, labels, err := read(ctx, source.local, source.Current.Name, ref, child.Platform)
 		if err != nil {
 			return fmt.Errorf("inspect platform %s origin: %w", buildkit.PlatformKey(*child.Platform), err)
 		}
@@ -89,7 +88,7 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 
 // Read only an immutable manifest/config pair. A daemon reconstruction may not
 // reproduce the source manifest bytes; fallback is safe only at the same digest.
-func readImmutableImageMetadata(ctx context.Context, parent, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
+func readImmutableImageMetadata(ctx context.Context, shared localSource, parent, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
@@ -125,7 +124,11 @@ func readImmutableImageMetadata(ctx context.Context, parent, image string, _ *sp
 	}
 	// Read the child's original blobs through the local parent. daemon.Image
 	// reconstructs a Docker manifest and cannot prove the captured OCI identity.
-	local, config, err := localImageMetadata(ctx, parent, expected)
+	readLocal := buildkit.LocalImageMetadata
+	if shared != nil {
+		readLocal = shared.Metadata
+	}
+	local, config, err := readLocal(ctx, parent, expected)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -159,12 +162,12 @@ func readImmutableImageMetadata(ctx context.Context, parent, image string, _ *sp
 // Descriptor equality only proves unchanged content. Docker lists can lose
 // index annotations, and legacy children retain their patch marker in config.
 // Unavailable metadata leaves this optional common-origin claim unverified.
-func unpatchedIndexChild(ctx context.Context, source *buildkit.ImageSource, child *specs.Descriptor) bool {
+func unpatchedIndexChild(ctx context.Context, local localSource, source *buildkit.ImageSource, child *specs.Descriptor) bool {
 	ref, err := platformSourceReference(source, child.Platform)
 	if err != nil {
 		return false
 	}
-	manifest, labels, err := readIndexChildMetadata(ctx, source.Name, ref, child.Platform)
+	manifest, labels, err := readIndexChildMetadata(ctx, local, source.Name, ref, child.Platform)
 	if err != nil {
 		return false
 	}

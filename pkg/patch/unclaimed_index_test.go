@@ -47,7 +47,7 @@ func TestCommonOriginRequiresUnpatchedChildMetadata(t *testing.T) {
 			}
 			source, err := captureIndexSource(t.Context(), current)
 			require.NoError(t, err)
-			readIndexChildMetadata = func(_ context.Context, _ string, ref string, _ *specs.Platform) (map[string]string, map[string]string, error) {
+			readIndexChildMetadata = func(_ context.Context, _ localSource, _ string, ref string, _ *specs.Platform) (map[string]string, map[string]string, error) {
 				require.Equal(t, "example.com/app@"+child.Digest.String(), ref)
 				return manifest, labels, failure
 			}

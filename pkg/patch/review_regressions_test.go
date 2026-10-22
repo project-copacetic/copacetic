@@ -80,7 +80,7 @@ func TestGatewayIndexRecoveryKeepsSourceAccess(t *testing.T) {
 		t.Fatal("gateway recovery must not use host registry resolution")
 		return nil, nil
 	}
-	readIndexChildMetadata = func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+	readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 		t.Fatal("gateway recovery must not read metadata through the host")
 		return nil, nil, nil
 	}
@@ -100,7 +100,7 @@ func TestGatewayIndexRecoveryKeepsSourceAccess(t *testing.T) {
 			require.Equal(t, original.Name, image)
 			return original, nil
 		},
-		readMetadata: func(_ context.Context, parent, image string, got *specs.Platform) (map[string]string, map[string]string, error) {
+		readMetadata: func(_ context.Context, _ localSource, parent, image string, got *specs.Platform) (map[string]string, map[string]string, error) {
 			reads++
 			require.Equal(t, current.Name, parent)
 			require.Equal(t, "example.com/app@"+patchedChild.String(), image)
@@ -116,7 +116,7 @@ func TestGatewayIndexRecoveryKeepsSourceAccess(t *testing.T) {
 	require.Equal(t, "example.com/app@"+patchedChild.String(), pinned.String())
 	require.Equal(t, 1, reads)
 
-	access.readMetadata = func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+	access.readMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 		return (&types.SourceLineage{Kind: types.PatchOriginImage, Name: lineage.Name, Digest: digest.FromString("contradiction")}).Annotations(), nil, nil
 	}
 	_, _, _, _, _, err = singlePlatformSnapshotWithAccess(t.Context(), current, ref, platform, access)
@@ -174,7 +174,7 @@ func TestIndexRecoveryAccessFailureRetainsCapturedSnapshot(t *testing.T) {
 				}
 				return original, nil
 			}
-			readIndexChildMetadata = func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+			readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 				if scenario == "child access" {
 					return nil, nil, &indexLookupError{error: errors.New("child requires gateway authentication")}
 				}
@@ -195,7 +195,7 @@ func TestIndexRecoveryAccessFailureRetainsCapturedSnapshot(t *testing.T) {
 					require.Equal(t, original.Name, image, "never resolve the current tag again")
 					return original, nil
 				},
-				readMetadata: func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+				readMetadata: func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 					return (&types.SourceLineage{Kind: types.PatchOriginImage, Name: lineage.Name, Digest: originalChild}).Annotations(), map[string]string{"BaseImage": lineage.Name}, nil
 				},
 			}

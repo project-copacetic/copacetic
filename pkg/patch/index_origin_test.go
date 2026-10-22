@@ -52,7 +52,7 @@ func TestRecordedIndexRejectsContradictoryChildrenBeforePatching(t *testing.T) {
 					}
 					return base, nil
 				}
-				readIndexChildMetadata = func(_ context.Context, _ string, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
+				readIndexChildMetadata = func(_ context.Context, _ localSource, _ string, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
 					require.Equal(t, "registry.example.com/app@"+current.Index.Manifests[0].Digest.String(), image)
 					if surface == "manifest" {
 						return claims, origin, nil
@@ -95,7 +95,7 @@ func TestRecordedIndexAllowsUnverifiedPreservedChildren(t *testing.T) {
 		Base: &buildkit.ImageSource{Index: &specs.Index{Manifests: []specs.Descriptor{{Digest: original, Platform: &platform}}}}, IndexLineage: parent,
 	}
 	for _, claims := range []map[string]string{nil, child.Annotations(), parent.Annotations()} {
-		readIndexChildMetadata = func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+		readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 			labels := maps.Clone(claims)
 			if labels == nil {
 				labels = map[string]string{}
@@ -107,12 +107,12 @@ func TestRecordedIndexAllowsUnverifiedPreservedChildren(t *testing.T) {
 		require.Nil(t, commonBaseIndexLineage(t.Context(), source, []types.PatchResult{{PatchedDesc: &source.Current.Index.Manifests[0]}}),
 			"matching unverified ancestry remains insufficient for output common claim")
 	}
-	readIndexChildMetadata = func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+	readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 		return nil, nil, nil
 	}
 	require.ErrorContains(t, validateRecordedIndexChildren(t.Context(), source), "unpatched manifest contradicts")
 	source.Current.Index.Manifests[0].Digest = original
-	readIndexChildMetadata = func(context.Context, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+	readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
 		return nil, nil, nil
 	}
 	require.NoError(t, validateRecordedIndexChildren(t.Context(), source))
@@ -167,7 +167,7 @@ func TestPreservedChildOriginSurfacesMustAgree(t *testing.T) {
 				}
 				return base, nil
 			}
-			readIndexChildMetadata = func(_ context.Context, _ string, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
+			readIndexChildMetadata = func(_ context.Context, _ localSource, _ string, image string, _ *specs.Platform) (map[string]string, map[string]string, error) {
 				if image == "example.com/app@"+amdPatched.String() {
 					labels := maps.Clone(amdOrigin)
 					labels["BaseImage"] = parent.Name
