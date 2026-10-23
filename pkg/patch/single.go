@@ -397,7 +397,7 @@ func validateBuildkitPlatformSupport(ctx context.Context, client *client.Client,
 func setupWorkingFolder(workingFolder string) (string, func(), error) {
 	if workingFolder == "" {
 		var err error
-		workingFolder, err = os.MkdirTemp("", "copa-*")
+		workingFolder, err = utils.MkdirTemp("copa-*")
 		if err != nil {
 			return "", nil, err
 		}
