@@ -18,6 +18,7 @@ const (
 	OSTypeOracle       = "oracle"
 	OSTypeRedHat       = "redhat"
 	OSTypeRocky        = "rocky"
+	OSTypeFedora       = "fedora"
 	OSTypeAmazon       = "amazon"
 	OSTypeAlma         = "alma"
 	OSTypeAlmaLinux    = "almalinux"
@@ -35,6 +36,7 @@ var RPMDistros = []string{
 	OSTypeOracle,
 	OSTypeRedHat,
 	OSTypeRocky,
+	OSTypeFedora,
 	OSTypeAmazon,
 	OSTypeAlma,
 	OSTypeAlmaLinux,
@@ -94,6 +96,8 @@ func CanonicalOSType(osType string) string {
 		return OSTypeCentOS
 	case strings.Contains(os, OSTypeRocky):
 		return OSTypeRocky
+	case strings.Contains(os, OSTypeFedora):
+		return OSTypeFedora
 	case strings.Contains(os, OSTypeOracle):
 		return OSTypeOracle
 	case strings.Contains(os, OSTypeArchLinux):
