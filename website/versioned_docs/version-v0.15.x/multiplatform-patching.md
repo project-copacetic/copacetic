@@ -124,7 +124,7 @@ These flags are essential for multi-platform patching:
 :::
 
 :::warning
-Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
+Copa does not transfer source signatures or attestations to newly patched subjects or copy registry referrers to the new output. OCI layout export retains embedded attestation-manifest descriptors associated with unchanged platform manifests and their referenced blobs; it does not verify or renew those attestations.
 :::
 
 ## Understanding the Results

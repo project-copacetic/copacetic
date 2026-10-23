@@ -106,6 +106,14 @@ These flags are essential for multi-platform patching:
 
 - **OCI layout export**: The `--oci-dir` flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. `--push` and `--oci-dir` cannot be used together.
 
+- **Single-platform inputs**: A report directory can also be used with an ordinary single-manifest image. Copa patches its matching platform without claiming an original index.
+
+- **Patch origin**: Newly patched OCI manifests and their image-config labels record `sh.copa.patch.origin.kind`, `sh.copa.patch.origin.name`, and `sh.copa.patch.origin.digest`. They identify the original non-Copa image that was patched: kind `image-ref`, its name, and the digest of the exact platform manifest. A patched index also records the original index when every output platform maps to it. Re-patching records the same original, so every generation points directly to it. These fields describe content identity, not authenticated provenance. Application-owned `org.opencontainers.image.base.*` metadata and unchanged platforms are left as they are. The `oci-layout` kind (a digest, an optional portable name, and never a local path) is reserved for OCI layout input; Copa doesn't produce it yet. On an older BuildKit server without image-blob support, a remote-only single-platform source can record its index digest. For the BuildKit frontend, see [patch origin metadata](docker-build.md#patch-origin-metadata).
+
+  Copa validates the selected patch origins before patching. If a recorded original can't be recovered by its digest, or recovery fails during patching, Copa returns an error even with `--ignore-errors` and doesn't publish the final index; restore the original and retry. Platform images exported before such a failure remain available. Images patched by older Copa versions carry only the `BaseImage` label; they are re-patched as before, with a warning and no origin.
+
+- **Source access**: Multi-platform discovery and source capture require registry or local-daemon access from the Copa process. Gateway-only capture through an authenticated BuildKit session supports single-platform patching, including one selected child of an index.
+
 - **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
 
 - **No-report platform discovery**: In comprehensive no-report mode, Copa inspects the image. A single-platform image is patched as that discovered platform; otherwise the selected or discovered multi-platform set is used.
@@ -124,7 +132,9 @@ These flags are essential for multi-platform patching:
 :::
 
 :::warning
-Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.
+Copa does not transfer source signatures or attestations to newly patched subjects or copy registry referrers to the new output. OCI layout export retains embedded attestation-manifest descriptors associated with unchanged platform manifests and their referenced blobs; it does not verify or renew those attestations.
+
+Docker schema 2 manifests and manifest lists do not define OCI annotations; consumers may discard nonstandard annotation fields even if an exporter includes them. Patch-origin annotations are therefore guaranteed only for OCI manifests, OCI indexes, and OCI layouts; Copa does not silently convert Docker-format output to OCI.
 :::
 
 ## Understanding the Results
