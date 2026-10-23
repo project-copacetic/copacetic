@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -41,8 +42,15 @@ func policyImageReference(ctx context.Context, image string) (string, error) {
 		Identifier: imageScheme + named.String(),
 		Attrs:      map[string]string{pb.AttrImageResolveMode: llb.ResolveModePreferLocal.String()},
 	}
+	requested := maps.Clone(op.Attrs)
 	if _, err := sourcepolicy.NewEngine([]*policytypes.Policy{policy}).Evaluate(ctx, op); err != nil {
 		return "", fmt.Errorf("evaluate patch input source policy: %w", err)
+	}
+	// Copa captures and pins the input itself, so an attribute such as a
+	// registry-only resolve mode would not reach the source BuildKit reads.
+	// Fail rather than patch content the policy did not select.
+	if changed := changedSourceAttrs(requested, op.Attrs); len(changed) > 0 {
+		return "", fmt.Errorf("source policy sets attributes on patch input %s that Copa cannot apply: %s", named.String(), strings.Join(changed, ", "))
 	}
 	if op.Identifier == imageScheme+named.String() {
 		return image, nil // Keep the supplied locator when no conversion occurred.
@@ -55,6 +63,18 @@ func policyImageReference(ctx context.Context, image string) (string, error) {
 		return "", fmt.Errorf("parse policy-selected image: %w", err)
 	}
 	return converted, nil
+}
+
+// changedSourceAttrs lists the attributes a policy added or changed, sorted.
+func changedSourceAttrs(before, after map[string]string) []string {
+	var changed []string
+	for key, value := range after {
+		if previous, ok := before[key]; !ok || previous != value {
+			changed = append(changed, key+"="+value)
+		}
+	}
+	slices.Sort(changed)
+	return changed
 }
 
 // A policy changes input identity, not the requested output repository or tag.

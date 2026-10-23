@@ -20,8 +20,10 @@ func TestPolicyImageReference(t *testing.T) {
 		selector string
 		action   policytypes.PolicyAction
 		update   string
+		attrs    map[string]string
 		want     string
 		denied   bool
+		unusable string
 	}{
 		{name: "input conversion", selector: "docker-image://docker.io/library/alpine:latest", update: "docker-image://" + approved, want: approved},
 		{
@@ -31,13 +33,29 @@ func TestPolicyImageReference(t *testing.T) {
 		},
 		{name: "tooling rule", selector: "docker-image://example.com/tool:latest", update: "docker-image://example.com/tool@" + digest.FromString("tool").String(), want: "alpine"},
 		{name: "deny input", selector: "docker-image://docker.io/library/alpine:latest", action: policytypes.PolicyAction_DENY, denied: true},
+		{
+			name: "attribute-only input conversion", selector: "docker-image://docker.io/library/alpine:latest",
+			attrs: map[string]string{"image.resolvemode": "pull"}, unusable: "image.resolvemode=pull",
+		},
+		{
+			name: "input conversion with attributes", selector: "docker-image://docker.io/library/alpine:latest", update: "docker-image://" + approved,
+			attrs: map[string]string{"image.resolvemode": "pull"}, unusable: "image.resolvemode=pull",
+		},
+		{
+			name: "input attribute already in effect", selector: "docker-image://docker.io/library/alpine:latest",
+			attrs: map[string]string{"image.resolvemode": "local"}, want: "alpine",
+		},
+		{
+			name: "tooling attribute", selector: "docker-image://example.com/tool:latest",
+			attrs: map[string]string{"image.resolvemode": "pull"}, want: "alpine",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rule := &policytypes.Rule{Action: policytypes.PolicyAction_CONVERT, Selector: &policytypes.Selector{Identifier: tc.selector}}
 			if tc.denied {
 				rule.Action = tc.action
 			} else {
-				rule.Updates = &policytypes.Update{Identifier: tc.update}
+				rule.Updates = &policytypes.Update{Identifier: tc.update, Attrs: tc.attrs}
 			}
 			data, err := json.Marshal(&policytypes.Policy{Rules: []*policytypes.Rule{rule}})
 			require.NoError(t, err)
@@ -47,6 +65,11 @@ func TestPolicyImageReference(t *testing.T) {
 			got, err := policyImageReference(t.Context(), "alpine")
 			if tc.denied {
 				require.ErrorIs(t, err, sourcepolicy.ErrSourceDenied)
+				return
+			}
+			if tc.unusable != "" {
+				require.ErrorContains(t, err, "that Copa cannot apply: "+tc.unusable)
+				require.Empty(t, got)
 				return
 			}
 			require.NoError(t, err)
