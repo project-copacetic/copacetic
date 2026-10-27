@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/distribution/reference"
+	"github.com/moby/buildkit/client"
 	v1 "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -270,6 +272,55 @@ func TestWriteMultiPlatformVEX(t *testing.T) {
 		_, err = os.Stat(outputPath)
 		require.ErrorIs(t, err, os.ErrNotExist)
 	})
+}
+
+func TestPatchMultiPlatformImageWritesVEXForEveryPatchedPlatform(t *testing.T) {
+	originalPatchPlatformImage := patchPlatformImage
+	t.Cleanup(func() { patchPlatformImage = originalPatchPlatformImage })
+
+	const image = "docker.io/library/nginx:1.25"
+	patchPlatformImage = func(_ context.Context, opts *types.Options, p types.PatchPlatform, _ bool, _ chan<- *client.SolveStatus) (*types.PatchResult, error) {
+		assert.Empty(t, opts.Output, "a platform build must not write the shared VEX file")
+		originalRef, err := reference.ParseNormalizedNamed(image)
+		if err != nil {
+			return nil, err
+		}
+		patchedRef, err := reference.ParseNormalizedNamed(image + "-patched-" + p.Architecture)
+		if err != nil {
+			return nil, err
+		}
+		return &types.PatchResult{
+			OriginalRef: originalRef,
+			PatchedRef:  patchedRef,
+			VEX:         platformVEX(t, "nginx@sha256:"+p.Architecture, p.Architecture),
+		}, nil
+	}
+
+	outputPath := filepath.Join(t.TempDir(), "vex.json")
+	err := patchMultiPlatformImage(context.Background(), &types.Options{
+		Image:  image,
+		Format: "openvex",
+		Output: outputPath,
+	}, []types.PatchPlatform{
+		{Platform: platformSpec("linux", "amd64", "")},
+		{Platform: platformSpec("linux", "arm64", "")},
+	})
+	require.NoError(t, err)
+
+	body, err := os.ReadFile(outputPath)
+	require.NoError(t, err)
+	var doc struct {
+		Statements []struct {
+			Products []struct {
+				ID string `json:"@id"`
+			} `json:"products"`
+		} `json:"statements"`
+	}
+	require.NoError(t, json.Unmarshal(body, &doc))
+	require.Len(t, doc.Statements, 1)
+	require.Len(t, doc.Statements[0].Products, 2)
+	assert.Equal(t, "pkg:oci/nginx@sha256:amd64", doc.Statements[0].Products[0].ID)
+	assert.Equal(t, "pkg:oci/nginx@sha256:arm64", doc.Statements[0].Products[1].ID)
 }
 
 func platformVEX(t *testing.T, nameDigest, arch string) *types.PlatformVEX {

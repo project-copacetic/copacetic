@@ -337,11 +337,10 @@ func patchSingleArchImageWithUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult, patchVEX)
 	if err != nil {
 		return nil, err
 	}
-	result.VEX = patchVEX
 	if updates != nil {
 		result.Summary = updates.CombinedSummary()
 	}
@@ -553,9 +552,11 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 	return nil
 }
 
-// createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
+// createPatchResultWithStates creates the final patch result with descriptor, annotations, preserved BuildKit states,
+// and the platform's VEX data (nil when it does not qualify for a VEX statement).
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
+	vexData *types.PlatformVEX,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -598,6 +599,7 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		OriginalRef: imageName,
 		PatchedRef:  patchedRef,
 		PatchedDesc: patchedDesc,
+		VEX:         vexData,
 	}
 
 	// Include preserved BuildKit states if available

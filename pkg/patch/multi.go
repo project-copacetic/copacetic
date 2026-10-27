@@ -21,6 +21,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// patchPlatformImage patches one platform of a multi-platform image.
+// Tests replace it to feed per-platform results through patchMultiPlatformImage.
+var patchPlatformImage = patchSingleArchImage
+
 // patchMultiPlatformImage patches a multi-platform image across all discovered platforms.
 func patchMultiPlatformImage(
 	ctx context.Context,
@@ -230,7 +234,7 @@ func patchMultiPlatformImage(
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImage(gctx, patchOpts, p, true, sharedProgressCh)
+			res, err := patchPlatformImage(gctx, patchOpts, p, true, sharedProgressCh)
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {
