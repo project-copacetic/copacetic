@@ -89,6 +89,11 @@ Azure Linux based images will use `ghcr.io/project-copacetic/copacetic/azurelinu
 
 These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0`
 
+Fedora images without package-management tools use `fedora:<version>` for the
+chroot update operation. Copa reads repository definitions from the target
+image, including Fedora 45's `/usr/share/dnf5/repos.d`, rather than the tooling
+image's repositories.
+
 #### SUSE (SLES and BCI)
 These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/bci/bci-base` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.suse.com/bci/bci-base`.
 
