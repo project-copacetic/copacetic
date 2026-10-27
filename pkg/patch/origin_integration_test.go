@@ -27,8 +27,10 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	v1types "github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/moby/buildkit/client"
+	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -457,22 +459,78 @@ func TestOriginRoundTrip(t *testing.T) {
 			}
 		}
 	})
-	t.Run("missing-original-index", func(t *testing.T) {
-		input := repo + ":missing-original-index"
-		require.NoError(t, remote.WriteIndex(originTestReference(t, input), indexOut, remote.WithContext(ctx)))
-		singleInput := repo + ":missing-original-index-single"
-		singleIndex := mutate.RemoveManifests(indexOut, func(d v1.Descriptor) bool {
-			return d.Platform == nil || d.Platform.Architecture != "amd64"
-		})
-		require.NoError(t, remote.WriteIndex(originTestReference(t, singleInput), singleIndex, remote.WithContext(ctx)))
+	t.Run("cached-original-index", func(t *testing.T) {
 		originalRef := originTestReference(t, repo+"@"+originalIndexHash.String())
+		platform := descriptors[originAMD64].Platform
+		var native bool
+		_, err := bk.Build(ctx, authenticatedSolveOpt(), copaProduct, func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
+			buildOpts := c.BuildOpts()
+			native = buildOpts.LLBCaps.Supports(pb.CapSourceImageBlob) == nil
+			if !native {
+				return gwclient.NewResult(), nil
+			}
+			// Warm metadata and exact index bytes through the same session API
+			// used for recovery, then materialize the selected image source.
+			source, err := buildkit.ResolveImageSourceWithClient(ctx, c, originalRef.Name(), platform)
+			if err != nil {
+				return nil, err
+			}
+			if source.Index == nil || source.Descriptor.Digest.String() != originalIndexHash.String() {
+				return nil, fmt.Errorf("cached source does not identify the original index")
+			}
+			definition, err := llb.Image(originalRef.Name(), llb.ResolveModePreferLocal, llb.Platform(*platform)).Marshal(ctx, llb.WithCaps(buildOpts.LLBCaps))
+			if err != nil {
+				return nil, err
+			}
+			_, err = c.Solve(ctx, gwclient.SolveRequest{Definition: definition.ToPB(), Evaluate: true})
+			return gwclient.NewResult(), err
+		}, nil)
+		require.NoError(t, err)
+		if !native {
+			t.Skip("cached index recovery requires BuildKit image-blob sources")
+		}
+		input := repo + ":cached-original-index-single"
+		singleIndex := mutate.RemoveManifests(indexOut, func(d v1.Descriptor) bool {
+			return d.Platform == nil || d.Platform.Architecture != originAMD64
+		})
+		require.NoError(t, remote.WriteIndex(originTestReference(t, input), singleIndex, remote.WithContext(ctx)))
 		require.NoError(t, remote.Delete(originalRef, remote.WithContext(ctx)))
 		defer func() {
-			// The tag still exists after deletion; restore the missing digest directly.
 			require.NoError(t, remote.WriteIndex(originalRef, index, remote.WithContext(ctx)))
 			_, err := remote.Get(originalRef, remote.WithContext(ctx))
 			require.NoError(t, err)
 		}()
+		_, err = remote.Get(originalRef, remote.WithContext(ctx))
+		require.Error(t, err, "the registry copy must be unavailable even though BuildKit has the original")
+		output := repo + ":cached-index-repatch"
+		require.NoError(t, Patch(ctx, &types.Options{
+			Image: input, Push: true, PatchedTag: "cached-index-repatch", BkAddr: addr,
+			PkgTypes: "os", Progress: "quiet", Timeout: time.Minute,
+		}))
+		image := contractImage(t, ctx, output)
+		assertContractOrigin(t, image, descriptors[originAMD64].Digest.String(), application)
+		assertContractLayers(t, image, images[originAMD64], true)
+		labels := contractLabels(t, image)
+		require.Equal(t, repo+":original-amd64", labels["BaseImage"])
+		require.Equal(t, repo+":original-amd64", labels[types.AnnotationPatchOriginName])
+	})
+	t.Run("missing-original-index", func(t *testing.T) {
+		// Registry deletion alone does not make an index unrecoverable: earlier
+		// cases can cache it in BuildKit. Record a digest neither transport has,
+		// while keeping the valid P1 children and their original manifests.
+		missing := *common
+		missing.Digest = digest.FromString("unavailable original index")
+		require.True(t, missing.Valid())
+		missingIndex, ok := mutate.Annotations(indexOut, missing.Annotations()).(v1.ImageIndex)
+		require.True(t, ok)
+		input := repo + ":missing-original-index"
+		require.NoError(t, remote.WriteIndex(originTestReference(t, input), missingIndex, remote.WithContext(ctx)))
+		singleInput := repo + ":missing-original-index-single"
+		singleIndex := mutate.RemoveManifests(missingIndex, func(d v1.Descriptor) bool {
+			return d.Platform == nil || d.Platform.Architecture != "amd64"
+		})
+		require.NoError(t, remote.WriteIndex(originTestReference(t, singleInput), singleIndex, remote.WithContext(ctx)))
+		originalRef := originTestReference(t, repo+"@"+missing.Digest.String())
 		_, err := remote.Get(originalRef, remote.WithContext(ctx))
 		require.Error(t, err, "the recorded original index must be unavailable")
 		// P1 children and each original A manifest remain available. Their
