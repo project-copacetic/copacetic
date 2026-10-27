@@ -320,9 +320,9 @@ func InitializeBuildkitConfig(
 }
 
 // InitializeBuildkitConfigWithBaseImage reads the image through userImage,
-// which may be a digest-pinned child, but records baseImageLocator as the
-// BaseImage label of a first patch. Older Copa versions use that label to find
-// the image to rebuild from, so it keeps the locator the user supplied.
+// which may be a digest-pinned child. The first-patch BaseImage label keeps
+// baseImageLocator unless a source policy selects a different image. Older
+// Copa versions use that label to find the image to rebuild from.
 func InitializeBuildkitConfigWithBaseImage(
 	ctx context.Context,
 	c gwclient.Client,
@@ -351,9 +351,23 @@ func InitializeBuildkitConfigWithBaseImage(
 	if platform != nil {
 		resolveOpt.ImageOpt.Platform = platform
 	}
-	_, userImageDigest, configData, err := resolver.ResolveImageConfig(ctx, userImage, resolveOpt)
+	resolvedUserImage, userImageDigest, configData, err := resolver.ResolveImageConfig(ctx, userImage, resolveOpt)
 	if err != nil {
 		return nil, err
+	}
+	requested, err := reference.ParseNormalizedNamed(userImage)
+	if err != nil {
+		return nil, err
+	}
+	selected, err := reference.ParseNormalizedNamed(resolvedUserImage)
+	if err != nil {
+		return nil, fmt.Errorf("parse resolved image reference: %w", err)
+	}
+	// A source policy may select another repository or tag. Use that source
+	// for content and lineage, without mistaking ordinary name normalization
+	// for a conversion that replaces the caller's BaseImage locator.
+	if reference.TagNameOnly(requested).String() != reference.TagNameOnly(selected).String() {
+		baseImageLocator = selected.String()
 	}
 
 	var baseImage string
@@ -361,7 +375,7 @@ func InitializeBuildkitConfigWithBaseImage(
 		ctx,
 		resolver,
 		configData,
-		userImage,
+		selected.String(),
 		baseImageLocator,
 		userImageDigest,
 		platform,
@@ -402,7 +416,7 @@ func InitializeBuildkitConfigWithBaseImage(
 		if platform != nil {
 			patchedImageOpts = append(patchedImageOpts, llb.Platform(*platform))
 		}
-		patchedSource, err := resolvedImageReference(userImage, userImageDigest)
+		patchedSource, err := resolvedImageReference(selected.String(), userImageDigest)
 		if err != nil {
 			return nil, err
 		}
