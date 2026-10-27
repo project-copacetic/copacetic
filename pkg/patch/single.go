@@ -281,16 +281,18 @@ func patchSingleArchImageWithUpdates(
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
+	var patchVEX *types.PlatformVEX
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
+		result, vexData, err := executePatchBuild(ctx, bkClient, buildConfig, buildkitImageRef, &targetPlatform,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
 		patchBuildErr = err
 		if err != nil {
 			return err
 		}
 		patchResult = result
+		patchVEX = vexData
 		log.Debugf("BuildKit build completed for %s", patchedImageName)
 		return nil
 	})
@@ -335,7 +337,7 @@ func patchSingleArchImageWithUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult)
+	result, err := createPatchResultWithStates(imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult, patchVEX)
 	if err != nil {
 		return nil, err
 	}
@@ -550,9 +552,11 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 	return nil
 }
 
-// createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
+// createPatchResultWithStates creates the final patch result with descriptor, annotations, preserved BuildKit states,
+// and the platform's VEX data (nil when it does not qualify for a VEX statement).
 func createPatchResultWithStates(imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result,
+	vexData *types.PlatformVEX,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -595,6 +599,7 @@ func createPatchResultWithStates(imageName reference.Named, patchedImageName str
 		OriginalRef: imageName,
 		PatchedRef:  patchedRef,
 		PatchedDesc: patchedDesc,
+		VEX:         vexData,
 	}
 
 	// Include preserved BuildKit states if available
@@ -641,7 +646,7 @@ func executePatchBuild(
 	toolchainPatchLevel string,
 	goVCSURL string,
 	chiselRelease string,
-) (*Result, error) {
+) (*Result, *types.PlatformVEX, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
 	var patchResult *Result // Store the patch result with preserved states
@@ -723,17 +728,26 @@ func executePatchBuild(
 		digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 		patchedImageDigest = digest
 	}
-	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+	var platformVEX *types.PlatformVEX
+	if patchedImageDigest != "" && reportFile != "" && validatedManifest != nil &&
+		(len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
 		nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
-		// vex document must contain at least one statement
-		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
+		platformVEX = &types.PlatformVEX{
+			Updates:         validatedManifest,
+			PkgType:         pkgType,
+			NameDigestOrTag: nameDigestOrTag,
+		}
+		// Single-platform runs write the document here. Multi-platform runs clear
+		// Output on the per-platform options so this write is skipped; one document
+		// is written after every platform finishes.
+		if output != "" {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
-	return patchResult, err
+	return patchResult, platformVEX, err
 }
 
 // shouldIncludeOSUpdates returns true if OS updates should be included based on package types.

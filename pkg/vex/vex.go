@@ -15,11 +15,37 @@ type Vex interface {
 	CreateVEXDocument(updates *unversioned.UpdateManifest, patchedImageName string, pkgmgr pkgmgr.PackageManager) (string, error)
 }
 
+// ImageUpdates is one patched image included in a VEX document.
+// Updates is the validated manifest for that image, PkgType selects the
+// subcomponent PURLs, and PatchedImageName is placed in the product identifier.
+type ImageUpdates struct {
+	Updates          *unversioned.UpdateManifest
+	PkgType          string
+	PatchedImageName string
+}
+
 func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedImageName, format, file string) error {
 	switch format {
 	case "openvex":
 		ov := &OpenVex{}
 		doc, err := ov.createVEXDocument(updates, patchedImageName, pkgType)
+		if err != nil {
+			return err
+		}
+		return writeVEXDocumentFile(file, doc.ToJSON)
+	default:
+		return fmt.Errorf("unsupported output format %s specified", format)
+	}
+}
+
+// TryOutputMultiVexDocument writes one OpenVEX document covering every image.
+// A vulnerability fixed on more than one image is a single statement whose
+// products lists one product per image, in the order of images.
+func TryOutputMultiVexDocument(images []ImageUpdates, format, file string) error {
+	switch format {
+	case "openvex":
+		ov := &OpenVex{}
+		doc, err := ov.createMultiVEXDocument(images)
 		if err != nil {
 			return err
 		}

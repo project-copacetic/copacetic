@@ -104,6 +104,8 @@ These flags are essential for multi-platform patching:
 
 - **Platform preservation**: When using `--platform`, only specified platforms are patched; others are preserved unchanged in a pushed index or an OCI layout.
 
+- **VEX output**: `--output` writes one VEX document for the run, with one product per platform image Copa patched. Preserved and already up-to-date platforms are not included. See [VEX Output](output.md).
+
 - **OCI layout export**: The `--oci-dir` flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. `--push` and `--oci-dir` cannot be used together.
 
 - **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
