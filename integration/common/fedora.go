@@ -33,8 +33,10 @@ func FedoraReleaseVersion(t *testing.T, image, platform string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	args := []string{"run", "--rm", "--platform", platform, "--entrypoint", "rpm", image,
-		"-q", "--qf", "%{VERSION}-%{RELEASE}", Fedora45ReleasePackage}
+	args := []string{
+		"run", "--rm", "--platform", platform, "--entrypoint", "rpm", image,
+		"-q", "--qf", "%{VERSION}-%{RELEASE}", Fedora45ReleasePackage,
+	}
 	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- image and platform are fixed integration fixtures.
 	cmd.Env = append(os.Environ(), DockerDINDAddress.Env()...)
 	var stderr bytes.Buffer

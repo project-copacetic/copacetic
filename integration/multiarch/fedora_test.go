@@ -33,8 +33,10 @@ func TestPatchFedora45(t *testing.T) {
 			if tt.report {
 				tag = "45-cli-native-patched"
 			}
-			args := []string{"patch", "-i=" + sourceRef, "-t=" + tag,
-				"--push", "--timeout=30m", "--ignore-errors=false", "--debug"}
+			args := []string{
+				"patch", "-i=" + sourceRef, "-t=" + tag,
+				"--push", "--timeout=30m", "--ignore-errors=false", "--debug",
+			}
 			if buildkitAddr != "" {
 				args = append(args, "-a="+buildkitAddr)
 			}

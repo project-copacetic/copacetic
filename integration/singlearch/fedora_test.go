@@ -23,8 +23,10 @@ func TestPatchFedora45(t *testing.T) {
 	if reportFile {
 		tag = "45-fedora-cli-native"
 	}
-	args := []string{"patch", "-i=" + common.Fedora45Image, "-t=" + tag,
-		"--timeout=30m", "--ignore-errors=false", "--debug"}
+	args := []string{
+		"patch", "-i=" + common.Fedora45Image, "-t=" + tag,
+		"--timeout=30m", "--ignore-errors=false", "--debug",
+	}
 	if buildkitAddr != "" {
 		args = append(args, "-a="+buildkitAddr)
 	}
