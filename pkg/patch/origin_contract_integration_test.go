@@ -177,6 +177,45 @@ func TestOriginContract(t *testing.T) {
 		require.Error(t, err, "a denied input must not publish output")
 	})
 
+	t.Run("source-policy-denied-digest", func(t *testing.T) {
+		// An allowed tag must not authorize content whose digest the policy
+		// denies, whether an exact rule or the default allows the tag.
+		single, multi := repo+":digest-denied", repo+":digest-denied-index"
+		require.NoError(t, remote.Write(originTestReference(t, single), originals[originAMD64], remote.WithContext(ctx)))
+		require.NoError(t, remote.WriteIndex(originTestReference(t, multi), index, remote.WithContext(ctx)))
+		rule := func(action, matchType, ref string) string {
+			return fmt.Sprintf(`{"action":%q,"selector":{"identifier":%q,"match_type":%q}}`, action, "docker-image://"+ref, matchType)
+		}
+		for _, tc := range []struct {
+			name, input, report string
+			rules               []string
+		}{
+			{
+				name: "explicit-allow", input: single, report: originTestReport(t, originAMD64),
+				rules: []string{rule("DENY", "WILDCARD", repo+"*"), rule("ALLOW", "EXACT", single), rule("DENY", "EXACT", repo+"@"+children[originAMD64])},
+			},
+			{
+				name: "default-allow", input: single, report: originTestReport(t, originAMD64),
+				rules: []string{rule("DENY", "EXACT", repo+"@"+children[originAMD64])},
+			},
+			{
+				name: "index-child", input: multi, report: reports,
+				rules: []string{rule("DENY", "WILDCARD", repo+"*"), rule("ALLOW", "EXACT", multi), rule("DENY", "EXACT", repo+"@"+children[arches[1]])},
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				policyPath := filepath.Join(t.TempDir(), "source-policy.json")
+				require.NoError(t, os.WriteFile(policyPath, []byte(`{"rules":[`+strings.Join(tc.rules, ",")+`]}`), 0o600))
+				t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", policyPath)
+				output := "digest-denied-" + tc.name
+				err := patch(tc.input, output, tc.report, nil)
+				require.ErrorContains(t, err, "denied by policy")
+				_, err = remote.Get(originTestReference(t, repo+":"+output), remote.WithContext(ctx))
+				require.Error(t, err, "a denied input must not publish output")
+			})
+		}
+	})
+
 	t.Run("preserved-windows-versions", func(t *testing.T) {
 		addenda := []mutate.IndexAddendum{{Add: originals[originAMD64], Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: LINUX, Architecture: originAMD64}}}}
 		for _, version := range []string{"10.0.20348.0", "10.0.26100.0"} {

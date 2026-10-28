@@ -82,6 +82,46 @@ func TestAuthorizePinnedInput(t *testing.T) {
 		require.Same(t, policy, got)
 	})
 
+	// A rule that matches the pinned digest but not the requested tag decides
+	// about that content itself, so the tag's ALLOW must not override it.
+	exact := func(action policytypes.PolicyAction, ref string) *policytypes.Rule {
+		return &policytypes.Rule{Action: action, Selector: &policytypes.Selector{Identifier: "docker-image://" + ref, MatchType: policytypes.MatchType_EXACT}}
+	}
+	for _, tc := range []struct {
+		name  string
+		rules []*policytypes.Rule
+	}{
+		{name: "explicitly allowed tag resolving to a denied digest", rules: append(allowlist().Rules, exact(policytypes.PolicyAction_DENY, child))},
+		{name: "digest denied before the allowlist", rules: append([]*policytypes.Rule{exact(policytypes.PolicyAction_DENY, child)}, allowlist().Rules...)},
+		{name: "default-allowed tag resolving to a denied digest", rules: []*policytypes.Rule{exact(policytypes.PolicyAction_DENY, child)}},
+		{
+			name: "every digest of the repository denied",
+			rules: append(allowlist().Rules, &policytypes.Rule{
+				Action:   policytypes.PolicyAction_DENY,
+				Selector: &policytypes.Selector{Identifier: "docker-image://" + repo + "@*", MatchType: policytypes.MatchType_WILDCARD},
+			}),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			policy := &policytypes.Policy{Rules: tc.rules}
+			require.True(t, allowed(t, policy, repo+":approved"), "control: the requested tag is allowed")
+			require.False(t, allowed(t, policy, child), "control: the pinned digest is denied")
+			got, err := authorizePinnedInput(t.Context(), policy, repo+":approved", child)
+			require.ErrorIs(t, err, sourcepolicy.ErrSourceDenied)
+			require.ErrorContains(t, err, "source policy denies pinned patch input "+child)
+			require.Nil(t, got)
+		})
+	}
+
+	t.Run("digest allowed before a broader denial carries the tag's decision", func(t *testing.T) {
+		policy := &policytypes.Policy{Rules: append([]*policytypes.Rule{exact(policytypes.PolicyAction_ALLOW, child)}, allowlist().Rules...)}
+		require.False(t, allowed(t, policy, child), "control: the repository-wide DENY still denies the digest")
+		got, err := authorizePinnedInput(t.Context(), policy, repo+":approved", child)
+		require.NoError(t, err)
+		require.True(t, allowed(t, got, child))
+		require.False(t, allowed(t, got, other))
+	})
+
 	t.Run("BuildKit engine denies the pinned child without the rule", func(t *testing.T) {
 		_, err := sourcepolicy.NewEngine([]*policytypes.Policy{allowlist()}).Evaluate(t.Context(), imageSourceOp("docker-image://"+child))
 		require.ErrorIs(t, err, sourcepolicy.ErrSourceDenied)

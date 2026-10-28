@@ -105,8 +105,11 @@ func policyPatchOptions(ctx context.Context, opts *types.Options) (*types.Option
 // input to the digest-pinned references Copa reads instead. Without it, an
 // exact-tag ALLOW after a wildcard DENY stops matching once the input is pinned.
 // Each pinned reference gets an exact ALLOW rule only when the policy allows the
-// requested input unchanged and would deny that pinned reference. Tooling,
-// recovered originals and every other source keep the policy as written.
+// requested input unchanged and denies the pinned reference only through rules
+// that also cover the requested input. A rule that matches the pinned reference
+// but not the requested input, such as a DENY for that digest, keeps its
+// decision, and the input is rejected. Tooling, recovered originals and every
+// other source keep the policy as written.
 func authorizePinnedInput(
 	ctx context.Context, policy *policytypes.Policy, requested string, pinned ...string,
 ) (*policytypes.Policy, error) {
@@ -143,6 +146,13 @@ func authorizePinnedInput(
 		if !errors.Is(err, sourcepolicy.ErrSourceDenied) {
 			return nil, fmt.Errorf("evaluate pinned patch input source policy: %w", err)
 		}
+		denied, err := pinnedRulesDeny(ctx, policy, requestedID, id)
+		if err != nil {
+			return nil, fmt.Errorf("evaluate pinned patch input source policy: %w", err)
+		}
+		if denied {
+			return nil, fmt.Errorf("source policy denies pinned patch input %s: %w", named.String(), sourcepolicy.ErrSourceDenied)
+		}
 		extra = append(extra, &policytypes.Rule{
 			Action:   policytypes.PolicyAction_ALLOW,
 			Selector: &policytypes.Selector{Identifier: id, MatchType: policytypes.MatchType_EXACT},
@@ -153,6 +163,48 @@ func authorizePinnedInput(
 	}
 	// The last matching ALLOW or DENY wins, so these exact rules go last.
 	return &policytypes.Policy{Version: policy.Version, Rules: append(slices.Clone(policy.Rules), extra...)}, nil
+}
+
+// pinnedRulesDeny evaluates pinnedID against only the ALLOW and DENY rules that
+// match it but not requestedID, in policy order. Those rules decide something
+// about the pinned content itself, so their DENY must win over the requested
+// input's ALLOW. The BuildKit engine decides every match.
+func pinnedRulesDeny(ctx context.Context, policy *policytypes.Policy, requestedID, pinnedID string) (bool, error) {
+	var rules []*policytypes.Rule
+	for _, rule := range policy.Rules {
+		if rule.Action != policytypes.PolicyAction_ALLOW && rule.Action != policytypes.PolicyAction_DENY {
+			continue
+		}
+		pinned, err := policyRuleMatches(ctx, rule, pinnedID)
+		if err != nil {
+			return false, err
+		}
+		if !pinned {
+			continue
+		}
+		requested, err := policyRuleMatches(ctx, rule, requestedID)
+		if err != nil {
+			return false, err
+		}
+		if !requested {
+			rules = append(rules, rule)
+		}
+	}
+	_, err := sourcepolicy.NewEngine([]*policytypes.Policy{{Version: policy.Version, Rules: rules}}).Evaluate(ctx, imageSourceOp(pinnedID))
+	if errors.Is(err, sourcepolicy.ErrSourceDenied) {
+		return true, nil
+	}
+	return false, err
+}
+
+// policyRuleMatches reports whether the rule's selector matches id.
+func policyRuleMatches(ctx context.Context, rule *policytypes.Rule, id string) (bool, error) {
+	probe := &policytypes.Policy{Rules: []*policytypes.Rule{{Action: policytypes.PolicyAction_DENY, Selector: rule.Selector}}}
+	_, err := sourcepolicy.NewEngine([]*policytypes.Policy{probe}).Evaluate(ctx, imageSourceOp(id))
+	if errors.Is(err, sourcepolicy.ErrSourceDenied) {
+		return true, nil
+	}
+	return false, err
 }
 
 const imageSourceScheme = "docker-image://"
