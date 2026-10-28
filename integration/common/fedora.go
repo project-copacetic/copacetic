@@ -19,7 +19,12 @@ import (
 // both amd64 and arm64, so an upgrade can be observed in integration tests.
 const Fedora45Image = "docker.io/library/fedora@sha256:aacbc26b38361ba0cb3d10f268da40b61b36aed6ed6fe5831a35871636bedb06"
 
-const Fedora45ReleasePackage = "fedora-release-container"
+const (
+	Fedora45ReleasePackage = "fedora-release-container"
+	// The test checks a real upgrade from 45-0.10, without depending on which
+	// newer Fedora release happens to be available or cached by BuildKit.
+	fedora45MinimumFixedVersion = "45-0.11"
+)
 
 // FedoraReleaseVersion reads the installed RPM from a container image.
 func FedoraReleaseVersion(t *testing.T, image, platform string) string {
@@ -47,7 +52,7 @@ func WriteFedoraReleaseManifest(t *testing.T, dir, arch, installedVersion string
 		},
 		Updates: v1alpha1.UpdatePackages{{
 			Name: Fedora45ReleasePackage, InstalledVersion: installedVersion,
-			FixedVersion: "45-14", VulnerabilityID: "CVE-2023-TEST",
+			FixedVersion: fedora45MinimumFixedVersion, VulnerabilityID: "CVE-2023-TEST",
 		}},
 	}
 	data, err := json.Marshal(manifest)
@@ -63,7 +68,7 @@ func RequireFedoraReleaseUpgrade(t *testing.T, before, after string) {
 	require.Equal(t, "45-0.10", before, "pinned Fedora fixture must contain the outdated RPM")
 	oldVersion, newVersion := rpmver.NewVersion(before), rpmver.NewVersion(after)
 	require.True(t, oldVersion.LessThan(newVersion), "RPM must change: before=%s after=%s", before, after)
-	require.False(t, newVersion.LessThan(rpmver.NewVersion("45-14")),
+	require.False(t, newVersion.LessThan(rpmver.NewVersion(fedora45MinimumFixedVersion)),
 		"patched RPM %s must meet the fixed version", after)
 	t.Logf("%s: %s -> %s", Fedora45ReleasePackage, before, after)
 }
