@@ -3,6 +3,7 @@ package mocks
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/tonistiigi/fsutil/types"
 
@@ -20,6 +21,17 @@ type MockGWClient struct {
 }
 
 func (m *MockGWClient) ResolveSourceMetadata(ctx context.Context, op *pb.SourceOp, opt sourceresolver.Opt) (*sourceresolver.MetaResponse, error) {
+	// Image metadata can use the same expectations through either gateway API.
+	if ref, ok := strings.CutPrefix(op.Identifier, "docker-image://"); ok {
+		resolved, dgst, config, err := m.ResolveImageConfig(ctx, ref, opt)
+		if err != nil {
+			return nil, err
+		}
+		return &sourceresolver.MetaResponse{
+			Op:    &pb.SourceOp{Identifier: "docker-image://" + resolved},
+			Image: &sourceresolver.ResolveImageResponse{Digest: dgst, Config: config},
+		}, nil
+	}
 	args := m.Called(ctx, op, opt)
 
 	metaResponse, ok := args.Get(0).(*sourceresolver.MetaResponse)

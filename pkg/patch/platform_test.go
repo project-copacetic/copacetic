@@ -32,7 +32,7 @@ func stubLocalPlatformDescriptor(
 
 func stubVerifiedRemoteIndex(
 	t *testing.T,
-	fn func(ref name.Digest) (*remote.Descriptor, error),
+	fn func(_ context.Context, ref name.Digest) (*remote.Descriptor, error),
 ) func() {
 	t.Helper()
 	orig := getVerifiedRemoteIndex
@@ -86,7 +86,7 @@ func TestGetPlatformDescriptorFromManifest_LocalHit(t *testing.T) {
 		return want, true, nil
 	})()
 
-	got, err := getPlatformDescriptorFromManifest(
+	got, err := getPlatformDescriptorFromManifest(t.Context(),
 		"127.0.0.1:1/example:latest",
 		&types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}},
 	)
@@ -105,12 +105,12 @@ func TestGetPlatformDescriptorFromManifest_LocalDigestUsesVerifiedRemoteIndex(t 
 	defer stubLocalPlatformDescriptor(t, func(_ context.Context, _ string, _ *ispec.Platform) (*ispec.Descriptor, bool, error) {
 		return nil, true, nil
 	})()
-	defer stubVerifiedRemoteIndex(t, func(ref name.Digest) (*remote.Descriptor, error) {
+	defer stubVerifiedRemoteIndex(t, func(_ context.Context, ref name.Digest) (*remote.Descriptor, error) {
 		require.Equal(t, "sha256:"+indexDigest, ref.DigestStr())
 		return platformTestRemoteIndexDescriptor(indexDigest), nil
 	})()
 
-	got, err := getPlatformDescriptorFromManifest(
+	got, err := getPlatformDescriptorFromManifest(t.Context(),
 		imageRef,
 		&types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "arm64"}},
 	)
@@ -139,12 +139,12 @@ func TestGetPlatformDescriptorFromManifest_LocalAmbiguous(t *testing.T) {
 	defer stubLocalPlatformDescriptor(t, func(_ context.Context, _ string, _ *ispec.Platform) (*ispec.Descriptor, bool, error) {
 		return nil, true, nil // ok=true, no descriptor — the ambiguous case
 	})()
-	defer stubVerifiedRemoteIndex(t, func(name.Digest) (*remote.Descriptor, error) {
+	defer stubVerifiedRemoteIndex(t, func(context.Context, name.Digest) (*remote.Descriptor, error) {
 		t.Fatal("mutable local image reference must not be reconciled with a remote image")
 		return nil, nil
 	})()
 
-	_, err := getPlatformDescriptorFromManifest(
+	_, err := getPlatformDescriptorFromManifest(t.Context(),
 		"127.0.0.1:1/example:latest",
 		&types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "ppc64le"}},
 	)
@@ -170,7 +170,7 @@ func TestGetPlatformDescriptorFromManifest_LocalErrorFallsThrough(t *testing.T) 
 		return nil, false, errors.New("simulated: image not in local daemon")
 	})()
 
-	_, err := getPlatformDescriptorFromManifest(
+	_, err := getPlatformDescriptorFromManifest(t.Context(),
 		"127.0.0.1:1/example:latest",
 		&types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}},
 	)
