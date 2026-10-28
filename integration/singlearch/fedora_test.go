@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/integration/common"
@@ -13,7 +14,8 @@ import (
 // TestPatchFedora45 exercises the CLI without relying on Trivy's Fedora support.
 // The CI matrix runs it once with a native report and once without a report.
 func TestPatchFedora45(t *testing.T) {
-	const platform = "linux/amd64"
+	arch := runtime.GOARCH
+	platform := "linux/" + arch
 	before := common.FedoraReleaseVersion(t, common.Fedora45Image, platform)
 	require.Equal(t, "45-0.10", before, "pinned Fedora fixture must contain the outdated RPM")
 
@@ -27,7 +29,7 @@ func TestPatchFedora45(t *testing.T) {
 		args = append(args, "-a="+buildkitAddr)
 	}
 	if reportFile {
-		report := common.WriteFedoraReleaseManifest(t, t.TempDir(), "amd64", before)
+		report := common.WriteFedoraReleaseManifest(t, t.TempDir(), arch, before)
 		args = append(args, "-r="+report, "-s=native")
 	} else {
 		args = append(args, "--platform="+platform)
@@ -36,7 +38,7 @@ func TestPatchFedora45(t *testing.T) {
 	unsuffixedRef := fmt.Sprintf("docker.io/library/fedora:%s", tag)
 	patchedRef := unsuffixedRef
 	if !reportFile {
-		patchedRef += "-amd64"
+		patchedRef += "-" + arch
 	}
 	removeDockerImages(t, patchedRef, unsuffixedRef)
 
