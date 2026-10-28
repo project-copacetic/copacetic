@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -36,8 +37,10 @@ func FedoraReleaseVersion(t *testing.T, image, platform string) string {
 		"-q", "--qf", "%{VERSION}-%{RELEASE}", Fedora45ReleasePackage}
 	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- image and platform are fixed integration fixtures.
 	cmd.Env = append(os.Environ(), DockerDINDAddress.Env()...)
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "querying %s on %s: %s", Fedora45ReleasePackage, image, string(out))
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	require.NoError(t, err, "querying %s on %s: %s", Fedora45ReleasePackage, image, stderr.String())
 	return strings.TrimSpace(string(out))
 }
 
