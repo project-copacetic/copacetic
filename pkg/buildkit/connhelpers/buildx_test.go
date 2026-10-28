@@ -1,12 +1,14 @@
 package connhelpers
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,46 +95,76 @@ func TestBuildxDialStdio(t *testing.T) {
 
 func TestBuildxDialStdioUsesEffectiveBuilderEnvironment(t *testing.T) {
 	originalCommand := buildxExecCommand
-	t.Cleanup(func() { buildxExecCommand = originalCommand })
+	originalCommandContext := buildxExecCommandContext
+	t.Cleanup(func() {
+		buildxExecCommand = originalCommand
+		buildxExecCommandContext = originalCommandContext
+	})
 	buildxExecCommand = buildxDialHelperCommand
+	buildxExecCommandContext = buildxDialHelperCommandContext
 
+	const dockerHost = "unix:///docker-loader.sock"
 	tests := []struct {
 		name               string
-		builder            string
+		addr               string
 		environmentBuilder string
-		wantError          bool
+		want               string
 	}{
 		{
-			name:    "explicit URL builder ignores Docker host",
-			builder: "desktop-linux",
+			name: "URL builder omits Docker host",
+			addr: "buildx://desktop-linux",
+			want: "builder-flag=desktop-linux builder=desktop-linux docker-host=",
 		},
 		{
-			name:               "BUILDX_BUILDER fallback ignores Docker host",
+			name:               "URL builder takes precedence over BUILDX_BUILDER",
+			addr:               "buildx://desktop-linux",
+			environmentBuilder: "copa-builder",
+			want:               "builder-flag=desktop-linux builder=desktop-linux docker-host=",
+		},
+		{
+			name:               "BUILDX_BUILDER omits Docker host",
+			addr:               "buildx://",
 			environmentBuilder: "desktop-linux",
+			want:               "builder-flag= builder=desktop-linux docker-host=",
 		},
 		{
-			name:      "no effective builder retains Docker host",
-			wantError: true,
+			name: "default URL builder keeps Docker host",
+			addr: "buildx://default",
+			want: "builder-flag=default builder=default docker-host=" + dockerHost,
+		},
+		{
+			name:               "default BUILDX_BUILDER keeps Docker host",
+			addr:               "buildx://",
+			environmentBuilder: "default",
+			want:               "builder-flag= builder=default docker-host=" + dockerHost,
+		},
+		{
+			name: "no builder keeps Docker host",
+			addr: "buildx://",
+			want: "builder-flag= builder= docker-host=" + dockerHost,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("DOCKER_HOST", "unix:///docker-loader.sock")
+			t.Setenv("DOCKER_HOST", dockerHost)
 			t.Setenv("BUILDX_BUILDER", tt.environmentBuilder)
-			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			t.Setenv("BUILDX_DIAL_HELPER_REPORT", "1")
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			t.Cleanup(cancel)
 
-			conn, err := buildxDialStdio(ctx, tt.builder)
-			if tt.wantError {
-				require.ErrorContains(t, err, "buildx dial-stdio failed before connecting")
-				assert.Nil(t, conn)
-				return
-			}
-
+			helper, err := connhelper.GetConnectionHelper(tt.addr)
 			require.NoError(t, err)
-			require.NotNil(t, conn)
-			require.NoError(t, conn.Close())
+			conn, err := helper.ContextDialer(ctx, "")
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = conn.Close() })
+
+			require.NoError(t, conn.SetReadDeadline(time.Now().Add(2*time.Second)))
+			line, err := bufio.NewReader(conn).ReadString('\n')
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, strings.TrimSuffix(line, "\n"))
+			// The image loader reads DOCKER_HOST from Copa's own environment.
+			assert.Equal(t, dockerHost, os.Getenv("DOCKER_HOST"))
 		})
 	}
 }
@@ -216,18 +248,46 @@ func TestBuildxDialStdioKeepsProxyOpenAfterDialContextEnds(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func buildxDialHelperCommand(_ string, _ ...string) *exec.Cmd {
+func buildxDialHelperCommand(_ string, args ...string) *exec.Cmd {
 	//nolint:gosec // os.Args[0] is the Go test binary, not untrusted input.
-	return exec.Command(os.Args[0], "-test.run=^TestBuildxDialStdioHelperProcess$", "--", "--buildx-dial-helper")
+	return exec.Command(os.Args[0], buildxDialHelperArgs(args)...)
 }
 
+func buildxDialHelperCommandContext(ctx context.Context, _ string, args ...string) *exec.Cmd {
+	//nolint:gosec // os.Args[0] is the Go test binary, not untrusted input.
+	return exec.CommandContext(ctx, os.Args[0], buildxDialHelperArgs(args)...)
+}
+
+func buildxDialHelperArgs(args []string) []string {
+	return append([]string{"-test.run=^TestBuildxDialStdioHelperProcess$", "--", "--buildx-dial-helper"}, args...)
+}
+
+// TestBuildxDialStdioHelperProcess stands in for docker buildx dial-stdio. It
+// follows Buildx builder selection: --builder defaults to BUILDX_BUILDER, and
+// DOCKER_HOST makes the default Docker context current, so a builder bound to
+// another Docker context is rejected.
 func TestBuildxDialStdioHelperProcess(t *testing.T) {
-	if !slices.Contains(os.Args, "--buildx-dial-helper") {
+	marker := slices.Index(os.Args, "--buildx-dial-helper")
+	if marker == -1 {
 		return
 	}
+	args := os.Args[marker+1:]
+	if slices.Contains(args, "--help") {
+		os.Exit(0)
+	}
 
-	if os.Getenv("DOCKER_HOST") != "" || os.Getenv("BUILDX_DIAL_HELPER_FAIL") != "" {
-		fmt.Fprintln(os.Stderr, "ERROR: use the builder's Docker context")
+	builderFlag := ""
+	if i := slices.Index(args, "--builder"); i != -1 && i+1 < len(args) {
+		builderFlag = args[i+1]
+	}
+	builder := builderFlag
+	if builder == "" {
+		builder = os.Getenv("BUILDX_BUILDER")
+	}
+	dockerHost := os.Getenv("DOCKER_HOST")
+
+	if os.Getenv("BUILDX_DIAL_HELPER_FAIL") != "" || (dockerHost != "" && builder != "" && builder != "default") {
+		fmt.Fprintf(os.Stderr, "ERROR: use `docker --context=%s buildx` to switch to context %q\n", builder, builder)
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		os.Exit(1)
 	}
@@ -246,7 +306,11 @@ func TestBuildxDialStdioHelperProcess(t *testing.T) {
 		fmt.Fprintln(os.Stderr, "#1 ERROR: failed to dial builder: context deadline exceeded")
 		os.Exit(1)
 	}
-	fmt.Fprint(os.Stdout, "proxy ready")
+	if os.Getenv("BUILDX_DIAL_HELPER_REPORT") != "" {
+		fmt.Fprintf(os.Stdout, "builder-flag=%s builder=%s docker-host=%s\n", builderFlag, builder, dockerHost)
+	} else {
+		fmt.Fprint(os.Stdout, "proxy ready")
+	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
 	os.Exit(0)
 }
