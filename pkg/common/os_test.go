@@ -92,6 +92,14 @@ VERSION_ID="8.5"`,
 			wantVersion: "8.5",
 		},
 		{
+			name: "Fedora Linux 45",
+			osRelease: `NAME="Fedora Linux"
+ID=fedora
+VERSION_ID=45`,
+			wantType:    utils.OSTypeFedora,
+			wantVersion: "45",
+		},
+		{
 			name: "Oracle Linux",
 			osRelease: `NAME="Oracle Linux Server"
 VERSION_ID="8.5"`,

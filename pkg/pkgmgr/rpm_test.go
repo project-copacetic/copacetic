@@ -12,6 +12,7 @@ import (
 
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/solver/pb"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/stretchr/testify/mock"
@@ -21,6 +22,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRpmDBTypeString tests the String method of rpmDBType.
@@ -84,6 +86,14 @@ func TestIsLessThanRPMVersion(t *testing.T) {
 		{"equal with suffix", args{"1.0-r0", "1.0-r0"}, false},
 		{"greater than with suffix", args{"1.0-r2", "1.0-r1"}, false},
 		{"equal without suffix", args{"2.0", "2.0"}, false},
+		{"snapshot follows base", args{"1.0", "1.0^20260101"}, true},
+		{"snapshot precedes next release", args{"1.0^20260101", "1.0.1"}, true},
+		{"release follows snapshot", args{"1.0.1", "1.0^20260101"}, false},
+		{"snapshot revisions", args{"0^20250110git2dd8134-6.fc45", "0^20250110git2dd8134-7.fc45"}, true},
+		{"snapshot equality", args{"1.0^git1", "1.0^git1"}, false},
+		{"prerelease precedes snapshot", args{"1.0~rc1", "1.0^git1"}, true},
+		{"caret in release", args{"1.0-1^git1", "1.0-1.1"}, true},
+		{"epoch takes precedence", args{"2:1.0^git1", "1:2.0"}, false},
 		{"greater than without suffix", args{"3.0", "2.0"}, false},
 		{"less than mixed suffixes", args{"1a_rc4_p5_b7-6-x86_64", "3a_rc4_p5_b7-6-x86_64"}, true},
 		{"equal mixed suffixes", args{"3a_rc4_p5_b7-6-x86_64", "3a_rc4_p5_b7-6-x86_64"}, false},
@@ -183,6 +193,13 @@ func TestGetRPMImageName(t *testing.T) {
 			osType:    "redhat",
 			osVersion: "8.4",
 			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0", // uses default CBL-Mariner image
+		},
+		{
+			name:      "Fedora 45",
+			manifest:  &unversioned.UpdateManifest{},
+			osType:    utils.OSTypeFedora,
+			osVersion: "45",
+			image:     "ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0",
 		},
 		{
 			name:      "SUSE (SLES and BCI)",
@@ -367,6 +384,26 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 			ignoreErrors: true,
 		},
 		{
+			name:         "caret version meets requested snapshot",
+			updates:      unversioned.UpdatePackages{{Name: "caliper", FixedVersion: "0^20260703git5fa5c15-3.fc45"}},
+			cmp:          rpmComparer,
+			resultsBytes: []byte("caliper\t0^20260703git5fa5c15-4.fc45\tx86_64\n"),
+		},
+		{
+			name:         "caret version meets ordinary lower bound",
+			updates:      unversioned.UpdatePackages{{Name: "caliper", FixedVersion: "0"}},
+			cmp:          rpmComparer,
+			resultsBytes: []byte("caliper\t0^20260703git5fa5c15-4.fc45\tx86_64\n"),
+		},
+		{
+			name:            "snapshot does not meet next release",
+			updates:         unversioned.UpdatePackages{{Name: "caliper", FixedVersion: "1.0.1"}},
+			cmp:             rpmComparer,
+			resultsBytes:    []byte("caliper\t1.0^20260101\tx86_64\n"),
+			expectedError:   "downloaded package caliper version 1.0^20260101 lower than required 1.0.1 for update",
+			expectedErrPkgs: []string{"caliper"},
+		},
+		{
 			name: "unexpected number of installed packages",
 			updates: unversioned.UpdatePackages{
 				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
@@ -475,6 +512,10 @@ func TestIsValidVersion(t *testing.T) {
 			testName:    "Valid version, with tilde",
 			pkgVersion:  "3.0.1~rc1",
 			expectedErr: "",
+		},
+		{
+			testName:   "Valid version, with caret",
+			pkgVersion: "0^20250110git2dd8134-7.fc45",
 		},
 		{
 			testName:    "Valid version, with colon",
@@ -985,6 +1026,12 @@ func TestGetChrootToolImage(t *testing.T) {
 			expected:  "oraclelinux:8",
 		},
 		{
+			name:      "Fedora 45",
+			osType:    utils.OSTypeFedora,
+			osVersion: "45",
+			expected:  "fedora:45",
+		},
+		{
 			name:      "Unknown RPM distro defaults to almalinux:9",
 			osType:    utils.OSTypeCBLMariner,
 			osVersion: "2.0",
@@ -1003,6 +1050,7 @@ func TestGetChrootToolImage(t *testing.T) {
 func Test_dnfChrootInstallUpdates(t *testing.T) {
 	tests := []struct {
 		name           string
+		osType         string
 		updates        unversioned.UpdatePackages
 		mockSetup      func(reference *mocks.MockReference)
 		toolImage      string
@@ -1024,6 +1072,16 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 			ignoreErrors:   false,
 			expectedError:  false,
 			expectedResult: []byte("package1\t1.2.3\tx86_64\npackage2\t2.3.4\tx86_64\n"),
+		},
+		{
+			name:   "Fedora vendor repositories",
+			osType: utils.OSTypeFedora,
+			mockSetup: func(mr *mocks.MockReference) {
+				mr.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("package1\t1.2.3\tx86_64\n"), nil)
+			},
+			updates:        unversioned.UpdatePackages{{Name: "package1", FixedVersion: "1.2.3"}},
+			toolImage:      "fedora:45",
+			expectedResult: []byte("package1\t1.2.3\tx86_64\n"),
 		},
 		{
 			name: "dnf chroot - Successful update all packages",
@@ -1121,6 +1179,10 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 				osVersion:      "9.3",
 			}
 
+			if tt.osType != "" {
+				rm.osType = tt.osType
+			}
+
 			testPlatform := &ocispecs.Platform{
 				OS:           "linux",
 				Architecture: "amd64",
@@ -1138,8 +1200,46 @@ func Test_dnfChrootInstallUpdates(t *testing.T) {
 				assert.Equal(t, tt.expectedResult, resultBytes)
 			}
 
+			if !tt.expectedError {
+				expectedRepos := "COPA_REPOS_DIR=/tmp/rootfs/etc/yum.repos.d"
+				if rm.osType == utils.OSTypeFedora {
+					expectedRepos += ",/tmp/rootfs/usr/share/dnf5/repos.d"
+				}
+				foundRepos := false
+				for _, call := range mockClient.Calls {
+					if call.Method != "Solve" {
+						continue
+					}
+					request, ok := call.Arguments.Get(1).(gwclient.SolveRequest)
+					require.True(t, ok)
+					for _, raw := range request.Definition.Def {
+						var op pb.Op
+						require.NoError(t, op.Unmarshal(raw))
+						if exec := op.GetExec(); exec != nil {
+							for _, env := range exec.Meta.Env {
+								if env == expectedRepos {
+									foundRepos = true
+								}
+							}
+						}
+					}
+				}
+				assert.True(t, foundRepos, "chroot command must use the target's repository directories")
+			}
+
 			mockClient.AssertExpectations(t)
 			mockRef.AssertExpectations(t)
+		})
+	}
+}
+
+func TestRPMCaretUpdateSelection(t *testing.T) {
+	updates := unversioned.UpdatePackages{{Name: "caliper", FixedVersion: "0^20260703git5fa5c15-3.fc45"}}
+	for _, ignoreErrors := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ignoreErrors=%v", ignoreErrors), func(t *testing.T) {
+			selected, err := GetUniqueLatestUpdates(updates, VersionComparer{isValidRPMVersion, isLessThanRPMVersion}, ignoreErrors)
+			require.NoError(t, err)
+			assert.Equal(t, updates, selected, "valid caret versions must not be silently skipped")
 		})
 	}
 }
