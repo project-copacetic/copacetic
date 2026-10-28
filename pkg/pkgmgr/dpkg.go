@@ -2007,6 +2007,19 @@ func (dm *dpkgManager) unpackAndMergeUpdates(ctx context.Context, updates unvers
 		File(llb.Rm(dpkgLibPath)).
 		File(llb.Copy(dpkgdb, dpkgLibPath, dpkgLibPath))
 
+	// Apply the target's Debconf override after the tooling image has finished
+	// preparing its own package database.
+	if dm.installationMode == dpkgInstallationModeExternalStatusDirectory {
+		const debconfSystemRCEnv = "DEBCONF_SYSTEMRC"
+		configPath, hasOverride, err := imageStateCurrent.GetEnv(ctx, debconfSystemRCEnv)
+		if err != nil {
+			return nil, nil, fmt.Errorf("reading target Debconf configuration override: %w", err)
+		}
+		if hasOverride {
+			updated = updated.AddEnv(debconfSystemRCEnv, configPath)
+		}
+	}
+
 	var downloadCustomName string
 	if updates != nil {
 		downloadCustomName = fmt.Sprintf("Downloading and installing %d security updates", len(updates))

@@ -39,8 +39,8 @@ var TrivyIgnore []byte
 //	  -H "Authorization: Bearer $(curl -fsSL 'https://public.ecr.aws/token/' | jq -r .token)" \
 //	  https://public.ecr.aws/v2/aquasecurity/trivy-db/manifests/2 | grep -i docker-content-digest
 const (
-	trivyDBPrimary  = "ghcr.io/aquasecurity/trivy-db@sha256:9c3c4278a220529e8efe5676957dcd9280505549e6beb4d01955346d1cb8139c"
-	trivyDBFallback = "public.ecr.aws/aquasecurity/trivy-db@sha256:cae2fc5048b8e5052f3645784105e84ecd299fe0bdfa8a3fba7963fe9a4952d1"
+	trivyDBPrimary  = "ghcr.io/aquasecurity/trivy-db@sha256:bbfc8e8f97ac91b48d795f6457c3a2cbcd5de305a7803eef3e4c00f43bbea145"
+	trivyDBFallback = "public.ecr.aws/aquasecurity/trivy-db@sha256:3d0039959f285c0ce0c1fd229ead5c7f9683f1d7c6593c8b820384092a0d83eb"
 )
 
 // trivyDBRepositories is the comma-separated `--db-repository` value passed to

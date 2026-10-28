@@ -18,11 +18,14 @@ import (
 
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
+	"github.com/docker/cli/cli/config"
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
 	"github.com/moby/buildkit/client/llb/sourceresolver"
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
+	"github.com/moby/buildkit/session"
+	"github.com/moby/buildkit/session/auth/authprovider"
 	specs "github.com/opencontainers/image-spec/specs-go/v1"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit/connhelpers"
@@ -1415,6 +1418,26 @@ func addOCIExportMetadata(result *gwclient.Result, metadata platformExportMetada
 	return nil
 }
 
+// ensureAuthSession attaches the local Docker credentials to an OCI export solve when the
+// caller has not supplied a session of its own.
+//
+// The patched states still reference the source image, so BuildKit resolves the
+// `docker-image://` source again while solving the export. With no auth session attached it
+// does so anonymously, which succeeds for a public source but fails on a private registry
+// with "failed to authorize: failed to fetch anonymous token" — even though patching itself
+// has already succeeded using these same credentials, because the patch solve attaches them
+// (see pkg/patch.authenticatedSolveOpt).
+func ensureAuthSession(solveOpt *client.SolveOpt) {
+	if solveOpt == nil || len(solveOpt.Session) > 0 {
+		return
+	}
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	authConfig := authprovider.DockerAuthProviderConfig{
+		AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig),
+	}
+	solveOpt.Session = []session.Attachable{authprovider.NewDockerAuthProvider(authConfig)}
+}
+
 func solvePlatformOCI(
 	ctx context.Context,
 	c *client.Client,
@@ -1423,6 +1446,8 @@ func solvePlatformOCI(
 	metadata platformExportMetadata,
 	solveOpt *client.SolveOpt,
 ) error {
+	ensureAuthSession(solveOpt)
+
 	_, err := c.Build(ctx, *solveOpt, "copa-oci-export", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
 		def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
 		if err != nil {

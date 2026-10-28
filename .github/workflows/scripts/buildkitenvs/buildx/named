@@ -1,5 +1,12 @@
 #!/usr/bin/env sh
 
-docker buildx create --name testpatch
-docker buildx inspect --bootstrap testpatch
-export COPA_BUILDKIT_ADDR="buildx://testpatch"
+if [ -n "${COPA_TEST_OPENSSL_IMAGE:-}" ]; then
+    docker buildx create --name "$COPA_TEST_BUILDX_BUILDER" \
+        --driver-opt network=host --driver-opt "image=moby/buildkit:v${BUILDKIT_VERSION:-0.19.0}"
+    docker buildx inspect --bootstrap "$COPA_TEST_BUILDX_BUILDER"
+    export COPA_BUILDKIT_ADDR="buildx://${COPA_TEST_BUILDX_BUILDER}"
+else
+    docker buildx create --name testpatch
+    docker buildx inspect --bootstrap testpatch
+    export COPA_BUILDKIT_ADDR="buildx://testpatch"
+fi
