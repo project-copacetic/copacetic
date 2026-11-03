@@ -325,7 +325,10 @@ func failRuntimeImageWait(t *testing.T, imageRuntime string, waitErr error, cand
 
 	diagnosticCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	listCmd := exec.CommandContext(diagnosticCtx, imageRuntime, runtimeImageArgs(imageRuntime, "images", "--format", "{{.Repository}}:{{.Tag}}")...) // #nosec G204 -- runtime is a fixed integration fixture.
+	listCmd := exec.CommandContext(
+		diagnosticCtx, imageRuntime,
+		runtimeImageArgs(imageRuntime, "images", "--format", "{{.Repository}}:{{.Tag}}")...,
+	) // #nosec G204 -- runtime is a fixed integration fixture.
 	images, diagnosticErr := listCmd.CombinedOutput()
 	t.Fatalf(
 		"none of the patched image candidates %v became visible in %s: %v; "+
