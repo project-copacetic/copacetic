@@ -5,18 +5,24 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/project-copacetic/copacetic/integration/common"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/stretchr/testify/require"
 )
 
 // TestPatchFedora45 exercises the CLI without relying on Trivy's Fedora support.
 // The CI matrix runs it once with a native report and once without a report.
 func TestPatchFedora45(t *testing.T) {
+	imageRuntime := imageloader.Docker
+	if strings.HasPrefix(buildkitAddr, "podman-container://") {
+		imageRuntime = imageloader.Podman
+	}
 	arch := runtime.GOARCH
 	platform := "linux/" + arch
-	before := common.FedoraReleaseVersion(t, common.Fedora45Image, platform)
+	before := common.FedoraReleaseVersion(t, common.Fedora45Image, platform, imageRuntime)
 	require.Equal(t, "45-0.10", before, "pinned Fedora fixture must contain the outdated RPM")
 
 	tag := "45-fedora-cli-reportless"
@@ -42,14 +48,14 @@ func TestPatchFedora45(t *testing.T) {
 	if !reportFile {
 		patchedRef += "-" + arch
 	}
-	removeDockerImages(t, patchedRef, unsuffixedRef)
+	removeRuntimeImages(t, imageRuntime, patchedRef, unsuffixedRef)
 
 	cmd := exec.Command(copaPath, args...) // #nosec G204 -- arguments are fixed integration fixtures.
 	cmd.Env = append(os.Environ(), common.DockerDINDAddress.Env()...)
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "copa patch Fedora 45: %s", string(out))
 
-	patchedRef = waitForDockerImage(t, patchedRef, unsuffixedRef)
-	after := common.FedoraReleaseVersion(t, patchedRef, platform)
+	patchedRef = waitForRuntimeImage(t, imageRuntime, patchedRef, unsuffixedRef)
+	after := common.FedoraReleaseVersion(t, patchedRef, platform, imageRuntime)
 	common.RequireFedoraReleaseUpgrade(t, before, after)
 }

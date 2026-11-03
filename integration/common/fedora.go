@@ -12,6 +12,7 @@ import (
 	"time"
 
 	rpmver "github.com/knqyf263/go-rpm-version"
+	"github.com/project-copacetic/copacetic/pkg/imageloader"
 	"github.com/project-copacetic/copacetic/pkg/types/v1alpha1"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ const (
 )
 
 // FedoraReleaseVersion reads the installed RPM from a container image.
-func FedoraReleaseVersion(t *testing.T, image, platform string) string {
+func FedoraReleaseVersion(t *testing.T, image, platform, imageRuntime string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -37,8 +38,10 @@ func FedoraReleaseVersion(t *testing.T, image, platform string) string {
 		"run", "--rm", "--platform", platform, "--entrypoint", "rpm", image,
 		"-q", "--qf", "%{VERSION}-%{RELEASE}", Fedora45ReleasePackage,
 	}
-	cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- image and platform are fixed integration fixtures.
-	cmd.Env = append(os.Environ(), DockerDINDAddress.Env()...)
+	cmd := exec.CommandContext(ctx, imageRuntime, args...) // #nosec G204 -- runtime, image, and platform are fixed integration fixtures.
+	if imageRuntime == imageloader.Docker {
+		cmd.Env = append(os.Environ(), DockerDINDAddress.Env()...)
+	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
