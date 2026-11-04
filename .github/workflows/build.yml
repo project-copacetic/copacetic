@@ -365,13 +365,14 @@ jobs:
 
   test-patch-multiplatform:
     needs: build
-    name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
+    name: Test patch with multiplatform ${{ matrix.test_suite }} ${{ matrix.buildkit_mode }}
     runs-on: oracle-vm-16cpu-64gb-x86-64
     timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
+        test_suite: [standard, fedora]
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
@@ -445,7 +446,12 @@ jobs:
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
           fi
 
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
+          test_filter=(-skip '^TestPatchFedora45$')
+          if [[ "${{ matrix.test_suite }}" == "fedora" ]]; then
+            test_filter=(-run '^TestPatchFedora45$')
+          fi
+
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 "${test_filter[@]}"
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         with:
