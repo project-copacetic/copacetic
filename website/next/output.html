@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.bbb483a2.css">
-<script src="/copacetic/website/assets/js/runtime~main.8ef55f5f.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.fdf84585.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.052dd6aa.js" defer="defer"></script>
 </head>
 <body>
@@ -31,6 +31,7 @@
 <p>A VEX document must contain at least one VEX statement. If there are no fixed vulnerabilities, Copa will not generate a VEX document.</p>
 </li>
 </ul></div></div>
+<p>In a multi-platform run, <code>--output</code> receives one VEX document covering every platform Copa patched. Each patched platform image is its own product (<code>pkg:oci/&lt;name@digest&gt;</code>). A vulnerability fixed on more than one platform is one statement with one product per patched platform image. Platforms that were preserved unchanged, or that were already up-to-date, are not included.</p>
 <p>To generate a VEX document using OpenVEX, use <code>--format=&quot;openvex&quot;</code> flag, and use <code>--output</code> to specify a file path. For example:</p>
 <div class="language-bash codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-bash codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">copa patch -i mcr.microsoft.com/azure-cli:2.50.0 -r report.json -t 2.50.0-patched --format=&quot;openvex&quot; --output &quot;vex.json&quot;</span><br></div></code></pre></div></div>
 <p>This will generate a VEX Document that looks like:</p>
