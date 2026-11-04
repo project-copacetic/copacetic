@@ -17,9 +17,14 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
+	"github.com/project-copacetic/copacetic/pkg/vex"
 	log "github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )
+
+// patchPlatformImage patches one platform of a multi-platform image.
+// Tests replace it to feed per-platform results through patchMultiPlatformImage.
+var patchPlatformImage = patchSingleArchImage
 
 // patchMultiPlatformImage patches a multi-platform image across all discovered platforms.
 func patchMultiPlatformImage(
@@ -177,6 +182,7 @@ func patchPreparedMultiPlatformImage(
 
 	var mu sync.Mutex
 	patchResults := []types.PatchResult{}
+	vexByPlatform := make(map[string]*types.PlatformVEX)
 
 	summaryMap := make(map[string]*types.MultiPlatformSummary)
 
@@ -289,15 +295,15 @@ func patchPreparedMultiPlatformImage(
 				reportFile = ""
 			}
 
-			patchOpts := *opts
-			patchOpts.Report = reportFile
+			// Clear the shared VEX path so each platform build does not overwrite it.
+			patchOpts := platformBuildOptions(opts, reportFile)
 
 			// Count a real patch attempt (not preserved)
 			mu.Lock()
 			patchedAttempts++
 			mu.Unlock()
 
-			res, err := patchSingleArchImage(gctx, &patchOpts, p, true, sharedProgressCh)
+			res, err := patchPlatformImage(gctx, patchOpts, p, true, sharedProgressCh)
 
 			// Track completion to know when to close shared channel
 			if completedCount.Add(1) == patchingPlatformCount {
@@ -358,6 +364,9 @@ func patchPreparedMultiPlatformImage(
 			}
 
 			patchResults = append(patchResults, *res)
+			if res.VEX != nil {
+				vexByPlatform[platformKey] = res.VEX
+			}
 			summaryMap[platformKey] = &types.MultiPlatformSummary{
 				Platform: platformLabel,
 				Status:   "Patched",
@@ -493,6 +502,13 @@ func patchPreparedMultiPlatformImage(
 	if !anySuccesses && len(summaryMap) > 0 {
 		return types.ErrNoUpdatesFound
 	}
+	// OCI layout input has no final manifest digests until the export below,
+	// so writeOCIVEX writes its document after the export instead.
+	if opts.OCISource == nil {
+		if err := writeMultiPlatformVEX(platforms, vexByPlatform, opts.Format, opts.Output); err != nil {
+			return err
+		}
+	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
 		exportOpts, err := ociExportOptions(ctx, opts, patchedImageName.String())
@@ -511,7 +527,7 @@ func patchPreparedMultiPlatformImage(
 	}
 
 	if opts.OCIDir != "" && opts.OCISource != nil {
-		return writeOCIVEX(ctx, opts, patchResults, patchedImageName.String())
+		return writeOCIVEX(ctx, opts, resultsInPlatformOrder(platforms, patchResults), patchedImageName.String())
 	}
 	return nil
 }
@@ -554,6 +570,42 @@ func platformsForSingleReport(
 		)
 	}
 	return platforms, nil
+}
+
+// platformBuildOptions copies opts for one platform build in a multi-platform run.
+// Output is cleared so the platform build does not write the shared VEX path.
+// The multi-platform document is written once after every platform finishes.
+func platformBuildOptions(opts *types.Options, reportFile string) *types.Options {
+	patchOpts := *opts
+	patchOpts.Report = reportFile
+	patchOpts.Output = ""
+	return &patchOpts
+}
+
+// writeMultiPlatformVEX writes one VEX document for patched platforms.
+// Products follow platforms. Platforms with no map entry are omitted.
+// Nothing is written when output is empty or the map has no entries.
+func writeMultiPlatformVEX(platforms []types.PatchPlatform, vexByPlatform map[string]*types.PlatformVEX, format, output string) error {
+	if output == "" {
+		return nil
+	}
+
+	images := make([]vex.ImageUpdates, 0, len(vexByPlatform))
+	for _, p := range platforms {
+		vexData := vexByPlatform[buildkit.PlatformKey(p.Platform)]
+		if vexData == nil || vexData.Updates == nil {
+			continue
+		}
+		images = append(images, vex.ImageUpdates{
+			Updates:          vexData.Updates,
+			PkgType:          vexData.PkgType,
+			PatchedImageName: vexData.NameDigestOrTag,
+		})
+	}
+	if len(images) == 0 {
+		return nil
+	}
+	return vex.TryOutputMultiVexDocument(images, format, output)
 }
 
 func markPlatformPreserved(platforms []types.PatchPlatform, targetKey string) {

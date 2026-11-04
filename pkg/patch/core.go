@@ -55,7 +55,6 @@ type Options struct {
 
 // Result contains the result of the core patching operation.
 type Result struct {
-	VEX *types.VEXData
 	// BuildKit gateway result (nil if ReturnState is true)
 	Result *gwclient.Result
 

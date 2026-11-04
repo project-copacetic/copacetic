@@ -29,7 +29,7 @@ func TestOCIResultRecordsInferredPlatformWithoutChangingSource(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, desc.Platform)
 
-	result, err := createPatchResultWithStates(t.Context(), nil, "example.com/acme/app:patched", &target, nil, "", &Result{}, source)
+	result, err := createPatchResultWithStates(t.Context(), nil, "example.com/acme/app:patched", &target, nil, "", &Result{}, source, nil)
 	require.NoError(t, err)
 	require.NotNil(t, result.PatchedDesc.Platform)
 	assert.Equal(t, target.Platform, *result.PatchedDesc.Platform)

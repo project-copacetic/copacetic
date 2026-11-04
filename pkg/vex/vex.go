@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	openvex "github.com/openvex/go-vex/pkg/vex"
-
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
@@ -17,11 +15,37 @@ type Vex interface {
 	CreateVEXDocument(updates *unversioned.UpdateManifest, patchedImageName string, pkgmgr pkgmgr.PackageManager) (string, error)
 }
 
+// ImageUpdates is one patched image included in a VEX document.
+// Updates is the validated manifest for that image, PkgType selects the
+// subcomponent PURLs, and PatchedImageName is placed in the product identifier.
+type ImageUpdates struct {
+	Updates          *unversioned.UpdateManifest
+	PkgType          string
+	PatchedImageName string
+}
+
 func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedImageName, format, file string) error {
 	switch format {
 	case "openvex":
 		ov := &OpenVex{}
 		doc, err := ov.createVEXDocument(updates, patchedImageName, pkgType)
+		if err != nil {
+			return err
+		}
+		return writeVEXDocumentFile(file, doc.ToJSON)
+	default:
+		return fmt.Errorf("unsupported output format %s specified", format)
+	}
+}
+
+// TryOutputMultiVexDocument writes one OpenVEX document covering every image.
+// A vulnerability fixed on more than one image is a single statement whose
+// products lists one product per image, in the order of images.
+func TryOutputMultiVexDocument(images []ImageUpdates, format, file string) error {
+	switch format {
+	case "openvex":
+		ov := &OpenVex{}
+		doc, err := ov.createMultiVEXDocument(images)
 		if err != nil {
 			return err
 		}
@@ -71,40 +95,4 @@ func writeBufferedVEXDocumentFile(file string, write func(io.Writer) error) erro
 		return err
 	}
 	return os.WriteFile(file, buf.Bytes(), 0o600)
-}
-
-// DocumentInput describes validated updates for one produced image manifest.
-type DocumentInput struct {
-	Updates     *unversioned.UpdateManifest
-	PackageType string
-	Image       string
-}
-
-// TryOutputVexDocuments emits one document while retaining each platform's
-// product identity. Statements never extend to unpatched sibling manifests.
-func TryOutputVexDocuments(inputs []DocumentInput, format, file string) error {
-	if format != "openvex" {
-		return fmt.Errorf("unsupported output format %s specified", format)
-	}
-	var combined *openvex.VEX
-	for _, input := range inputs {
-		doc, err := (&OpenVex{}).createVEXDocument(input.Updates, input.Image, input.PackageType)
-		if err != nil {
-			return err
-		}
-		if combined == nil {
-			combined = doc
-		} else {
-			combined.Statements = append(combined.Statements, doc.Statements...)
-		}
-	}
-	if combined == nil {
-		return nil
-	}
-	id, err := combined.GenerateCanonicalID()
-	if err != nil {
-		return err
-	}
-	combined.ID = id
-	return writeVEXDocumentFile(file, combined.ToJSON)
 }

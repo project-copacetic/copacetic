@@ -290,16 +290,18 @@ func patchSingleArchImageWithUpdates(
 
 	// Start the main build process and capture preserved states
 	var patchResult *Result
+	var patchVEX *types.PlatformVEX
 	var patchBuildErr error
 	eg.Go(func() error {
 		defer pipeW.Close()
-		result, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform, opts.OCISource,
+		result, vexData, err := executePatchBuild(buildCtx, bkClient, buildConfig, buildkitImageRef, &targetPlatform, opts.OCISource,
 			workingFolder, updates, ignoreError, reportFile, format, output, patchedImageName, buildChannel, opts.ExitOnEOL, toolchainPatchLevel, goVCSURL, chiselRelease)
 		patchBuildErr = err
 		if err != nil {
 			return err
 		}
 		patchResult = result
+		patchVEX = vexData
 		log.Debugf("BuildKit build completed for %s", patchedImageName)
 		return nil
 	})
@@ -347,7 +349,7 @@ func patchSingleArchImageWithUpdates(
 	}
 
 	// Get patched descriptor and add annotations, including preserved states
-	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult, opts.OCISource)
+	result, err := createPatchResultWithStates(ctx, imageName, patchedImageName, &targetPlatform, originalAnnotations, finalLoaderType, patchResult, opts.OCISource, patchVEX)
 	if err != nil {
 		return nil, err
 	}
@@ -580,9 +582,11 @@ func rejectTargetedNativeChiselPatch(ctx context.Context, bkClient buildkitBuild
 	return nil
 }
 
-// createPatchResultWithStates creates the final patch result with descriptor, annotations, and preserved BuildKit states.
+// createPatchResultWithStates creates the final patch result with descriptor, annotations, preserved BuildKit states,
+// and the platform's VEX data (nil when it does not qualify for a VEX statement).
 func createPatchResultWithStates(ctx context.Context, imageName reference.Named, patchedImageName string,
 	targetPlatform *types.PatchPlatform, originalAnnotations map[string]string, loaderType string, patchResult *Result, source *ocilayout.Source,
+	vexData *types.PlatformVEX,
 ) (*types.PatchResult, error) {
 	// Use the appropriate runtime for image descriptor lookup
 	runtime := imageloader.Docker
@@ -652,13 +656,13 @@ func createPatchResultWithStates(ctx context.Context, imageName reference.Named,
 		PatchedDesc:         patchedDesc,
 		OCISource:           source,
 		ManifestAnnotations: manifestAnnotations,
+		VEX:                 vexData,
 	}
 
 	// Include preserved BuildKit states if available
 	if patchResult != nil {
 		result.PatchedState = patchResult.PatchedState
 		result.ConfigData = patchResult.ConfigData
-		result.VEX = patchResult.VEX
 	}
 
 	return result, nil
@@ -700,7 +704,7 @@ func executePatchBuild(
 	toolchainPatchLevel string,
 	goVCSURL string,
 	chiselRelease string,
-) (*Result, error) {
+) (*Result, *types.PlatformVEX, error) {
 	var pkgType string
 	var validatedManifest *unversioned.UpdateManifest
 	var patchResult *Result // Store the patch result with preserved states
@@ -787,20 +791,33 @@ func executePatchBuild(
 		digest := solveResponse.ExporterResponse[exptypes.ExporterImageDigestKey]
 		patchedImageDigest = digest
 	}
-	if source != nil && patchResult != nil && err == nil && reportFile != "" {
-		patchResult.VEX = &types.VEXData{Updates: validatedManifest, PackageType: pkgType}
-	}
-	if source == nil && patchedImageDigest != "" && reportFile != "" && validatedManifest != nil {
+	hasValidatedUpdates := validatedManifest != nil &&
+		(len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0)
+	var platformVEX *types.PlatformVEX
+	if source != nil {
+		// OCI layout input gets its manifest digest from the final export, so
+		// the OCI output path names each product and writes the document.
+		if patchResult != nil && err == nil && reportFile != "" && hasValidatedUpdates {
+			platformVEX = &types.PlatformVEX{Updates: validatedManifest, PkgType: pkgType}
+		}
+	} else if patchedImageDigest != "" && reportFile != "" && hasValidatedUpdates {
 		nameDigestOrTag := common.GetRepoNameWithDigest(patchedImageName, patchedImageDigest)
-		// vex document must contain at least one statement
-		if output != "" && (len(validatedManifest.OSUpdates) > 0 || len(validatedManifest.LangUpdates) > 0) {
+		platformVEX = &types.PlatformVEX{
+			Updates:         validatedManifest,
+			PkgType:         pkgType,
+			NameDigestOrTag: nameDigestOrTag,
+		}
+		// Single-platform runs write the document here. Multi-platform runs clear
+		// Output on the per-platform options so this write is skipped; one document
+		// is written after every platform finishes.
+		if output != "" {
 			if err := vex.TryOutputVexDocument(validatedManifest, pkgType, nameDigestOrTag, format, output); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 	}
 
-	return patchResult, err
+	return patchResult, platformVEX, err
 }
 
 // shouldIncludeOSUpdates returns true if OS updates should be included based on package types.

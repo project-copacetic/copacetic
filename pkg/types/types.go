@@ -45,9 +45,22 @@ func (p PatchPlatform) String() string {
 	return p.OS + "/" + p.Architecture + "/" + p.Variant
 }
 
+// PlatformVEX is the validated update manifest for one patched platform image.
+// It is set when a report was provided, the patched digest is known, and the
+// validated manifest contains at least one OS or language update. For OCI
+// layout input the digest comes from the final export, so NameDigestOrTag is
+// empty here and the OCI output path names each product.
+type PlatformVEX struct {
+	// Updates is the validated manifest after errored packages are excluded.
+	Updates *unversioned.UpdateManifest
+	// PkgType is the package manager type used to build subcomponent PURLs.
+	PkgType string
+	// NameDigestOrTag is the patched image name with digest.
+	NameDigestOrTag string
+}
+
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	VEX                 *VEXData // Validated updates retained until the final OCI artifact exists.
 	OriginalRef         reference.Named
 	PatchedDesc         *ispec.Descriptor
 	PatchedRef          reference.Named
@@ -56,6 +69,9 @@ type PatchResult struct {
 	ConfigData          []byte                    // Image config data
 	Summary             *unversioned.PatchSummary // Patch summary, nil if unavailable
 	OCISource           *ocilayout.Source         // Source store retained for OCI-backed state re-solves
+	// VEX is set when this platform was patched and qualifies for a VEX statement.
+	// Nil for preserved, up-to-date, and failed platforms.
+	VEX *PlatformVEX
 }
 
 type MultiPlatformSummary struct {
@@ -63,11 +79,4 @@ type MultiPlatformSummary struct {
 	Status   string
 	Ref      string
 	Message  string
-}
-
-// VEXData carries patch validation evidence without assigning an output identity
-// before the final OCI export has produced its manifest digest.
-type VEXData struct {
-	Updates     *unversioned.UpdateManifest
-	PackageType string
 }
