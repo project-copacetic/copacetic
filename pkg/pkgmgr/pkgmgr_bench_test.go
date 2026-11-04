@@ -163,7 +163,7 @@ func BenchmarkValidateDebianPackageVersions1000(b *testing.B) {
 	b.SetBytes(int64(len(results)))
 	b.ResetTimer()
 	for range b.N {
-		benchmarkStringsSink, benchmarkErrSink = validateDebianPackageVersions(updates, benchmarkComparer, results, false)
+		benchmarkStringsSink, benchmarkErrSink = validateDebianPackageVersions(updates, nil, benchmarkComparer, results, false, "")
 	}
 }
 

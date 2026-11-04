@@ -1,24 +1,18 @@
 package buildkit
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/google/go-containerregistry/pkg/v1/remote"
 	v1types "github.com/google/go-containerregistry/pkg/v1/types"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	buildkitDescriptorSink *remote.Descriptor
-	buildkitStringSink     string
-)
+var buildkitStringSink string
 
 func benchmarkRawIndexManifest(tb testing.TB, manifests int) []byte {
 	tb.Helper()
@@ -63,26 +57,6 @@ func benchmarkRawIndexManifest(tb testing.TB, manifests int) []byte {
 	return b
 }
 
-func TestDescriptorFromRawManifest(t *testing.T) {
-	rawManifest := benchmarkRawIndexManifest(t, 4)
-	desc, err := descriptorFromRawManifest("registry.example.com/acme/app:latest", rawManifest)
-	require.NoError(t, err)
-	require.Equal(t, v1types.DockerManifestList, desc.MediaType)
-	require.Equal(t, int64(len(rawManifest)), desc.Size)
-	require.Equal(t, rawManifest, desc.Manifest)
-
-	sum := sha256.Sum256(rawManifest)
-	require.Equal(t, hex.EncodeToString(sum[:]), desc.Digest.Hex)
-}
-
-func TestDescriptorFromRawManifestSinglePlatformSemantics(t *testing.T) {
-	_, err := descriptorFromRawManifest("registry.example.com/acme/app:latest", []byte(`{"schemaVersion":2}`))
-	require.EqualError(t, err, "single-platform image")
-
-	_, err = descriptorFromRawManifest("registry.example.com/acme/app:latest", []byte(`{"schemaVersion":2,"manifests":{}}`))
-	require.EqualError(t, err, "single-platform image")
-}
-
 func TestPlatformImageReferenceFromManifest(t *testing.T) {
 	ref := name.MustParseReference("registry.example.com/acme/app:latest")
 	rawManifest := []byte(
@@ -94,19 +68,6 @@ func TestPlatformImageReferenceFromManifest(t *testing.T) {
 	got, err := platformImageReferenceFromManifest(ref, rawManifest, &ispec.Platform{OS: "linux", Architecture: "arm64"})
 	require.NoError(t, err)
 	require.Equal(t, "registry.example.com/acme/app@sha256:"+strings.Repeat("a", 64), got)
-}
-
-func BenchmarkDescriptorFromRawManifest(b *testing.B) {
-	rawManifest := benchmarkRawIndexManifest(b, 32)
-
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		desc, err := descriptorFromRawManifest("registry.example.com/acme/app:latest", rawManifest)
-		if err != nil {
-			b.Fatal(err)
-		}
-		buildkitDescriptorSink = desc
-	}
 }
 
 func BenchmarkPlatformImageReferenceFromManifest(b *testing.B) {

@@ -1,0 +1,34 @@
+Package: base-files
+Status: install ok installed
+Priority: required
+Section: admin
+Installed-Size: 402
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: amd64
+Version: 13ubuntu10.2
+Description: Debian base system miscellaneous files
+ This package contains the basic filesystem hierarchy.
+
+Package: libc6
+Status: install ok installed
+Priority: optional
+Section: libs
+Installed-Size: 13487
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: amd64
+Multi-Arch: same
+Version: 2.39-0ubuntu8.5
+Description: GNU C Library: Shared libraries
+ Contains the standard libraries used by nearly all programs.
+
+Package: tzdata
+Status: hold ok installed
+Priority: required
+Section: localization
+Installed-Size: 2628
+Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Architecture: all
+Multi-Arch: foreign
+Version: 2025b-0ubuntu0.24.04.1
+Description: time zone and daylight-saving time data
+ This package contains data required for local time handling.

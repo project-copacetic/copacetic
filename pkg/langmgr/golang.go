@@ -13,8 +13,11 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/mod/module"
 	"golang.org/x/mod/semver"
 )
+
+const goStdlibPackage = "stdlib"
 
 // shellUnsafeChars are characters that must not appear in values interpolated into shell commands.
 const shellUnsafeChars = ";&|`$(){}[]<>\"'\\*?!~#\t\n\r"
@@ -56,7 +59,7 @@ func validateGoPackageName(name string) error {
 
 	// Skip "stdlib" - this represents Go standard library vulnerabilities
 	// which can only be fixed by upgrading Go itself, not by updating dependencies
-	if name == "stdlib" {
+	if name == goStdlibPackage {
 		return fmt.Errorf("stdlib vulnerabilities require Go version upgrade, not supported: %s", name)
 	}
 
@@ -126,6 +129,29 @@ func isLessThanGoVersion(v1, v2 string) bool {
 	return semver.Compare(v1, v2) < 0
 }
 
+// filterGoDowngrades drops updates whose reported fixed version is not newer than
+// the installed version. A stale advisory would otherwise downgrade a module that
+// has already been patched. Updates with missing or unparsable versions are kept
+// so that existing behavior is unchanged. The names of the skipped updates are
+// returned so callers can report them as unpatched: the image is left unchanged
+// for those modules, so they must not end up in the validated updates that feed
+// the VEX document.
+func filterGoDowngrades(updates unversioned.LangUpdatePackages) (unversioned.LangUpdatePackages, []string) {
+	filtered := make(unversioned.LangUpdatePackages, 0, len(updates))
+	var skipped []string
+	for _, u := range updates {
+		if u.InstalledVersion != "" && u.FixedVersion != "" &&
+			isValidGoVersion(u.InstalledVersion) && isValidGoVersion(u.FixedVersion) &&
+			!isLessThanGoVersion(u.InstalledVersion, u.FixedVersion) {
+			log.Warnf("Skipping Go module %s: installed version %s is not older than fixed version %s", u.Name, u.InstalledVersion, u.FixedVersion)
+			skipped = append(skipped, u.Name)
+			continue
+		}
+		filtered = append(filtered, u)
+	}
+	return filtered, skipped
+}
+
 // cleanGoVersion extracts the first valid version from a comma-separated list.
 // This handles cases where Trivy returns multiple versions.
 func cleanGoVersion(version string) string {
@@ -151,6 +177,32 @@ func cleanGoVersion(version string) string {
 	return ""
 }
 
+// appendIncompatibleIfNeeded adds the "+incompatible" build tag that `go get`
+// requires for pre-modules dependencies released at major version 2 or higher
+// whose module path carries no /vN suffix (github.com/docker/docker@v28.0.0,
+// for example). Scanner reports commonly omit the tag and `go get` rejects the
+// bare version outright. Versions that already carry build metadata are left
+// alone: semver allows a single '+' component, so appending here would produce
+// an invalid version such as v2.0.0+build1+incompatible.
+func appendIncompatibleIfNeeded(modulePath, version string) string {
+	if !semver.IsValid(version) || strings.Contains(version, "+") {
+		return version
+	}
+
+	switch semver.Major(version) {
+	case "v0", "v1":
+		return version
+	}
+
+	// A path major suffix (/v2, /v3, ...) means the dependency is modules-aware,
+	// so the version is used as-is.
+	if _, pathMajor, ok := module.SplitPathVersion(modulePath); !ok || pathMajor != "" {
+		return version
+	}
+
+	return version + "+incompatible"
+}
+
 // buildGoUpdateCmd assembles the shell command run inside the build container
 // to apply `go get` version bumps and then run `go mod tidy -e`. The -e flag
 // causes tidy to proceed past errors loading packages so a CVE patch is not
@@ -170,7 +222,7 @@ func filterGoPackages(langUpdates unversioned.LangUpdatePackages) (unversioned.L
 	stdlibFixedVersion := ""
 	for _, pkg := range langUpdates {
 		if pkg.Type == utils.GoModules || pkg.Type == utils.GoBinary {
-			if pkg.Name == "stdlib" {
+			if pkg.Name == goStdlibPackage {
 				fixVer := cleanGoVersion(pkg.FixedVersion)
 				if fixVer != "" && (stdlibFixedVersion == "" || isLessThanGoVersion(stdlibFixedVersion, fixVer)) {
 					stdlibFixedVersion = fixVer
@@ -280,6 +332,15 @@ func (gm *golangManager) InstallUpdates(
 				continue
 			}
 		}
+	}
+
+	updatesToAttempt, skippedDowngrades := filterGoDowngrades(updatesToAttempt)
+	// Skipped downgrades leave the module untouched in the image, so report them
+	// as unpatched to keep them out of the validated updates used for VEX.
+	errPkgsReported = append(errPkgsReported, skippedDowngrades...)
+	if len(updatesToAttempt) == 0 && !hasStdlib {
+		log.Warn("No Go update packages remain to apply after filtering out non-newer fixed versions.")
+		return currentState, errPkgsReported, nil
 	}
 
 	// Perform the upgrade
@@ -561,7 +622,7 @@ func collectGoBinaryInfo(langUpdates unversioned.LangUpdatePackages) (paths []st
 			continue
 		}
 		// Extract Go version from stdlib entries (e.g., "v1.26.0" -> "1.26.0").
-		if u.Name == "stdlib" && goVersion == "" && u.InstalledVersion != "" {
+		if u.Name == goStdlibPackage && goVersion == "" && u.InstalledVersion != "" {
 			goVersion = strings.TrimPrefix(u.InstalledVersion, "v")
 		}
 		if u.PkgPath != "" && !seen[u.PkgPath] {
@@ -604,6 +665,36 @@ func buildSyntheticBinaryInfo(binaryPaths []string, goVCSURL string, goVersion s
 		})
 	}
 	return binaries
+}
+
+// buildBinaryUpdateMap collects the module requirements shared across every
+// binary rebuilt from an image. Versions are normalized the same way the
+// in-image `go get` path normalizes them: a missing 'v' prefix is added and
+// pre-modules major>=2 dependencies gain the +incompatible build tag, since the
+// rebuild writes these values straight into go.mod requirements.
+func buildBinaryUpdateMap(updates unversioned.LangUpdatePackages) map[string]string {
+	updateMap := make(map[string]string)
+	log.Debugf("[updateMap] building from %d updates", len(updates))
+	for _, update := range updates {
+		if update.FixedVersion == "" {
+			log.Debugf("Skipping %s: no fixed version available", update.Name)
+			continue
+		}
+
+		// k8s.io/kubernetes has hundreds of replace directives and requires
+		// careful version coordination - skip for now
+		if strings.HasPrefix(update.Name, "k8s.io/kubernetes") {
+			log.Warnf("Skipping %s: k8s.io/kubernetes requires careful version coordination", update.Name)
+			continue
+		}
+
+		version := update.FixedVersion
+		if !strings.HasPrefix(version, "v") {
+			version = "v" + version
+		}
+		updateMap[update.Name] = appendIncompatibleIfNeeded(update.Name, version)
+	}
+	return updateMap
 }
 
 // attemptBinaryRebuild attempts to rebuild Go binaries using heuristic binary detection.
@@ -662,24 +753,7 @@ func (gm *golangManager) attemptBinaryRebuild(
 		}
 	}
 
-	// Build update map from updates (shared across all binaries)
-	updateMap := make(map[string]string)
-	log.Debugf("[updateMap] building from %d updates", len(updates))
-	for _, update := range updates {
-		if update.FixedVersion == "" {
-			log.Debugf("Skipping %s: no fixed version available", update.Name)
-			continue
-		}
-
-		// k8s.io/kubernetes has hundreds of replace directives and requires
-		// careful version coordination - skip for now
-		if strings.HasPrefix(update.Name, "k8s.io/kubernetes") {
-			log.Warnf("Skipping %s: k8s.io/kubernetes requires careful version coordination", update.Name)
-			continue
-		}
-
-		updateMap[update.Name] = update.FixedVersion
-	}
+	updateMap := buildBinaryUpdateMap(updates)
 
 	if len(updateMap) == 0 && stdlibFixedVersion == "" {
 		return currentState, failedPackages, fmt.Errorf("no version updates to apply")
@@ -908,6 +982,7 @@ func (gm *golangManager) updateGoModule(
 			if !strings.HasPrefix(version, "v") {
 				version = "v" + version
 			}
+			version = appendIncompatibleIfNeeded(u.Name, version)
 			spec := fmt.Sprintf("%s@%s", u.Name, version)
 			getCommands = append(getCommands, fmt.Sprintf("go get %s", spec))
 		} else {
@@ -1035,6 +1110,7 @@ func (gm *golangManager) upgradePackagesWithTooling(
 				if !strings.HasPrefix(version, "v") {
 					version = "v" + version
 				}
+				version = appendIncompatibleIfNeeded(u.Name, version)
 				spec := fmt.Sprintf("%s@%s", u.Name, version)
 				getCommands = append(getCommands, fmt.Sprintf("go get %s", spec))
 			}

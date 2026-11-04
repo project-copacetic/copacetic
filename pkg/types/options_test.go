@@ -18,6 +18,7 @@ func TestOptions(t *testing.T) {
 		assert.Empty(t, opts.Report)
 		assert.Empty(t, opts.PatchedTag)
 		assert.Empty(t, opts.Suffix)
+		assert.Empty(t, opts.ChiselRelease)
 		assert.Empty(t, opts.WorkingFolder)
 		assert.Zero(t, opts.Timeout)
 		assert.Empty(t, opts.Scanner)
@@ -37,10 +38,11 @@ func TestOptions(t *testing.T) {
 
 	t.Run("Populated options", func(t *testing.T) {
 		opts := Options{
-			Image:      "registry.io/image:tag",
-			Report:     "/path/to/report.json",
-			PatchedTag: "registry.io/image:patched",
-			Suffix:     "-patched",
+			Image:         "registry.io/image:tag",
+			Report:        "/path/to/report.json",
+			PatchedTag:    "registry.io/image:patched",
+			Suffix:        "-patched",
+			ChiselRelease: "ubuntu-24.04",
 
 			WorkingFolder: "/tmp/copa-work",
 			Timeout:       5 * time.Minute,
@@ -68,6 +70,7 @@ func TestOptions(t *testing.T) {
 		assert.Equal(t, "/path/to/report.json", opts.Report)
 		assert.Equal(t, "registry.io/image:patched", opts.PatchedTag)
 		assert.Equal(t, "-patched", opts.Suffix)
+		assert.Equal(t, "ubuntu-24.04", opts.ChiselRelease)
 		assert.Equal(t, "/tmp/copa-work", opts.WorkingFolder)
 		assert.Equal(t, 5*time.Minute, opts.Timeout)
 		assert.Equal(t, "trivy", opts.Scanner)
@@ -90,6 +93,7 @@ func TestOptions(t *testing.T) {
 			Image:         "test-image",
 			Report:        "test-report.json",
 			PatchedTag:    "test-patched",
+			ChiselRelease: "ubuntu-24.04",
 			WorkingFolder: "/tmp/test",
 			Timeout:       30 * time.Second,
 			Scanner:       "trivy",
@@ -108,6 +112,7 @@ func TestOptions(t *testing.T) {
 		assert.Equal(t, opts.Image, unmarshaled.Image)
 		assert.Equal(t, opts.Report, unmarshaled.Report)
 		assert.Equal(t, opts.PatchedTag, unmarshaled.PatchedTag)
+		assert.Equal(t, opts.ChiselRelease, unmarshaled.ChiselRelease)
 		assert.Equal(t, opts.WorkingFolder, unmarshaled.WorkingFolder)
 		assert.Equal(t, opts.Timeout, unmarshaled.Timeout)
 		assert.Equal(t, opts.Scanner, unmarshaled.Scanner)

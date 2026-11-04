@@ -180,6 +180,35 @@ func TestRewriteVersionAnnotation(t *testing.T) {
 			want:            "1.0.0-patched",
 		},
 		{
+			name:            "coincidental substring is not a version component",
+			originalVersion: "1.0.0",
+			patchedTag:      "11.0.0-patched",
+			want:            "1.0.0-11.0.0-patched",
+		},
+		{
+			name:            "version component may appear after a separator",
+			originalVersion: "1.0.0",
+			patchedTag:      "release-1.0.0-patched",
+			want:            "release-1.0.0-patched",
+		},
+		{
+			name:            "v-prefixed version is a complete component",
+			originalVersion: "1.0.0",
+			patchedTag:      "v1.0.0-patched",
+			want:            "v1.0.0-patched",
+		},
+		{
+			name:            "v-prefixed version after separator is a complete component",
+			originalVersion: "1.0.0",
+			patchedTag:      "release-v1.0.0-patched",
+			want:            "release-v1.0.0-patched",
+		},
+		{
+			name:       "empty original version remains empty",
+			patchedTag: "patched",
+			want:       "",
+		},
+		{
 			name:            "patched tag identical to original version",
 			originalVersion: "1.0.0",
 			patchedTag:      "1.0.0",

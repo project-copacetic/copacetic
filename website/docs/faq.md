@@ -15,14 +15,18 @@ For more information, please see [application-level patching](app-level-patching
 
 ## What kind of vulnerabilities can Copa not patch?
 
-Copa has limited support for compiled binaries built from source. While Copa can update Go module dependencies in `go.mod` files, it **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa will update the `go.mod` file but the running binary will still contain the vulnerable code until it is rebuilt.
+Copa has limited support for compiled binaries built from source. By default, Copa updates Go module dependencies in `go.mod` and `go.sum` files but **does not automatically rebuild compiled Go binaries**. If your application is a compiled Go binary that embeds a vulnerable module like `golang.org/x/net`, Copa updates the module files, but the running binary will still contain the vulnerable code until it is rebuilt.
+
+:::note Experimental: Go binary rebuilding
+Copa also has experimental support for rebuilding compiled Go binaries with patched dependencies (and Go stdlib via `--toolchain-patch-level`). Enable it with `COPA_EXPERIMENTAL=1` together with `--pkg-types library`. See [application-level patching — Go binary rebuilding](app-level-patching.md#experimental-go-binary-rebuilding) for the requirements and limitations.
+:::
 
 For applications that are compiled binaries:
 - Copa updates `go.mod` and `go.sum` files with fixed dependency versions
 - The updated module files can be used for subsequent builds
-- The compiled binary itself is not automatically patched
+- The compiled binary itself is not patched unless the experimental binary rebuild is enabled
 
-To fully patch compiled binary vulnerabilities:
+To fully patch compiled binary vulnerabilities without the experimental rebuild:
 1. Use Copa to update the module dependencies
 2. Rebuild the application with the updated dependencies
 3. Replace the old binary with the newly built one
@@ -43,11 +47,37 @@ All images being passed into Copa have their versioning data carefully extracted
 
 All debian-based images have their `minor.patch` versioning stripped and `-slim` appended. e.g. if `nginx:1.21.6` is being patched, `ghcr.io/project-copacetic/copacetic/debian:11-slim` is used as the tooling image.
 
+For Distroless images with `/var/lib/dpkg/status.d`, Copa uses the tooling image
+to run package maintainer scripts. If the target has no Debconf configuration,
+Copa supplies temporary configuration and databases so packages such as `tzdata`
+can finish installing. This temporary state is removed before exporting the
+patched image. Existing Debconf configuration is preserved, including a custom
+path selected by the target image's `DEBCONF_SYSTEMRC` environment variable.
+The conventional value `DEBCONF_SYSTEMRC=1` skips the user's configuration and
+selects `/etc/debconf.conf` or `/usr/share/debconf/debconf.conf`. Copa passes the
+validated absolute path to Debconf; a relative file named `1` is not used.
+Package configuration continues to use that configuration's saved answers.
+Configuration and database paths must be absolute, contain no `.` or `..`
+components, and resolve inside the target image. Environment substitutions such
+as `${DEBCONF_DB_DIR}` and per-database `Root:` overrides (including an empty
+`Root:`) in Debconf configuration are not supported. Copa rejects these before
+installing packages because they can redirect saved answers outside the target
+image's databases. Debconf state under
+`/var/lib/dpkg` is rejected because that directory is rebuilt temporarily during
+patching. Absolute symlinks in configuration or database paths are also rejected;
+relative links must stay within the mounted target root. Copa preserves an
+existing regular `/etc/localtime` file when `/etc/timezone` is absent, including
+when a Debconf configuration exists but has no saved timezone answers.
+
 #### Ubuntu
 
-All Ubuntu-based images use the same versioning that was passed in. e.g. if `tomcat:10.1.17-jre17-temurin-jammy` is passed in, `ghcr.io/project-copacetic/copacetic/ubuntu:22.04` will be used for the tooling image.
-
-There is one caveat for Ubuntu-based images. If an Ubuntu-based image is being patched without a Trivy scan, Copa is unable to parse a scan for versioning information. In these scenarios, Copa will fallback to `ghcr.io/project-copacetic/copacetic/debian:stable-slim` as the tooling image.
+Copa selects DPKG tooling from the target's detected Ubuntu version. For
+example, patching `tomcat:10.1.17-jre17-temurin-jammy` uses
+`ghcr.io/project-copacetic/copacetic/ubuntu:22.04`. This selection works in both
+report-driven and comprehensive no-report modes; Ubuntu targets do not fall
+back to Debian tooling when a report is omitted. Native images containing
+`/var/lib/chisel/manifest.wall` use Copa's dedicated Chisel tooling image
+instead.
 
 ### RPM
 
@@ -95,7 +125,7 @@ When updating Go modules:
     - Perform module updates in the tooling container
     - Copy updated files back to the target image
 
-**Note**: Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. See [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
+**Note**: By default, Copa updates `go.mod` and `go.sum` files but does not automatically rebuild compiled Go binaries. An experimental binary rebuild feature is available — see [application-level patching — Go binary rebuilding](app-level-patching.md#experimental-go-binary-rebuilding) or [What kind of vulnerabilities can Copa not patch?](#what-kind-of-vulnerabilities-can-copa-not-patch) for more information.
 
 ## After Copa patched the image, why does the scanner still show patched OS package vulnerabilities?
 

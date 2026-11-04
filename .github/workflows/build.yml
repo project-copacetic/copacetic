@@ -37,12 +37,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -70,11 +70,11 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -111,7 +111,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -120,8 +120,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -138,17 +138,25 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - name: Build OpenSSL fixture
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh build
       - name: Run functional test
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          .github/workflows/scripts/singlearch-fixture.sh load
           gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 --report-file
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         with:
           paths: "test-results.xml"
+      - name: Clean up OpenSSL fixture
+        if: always()
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh cleanup
 
   test-patch-no-report:
     needs: build
@@ -161,7 +169,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -170,8 +178,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -188,12 +196,16 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - name: Build OpenSSL fixture
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh build
       - name: Run functional test
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          .github/workflows/scripts/singlearch-fixture.sh load
           echo "COPA_BUILDKIT_ADDR=${COPA_BUILDKIT_ADDR}" >> "$GITHUB_ENV"
           gotestsum --format testname --junitfile test-results.xml -- ./integration/singlearch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0
       - name: Test Summary
@@ -248,35 +260,10 @@ jobs:
 
           rm "${tmp}" "${tmp}_symlink"
           docker rm -f test
-      - name: Test Debian validation - noreplace files
-        if: ${{ !startsWith(env.COPA_BUILDKIT_ADDR, 'podman-container://') }}
+      - name: Clean up OpenSSL fixture
+        if: always()
         shell: bash
-        run: |
-            set -eux -o pipefail
-
-            _cleanup() {
-              docker rm -f "$DOCKER_CUSTOM_UNIX_ID"
-              sudo rm -rf "$SOCK_DIR"
-            }
-
-            if [[ -n "${COPA_BUILDKIT_ADDR}" && "${COPA_BUILDKIT_ADDR}" == docker://* ]]; then
-                export DOCKER_HOST="${COPA_BUILDKIT_ADDR#docker://}"
-                trap '_cleanup' EXIT
-            fi
-
-            docker create --name test ghcr.io/project-copacetic/copacetic/test/openssl:test-debian-patched /bin/sh
-            tmp="$(mktemp)"
-            docker cp test:/etc/ssl/openssl.cnf "${tmp}"
-
-            if ! grep -q foo "${tmp}"; then
-                echo "Error: openssl.cnf content replaced" >&2
-                rm "${tmp}"
-                docker rm -f test
-                exit 1
-            fi
-
-            rm "${tmp}"
-            docker rm -f test
+        run: .github/workflows/scripts/singlearch-fixture.sh cleanup
 
   test-plugin:
     needs: build
@@ -285,12 +272,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -313,7 +300,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run e2e tests
         shell: bash
         run: |
@@ -332,12 +319,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -346,11 +333,11 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
@@ -364,7 +351,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run e2e tests
         shell: bash
         run: |
@@ -387,7 +374,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -395,12 +382,12 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
           install: true
           platforms: linux/amd64,linux/arm/v5,linux/arm64,linux/386,linux/mips64le
       - name: Install oras CLI
-        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -423,8 +410,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -444,7 +431,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run functional test
         shell: bash
         run: |
@@ -475,7 +462,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -484,8 +471,8 @@ jobs:
           name: copa_edge_linux_amd64.tar.gz
       - run: docker system prune -a -f --volumes
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -502,7 +489,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run e2e tests
         shell: bash
         run: |
@@ -517,7 +504,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -526,12 +513,12 @@ jobs:
           echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf > /dev/null
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
           install: true
           platforms: linux/amd64,linux/arm64
       - name: Install oras CLI
-        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -549,8 +536,8 @@ jobs:
           docker tag nginx:latest localhost:5000/nginx:latest
           docker push localhost:5000/nginx:latest
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -577,7 +564,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run e2e multiplatform plugin tests
         shell: bash
         run: |
@@ -595,7 +582,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -603,13 +590,13 @@ jobs:
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
         with:
           install: true
           platforms: linux/amd64,linux/arm64
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -630,7 +617,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Set up local registry with insecure access
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -814,12 +801,12 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -827,7 +814,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run gateway integration tests
         shell: bash
         run: |
@@ -844,24 +831,24 @@ jobs:
     needs: build
     name: Test Bulk Patching
     runs-on: oracle-vm-16cpu-64gb-x86-64
-    timeout-minutes: 15
+    timeout-minutes: 75
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Configure Docker Daemon
         run: |
           echo '{"features": {"containerd-snapshotter": true}, "insecure-registries": ["127.0.0.1:37219"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           install: true
       - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -882,8 +869,13 @@ jobs:
         run: |
           set -eu -o pipefail
           # The test now runs in a more realistic and consistent environment
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/bulk --copa="$(pwd)/copa"
-  
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/bulk --copa="$(pwd)/copa" -timeout 60m
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
+        with:
+          paths: "test-results.xml"
+
   test-nodejs:
     needs: build
     name: Test Node.js patching
@@ -892,12 +884,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -918,7 +910,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run Node.js e2e tests
         shell: bash
         run: |
@@ -937,12 +929,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -963,7 +955,7 @@ jobs:
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
       - name: Run .NET e2e tests
         shell: bash
         env:
@@ -976,6 +968,154 @@ jobs:
         with:
           paths: "test-results.xml"
 
+  test-chisel:
+    needs: build
+    name: Test Ubuntu Chiseled image patching
+    runs-on: oracle-vm-16cpu-64gb-x86-64
+    timeout-minutes: 135
+    permissions: read-all
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Add containerd-snapshotter to docker daemon
+        run: |
+          echo '{"features": { "containerd-snapshotter": true }}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          # QEMU 10.0.4 mishandles GNU tar's openat2(O_NOFOLLOW) extraction path; 10.2.3 contains the AArch64 fix.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          use: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Verify pinned Chisel tooling image
+        shell: bash
+        env:
+          CHISEL_TOOLING_IMAGE: ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
+          CHISEL_VERSION: v1.4.2
+          CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
+          # Compiler used for this immutable image; update alongside its digest.
+          CHISEL_GO_VERSION: 1.25.13
+        run: |
+          set -eu -o pipefail
+          validator_source_sha256="$(sha256sum cmd/chisel-validator/main.go | awk '{print $1}')"
+          .github/workflows/scripts/chisel/verify-image.sh \
+            "${CHISEL_TOOLING_IMAGE}" \
+            "${CHISEL_VERSION}" \
+            "${CHISEL_COMMIT}" \
+            "${RUNNER_TEMP}/chisel-tooling-verification.md" \
+            "${validator_source_sha256}" \
+            "${CHISEL_GO_VERSION}"
+      - name: Run network-independent Chisel tests
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          go test ./integration/chisel ./cmd/chisel-validator ./internal/testutil/chiselverify -count=1
+      - name: Run Ubuntu Chiseled e2e tests
+        shell: bash
+        env:
+          COPA_CHISEL_PATCH_TIMEOUT: "75m"
+        run: |
+          set -eu -o pipefail
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/chisel --addr=docker:// --copa="$(pwd)/copa" -timeout 115m
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
+        with:
+          paths: "test-results.xml"
+
+  test-chisel-secondary-architectures:
+    needs: build
+    name: Test Ubuntu Chiseled secondary architectures
+    runs-on: oracle-vm-16cpu-64gb-x86-64
+    timeout-minutes: 120
+    permissions: read-all
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Add containerd-snapshotter to docker daemon
+        run: |
+          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          # QEMU 10.0.4 mishandles GNU tar's openat2(O_NOFOLLOW) extraction path; 10.2.3 contains the AArch64 fix.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: 386,arm,ppc64le,riscv64,s390x
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+        with:
+          use: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Download copa from build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: copa_edge_linux_amd64.tar.gz
+      - name: Extract copa
+        shell: bash
+        run: |
+          tar xzf copa_edge_linux_amd64.tar.gz
+          ./copa --version
+      - name: Pull and verify secondary-platform Chisel tooling images
+        shell: bash
+        env:
+          CHISEL_TOOLING_IMAGE: ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
+        run: |
+          set -eu -o pipefail
+          for platform in linux/386 linux/arm/v7 linux/ppc64le linux/riscv64 linux/s390x; do
+            docker pull --platform "${platform}" "${CHISEL_TOOLING_IMAGE}"
+            test "$(docker run --rm --platform "${platform}" "${CHISEL_TOOLING_IMAGE}" version)" = "v1.4.2"
+          done
+      - name: Run secondary-architecture Chiseled e2e tests
+        shell: bash
+        env:
+          COPA_CHISEL_SECONDARY_ARCHES: "1"
+          COPA_CHISEL_PATCH_TIMEOUT: "75m"
+        run: |
+          set -eu -o pipefail
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/chisel \
+            -run '^(TestNativeChiselSecondaryArchitecturesOCI|TestAptlessFullStatusComprehensiveFromBaselineARMv7)$' \
+            --addr=docker:// --copa="$(pwd)/copa" -timeout 100m
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
+        with:
+          paths: "test-results.xml"
+
   test-golang:
     needs: build
     name: Test Go patching
@@ -984,12 +1124,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1025,16 +1165,16 @@ jobs:
     needs: build
     name: Test BuildKit Frontend
     runs-on: oracle-vm-16cpu-64gb-x86-64
-    timeout-minutes: 20
+    timeout-minutes: 90
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.3.1
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1042,12 +1182,18 @@ jobs:
         run: |
           echo '{"features": { "containerd-snapshotter": true }, "insecure-registries": ["localhost:5000"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          # QEMU 10.0.4 mishandles GNU tar's openat2(O_NOFOLLOW) extraction path; 10.2.3 contains the AArch64 fix.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
       - name: Set up buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@38de303aac69abb66f3e6255b7198bff35f323e3 # v2.0.0
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2.0.1
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
@@ -1060,11 +1206,14 @@ jobs:
         run: |
           tar xzf copa_edge_linux_amd64.tar.gz
           ./copa --version
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
       - name: Run frontend e2e tests
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/buildx/default
-          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/frontend --addr="${COPA_BUILDKIT_ADDR}" --frontend-image="copa-frontend:test" -timeout 0
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/frontend --addr="${COPA_BUILDKIT_ADDR}" --frontend-image="copa-frontend:test" -timeout 75m
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
+        with:
+          paths: "test-results.xml"

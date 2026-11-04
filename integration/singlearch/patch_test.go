@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/containerd/platforms"
 	"github.com/distribution/reference"
@@ -105,10 +107,6 @@ func TestPatch(t *testing.T) {
 			require.NoError(t, err, err)
 
 			tagPatched := img.Tag + "-patched"
-
-			t.Log("patching image")
-			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
-
 			// For no-report tests with manifest images, Copa creates platform-specific tags like "-patched-amd64"
 			// The scanning should look for the tag that Copa actually created
 			scanTag := tagPatched
@@ -131,6 +129,25 @@ func TestPatch(t *testing.T) {
 				scanTag += "-" + targetArch
 			}
 			patchedRef := fmt.Sprintf("%s:%s", r.Name(), scanTag)
+			expectsPatchFailure := strings.Contains(img.Image, "oracle") && reportFile && !img.IgnoreErrors
+			unsuffixedRef := fmt.Sprintf("%s:%s", r.Name(), tagPatched)
+			if common.DockerDINDAddress.Addr() != "" && !expectsPatchFailure {
+				// The custom-unix fixture persists /var/lib/docker in a named volume.
+				// Remove both possible outputs so this run cannot accept a tag left by
+				// an earlier job.
+				removeDockerImages(t, patchedRef, unsuffixedRef)
+			}
+
+			t.Log("patching image")
+			patch(t, ref, tagPatched, dir, img.IgnoreErrors, reportFile)
+
+			if common.DockerDINDAddress.Addr() != "" && !expectsPatchFailure {
+				// A concurrent local-name fixture can make a remote manifest list
+				// visible to the nested daemon as a single-platform image. Copa then
+				// correctly emits the unsuffixed single-platform tag instead of the
+				// anticipated architecture-suffixed tag.
+				patchedRef = waitForDockerImage(t, patchedRef, unsuffixedRef)
+			}
 
 			// Sanity-check that copa wrote an inspectable patched manifest with
 			// a recognized media-type family (OCI or Docker). This is what's
@@ -257,6 +274,91 @@ func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 	return filteredPlatforms
 }
 
+func waitForDockerImage(t *testing.T, refs ...string) string {
+	t.Helper()
+
+	candidates := uniqueImageRefs(refs...)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	lastOutput := make(map[string]string, len(candidates))
+	for {
+		for _, ref := range candidates {
+			args := dockerArgs("image", "inspect", ref)
+			cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- refs come from pinned integration fixtures.
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				if ref != candidates[0] {
+					t.Logf("using patched image tag %s after %s was not emitted", ref, candidates[0])
+				}
+				return ref
+			}
+			lastOutput[ref] = string(output)
+			if ctx.Err() != nil {
+				failDockerImageWait(t, ctx.Err(), candidates, lastOutput)
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			failDockerImageWait(t, ctx.Err(), candidates, lastOutput)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
+func uniqueImageRefs(refs ...string) []string {
+	candidates := make([]string, 0, len(refs))
+	seen := make(map[string]struct{}, len(refs))
+	for _, ref := range refs {
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		candidates = append(candidates, ref)
+	}
+	return candidates
+}
+
+func failDockerImageWait(t *testing.T, waitErr error, candidates []string, lastOutput map[string]string) {
+	t.Helper()
+
+	diagnosticCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	listCmd := exec.CommandContext(diagnosticCtx, "docker", dockerArgs("images", "--format", "{{.Repository}}:{{.Tag}}")...) // #nosec G204 -- fixed diagnostic command.
+	images, diagnosticErr := listCmd.CombinedOutput()
+	t.Fatalf(
+		"none of the patched image candidates %v became visible in the Docker daemon: %v; "+
+			"inspect errors: %v; available images: %s; diagnostic error: %v",
+		candidates, waitErr, lastOutput, string(images), diagnosticErr,
+	)
+}
+
+func removeDockerImages(t *testing.T, refs ...string) {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	for _, ref := range uniqueImageRefs(refs...) {
+		cmd := exec.CommandContext(ctx, "docker", dockerArgs("image", "rm", "--force", ref)...) // #nosec G204 -- refs come from pinned integration fixtures.
+		output, err := cmd.CombinedOutput()
+		if err == nil || strings.Contains(string(output), "No such image") {
+			continue
+		}
+		if ctx.Err() != nil {
+			require.NoError(t, ctx.Err(), "timed out removing stale image %s: %s", ref, string(output))
+		}
+		require.NoError(t, err, "failed to remove stale image %s: %s", ref, string(output))
+	}
+}
+
+func dockerArgs(args ...string) []string {
+	if addr := common.DockerDINDAddress.Addr(); addr != "" {
+		return append([]string{"-H", addr}, args...)
+	}
+	return args
+}
+
 func dockerPull(t *testing.T, ref string) {
 	dockerCmd(t, `pull`, ref)
 }
@@ -272,15 +374,7 @@ func dockerCmd(t *testing.T, args ...string) {
 	}
 	require.NoError(t, err, "no args provided")
 
-	a := []string{}
-
-	if addr := common.DockerDINDAddress.Addr(); addr != "" {
-		a = append(a, "-H", addr)
-	}
-
-	a = append(a, args...)
-
-	cmd := exec.Command(`docker`, a...)
+	cmd := exec.Command(`docker`, dockerArgs(args...)...) // #nosec G204 -- args are controlled by integration fixtures.
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))
 }
@@ -348,10 +442,9 @@ func TestPatchDaemonOnlyImage(t *testing.T) {
 		t.Skip("daemon-only patching requires COPA_BUILDKIT_ADDR=docker://...")
 	}
 
-	// Use a small, stable image from the existing fixtures so we don't pull
-	// anything new. The digest pins the content to make the test reproducible.
+	// Pin the amd64 manifest to match --platform below, including on ARM64 hosts.
 	const (
-		source     = "docker.io/library/nginx:1.21.6@sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514"
+		source     = "docker.io/library/nginx:1.27.0-bookworm@sha256:a3ab061d6909191271bcf24b9ab6eee9e8fc5f2fbf1525c5bd84d21f27a9d708"
 		daemonOnly = "127.0.0.1:1/copa-daemon-only:original"
 		bogusHost  = "127.0.0.1:1"
 	)

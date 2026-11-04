@@ -12,13 +12,15 @@ EOF
 sock_dir="$(mktemp -d)"
 
 docker_custom_unix_id="$(docker run -d --privileged --mount=type=bind,source="${sock_dir}",target=/run --mount=type=volume,source="${DOCKER_DIND_VOLUME}",target=/var/lib/docker dind --group "$(id -g)")"
-echo "DOCKER_CUSTOM_UNIX_ID=$docker_custom_unix_id" >> $GITHUB_ENV
-echo "SOCK_DIR=$sock_dir" >> $GITHUB_ENV
+echo "DOCKER_CUSTOM_UNIX_ID=$docker_custom_unix_id" >> "$GITHUB_ENV"
+echo "SOCK_DIR=$sock_dir" >> "$GITHUB_ENV"
 
 
+# The variables in this script are intentionally expanded by the inner shell.
+# shellcheck disable=SC2016
 timeout 5m bash -c '
 docker_custom_unix_id="$1"
-until [ "$(docker inspect -f "{{.State.Status}}" $docker_custom_unix_id)" == "running" ]; do
+until [ "$(docker inspect -f "{{.State.Status}}" "$docker_custom_unix_id")" = "running" ]; do
     sleep 0.1
 done
 ' -- "$docker_custom_unix_id"
@@ -31,4 +33,8 @@ while ! _check_docker_dind; do
     _check_docker_dind || sleep 1
 done
 
-export COPA_BUILDKIT_ADDR="docker://unix://${sock_dir}/docker.sock"
+# Keep every Docker client in this shell on the same nested daemon as Copa.
+# In particular, in-process descriptor checks do not receive the explicit
+# environment overrides used by child commands in the integration tests.
+export DOCKER_HOST="unix://${sock_dir}/docker.sock"
+export COPA_BUILDKIT_ADDR="docker://${DOCKER_HOST}"

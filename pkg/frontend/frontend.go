@@ -29,6 +29,7 @@ const (
 	keyFormat            = "format"
 	keyPkgTypes          = "pkg-types"
 	keyLibraryPatchLevel = "library-patch-level"
+	keyChiselRelease     = "chisel-release"
 )
 
 // Frontend implements the BuildKit frontend interface for Copa.
@@ -119,6 +120,10 @@ func (f *Frontend) build(ctx context.Context) (*gwclient.Result, error) {
 
 // buildMultiarch handles multiarch builds by processing each platform separately.
 func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gwclient.Result, error) {
+	if err := validateFrontendReportPlatforms(opts.Report, opts.Platforms); err != nil {
+		return nil, err
+	}
+
 	var targetPlatforms []ocispecs.Platform
 
 	// If report is a directory, discover platforms from report files
@@ -172,6 +177,7 @@ func (f *Frontend) buildMultiarch(ctx context.Context, opts *types.Options) (*gw
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to solve platform")
 		}
+		copyFrontendResultMetadata(res, platformRes)
 
 		ref, err := platformRes.SingleRef()
 		if err != nil {

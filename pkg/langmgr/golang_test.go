@@ -943,3 +943,242 @@ func TestBuildGoUpdateCmd(t *testing.T) {
 		})
 	}
 }
+
+func TestFilterGoDowngrades(t *testing.T) {
+	tests := []struct {
+		name            string
+		input           unversioned.LangUpdatePackages
+		expectedNames   []string
+		expectedSkipped []string
+	}{
+		{
+			name: "fixed version older than installed - skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "fixed version equal to installed - skipped",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.7", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames:   []string{},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "fixed version newer than installed - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.7.0", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "versions without v prefix are normalized",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "1.9.1", FixedVersion: "1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", InstalledVersion: "0.4.0", FixedVersion: "0.5.0", Type: utils.GoModules},
+			},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "empty installed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "empty fixed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "unparsable installed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "not-a-version", FixedVersion: "v1.7.7", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "unparsable fixed version - kept",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7, v1.8.0", Type: utils.GoModules},
+			},
+			expectedNames: []string{"github.com/gin-gonic/gin"},
+		},
+		{
+			name: "mixed packages - only downgrades removed",
+			input: unversioned.LangUpdatePackages{
+				{Name: "github.com/gin-gonic/gin", InstalledVersion: "v1.9.1", FixedVersion: "v1.7.7", Type: utils.GoModules},
+				{Name: "golang.org/x/net", InstalledVersion: "v0.4.0", FixedVersion: "v0.5.0", Type: utils.GoModules},
+				{Name: "golang.org/x/text", InstalledVersion: "v0.3.8", FixedVersion: "v0.3.8", Type: utils.GoModules},
+			},
+			expectedNames:   []string{"golang.org/x/net"},
+			expectedSkipped: []string{"github.com/gin-gonic/gin", "golang.org/x/text"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, skipped := filterGoDowngrades(tt.input)
+			names := make([]string, 0, len(result))
+			for _, pkg := range result {
+				names = append(names, pkg.Name)
+			}
+			assert.Equal(t, tt.expectedNames, names)
+			assert.Equal(t, tt.expectedSkipped, skipped)
+			for _, skippedName := range skipped {
+				assert.NotContains(t, names, skippedName,
+					"skipped downgrade must not appear in the updates that get applied")
+			}
+		})
+	}
+}
+
+func TestGolangManagerInstallUpdatesSkipsNonNewerVersion(t *testing.T) {
+	config := &buildkit.Config{}
+	currentState := &config.ImageState
+	manager := &golangManager{}
+	manifest := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{
+				Name:             "github.com/gin-gonic/gin",
+				InstalledVersion: "v1.9.1",
+				FixedVersion:     "v1.7.7",
+				Type:             utils.GoModules,
+			},
+		},
+	}
+
+	state, errPkgs, err := manager.InstallUpdates(t.Context(), currentState, manifest, false)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"github.com/gin-gonic/gin"}, errPkgs,
+		"downgrade-skipped packages must be reported as unpatched so they stay out of validated updates")
+	assert.Same(t, currentState, state)
+}
+
+func TestAppendIncompatibleIfNeeded(t *testing.T) {
+	tests := []struct {
+		name       string
+		modulePath string
+		version    string
+		expected   string
+	}{
+		{
+			name:       "pre-module major v2+ without path suffix",
+			modulePath: "github.com/docker/docker",
+			version:    "v28.0.0",
+			expected:   "v28.0.0+incompatible",
+		},
+		{
+			name:       "module path with matching major suffix",
+			modulePath: "github.com/foo/bar/v2",
+			version:    "v2.1.0",
+			expected:   "v2.1.0",
+		},
+		{
+			name:       "major v0",
+			modulePath: "github.com/foo/bar",
+			version:    "v0.9.1",
+			expected:   "v0.9.1",
+		},
+		{
+			name:       "major v1",
+			modulePath: "github.com/foo/bar",
+			version:    "v1.2.3",
+			expected:   "v1.2.3",
+		},
+		{
+			name:       "already suffixed",
+			modulePath: "github.com/docker/docker",
+			version:    "v28.0.0+incompatible",
+			expected:   "v28.0.0+incompatible",
+		},
+		{
+			name:       "pseudo-version at v0",
+			modulePath: "github.com/foo/bar",
+			version:    "v0.0.0-20230101120000-abcdef123456",
+			expected:   "v0.0.0-20230101120000-abcdef123456",
+		},
+		{
+			name:       "pseudo-version at major v2 without path suffix",
+			modulePath: "github.com/foo/bar",
+			version:    "v2.0.1-0.20230101120000-abcdef123456",
+			expected:   "v2.0.1-0.20230101120000-abcdef123456+incompatible",
+		},
+		{
+			name:       "pseudo-version at major v2 with path suffix",
+			modulePath: "github.com/foo/bar/v2",
+			version:    "v2.0.1-0.20230101120000-abcdef123456",
+			expected:   "v2.0.1-0.20230101120000-abcdef123456",
+		},
+		{
+			name:       "invalid version left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "not-a-version",
+			expected:   "not-a-version",
+		},
+		{
+			name:       "empty version left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "",
+			expected:   "",
+		},
+		{
+			// A version that already carries build metadata must not gain a
+			// second '+' component, which would be invalid semver.
+			name:       "existing build metadata left unchanged",
+			modulePath: "github.com/foo/bar",
+			version:    "v2.0.0+build1",
+			expected:   "v2.0.0+build1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := appendIncompatibleIfNeeded(tt.modulePath, tt.version)
+			assert.Equal(t, tt.expected, result, "Module: %s, version: %s", tt.modulePath, tt.version)
+		})
+	}
+}
+
+// TestIncompatibleVersionsPassValidation ensures the +incompatible build tag
+// survives the existing version validation and cleaning paths.
+func TestIncompatibleVersionsPassValidation(t *testing.T) {
+	assert.True(t, isValidGoVersion("v28.0.0+incompatible"))
+	assert.NoError(t, validateGoVersion("v28.0.0+incompatible"))
+	assert.Equal(t, "v28.0.0+incompatible", cleanGoVersion("v28.0.0+incompatible"))
+}
+
+// TestBuildBinaryUpdateMap asserts that the binary-rebuild path normalizes the
+// versions it records as module requirements: a missing 'v' prefix is added and
+// pre-module major>=2 dependencies gain the +incompatible build tag, matching
+// the `go get` spec construction used by the in-image module path.
+func TestBuildBinaryUpdateMap(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "github.com/docker/docker", FixedVersion: "v28.0.0"},
+		{Name: "github.com/moby/moby", FixedVersion: "28.0.0"},
+		{Name: "github.com/foo/bar/v2", FixedVersion: "v2.1.0"},
+		{Name: "golang.org/x/net", FixedVersion: "v0.23.0"},
+		{Name: "github.com/already/tagged", FixedVersion: "v3.1.0+incompatible"},
+		{Name: "github.com/no/fix", FixedVersion: ""},
+		{Name: "k8s.io/kubernetes", FixedVersion: "v1.30.0"},
+	}
+
+	got := buildBinaryUpdateMap(updates)
+
+	want := map[string]string{
+		"github.com/docker/docker":  "v28.0.0+incompatible",
+		"github.com/moby/moby":      "v28.0.0+incompatible",
+		"github.com/foo/bar/v2":     "v2.1.0",
+		"golang.org/x/net":          "v0.23.0",
+		"github.com/already/tagged": "v3.1.0+incompatible",
+	}
+	assert.Equal(t, want, got)
+}

@@ -31,6 +31,15 @@ type BuildConfig struct {
 	PipeWriter      io.WriteCloser
 }
 
+func authenticatedSolveOpt() client.SolveOpt {
+	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
+	authConfig := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
+	return client.SolveOpt{
+		Frontend: "",
+		Session:  []session.Attachable{authprovider.NewDockerAuthProvider(authConfig)},
+	}
+}
+
 // createBuildConfig creates the build configuration for patching.
 // originalAnnotations is the set of manifest-level annotations captured from the
 // source image before patching; they are forwarded to the BuildKit exporter via
@@ -58,15 +67,8 @@ func createBuildConfig(
 	compression string,
 	forceCompression bool,
 ) (*BuildConfig, error) {
-	dockerConfig := config.LoadDefaultConfigFile(os.Stderr)
-	cfg := authprovider.DockerAuthProviderConfig{AuthConfigProvider: authprovider.LoadAuthConfig(dockerConfig)}
-	attachable := []session.Attachable{authprovider.NewDockerAuthProvider(cfg)}
-
 	// create solve options based on whether we're pushing to registry or loading to docker
-	solveOpt := client.SolveOpt{
-		Frontend: "",         // i.e. we are passing in the llb.Definition directly
-		Session:  attachable, // used for authprovider, sshagentprovider and secretprovider
-	}
+	solveOpt := authenticatedSolveOpt()
 
 	// determine which attributes to set for the export
 	attrs := map[string]string{
@@ -153,13 +155,39 @@ func createBuildConfig(
 // -> "1.0.0-patched") so the patched manifest does not advertise the
 // unpatched version.
 func rewriteVersionAnnotation(originalVersion, patchedTag string) string {
-	if patchedTag == "" {
+	if originalVersion == "" || patchedTag == "" {
 		return originalVersion
 	}
-	if strings.Contains(patchedTag, originalVersion) {
+	if tagContainsVersionComponent(patchedTag, originalVersion) {
 		return patchedTag
 	}
 	return originalVersion + "-" + patchedTag
+}
+
+func tagContainsVersionComponent(tag, version string) bool {
+	for searchFrom := 0; searchFrom <= len(tag)-len(version); {
+		relative := strings.Index(tag[searchFrom:], version)
+		if relative < 0 {
+			return false
+		}
+		start := searchFrom + relative
+		end := start + len(version)
+		beforeBoundary := start == 0 || isVersionTagSeparator(tag[start-1])
+		if !beforeBoundary && (tag[start-1] == 'v' || tag[start-1] == 'V') {
+			versionPrefix := start - 1
+			beforeBoundary = versionPrefix == 0 || isVersionTagSeparator(tag[versionPrefix-1])
+		}
+		afterBoundary := end == len(tag) || isVersionTagSeparator(tag[end])
+		if beforeBoundary && afterBoundary {
+			return true
+		}
+		searchFrom = start + 1
+	}
+	return false
+}
+
+func isVersionTagSeparator(character byte) bool {
+	return character == '-' || character == '_' || character == '.' || character == '+'
 }
 
 // validateSourcePolicy validates that the source policy doesn't contain unsupported distributions.

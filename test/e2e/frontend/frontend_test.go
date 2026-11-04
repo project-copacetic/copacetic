@@ -19,7 +19,12 @@ import (
 
 const (
 	// defaultBridgeGateway is the default Docker bridge gateway IP.
-	defaultBridgeGateway = "172.17.0.1"
+	defaultBridgeGateway    = "172.17.0.1"
+	frontendNginxBaseImage  = "docker.io/library/nginx:1.27.0-bookworm@sha256:98f8ec75657d21b924fe4f69b6b9bff2f6550ea48838af479d8894a852000e40"
+	frontendPythonBaseImage = "docker.io/library/python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317"
+	buildCommand            = "build"
+	buildctlOptionFlag      = "--opt"
+	outputFlag              = "--output"
 )
 
 // ensureBuildxBuilder creates a BuildKit builder with insecure registry support for testing.
@@ -97,8 +102,8 @@ func TestFrontendPatch(t *testing.T) {
 	}{
 		{
 			name:       "nginx-debian",
-			baseImage:  "docker.io/library/nginx:1.21.6",
-			localImage: "localhost:5000/nginx:1.21.6",
+			baseImage:  frontendNginxBaseImage,
+			localImage: "localhost:5000/nginx:1.27.0-bookworm",
 		},
 		{
 			name:       "alpine",
@@ -112,8 +117,8 @@ func TestFrontendPatch(t *testing.T) {
 		},
 		{
 			name:       "python-app-library-only",
-			baseImage:  "docker.io/library/python:3.11.0",
-			localImage: "localhost:5000/python:3.11.0",
+			baseImage:  frontendPythonBaseImage,
+			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
 				"pkg-types":           "library",
 				"library-patch-level": "patch",
@@ -121,8 +126,8 @@ func TestFrontendPatch(t *testing.T) {
 		},
 		{
 			name:       "python-app-library-and-os",
-			baseImage:  "docker.io/library/python:3.11.0",
-			localImage: "localhost:5000/python:3.11.0",
+			baseImage:  frontendPythonBaseImage,
+			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
 				"pkg-types":           "os,library",
 				"library-patch-level": "minor",
@@ -138,6 +143,14 @@ func TestFrontendPatch(t *testing.T) {
 			runFrontendTest(t, tc.baseImage, tc.localImage, tc.extraOpts)
 		})
 	}
+
+	// Test native Chisel comprehensive updates through the frontend.
+	t.Run("native-chisel-named-release", func(t *testing.T) {
+		runFrontendNamedChiselTest(t)
+	})
+	t.Run("native-chisel-local-release-context", func(t *testing.T) {
+		runFrontendLocalChiselReleaseTest(t)
+	})
 
 	// Test multiplatform with directory-based reports
 	t.Run("multiplatform-directory", func(t *testing.T) {
@@ -180,7 +193,7 @@ func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[s
 	trivyArgs := []string{
 		"image",
 		"--format", "json",
-		"--output", reportFile,
+		outputFlag, reportFile,
 		"--quiet",
 		"--no-progress",
 		"--pkg-types", pkgTypes,
@@ -229,21 +242,21 @@ func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[s
 	localImageRef := strings.Replace(localImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
 
 	args := []string{
-		"build",
+		buildCommand,
 		"--frontend=gateway.v0",
-		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
-		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", fmt.Sprintf("report=%s", reportBaseName), // Report file name within the context
-		"--opt", "scanner=trivy",
+		buildctlOptionFlag, fmt.Sprintf("source=%s", frontendImageRef),
+		buildctlOptionFlag, fmt.Sprintf("image=%s", localImageRef),
+		buildctlOptionFlag, fmt.Sprintf("report=%s", reportBaseName), // Report file name within the context
+		buildctlOptionFlag, "scanner=trivy",
 		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
-		"--opt", "context:report=local:report", // Map the context
-		"--output", "type=oci,dest=" + outputTar,
-		"--opt", "platform=linux/amd64",
+		buildctlOptionFlag, "context:report=local:report", // Map the context
+		outputFlag, "type=oci,dest=" + outputTar,
+		buildctlOptionFlag, "platform=linux/amd64",
 	}
 
 	// Add extra options from test case (pkg-types, library-patch-level, etc.)
 	for key, value := range extraOpts {
-		args = append(args, "--opt", fmt.Sprintf("%s=%s", key, value))
+		args = append(args, buildctlOptionFlag, fmt.Sprintf("%s=%s", key, value))
 		t.Logf("Adding extra option: %s=%s", key, value)
 	}
 
@@ -346,9 +359,9 @@ func buildFrontendImage(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err == nil {
 		// Check if buildx is available
 		if checkCmd := exec.Command("docker", "buildx", "version"); checkCmd.Run() == nil {
-			cmd = exec.Command("docker", "buildx", "build", "--load", "-f", "frontend.Dockerfile", "-t", frontendImage, ".")
+			cmd = exec.Command("docker", "buildx", buildCommand, "--load", "-f", "frontend.Dockerfile", "-t", frontendImage, ".")
 		} else {
-			cmd = exec.Command("docker", "build", "-f", "frontend.Dockerfile", "-t", frontendImage, ".")
+			cmd = exec.Command("docker", buildCommand, "-f", "frontend.Dockerfile", "-t", frontendImage, ".")
 		}
 	}
 	cmd.Dir = projectRoot
@@ -384,8 +397,8 @@ func buildFrontendImage(t *testing.T) {
 
 func runFrontendMultiplatformTest(t *testing.T) {
 	// Use nginx as a multiarch image
-	baseImage := "docker.io/library/nginx:1.21.6"
-	localImage := "localhost:5000/nginx-multiarch:1.21.6"
+	baseImage := frontendNginxBaseImage
+	localImage := "localhost:5000/nginx-multiarch:1.27.0-bookworm"
 
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)
@@ -421,7 +434,7 @@ func runFrontendMultiplatformTest(t *testing.T) {
 
 		trivyCmd := exec.Command("trivy", "image",
 			"--format", "json",
-			"--output", reportFile,
+			outputFlag, reportFile,
 			"--platform", p.platform,
 			"--quiet",
 			"--no-progress",
@@ -464,16 +477,16 @@ func runFrontendMultiplatformTest(t *testing.T) {
 	localImageRef := strings.Replace(localImage, "localhost:5000", fmt.Sprintf("%s:5000", bridgeGateway), 1)
 
 	args := []string{
-		"build",
+		buildCommand,
 		"--frontend=gateway.v0",
-		"--opt", fmt.Sprintf("source=%s", frontendImageRef),
-		"--opt", fmt.Sprintf("image=%s", localImageRef),
-		"--opt", "report=.", // Point to reports directory root
-		"--opt", "scanner=trivy",
+		buildctlOptionFlag, fmt.Sprintf("source=%s", frontendImageRef),
+		buildctlOptionFlag, fmt.Sprintf("image=%s", localImageRef),
+		buildctlOptionFlag, "report=.", // Point to reports directory root
+		buildctlOptionFlag, "scanner=trivy",
 		"--local", fmt.Sprintf("report=%s", reportsDir), // Pass reports directory as local context
-		"--opt", "context:report=local:report", // Map the context
-		"--output", "type=oci,dest=" + outputTar,
-		"--opt", "platform=linux/amd64,linux/arm64", // Multiplatform build
+		buildctlOptionFlag, "context:report=local:report", // Map the context
+		outputFlag, "type=oci,dest=" + outputTar,
+		buildctlOptionFlag, "platform=linux/amd64,linux/arm64", // Multiplatform build
 	}
 
 	// Handle buildx:// address
@@ -510,9 +523,9 @@ func removeLocalImage(_ *testing.T, image string) {
 func runFrontendAttestationTest(t *testing.T) {
 	// This test uses docker buildx build instead of buildctl because
 	// the --sbom and --provenance flags are easier to use with buildx
-	baseImage := "docker.io/library/nginx:1.21.6"
-	localImage := "localhost:5000/nginx-attestation:1.21.6"
-	patchedImage := "localhost:5000/nginx-attestation:1.21.6-patched"
+	baseImage := frontendNginxBaseImage
+	localImage := "localhost:5000/nginx-attestation:1.27.0-bookworm"
+	patchedImage := "localhost:5000/nginx-attestation:1.27.0-bookworm-patched"
 
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)
@@ -533,7 +546,7 @@ func runFrontendAttestationTest(t *testing.T) {
 
 	trivyCmd := exec.Command("trivy", "image",
 		"--format", "json",
-		"--output", reportFile,
+		outputFlag, reportFile,
 		"--quiet",
 		"--no-progress",
 		"--insecure",
@@ -602,14 +615,14 @@ func runFrontendAttestationTest(t *testing.T) {
 	// because --build-arg BUILDKIT_SYNTAX doesn't work well with --build-context
 	t.Logf("Running docker buildx build with --sbom=true --provenance=true")
 	buildArgs := []string{
-		"buildx", "build",
+		"buildx", buildCommand,
 		"--builder", builderName,
 		"--build-arg", fmt.Sprintf("image=%s", localImageRef),
 		"--build-arg", "report=report.json",
 		"--build-context", fmt.Sprintf("report=%s", tempDir),
 		"--sbom=true",
 		"--provenance=true",
-		"--output", fmt.Sprintf("type=image,name=%s,push=true", patchedImage),
+		outputFlag, fmt.Sprintf("type=image,name=%s,push=true", patchedImage),
 		tempDir,
 	}
 

@@ -1,0 +1,21 @@
+apiVersion: copa.sh/v1alpha1
+kind: PatchConfig
+chiselRelease: "__DEFAULT_CHISEL_RELEASE__"
+images:
+  - name: "native-chisel-default-release"
+    image: "__DEFAULT_RELEASE_REPO__"
+    tags:
+      strategy: "list"
+      list: ["fixture"]
+    platforms: ["linux/amd64"]
+    target:
+      tag: "{{ .SourceTag }}-bulk-default"
+  - name: "native-chisel-image-release"
+    image: "__IMAGE_RELEASE_REPO__"
+    chiselRelease: ubuntu-24.04
+    tags:
+      strategy: "list"
+      list: ["fixture"]
+    platforms: ["linux/amd64"]
+    target:
+      tag: "{{ .SourceTag }}-bulk-override"

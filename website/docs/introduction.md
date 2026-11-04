@@ -3,7 +3,7 @@ title: Introduction
 ---
 
 # Project Copacetic: Directly patch container image vulnerabilities
-`copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit) that can be used to directly patch container images given the vulnerability scanning results from popular tools like [Trivy](https://github.com/aquasecurity/trivy).
+`copa` is a CLI tool written in [Go](https://golang.org) and based on [buildkit](https://github.com/moby/buildkit). It can apply targeted updates from supported scanner reports such as [Trivy](https://github.com/aquasecurity/trivy), or comprehensive package updates without a report.
 
 ## Why?
 
@@ -25,8 +25,8 @@ In addition to filling the operational gap not met by left-shift security practi
 
 The `copa` tool is an extensible engine that:
 
-1. Parses the needed update packages from the container image’s vulnerability report produced by a scanner like Trivy. New adapters can be written to accommodate more report formats.
-2. Obtains and processes the needed update packages using the appropriate package manager tools such as apt-get, apk, etc. New adapters can be written to support more package managers.
+1. Determines the update scope from a supported vulnerability report or, for a comprehensive update, from package metadata in the target image.
+2. Obtains and processes the updates using the appropriate package-manager tooling or Chisel release definitions. New adapters can be written to support more package managers and report formats.
 3. Applies the resulting update binaries to the container image using buildkit.
 
 <img title="report-driven vulnerability patching" src="/copacetic/website/img/vulnerability-patch.png" />

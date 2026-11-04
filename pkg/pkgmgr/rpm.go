@@ -962,7 +962,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	var zypperCmd string
 	if ignoreErrors {
 		zypperCmd = `
-                if ! [[ -e "${COPA_RPM_DB_FILE}" ]]; then echo "RPM DB not found"; exit 1; fi
+                if ! { [[ -e "${COPA_RPM_DB_DIR}/Packages.db" ]] || [[ -e "${COPA_RPM_DB_DIR}/rpmdb.sqlite" ]] || [[ -e "${COPA_RPM_DB_DIR}/Packages" ]]; }; then echo "RPM DB not found"; exit 1; fi
                 zypper --non-interactive refresh
                 output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1) || true
                 echo "$output"
@@ -976,7 +976,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 	`
 	} else {
 		zypperCmd = `
-                if ! [[ -e "${COPA_RPM_DB_FILE}" ]]; then echo "RPM DB not found"; exit 1; fi
+                if ! { [[ -e "${COPA_RPM_DB_DIR}/Packages.db" ]] || [[ -e "${COPA_RPM_DB_DIR}/rpmdb.sqlite" ]] || [[ -e "${COPA_RPM_DB_DIR}/Packages" ]]; }; then echo "RPM DB not found"; exit 1; fi
                 zypper --non-interactive refresh
                 output=$(zypper --non-interactive --installroot "${COPA_CHROOT_DIR}" up --no-recommends %s 2>&1)
                 zypper_exit=$?
@@ -995,7 +995,7 @@ func (rm *rpmManager) zypperChrootInstallUpdates(ctx context.Context, updates un
 
 	run := toolingBase.Run(
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
-		llb.AddEnv("COPA_RPM_DB_FILE", filepath.Join(chrootDir, rpmLibPath, rpmNDB)),
+		llb.AddEnv("COPA_RPM_DB_DIR", chrootDir+rpmLibPath),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
 		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
 		buildkit.Sh(zypperCmd),

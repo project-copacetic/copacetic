@@ -41,6 +41,7 @@ const sidebars = {
         'output',
         'scanner-plugins',
         'bulk-image-patching',
+        'chiseled-images',
         "multiplatform-patching",
         'demos',
       ],
