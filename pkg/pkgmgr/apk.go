@@ -1,8 +1,6 @@
 package pkgmgr
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"sort"
@@ -38,16 +36,7 @@ func apkReadResultsManifest(b []byte) ([]string, error) {
 	if b == nil {
 		return nil, fmt.Errorf("nil buffer provided")
 	}
-
-	buf := bytes.NewBuffer(b)
-
-	var lines []string
-	fs := bufio.NewScanner(buf)
-	for fs.Scan() {
-		lines = append(lines, fs.Text())
-	}
-
-	return lines, nil
+	return splitManifestLines(b), nil
 }
 
 func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsBytes []byte, ignoreErrors bool) ([]string, error) {
@@ -65,14 +54,12 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 
 	// Not strictly necessary, but sort the two lists to not take a dependency on the
 	// ordering behavior of apk info output
-	sort.SliceStable(updates, func(i, j int) bool {
+	sort.Slice(updates, func(i, j int) bool {
 		return updates[i].Name < updates[j].Name
 	})
 	log.Debugf("Required updates: %s", updates)
 
-	sort.SliceStable(lines, func(i, j int) bool {
-		return lines[i] < lines[j]
-	})
+	sort.Strings(lines)
 	log.Debugf("Resulting updates: %s", lines)
 
 	// Walk files and check update name is prefix for file name
@@ -85,14 +72,19 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	var errorPkgs []string
 	lineIndex := 0
 	for _, update := range updates {
-		expectedPrefix := update.Name + "-"
-		if lineIndex >= len(lines) || !strings.HasPrefix(lines[lineIndex], expectedPrefix) {
+		if lineIndex >= len(lines) {
+			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			continue
+		}
+		line := lines[lineIndex]
+		nameLen := len(update.Name)
+		if len(line) <= nameLen || line[:nameLen] != update.Name || line[nameLen] != '-' {
 			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
 			continue
 		}
 
-		// Found a match, trim prefix- to get version string
-		version := strings.TrimPrefix(lines[lineIndex], expectedPrefix)
+		// Found a match, trim prefix to get version string
+		version := line[nameLen+1:]
 		lineIndex++
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)

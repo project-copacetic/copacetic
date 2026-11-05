@@ -36,17 +36,23 @@ func (v Vulnerability) Key() string {
 	return fmt.Sprintf("%s|%s", v.PkgName, v.ID)
 }
 
-// knownIntroducedCVEs lists CVEs that copa's nodejs patching pipeline
-// fails to eliminate today because the fix lives in a transitive
-// dependency that copa does not currently re-resolve when bumping the
-// direct dep. These are real CVEs with real upstream fixes — they are
-// allowlisted here only to keep this e2e suite from gating every
-// unrelated PR on a known langmgr gap, NOT because the CVEs are
-// unpatchable.
+// knownIntroducedCVEs lists CVEs that appear after copa's nodejs patching
+// pipeline runs, for one of two known reasons:
+//
+//   - the fix lives in a transitive dependency that copa does not
+//     currently re-resolve when bumping the direct dep; or
+//   - the fixed version copa installs (taken from the scanner report) is
+//     itself affected by a later advisory that the scanner does not report
+//     against the original version, and copa does not look past the
+//     report's fixed versions for a newer release.
+//
+// These are real CVEs with real upstream fixes — they are allowlisted
+// here only to keep this e2e suite from gating every unrelated PR on a
+// known langmgr gap, NOT because the CVEs are unpatchable.
 //
 // Each entry must document (a) the upstream fixed version that copa
-// failed to land transitively and (b) the tracking issue for fixing
-// copa. Drop the entry as soon as the corresponding copa fix ships.
+// failed to land and (b) the tracking issue for fixing copa. Drop the
+// entry as soon as the corresponding copa fix ships.
 var knownIntroducedCVEs = map[string]string{
 	// brace-expansion 5.0.0–5.0.5 (DoS, CWE-400). Fixed upstream in
 	// brace-expansion 5.0.6. Pulled in transitively (via glob /
@@ -60,6 +66,20 @@ var knownIntroducedCVEs = map[string]string{
 	// updated during patching. Copa nodejs langmgr doesn't re-resolve
 	// transitive deps to their fixed versions yet.
 	"CVE-2026-49982": "tmp package introduced transitively; copa nodejs langmgr does not patch transitives yet",
+	// lodash 4.18.0 is the highest fixed version Trivy reports for
+	// lodash 4.17.21 (CVE-2026-4800), but 4.18.0 is itself affected by
+	// CVE-2026-2950, fixed upstream in 4.18.1. Trivy does not report
+	// CVE-2026-2950 against 4.17.21.
+	// TODO: file tracking issue and reference it here; remove this entry
+	// once copa avoids installing fixed versions with known advisories.
+	"CVE-2026-2950": "lodash 4.18.0 (report's fixed version) is affected; fix exists in 4.18.1",
+	// moment 2.29.4 is the highest fixed version Trivy reports for
+	// moment 2.27.0 (CVE-2022-31129), but 2.29.4 is itself affected by
+	// CVE-2026-17495, fixed upstream in 2.31.0. Trivy does not report
+	// CVE-2026-17495 against 2.27.0.
+	// TODO: file tracking issue and reference it here; remove this entry
+	// once copa avoids installing fixed versions with known advisories.
+	"CVE-2026-17495": "moment 2.29.4 (report's fixed version) is affected; fix exists in 2.31.0",
 }
 
 // assertNoNewVulnerabilities verifies that every CVE present after

@@ -425,6 +425,19 @@ VERSION_ID="1.0"`,
 			wantErr: true,
 		},
 		{
+			name: "Malformed unused extension does not block detection",
+			osRelease: `NAME=Ubuntu
+VERSION_ID=24.04
+VENDOR=$ACME`,
+			wantType:    utils.OSTypeUbuntu,
+			wantVersion: "24.04",
+		},
+		{
+			name:      "Malformed required name remains invalid",
+			osRelease: `NAME=$Ubuntu`,
+			wantErr:   true,
+		},
+		{
 			name: "Another unsupported OS",
 			osRelease: `NAME="SomeRandomOS"
 ID=someos
@@ -602,6 +615,11 @@ func TestParseOSReleaseValue(t *testing.T) {
 			name:  "single quoted value is literal",
 			value: `'Amazon $Linux \path'`,
 			want:  `Amazon $Linux \path`,
+		},
+		{
+			name:  "single quoted escaped apostrophe",
+			value: `'Vendor'\''s Linux'`,
+			want:  `Vendor's Linux`,
 		},
 		{
 			name:  "surrounding whitespace remains accepted",
