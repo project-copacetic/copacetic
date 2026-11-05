@@ -202,9 +202,21 @@ func (dm *dpkgManager) InstallUpdates(ctx context.Context, manifest *unversioned
 		return nil, nil, fmt.Errorf("probing for native Chisel manifest %s: %w", chiselManifestPath, err)
 	}
 	if hasNativeManifest {
-		dm.installationMode = dpkgInstallationModeNativeChisel
-		log.Infof("Detected Debian installation mode: %s", dm.installationMode)
-		return dm.installNativeChiselUpdates(ctx, manifest)
+		// Images that carry both markers (Microsoft .NET chiseled + full
+		// dpkg/status) must use the apt-less status path for targeted
+		// patching (#1730). Only pure native Chisel (manifest, no full
+		// status) short-circuits here.
+		hasFullStatus, err := stateFileExists(ctx, dm.config.Client, &currentState, dpkgStatusPath)
+		if err != nil {
+			return nil, nil, fmt.Errorf("probing for dpkg status %s: %w", dpkgStatusPath, err)
+		}
+		if !hasFullStatus {
+			dm.installationMode = dpkgInstallationModeNativeChisel
+			log.Infof("Detected Debian installation mode: %s", dm.installationMode)
+			return dm.installNativeChiselUpdates(ctx, manifest)
+		}
+		log.Infof("Image has both %s and %s; using dpkg status path for targeted patching",
+			chiselManifestPath, dpkgStatusPath)
 	}
 
 	imagePlatform, err := currentState.GetPlatform(ctx)
@@ -340,9 +352,10 @@ func isStateFileNotFound(err error, path string) bool {
 }
 
 func classifyDPKGInstallationMode(result dpkgProbeResult) (dpkgInstallationMode, error) {
+	// A full dpkg status file wins over a native Chisel manifest when both
+	// are present: apt-less targeted patching is documented for that layout
+	// (.NET chiseled images) and the manifest must not short-circuit it.
 	switch {
-	case result.hasManifest:
-		return dpkgInstallationModeNativeChisel, nil
 	case result.hasStatus && len(result.missingTools) == 0:
 		return dpkgInstallationModeTargetTools, nil
 	case result.hasStatus && result.hasAdministrativeState:
@@ -364,6 +377,8 @@ func classifyDPKGInstallationMode(result dpkgProbeResult) (dpkgInstallationMode,
 		return dpkgInstallationModeExternalFullStatus, nil
 	case result.hasStatusDirectory:
 		return dpkgInstallationModeExternalStatusDirectory, nil
+	case result.hasManifest:
+		return dpkgInstallationModeNativeChisel, nil
 	default:
 		return dpkgInstallationModeUnknown, fmt.Errorf(
 			"unsupported Debian package metadata: checked %s, %s, and %s; no supported metadata was found",
