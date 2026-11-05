@@ -477,6 +477,15 @@ func containsIgnoreCase(s, substr string) bool {
 }
 
 func resolveOCIReportPlatform(discovered []types.PatchPlatform, targets []string, updates *unversioned.UpdateManifest) (types.PatchPlatform, error) {
+	// Platform resolution uses only the report's architecture, so a report for
+	// another OS family, such as Windows, would otherwise select the Linux
+	// sibling. Apply the strict report-directory rule; OS-less reports, such as
+	// language-only ones, remain valid.
+	if updates != nil {
+		if osType := strings.TrimSpace(updates.Metadata.OS.Type); osType != "" && !buildkit.IsSupportedOSType(osType) {
+			return types.PatchPlatform{}, fmt.Errorf("unsupported scan report OS %q", osType)
+		}
+	}
 	if len(targets) == 0 && (updates == nil || strings.TrimSpace(updates.Metadata.Config.Arch) == "") {
 		if len(discovered) != 1 {
 			return types.PatchPlatform{}, fmt.Errorf("scan report has no platform metadata; use --platform to select one of %d OCI image platforms", len(discovered))

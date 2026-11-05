@@ -528,6 +528,41 @@ func TestResolveOCIReportPlatform(t *testing.T) {
 	assert.Equal(t, other, matched)
 }
 
+func TestOCIReportRejectsUnsupportedReportOS(t *testing.T) {
+	linux := types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
+	windows := types.PatchPlatform{Platform: ispec.Platform{OS: "windows", Architecture: "amd64", OSVersion: "10.0.20348.1"}}
+	discovered := []types.PatchPlatform{linux, windows}
+	for _, test := range []struct {
+		name      string
+		osType    string
+		arch      string
+		targets   []string
+		wantError string
+	}{
+		{name: "windows report without --platform", osType: "windows", arch: "amd64", wantError: `unsupported scan report OS "windows"`},
+		{name: "windows report with --platform", osType: "windows", arch: "amd64", targets: []string{"linux/amd64"}, wantError: `unsupported scan report OS "windows"`},
+		{name: "windows report without arch", osType: "windows", targets: []string{"linux/amd64"}, wantError: `unsupported scan report OS "windows"`},
+		{name: "supported OS", osType: "debian", arch: "amd64"},
+		{name: "supported OS with --platform", osType: "debian", arch: "amd64", targets: []string{"linux/amd64"}},
+		{name: "OS-less report", arch: "amd64"},
+		{name: "OS-less report with --platform", targets: []string{"linux/amd64"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			updates := &unversioned.UpdateManifest{Metadata: unversioned.Metadata{
+				OS:     unversioned.OS{Type: test.osType},
+				Config: unversioned.Config{Arch: test.arch},
+			}}
+			got, err := resolveOCIReportPlatform(discovered, test.targets, updates)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, linux, got)
+		})
+	}
+}
+
 func TestOCIOutputNaming(t *testing.T) {
 	for _, test := range []struct {
 		name       string

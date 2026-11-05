@@ -319,6 +319,12 @@ func discoverPlatformsFromReport(reportDir, scanner string, strict bool) ([]type
 	return platforms, nil
 }
 
+// IsSupportedOSType reports whether a scan report's OS family is one Copa can
+// patch. It is the rule strict report discovery applies to each report.
+func IsSupportedOSType(osType string) bool {
+	return isSupportedOsType(osType)
+}
+
 func isSupportedOsType(osType string) bool {
 	switch utils.CanonicalOSType(osType) {
 	case utils.OSTypeAlpine,
