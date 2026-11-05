@@ -256,6 +256,7 @@ func isSupportedOsType(osType string) bool {
 		utils.OSTypeOracle,
 		utils.OSTypeRedHat,
 		utils.OSTypeRocky,
+		utils.OSTypeFedora,
 		utils.OSTypeAmazon,
 		utils.OSTypeAlma,
 		utils.OSTypeAlmaLinux,

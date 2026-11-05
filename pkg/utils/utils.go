@@ -59,6 +59,7 @@ const (
 //	centos              -> rpm
 //	almalinux           -> rpm
 //	rocky               -> rpm
+//	fedora              -> rpm
 //	redhat              -> rpm
 //	amazon              -> rpm
 //	oracle              -> rpm
@@ -74,7 +75,7 @@ func CanonicalPkgManagerType(raw string) string {
 		return "apk"
 	case OSTypeDebian, OSTypeUbuntu:
 		return "deb"
-	case OSTypeCBLMariner, OSTypeAzureLinux, OSTypeCentOS, OSTypeOracle, OSTypeRedHat, OSTypeRocky, OSTypeAmazon, OSTypeAlma, OSTypeAlmaLinux:
+	case OSTypeCBLMariner, OSTypeAzureLinux, OSTypeCentOS, OSTypeOracle, OSTypeRedHat, OSTypeRocky, OSTypeFedora, OSTypeAmazon, OSTypeAlma, OSTypeAlmaLinux:
 		return "rpm"
 	case OSTypeSLES, OSTypeOpenSUSELeap, OSTypeOpenSUSETW:
 		return "rpm"

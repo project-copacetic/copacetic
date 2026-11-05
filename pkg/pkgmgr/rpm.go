@@ -97,7 +97,7 @@ func isValidVersion(ver string) error {
 		return errors.New("upstream_version must start with digit")
 	}
 
-	allowedSymbols := ".-+~:_"
+	allowedSymbols := ".-+~:^_"
 	for _, s := range ver {
 		if !unicode.IsDigit(s) && !unicode.IsLetter(s) && !strings.ContainsRune(allowedSymbols, s) {
 			return fmt.Errorf("upstream_version %s includes invalid character %q", ver, s)
@@ -163,12 +163,14 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 // getChrootToolImage returns a tooling image suitable for chroot-based patching
 // of RPM images that lack their own package management tools. The tooling image
 // must contain dnf. We use the target image's own repo configuration via
-// --setopt=reposdir so exact repo compatibility of the tooling image is not
-// required; it only needs to provide the dnf binary.
+// --setopt=reposdir. Fedora needs release-matched tooling for its DNF5
+// repository layout and RPM database compatibility.
 func getChrootToolImage(osType string, osVersion string) string {
 	majorVersion := strings.Split(osVersion, ".")[0]
 
 	switch osType {
+	case utils.OSTypeFedora:
+		return fmt.Sprintf("fedora:%s", osVersion)
 	case utils.OSTypeRedHat:
 		// AlmaLinux is binary-compatible with RHEL and freely available.
 		return fmt.Sprintf("almalinux:%s", majorVersion)
@@ -1083,6 +1085,11 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 
 	chrootDir := "/tmp/rootfs"
 	manifestFile := "/tmp/manifest"
+	reposDir := chrootDir + "/etc/yum.repos.d"
+	if rm.osType == utils.OSTypeFedora {
+		// Fedora 45 moved vendor repository definitions out of /etc.
+		reposDir += "," + chrootDir + "/usr/share/dnf5/repos.d"
+	}
 
 	// If specific updates provided, parse into pkg names, else will update all
 	if updates != nil {
@@ -1107,7 +1114,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		dnfCmd = `
                 if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
                 output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
                     upgrade -y %s 2>&1) || true
@@ -1116,7 +1123,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                     echo "updates_applied" > "${COPA_UPDATES_MARKER}"
                 fi
                 dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     clean all 2>/dev/null || true
                 rm -rf "${COPA_CHROOT_DIR}"/var/cache/dnf/* "${COPA_CHROOT_DIR}"/var/log/dnf.*
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
@@ -1125,7 +1132,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		dnfCmd = `
                 if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
                 output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
                     upgrade -y %s 2>&1)
@@ -1136,7 +1143,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                     echo "updates_applied" > "${COPA_UPDATES_MARKER}"
                 fi
                 dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     clean all 2>/dev/null || true
                 rm -rf "${COPA_CHROOT_DIR}"/var/cache/dnf/* "${COPA_CHROOT_DIR}"/var/log/dnf.*
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
@@ -1153,6 +1160,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 
 	run := toolingBase.Run(
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
+		llb.AddEnv("COPA_REPOS_DIR", reposDir),
 		llb.AddEnv("COPA_RELEASE_VER", releaseVer),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
 		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
