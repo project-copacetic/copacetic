@@ -22,7 +22,7 @@
     "dotenv": "^17.4.2",
     "prism-react-renderer": "^2.4.1",
     "asciinema-player": "^3.17.0",
-    "react": "^19.2.8",
+    "react": "^19.3.0",
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
