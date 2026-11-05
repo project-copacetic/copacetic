@@ -701,6 +701,10 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *specs.Platfor
 		return manifestRef, nil
 	}
 
+	return platformImageReferenceFromManifest(ref, desc.Manifest, targetPlatform)
+}
+
+func platformImageReferenceFromManifest(ref name.Reference, manifestBytes []byte, targetPlatform *specs.Platform) (string, error) {
 	// Parse the manifest to extract platform-specific information
 	var manifestData struct {
 		Manifests []struct {
@@ -713,7 +717,7 @@ func GetPlatformImageReference(manifestRef string, targetPlatform *specs.Platfor
 		} `json:"manifests"`
 	}
 
-	if err := json.Unmarshal(desc.Manifest, &manifestData); err != nil {
+	if err := json.Unmarshal(manifestBytes, &manifestData); err != nil {
 		return "", fmt.Errorf("failed to parse manifest JSON: %w", err)
 	}
 

@@ -10,7 +10,7 @@ require (
 	github.com/canonical/chisel-manifest v1.2.0
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/lipgloss v0.13.1
-	github.com/containerd/containerd/v2 v2.2.9
+	github.com/containerd/containerd/v2 v2.2.10
 	github.com/containerd/continuity v0.5.0
 	github.com/containerd/errdefs v1.0.0
 	github.com/containerd/platforms v1.0.0-rc.4
@@ -157,5 +157,5 @@ require (
 	golang.org/x/xerrors v0.0.0-20240716161551-93cc26a95ae9 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260720211330-0afa2a65878a // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720211330-0afa2a65878a // indirect
-	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 )
