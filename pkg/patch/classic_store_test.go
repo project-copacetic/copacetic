@@ -129,7 +129,7 @@ func TestCreatePatchResultClassicStoreDescriptor(t *testing.T) {
 			original, err := reference.ParseNormalizedNamed("registry.example.com/app:1.0")
 			require.NoError(t, err)
 			result, err := createPatchResultWithStates(t.Context(), original, "registry.example.com/app:1.0-patched-amd64",
-				&types.PatchPlatform{Platform: platform}, nil, imageloader.Docker, tc.push, &Result{Annotations: origin})
+				&types.PatchPlatform{Platform: platform}, nil, imageloader.Docker, tc.push, &Result{Annotations: origin}, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.wantDigest != "", lookups == 1, "a loaded classic-store image must not be identified by a registry lookup")
 			require.NotNil(t, result.PatchedDesc)

@@ -164,7 +164,7 @@ func TestPlatformResultCancellation(t *testing.T) {
 				case stage == "original result":
 					_, err = createOriginalImageResult(ctx, ref, platform, input)
 				case strings.HasPrefix(stage, "patched result"):
-					_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil)
+					_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil, nil)
 				default:
 					_, err = getPlatformDescriptorFromManifest(ctx, input, platform)
 				}
@@ -224,7 +224,7 @@ func TestPlatformResultExpiredContext(t *testing.T) {
 			require.ErrorIs(t, err, want)
 			_, err = createOriginalImageResult(ctx, ref, platform, input)
 			require.ErrorIs(t, err, want)
-			_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil)
+			_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil, nil)
 			require.ErrorIs(t, err, want)
 		})
 	}

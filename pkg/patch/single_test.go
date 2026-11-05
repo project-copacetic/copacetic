@@ -410,11 +410,34 @@ func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T)
 		imageloader.Docker,
 		false,
 		nil,
+		nil,
 	)
 
 	require.Error(t, err)
 	assert.Nil(t, result)
 	assert.Contains(t, err.Error(), "failed to parse patched image name")
+}
+
+func TestCreatePatchResultWithStatesKeepsVEX(t *testing.T) {
+	t.Parallel()
+
+	imageName, err := reference.ParseNormalizedNamed("localhost:65535/test-image:latest")
+	require.NoError(t, err)
+	vexData := &types.PlatformVEX{PkgType: "apk", NameDigestOrTag: "localhost:65535/test-image@sha256:amd64"}
+
+	result, err := createPatchResultWithStates(t.Context(),
+		imageName,
+		"localhost:65535/test-image:latest-patched",
+		&types.PatchPlatform{Platform: v1.Platform{OS: LINUX, Architecture: "amd64"}},
+		nil,
+		imageloader.Docker,
+		false,
+		nil,
+		vexData,
+	)
+
+	require.NoError(t, err)
+	assert.Same(t, vexData, result.VEX)
 }
 
 func TestShouldIncludeUpdateTypes(t *testing.T) {
