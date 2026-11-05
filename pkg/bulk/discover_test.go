@@ -142,3 +142,30 @@ func TestFindTagsByLatest(t *testing.T) {
 		t.Errorf("Expected result %v, but got %v", expected, result)
 	}
 }
+
+func TestFindTagsByLatestEquivalentVersionsKeepsLastTag(t *testing.T) {
+	repo, _ := name.NewRepository("mock/repo")
+	spec := &ImageSpec{Name: "test"}
+
+	testCases := []struct {
+		tags     []string
+		expected string
+	}{
+		{tags: []string{"1.2.3", "v1.2.3"}, expected: "v1.2.3"},
+		{tags: []string{"v1.2.3", "1.2.3"}, expected: "1.2.3"},
+		{tags: []string{"1.2.3+build1", "1.0.0", "1.2.3+build2"}, expected: "1.2.3+build2"},
+	}
+
+	originalLister := listAllTags
+	defer func() { listAllTags = originalLister }()
+	for _, tc := range testCases {
+		listAllTags = mockTagLister(tc.tags, nil)
+		result, err := findTagsByLatest(repo, spec)
+		if err != nil {
+			t.Fatalf("Got unexpected error for %v: %v", tc.tags, err)
+		}
+		if !reflect.DeepEqual(result, []string{tc.expected}) {
+			t.Errorf("tags %v: expected [%s], got %v", tc.tags, tc.expected, result)
+		}
+	}
+}

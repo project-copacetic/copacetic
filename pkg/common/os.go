@@ -86,6 +86,9 @@ func parseOSRelease(ctx context.Context, data []byte) (map[string]string, error)
 		}
 		value, err := parseOSReleaseValue(rawValue)
 		if err != nil {
+			if !isOSInfoKey(key) {
+				continue
+			}
 			return nil, fmt.Errorf("invalid value for %s on line %d: %w", key, lineNumber, err)
 		}
 		values[key] = value
@@ -97,6 +100,15 @@ func parseOSRelease(ctx context.Context, data []byte) (map[string]string, error)
 		return nil, fmt.Errorf("os-release contains no assignments")
 	}
 	return values, nil
+}
+
+func isOSInfoKey(key string) bool {
+	switch key {
+	case "NAME", "ID", "VERSION_ID":
+		return true
+	default:
+		return false
+	}
 }
 
 func validOSReleaseKey(key string) bool {

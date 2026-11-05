@@ -25,15 +25,30 @@ func ParseValue(value string) (string, error) {
 }
 
 func parseSingleQuotedValue(value string) (string, error) {
-	closingQuote := strings.IndexByte(value[1:], '\'')
-	if closingQuote < 0 {
-		return "", fmt.Errorf("unterminated single-quoted value")
+	var parsed strings.Builder
+	parsed.Grow(len(value))
+
+	for segmentStart := 1; ; {
+		closingQuote := strings.IndexByte(value[segmentStart:], '\'')
+		if closingQuote < 0 {
+			return "", fmt.Errorf("unterminated single-quoted value")
+		}
+		closingQuote += segmentStart
+		parsed.WriteString(value[segmentStart:closingQuote])
+
+		remainder := value[closingQuote+1:]
+		if strings.TrimSpace(remainder) == "" {
+			return parsed.String(), nil
+		}
+		// The only supported concatenation is the shell idiom for an embedded
+		// apostrophe: 'Vendor'\''s Linux'.
+		if !strings.HasPrefix(remainder, `\''`) {
+			return "", fmt.Errorf("quoted value has trailing characters; only escaped apostrophe segments are supported")
+		}
+
+		parsed.WriteByte('\'')
+		segmentStart = closingQuote + 4
 	}
-	closingQuote++
-	if strings.TrimSpace(value[closingQuote+1:]) != "" {
-		return "", fmt.Errorf("quoted value has trailing characters; concatenation is not supported")
-	}
-	return value[1:closingQuote], nil
 }
 
 func parseDoubleQuotedValue(value string) (string, error) {
