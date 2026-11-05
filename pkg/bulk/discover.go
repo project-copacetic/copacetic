@@ -67,7 +67,9 @@ func findTagsByLatest(repo name.Repository, spec *ImageSpec) ([]string, error) {
 			log.Warnf("Could not parse tag '%s' as stable semver for '%s', skipping", t, repo.Name())
 			continue
 		}
-		if !found || compareTagVersions(v, latest) > 0 {
+		// Equal versions (e.g. "1.2.3" and "v1.2.3") are distinct tags; keep the
+		// last one, matching the previous ascending-sort-then-take-last behavior.
+		if !found || compareTagVersions(v, latest) >= 0 {
 			latest = v
 			found = true
 		}
