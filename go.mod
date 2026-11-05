@@ -22,7 +22,7 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/google/go-containerregistry v0.21.6
 	github.com/hashicorp/go-multierror v1.1.1
-	github.com/klauspost/compress v1.18.7
+	github.com/klauspost/compress v1.20.2
 	github.com/knqyf263/go-apk-version v0.0.0-20200609155635-041fdbb8563f
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20220614171824-631e686d1075
