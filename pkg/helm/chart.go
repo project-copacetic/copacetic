@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 // Chart is the local representation needed for discovery and wrapper generation.
@@ -41,7 +43,7 @@ type Dependency struct {
 
 // DownloadChart downloads and reads a chart archive with the Helm CLI.
 var DownloadChart = func(ctx context.Context, name, version, repository string) (*Chart, error) {
-	tmpDir, err := os.MkdirTemp("", "copa-helm-pull-*")
+	tmpDir, err := utils.MkdirTemp("copa-helm-pull-*")
 	if err != nil {
 		return nil, fmt.Errorf("create chart download directory: %w", err)
 	}
@@ -144,7 +146,7 @@ func chartFiles(archive []byte) (map[string][]byte, error) {
 
 // RenderChart renders default chart values, including CRDs and hooks, with the Helm CLI.
 var RenderChart = func(ctx context.Context, ch *Chart) (string, error) {
-	tmpDir, err := os.MkdirTemp("", "copa-helm-template-*")
+	tmpDir, err := utils.MkdirTemp("copa-helm-template-*")
 	if err != nil {
 		return "", fmt.Errorf("create chart render directory: %w", err)
 	}
