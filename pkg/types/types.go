@@ -5,6 +5,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
@@ -46,7 +47,9 @@ func (p PatchPlatform) String() string {
 
 // PlatformVEX is the validated update manifest for one patched platform image.
 // It is set when a report was provided, the patched digest is known, and the
-// validated manifest contains at least one OS or language update.
+// validated manifest contains at least one OS or language update. For OCI
+// layout input the digest comes from the final export, so NameDigestOrTag is
+// empty here and the OCI output path names each product.
 type PlatformVEX struct {
 	// Updates is the validated manifest after errored packages are excluded.
 	Updates *unversioned.UpdateManifest
@@ -58,12 +61,14 @@ type PlatformVEX struct {
 
 // PatchResult represents the result of a single arch patch operation.
 type PatchResult struct {
-	OriginalRef  reference.Named
-	PatchedDesc  *ispec.Descriptor
-	PatchedRef   reference.Named
-	PatchedState *llb.State                // BuildKit state for OCI export
-	ConfigData   []byte                    // Image config data
-	Summary      *unversioned.PatchSummary // Patch summary, nil if unavailable
+	OriginalRef         reference.Named
+	PatchedDesc         *ispec.Descriptor
+	PatchedRef          reference.Named
+	PatchedState        *llb.State                // BuildKit state for OCI export
+	ManifestAnnotations map[string]string         // Manifest-body annotations, separate from PatchedDesc for OCI sources
+	ConfigData          []byte                    // Image config data
+	Summary             *unversioned.PatchSummary // Patch summary, nil if unavailable
+	OCISource           *ocilayout.Source         // Source store retained for OCI-backed state re-solves
 	// VEX is set when this platform was patched and qualifies for a VEX statement.
 	// Nil for preserved, up-to-date, and failed platforms.
 	VEX *PlatformVEX

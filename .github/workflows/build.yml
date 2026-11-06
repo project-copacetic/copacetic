@@ -312,6 +312,40 @@ jobs:
         with:
           paths: "test-results.xml"
 
+  test-oci-layout-input:
+    name: Test OCI layout input
+    runs-on: oracle-vm-16cpu-64gb-x86-64
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Install required tools
+        shell: bash
+        run: .github/workflows/scripts/download-tooling.sh
+      - name: Run OCI layout input tests
+        shell: bash
+        # The direct TCP worker has no access to the runner's filesystem, so the
+        # layout reaches it only through the BuildKit session. Tests gated by
+        # COPA_OCI_TEST_NAMED need Docker and a separate buildx builder; they
+        # run locally only.
+        run: |
+          set -eu -o pipefail
+          . .github/workflows/scripts/buildkitenvs/direct/tcp
+          export COPA_OCI_TEST_ADDR="${COPA_BUILDKIT_ADDR}"
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/ocilayout -run '^TestOCILayout' -count=1 -timeout 15m
+      - name: Test Summary
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
+        with:
+          paths: "test-results.xml"
+
   test-push:
     needs: build
     name: Test push

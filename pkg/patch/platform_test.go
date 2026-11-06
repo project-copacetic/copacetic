@@ -178,3 +178,15 @@ func TestGetPlatformDescriptorFromManifest_LocalErrorFallsThrough(t *testing.T) 
 	require.Contains(t, err.Error(), "from both local daemon and remote registry",
 		"with ok=false, the function must fall through to the legacy local-then-remote path")
 }
+
+func TestFilterOCIPlatformsDeduplicatesResolvedIdentity(t *testing.T) {
+	arm := types.PatchPlatform{Platform: ispec.Platform{
+		OS: "linux", Architecture: "arm64", OSVersion: "fixture.1", OSFeatures: []string{"a", "b"},
+	}}
+	amd := types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
+	selected, err := filterOCIPlatforms([]types.PatchPlatform{arm, amd}, []string{
+		"linux/arm64", "linux/arm64/v8", "linux/aarch64", "linux/amd64", "linux/arm64",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []types.PatchPlatform{arm, amd}, selected)
+}
