@@ -363,6 +363,43 @@ jobs:
           paths: "test-results.xml"
 
 
+  test-patch-origin:
+    name: Test patch origin
+    runs-on: oracle-vm-16cpu-64gb-x86-64
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Create BuildKit builder
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          # Host networking lets the builder reach the test's loopback registry.
+          builder="copa-origin-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create --name "$builder" --driver docker-container \
+            --driver-opt network=host --driver-opt "image=moby/buildkit:v${BUILDKIT_VERSION}"
+          docker buildx inspect --bootstrap "$builder"
+          echo "BUILDX_BUILDER=${builder}" >> "$GITHUB_ENV"
+          echo "COPA_ORIGIN_BUILDKIT_ADDR=buildx://${builder}" >> "$GITHUB_ENV"
+      - name: Test patch origin contract
+        shell: bash
+        run: go test ./pkg/patch -run '^TestOriginContract$' -count=1 -v -timeout 15m
+      - name: Remove BuildKit builder
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${BUILDX_BUILDER:-}" ]]; then
+            docker buildx rm "$BUILDX_BUILDER" || true
+          fi
+
   test-patch-multiplatform:
     needs: build
     name: Test patch with multiplatform ${{ matrix.buildkit_mode }}
