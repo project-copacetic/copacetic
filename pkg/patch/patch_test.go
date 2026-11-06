@@ -544,6 +544,8 @@ func TestOCIReportRejectsUnsupportedReportOS(t *testing.T) {
 		{name: "windows report without arch", osType: "windows", targets: []string{"linux/amd64"}, wantError: `unsupported scan report OS "windows"`},
 		{name: "supported OS", osType: "debian", arch: "amd64"},
 		{name: "supported OS with --platform", osType: "debian", arch: "amd64", targets: []string{"linux/amd64"}},
+		{name: "Arch Linux report", osType: "archlinux", arch: "amd64"},
+		{name: "Arch Linux report with --platform", osType: "archlinux", arch: "amd64", targets: []string{"linux/amd64"}},
 		{name: "OS-less report", arch: "amd64"},
 		{name: "OS-less report with --platform", targets: []string{"linux/amd64"}},
 	} {

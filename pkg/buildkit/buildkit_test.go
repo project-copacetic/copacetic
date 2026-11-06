@@ -430,6 +430,31 @@ func TestCreatePreservedOnlyOCILayoutMaterializesBlobs(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// Strict report discovery, used for OCI layout input, accepts every OS family
+// a Copa package manager can patch, including Arch Linux, and rejects others.
+func TestStrictReportDiscoveryOSFamilies(t *testing.T) {
+	writeReport := func(t *testing.T, family string) string {
+		t.Helper()
+		dir := t.TempDir()
+		report := fmt.Sprintf(`{
+			"SchemaVersion":2,"ArtifactName":"example.com/test/image:latest","ArtifactType":"container_image",
+			"Metadata":{"OS":{"Family":%q,"Name":"1"},"ImageConfig":{"architecture":"amd64"}},
+			"Results":[]
+		}`, family)
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "amd64.json"), []byte(report), 0o600))
+		return dir
+	}
+
+	found, err := DiscoverPlatformsFromReportStrict(writeReport(t, "archlinux"), "trivy")
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	assert.Equal(t, "linux", found[0].OS)
+	assert.Equal(t, "amd64", found[0].Architecture)
+
+	_, err = DiscoverPlatformsFromReportStrict(writeReport(t, "windows"), "trivy")
+	require.ErrorContains(t, err, `unsupported scan report OS "windows"`)
+}
+
 func TestDiscoverPlatformsReportMetadata(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix:///copa-report-test-no-daemon.sock")
 	server := httptest.NewServer(registry.New())

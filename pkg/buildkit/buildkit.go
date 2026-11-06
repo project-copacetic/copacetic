@@ -291,7 +291,11 @@ func discoverPlatformsFromReport(reportDir, scanner string, strict bool) ([]type
 		}
 
 		// use this to confirm that os type (ex/Debian) is linux based and supported since report.Metadata.OS.Type gives specific like "debian" rather than "linux"
-		if !isSupportedOsType(report.Metadata.OS.Type) {
+		supported := isSupportedOsType(report.Metadata.OS.Type)
+		if strict {
+			supported = IsSupportedOSType(report.Metadata.OS.Type)
+		}
+		if !supported {
 			if strict {
 				return nil, fmt.Errorf("unsupported scan report OS %q in report %s", report.Metadata.OS.Type, filePath)
 			}
@@ -319,10 +323,12 @@ func discoverPlatformsFromReport(reportDir, scanner string, strict bool) ([]type
 	return platforms, nil
 }
 
-// IsSupportedOSType reports whether a scan report's OS family is one Copa can
-// patch. It is the rule strict report discovery applies to each report.
+// IsSupportedOSType reports whether a scan report's OS family is one a Copa
+// package manager can patch. Strict report discovery and single OCI reports
+// use it. Non-strict discovery keeps its narrower isSupportedOsType list,
+// which omits Arch Linux.
 func IsSupportedOSType(osType string) bool {
-	return isSupportedOsType(osType)
+	return isSupportedOsType(osType) || utils.CanonicalOSType(osType) == utils.OSTypeArchLinux
 }
 
 func isSupportedOsType(osType string) bool {
