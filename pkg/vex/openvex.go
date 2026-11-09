@@ -44,6 +44,14 @@ func (o *OpenVex) createVEXDocument(
 	patchedImageName string,
 	pkgType string,
 ) (*vex.VEX, error) {
+	return o.createMultiVEXDocument([]ImageUpdates{{
+		Updates:          updates,
+		PkgType:          pkgType,
+		PatchedImageName: patchedImageName,
+	}})
+}
+
+func (o *OpenVex) createMultiVEXDocument(images []ImageUpdates) (*vex.VEX, error) {
 	t := now()
 	// construct a fresh VEX document per invocation (thread-safe, no shared state)
 	doc := &vex.VEX{Metadata: vex.Metadata{
@@ -66,22 +74,22 @@ func (o *OpenVex) createVEXDocument(
 	}
 	doc.ID = id
 
-	imageProduct := vex.Product{
-		Component: vex.Component{
-			ID: "pkg:oci/" + patchedImageName,
-		},
+	totalUpdates := 0
+	for _, image := range images {
+		if image.Updates == nil {
+			continue
+		}
+		totalUpdates += len(image.Updates.OSUpdates) + len(image.Updates.LangUpdates)
 	}
-	pt := utils.CanonicalPkgManagerType(pkgType) // base OS package manager type (apk, deb, rpm)
-	osPackagePrefix := "pkg:" + pt + "/" + updates.Metadata.OS.Type + "/"
-	osPackageQualifierSuffix := osPackageQualifiers(updates)
-	totalUpdates := len(updates.OSUpdates) + len(updates.LangUpdates)
 	initialStatementCapacity := min(totalUpdates, 512)
 	doc.Statements = make([]vex.Statement, 0, initialStatementCapacity)
 	statementByVulnerability := make(map[string]int, initialStatementCapacity)
 	seenSubcomponents := make(map[vexSubcomponentKey]struct{}, totalUpdates)
 
-	// helper closure to add a single update (OS or language) to the VEX doc
-	addUpdate := func(u unversioned.UpdatePackage) {
+	// helper closure to add a single update (OS or language) to the VEX doc.
+	// Subcomponent de-duplication is per product so the same package can be
+	// listed once under each platform image that fixed the vulnerability.
+	addUpdate := func(imageProduct vex.Product, osPackagePrefix, osPackageQualifierSuffix string, u unversioned.UpdatePackage) {
 		// skip entries without vulnerability IDs; VEX statements represent fixed vulns
 		if u.VulnerabilityID == "" {
 			log.Debugf("skipping update %s: empty vulnerability id for VEX", u.Name)
@@ -115,19 +123,41 @@ func (o *OpenVex) createVEXDocument(
 			componentID = osPackagePrefix + u.Name + "@" + purlVersion + osPackageQualifierSuffix
 		}
 		subComponent := vex.Subcomponent{Component: vex.Component{ID: componentID}}
-		// if vulnerability id already exists, append subcomponent
+		key := vexSubcomponentKey{
+			vulnerabilityID: u.VulnerabilityID,
+			productID:       imageProduct.ID,
+			componentID:     subComponent.ID,
+		}
+		// if vulnerability id already exists, append this image's product or subcomponent
 		if statementIndex, ok := statementByVulnerability[u.VulnerabilityID]; ok {
-			// deduplicate identical subcomponent IDs
-			key := vexSubcomponentKey{vulnerabilityID: u.VulnerabilityID, componentID: subComponent.ID}
-			if _, ok := seenSubcomponents[key]; ok {
+			if _, seen := seenSubcomponents[key]; seen {
 				log.Debugf("duplicate subcomponent %s ignored", subComponent.ID)
 				return
 			}
 			seenSubcomponents[key] = struct{}{}
-			doc.Statements[statementIndex].Products[0].Subcomponents = append(doc.Statements[statementIndex].Products[0].Subcomponents, subComponent)
+			products := doc.Statements[statementIndex].Products
+			productIndex := -1
+			for i := range products {
+				if products[i].ID == imageProduct.ID {
+					productIndex = i
+					break
+				}
+			}
+			if productIndex < 0 {
+				product := imageProduct
+				product.Subcomponents = []vex.Subcomponent{subComponent}
+				products = append(products, product)
+				doc.Statements[statementIndex].Products = products
+				return
+			}
+			doc.Statements[statementIndex].Products[productIndex].Subcomponents = append(
+				doc.Statements[statementIndex].Products[productIndex].Subcomponents,
+				subComponent,
+			)
 			return
 		}
-		// otherwise create new statement
+		// otherwise create new statement. Statements follow first-seen order
+		// across images, and products follow image input order.
 		product := imageProduct
 		product.Subcomponents = []vex.Subcomponent{subComponent}
 		doc.Statements = append(doc.Statements, vex.Statement{
@@ -136,14 +166,27 @@ func (o *OpenVex) createVEXDocument(
 			Status:        "fixed",
 		})
 		statementByVulnerability[u.VulnerabilityID] = len(doc.Statements) - 1
-		seenSubcomponents[vexSubcomponentKey{vulnerabilityID: u.VulnerabilityID, componentID: subComponent.ID}] = struct{}{}
+		seenSubcomponents[key] = struct{}{}
 	}
 
-	for _, u := range updates.OSUpdates {
-		addUpdate(u)
-	}
-	for _, u := range updates.LangUpdates {
-		addUpdate(u)
+	for _, image := range images {
+		if image.Updates == nil {
+			continue
+		}
+		imageProduct := vex.Product{
+			Component: vex.Component{
+				ID: "pkg:oci/" + image.PatchedImageName,
+			},
+		}
+		pt := utils.CanonicalPkgManagerType(image.PkgType) // base OS package manager type (apk, deb, rpm)
+		osPackagePrefix := "pkg:" + pt + "/" + image.Updates.Metadata.OS.Type + "/"
+		osPackageQualifierSuffix := osPackageQualifiers(image.Updates)
+		for _, u := range image.Updates.OSUpdates {
+			addUpdate(imageProduct, osPackagePrefix, osPackageQualifierSuffix, u)
+		}
+		for _, u := range image.Updates.LangUpdates {
+			addUpdate(imageProduct, osPackagePrefix, osPackageQualifierSuffix, u)
+		}
 	}
 
 	return doc, nil
@@ -151,6 +194,7 @@ func (o *OpenVex) createVEXDocument(
 
 type vexSubcomponentKey struct {
 	vulnerabilityID string
+	productID       string
 	componentID     string
 }
 
