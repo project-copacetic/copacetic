@@ -1774,6 +1774,7 @@ func TestIsSupportedOsType(t *testing.T) {
 		utils.OSTypeSLES,
 		utils.OSTypeOpenSUSELeap,
 		utils.OSTypeOpenSUSETW,
+		utils.OSTypeArchLinux,
 	}
 	for _, os := range supported {
 		if !isSupportedOsType(os) {
@@ -2465,4 +2466,47 @@ func TestOCIPublicationRejectsExistingDanglingSymlink(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "output", entries[0].Name())
+}
+
+func TestDiscoverPlatformsFromReportIncludesArchLinux(t *testing.T) {
+	dir := t.TempDir()
+	reports := map[string]string{
+		"arch.json":   "archlinux",
+		"debian.json": "debian",
+	}
+	for name, family := range reports {
+		body := fmt.Sprintf(`{
+  "SchemaVersion": 2,
+  "ArtifactName": "example/%[1]s:latest",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "OS": {"Family": %[1]q, "Name": "1"},
+    "ImageConfig": {"architecture": "amd64"}
+  },
+  "Results": []
+}`, family)
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	platforms, err := DiscoverPlatformsFromReport(dir, "trivy")
+	if err != nil {
+		t.Fatalf("DiscoverPlatformsFromReport: %v", err)
+	}
+
+	// Both reports describe amd64 images, so each must yield its own entry
+	// instead of the Arch Linux report being silently dropped.
+	got := map[string]bool{}
+	for _, p := range platforms {
+		got[filepath.Base(p.ReportFile)] = true
+		if p.ShouldPreserve {
+			t.Errorf("%s: platform with a report must not be preserved", p.ReportFile)
+		}
+	}
+	for name := range reports {
+		if !got[name] {
+			t.Errorf("report %s was dropped; got %v", name, got)
+		}
+	}
 }
