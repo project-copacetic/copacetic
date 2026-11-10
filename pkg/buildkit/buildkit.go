@@ -1026,6 +1026,9 @@ func updateImageConfigData(
 		if baseDocument.labels["BaseImage"] != "" {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image", ErrOriginIntegrity)
 		}
+		if err := verifyRecoveredOriginPlatform(configData, baseConfig, platform); err != nil {
+			return nil, nil, "", nil, false, fmt.Errorf("%w: %w", ErrOriginIntegrity, err)
+		}
 	} else {
 		// Legacy images have only a mutable BaseImage locator. Preserve their
 		// existing best-effort behavior without asserting verified original identity.
@@ -1043,6 +1046,42 @@ func updateImageConfigData(
 		return nil, nil, "", nil, false, err
 	}
 	return baseWithLabels, userImageConfig, baseImage, recorded, hasOrigin, nil
+}
+
+// verifyRecoveredOriginPlatform rejects a recovered origin built for a different
+// platform than the image being re-patched. The recorded digest establishes
+// content identity only: a single-platform manifest resolves regardless of the
+// requested platform, so metadata naming another platform's manifest would
+// otherwise rebuild the patch on a foreign root filesystem.
+func verifyRecoveredOriginPlatform(inputConfig, originConfig []byte, requested *specs.Platform) error {
+	var input, origin specs.Platform
+	if err := json.Unmarshal(inputConfig, &input); err != nil {
+		return fmt.Errorf("parse patched image platform: %w", err)
+	}
+	inputDeclared := input.OS != "" && input.Architecture != ""
+	if !inputDeclared && requested == nil {
+		return nil
+	}
+	if err := json.Unmarshal(originConfig, &origin); err != nil {
+		return fmt.Errorf("parse recorded patch origin platform: %w", err)
+	}
+	if origin.OS == "" || origin.Architecture == "" {
+		return errors.New("recorded patch origin config does not declare its platform")
+	}
+	if inputDeclared && !platformIdentityEqual(&origin, &input) {
+		return fmt.Errorf("recorded patch origin platform %s does not match patched image platform %s",
+			platforms.FormatAll(origin), platforms.FormatAll(input))
+	}
+	// A requested platform may omit identity details such as a Windows
+	// os.version, so compare only the fields that select a root filesystem.
+	if requested != nil {
+		want, got := platforms.Normalize(*requested), platforms.Normalize(origin)
+		if want.OS != got.OS || want.Architecture != got.Architecture || want.Variant != got.Variant {
+			return fmt.Errorf("recorded patch origin platform %s does not match requested platform %s",
+				platforms.FormatAll(origin), platforms.FormatAll(*requested))
+		}
+	}
+	return nil
 }
 
 // resolveRecordedOrigin preserves a matching local locator, but recovers a

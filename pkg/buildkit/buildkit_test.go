@@ -377,7 +377,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 				require.NotNil(t, resolveOpt.ImageOpt)
 				assert.Equal(t, platform, resolveOpt.ImageOpt.Platform)
 			}).
-			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"config":{"labels":{}}}`), nil).
+			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"architecture":"arm64","variant":"v8","os":"linux","config":{"labels":{}}}`), nil).
 			Once()
 		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"sh.copa.patch.origin.kind":"image-ref","BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
 			baseDigest,
