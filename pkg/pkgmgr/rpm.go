@@ -97,7 +97,7 @@ func isValidVersion(ver string) error {
 		return errors.New("upstream_version must start with digit")
 	}
 
-	allowedSymbols := ".-+~:_"
+	allowedSymbols := ".-+~:^_"
 	for _, s := range ver {
 		if !unicode.IsDigit(s) && !unicode.IsLetter(s) && !strings.ContainsRune(allowedSymbols, s) {
 			return fmt.Errorf("upstream_version %s includes invalid character %q", ver, s)
@@ -163,12 +163,14 @@ func getRPMImageName(manifest *unversioned.UpdateManifest, osType string, osVers
 // getChrootToolImage returns a tooling image suitable for chroot-based patching
 // of RPM images that lack their own package management tools. The tooling image
 // must contain dnf. We use the target image's own repo configuration via
-// --setopt=reposdir so exact repo compatibility of the tooling image is not
-// required; it only needs to provide the dnf binary.
+// --setopt=reposdir. Fedora needs release-matched tooling for its DNF5
+// repository layout and RPM database compatibility.
 func getChrootToolImage(osType string, osVersion string) string {
 	majorVersion := strings.Split(osVersion, ".")[0]
 
 	switch osType {
+	case utils.OSTypeFedora:
+		return fmt.Sprintf("fedora:%s", osVersion)
 	case utils.OSTypeRedHat:
 		// AlmaLinux is binary-compatible with RHEL and freely available.
 		return fmt.Sprintf("almalinux:%s", majorVersion)
@@ -191,21 +193,21 @@ func getChrootToolImage(osType string, osVersion string) string {
 }
 
 func parseRPMTools(b []byte) (rpmToolPaths, error) {
-	buf := bytes.NewBuffer(b)
 	// rpmTools file is expected contain a string map in the format of:
 	// <tool name>:<tool path | `notfound`>
 	// ...
-	rpmTools := rpmToolPaths{}
-	fs := bufio.NewScanner(buf)
+	rpmTools := make(rpmToolPaths, bytes.Count(b, []byte("\n"))+1)
+	fs := bufio.NewScanner(bytes.NewReader(b))
 	for fs.Scan() {
-		kv := strings.Split(fs.Text(), `:`)
-		if len(kv) != 2 {
-			err := fmt.Errorf("unexpected %s file entry: %s", rpmToolsFile, fs.Text())
+		line := fs.Text()
+		key, value, ok := strings.Cut(line, `:`)
+		if !ok || strings.Contains(value, `:`) {
+			err := fmt.Errorf("unexpected %s file entry: %s", rpmToolsFile, line)
 			log.Error(err)
 			return nil, err
 		}
-		if kv[1] != "notfound" && kv[1] != "" {
-			rpmTools[kv[0]] = kv[1]
+		if value != "notfound" && value != "" {
+			rpmTools[key] = value
 		}
 	}
 	return rpmTools, nil
@@ -505,25 +507,23 @@ func (rm *rpmManager) generateToolInstallCmd(ctx context.Context, toolsListed *l
 }
 
 func parseManifestFile(file string) (map[string]string, error) {
-	// split into lines
 	file = strings.TrimSuffix(file, "\n")
-	lines := strings.Split(file, "\n")
+	resultMap := make(map[string]string, strings.Count(file, "\n")+1)
 
-	resultMap := make(map[string]string)
-
-	// iterate over lines
-	for _, line := range lines {
-		// split line into columns
-		columns := strings.Split(line, "\t")
-
-		if len(columns) >= 2 {
-			// get package name and version
-			name := columns[0]
-			version := columns[1]
-			resultMap[name] = version
-		} else {
+	for {
+		line, rest, ok := strings.Cut(file, "\n")
+		name, version, hasVersion := strings.Cut(line, "\t")
+		if !hasVersion {
 			return nil, errors.New("unexpected format when parsing rpm manifest file")
 		}
+		if versionEnd := strings.IndexByte(version, '\t'); versionEnd >= 0 {
+			version = version[:versionEnd]
+		}
+		resultMap[name] = version
+		if !ok {
+			break
+		}
+		file = rest
 	}
 	return resultMap, nil
 }
@@ -1083,6 +1083,11 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 
 	chrootDir := "/tmp/rootfs"
 	manifestFile := "/tmp/manifest"
+	reposDir := chrootDir + "/etc/yum.repos.d"
+	if rm.osType == utils.OSTypeFedora {
+		// Fedora 45 moved vendor repository definitions out of /etc.
+		reposDir += "," + chrootDir + "/usr/share/dnf5/repos.d"
+	}
 
 	// If specific updates provided, parse into pkg names, else will update all
 	if updates != nil {
@@ -1107,7 +1112,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		dnfCmd = `
                 if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
                 output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
                     upgrade -y %s 2>&1) || true
@@ -1116,7 +1121,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                     echo "updates_applied" > "${COPA_UPDATES_MARKER}"
                 fi
                 dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     clean all 2>/dev/null || true
                 rm -rf "${COPA_CHROOT_DIR}"/var/cache/dnf/* "${COPA_CHROOT_DIR}"/var/log/dnf.*
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
@@ -1125,7 +1130,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 		dnfCmd = `
                 if ! [[ -d "${COPA_CHROOT_DIR}/var/lib/rpm" ]]; then echo "RPM DB not found"; exit 1; fi
                 output=$(dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     --releasever="${COPA_RELEASE_VER}" \
                     --nogpgcheck \
                     upgrade -y %s 2>&1)
@@ -1136,7 +1141,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
                     echo "updates_applied" > "${COPA_UPDATES_MARKER}"
                 fi
                 dnf --installroot="${COPA_CHROOT_DIR}" \
-                    --setopt=reposdir="${COPA_CHROOT_DIR}/etc/yum.repos.d" \
+                    --setopt=reposdir="${COPA_REPOS_DIR}" \
                     clean all 2>/dev/null || true
                 rm -rf "${COPA_CHROOT_DIR}"/var/cache/dnf/* "${COPA_CHROOT_DIR}"/var/log/dnf.*
                 rpm --dbpath "${COPA_CHROOT_DIR}"/var/lib/rpm -qa --qf="%%{NAME}\t%%{VERSION}-%%{RELEASE}\t%%{ARCH}\n" %s > "${COPA_MANIFEST_FILE}"
@@ -1153,6 +1158,7 @@ func (rm *rpmManager) dnfChrootInstallUpdates(ctx context.Context, updates unver
 
 	run := toolingBase.Run(
 		llb.AddEnv("COPA_CHROOT_DIR", chrootDir),
+		llb.AddEnv("COPA_REPOS_DIR", reposDir),
 		llb.AddEnv("COPA_RELEASE_VER", releaseVer),
 		llb.AddEnv("COPA_MANIFEST_FILE", filepath.Join(chrootDir, manifestFile)),
 		llb.AddEnv("COPA_UPDATES_MARKER", updatesMarkerFile),
@@ -1206,16 +1212,7 @@ func rpmReadResultsManifest(b []byte) ([]string, error) {
 	if b == nil {
 		return nil, fmt.Errorf("nil result manifest buffer")
 	}
-
-	buf := bytes.NewBuffer(b)
-
-	var lines []string
-	fs := bufio.NewScanner(buf)
-	for fs.Scan() {
-		lines = append(lines, fs.Text())
-	}
-
-	return lines, nil
+	return splitManifestLines(b), nil
 }
 
 func getJSONPackageData(packageInfo map[string]string) ([]byte, error) {
@@ -1235,14 +1232,12 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 
 	// Not strictly necessary, but sort the two lists to not take a dependency on the
 	// ordering behavior of rpm -qa output
-	sort.SliceStable(updates, func(i, j int) bool {
+	sort.Slice(updates, func(i, j int) bool {
 		return updates[i].Name < updates[j].Name
 	})
 	log.Debugf("Required updates: %s", updates)
 
-	sort.SliceStable(lines, func(i, j int) bool {
-		return lines[i] < lines[j]
-	})
+	sort.Strings(lines)
 	log.Debugf("Resulting updates: %s", lines)
 
 	// Assert rpm info list doesn't contain more entries than expected
@@ -1259,16 +1254,28 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	var errorPkgs []string
 	lineIndex := 0
 	for _, update := range updates {
-		expectedPrefix := update.Name + "\t"
-		if lineIndex >= len(lines) || !strings.HasPrefix(lines[lineIndex], expectedPrefix) {
+		if lineIndex >= len(lines) {
+			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			continue
+		}
+		line := lines[lineIndex]
+		nameLen := len(update.Name)
+		if len(line) <= nameLen || line[:nameLen] != update.Name || line[nameLen] != '\t' {
 			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
 			continue
 		}
 
-		// Found a match, trim prefix- and drop the .arch suffix to get version string
-		archIndex := strings.LastIndex(lines[lineIndex], "\t")
-		version := strings.TrimPrefix(lines[lineIndex][:archIndex], expectedPrefix)
+		// Found a match, trim prefix and drop the arch suffix to get version string
+		archIndex := strings.LastIndexByte(line, '\t')
 		lineIndex++
+		if archIndex <= nameLen {
+			err := fmt.Errorf("unexpected result manifest entry %q for package %s: missing architecture", line, update.Name)
+			log.Error(err)
+			errorPkgs = append(errorPkgs, update.Name)
+			allErrors = multierror.Append(allErrors, err)
+			continue
+		}
+		version := line[nameLen+1 : archIndex]
 
 		if !cmp.IsValid(version) {
 			err := fmt.Errorf("invalid version %s found for package %s", version, update.Name)

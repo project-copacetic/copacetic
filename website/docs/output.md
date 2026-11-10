@@ -24,6 +24,8 @@ OpenVEX is an implementation of Vulnerability Exploitability eXchange (VEX) form
 
 :::
 
+In a multi-platform run, `--output` receives one VEX document covering every platform Copa patched. Each patched platform image is its own product (`pkg:oci/<name@digest>`). A vulnerability fixed on more than one platform is one statement with one product per patched platform image. Platforms that were preserved unchanged, or that were already up-to-date, are not included.
+
 To generate a VEX document using OpenVEX, use `--format="openvex"` flag, and use `--output` to specify a file path. For example:
 
 ```bash

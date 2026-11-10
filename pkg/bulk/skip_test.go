@@ -62,6 +62,13 @@ func TestDiscoverExistingPatchTags(t *testing.T) {
 			allTags:  []string{"1.25.3-fixed", "1.25.3-fixed-1", "1.25.3-patched"},
 			expected: []string{"1.25.3-fixed", "1.25.3-fixed-1"},
 		},
+		{
+			name:     "signed suffixes are ignored",
+			repo:     "registry.io/nginx",
+			baseTag:  "1.25.3-patched",
+			allTags:  []string{"1.25.3-patched", "1.25.3-patched--1", "1.25.3-patched-+1", "1.25.3-patched-1"},
+			expected: []string{"1.25.3-patched", "1.25.3-patched-1"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -296,6 +303,8 @@ func TestExtractVersionNumber(t *testing.T) {
 		{"1.25.3-patched-1", "1.25.3-patched", 1},
 		{"1.25.3-patched-10", "1.25.3-patched", 10},
 		{"1.25.3-patched-100", "1.25.3-patched", 100},
+		{"1.25.3-patched--1", "1.25.3-patched", 0},
+		{"1.25.3-patched-+1", "1.25.3-patched", 0},
 		{"invalid-tag", "1.25.3-patched", 0},
 	}
 
@@ -322,12 +331,16 @@ func TestBuildReportIndex(t *testing.T) {
 	report1 := `{"ArtifactName": "alpine:3.14.0", "Results": []}`
 	report2 := `{"ArtifactName": "registry.io/nginx:1.25.3-patched", "Results": []}`
 	report3 := `{"ArtifactName": "quay.io/prometheus/alertmanager:v0.28.1", "Results": []}`
+	escapedSlashReport := `{"ArtifactName":"quay.io\/prometheus\/node-exporter:v1.8.2","Results":[]}`
+	lowerCamelReport := `{"artifactName":"example.com/team/app:v1.0.0","Results":[]}`
 	invalidJSON := `{invalid json`
 	noArtifact := `{"Results": []}`
 
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "alpine.json"), []byte(report1), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "nginx.json"), []byte(report2), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "prometheus.json"), []byte(report3), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "escaped-slash.json"), []byte(escapedSlashReport), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "lower-camel.json"), []byte(lowerCamelReport), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "invalid.json"), []byte(invalidJSON), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "no-artifact.json"), []byte(noArtifact), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "not-json.txt"), []byte("text file"), 0o600))
@@ -339,8 +352,8 @@ func TestBuildReportIndex(t *testing.T) {
 	assert.NotNil(t, idx)
 	assert.NotNil(t, idx.refs)
 
-	// Check that valid reports were indexed (3 valid reports)
-	assert.Equal(t, 3, len(idx.refs), "Should index 3 valid reports")
+	// Check that valid reports were indexed (5 valid reports)
+	assert.Equal(t, 5, len(idx.refs), "Should index 5 valid reports")
 
 	// Verify specific entries (normalized references)
 	_, found := idx.refs["index.docker.io/library/alpine:3.14.0"]
@@ -352,8 +365,47 @@ func TestBuildReportIndex(t *testing.T) {
 	_, found = idx.refs["quay.io/prometheus/alertmanager:v0.28.1"]
 	assert.True(t, found, "Should find prometheus report")
 
+	_, found = idx.refs["quay.io/prometheus/node-exporter:v1.8.2"]
+	assert.True(t, found, "Should find escaped slash report")
+
+	_, found = idx.refs["example.com/team/app:v1.0.0"]
+	assert.True(t, found, "Should find lower-camel ArtifactName report")
+
 	// Verify invalid files were not indexed
-	assert.Equal(t, 3, len(idx.refs), "Should only have 3 entries (invalid files skipped)")
+	assert.Equal(t, 5, len(idx.refs), "Should only have 5 entries (invalid files skipped)")
+}
+
+func TestExtractTopLevelStringFieldCompatibility(t *testing.T) {
+	tests := []struct {
+		name    string
+		report  string
+		want    string
+		wantErr bool
+	}{
+		{name: "exact key", report: `{"ArtifactName":"a"}`, want: "a"},
+		{name: "folded key", report: `{"artifactName":"a"}`, want: "a"},
+		{name: "uppercase key", report: `{"ARTIFACTNAME":"a"}`, want: "a"},
+		{name: "escaped folded key", report: `{"artifact\u004Eame":"a"}`, want: "a"},
+		{name: "later folded key wins", report: `{"ArtifactName":"first","artifactname":"last"}`, want: "last"},
+		{name: "later exact key wins", report: `{"artifactname":"first","ArtifactName":"last"}`, want: "last"},
+		{name: "later null is ignored", report: `{"ArtifactName":"first","artifactname":null}`, want: "first"},
+		{name: "earlier null is ignored", report: `{"artifactname":null,"ArtifactName":"last"}`, want: "last"},
+		{name: "null only", report: `{"ArtifactName":null}`, want: ""},
+		{name: "nested key is ignored", report: `{"value":{"ArtifactName":"nested"}}`, want: ""},
+		{name: "number is rejected", report: `{"ArtifactName":1}`, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := extractTopLevelStringField([]byte(tt.report), "ArtifactName")
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestReportIndexLookup(t *testing.T) {

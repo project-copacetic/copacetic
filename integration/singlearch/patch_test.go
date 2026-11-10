@@ -135,7 +135,7 @@ func TestPatch(t *testing.T) {
 				// The custom-unix fixture persists /var/lib/docker in a named volume.
 				// Remove both possible outputs so this run cannot accept a tag left by
 				// an earlier job.
-				removeDockerImages(t, patchedRef, unsuffixedRef)
+				removeRuntimeImages(t, imageloader.Docker, patchedRef, unsuffixedRef)
 			}
 
 			t.Log("patching image")
@@ -146,7 +146,7 @@ func TestPatch(t *testing.T) {
 				// visible to the nested daemon as a single-platform image. Copa then
 				// correctly emits the unsuffixed single-platform tag instead of the
 				// anticipated architecture-suffixed tag.
-				patchedRef = waitForDockerImage(t, patchedRef, unsuffixedRef)
+				patchedRef = waitForRuntimeImage(t, imageloader.Docker, patchedRef, unsuffixedRef)
 			}
 
 			// Sanity-check that copa wrote an inspectable patched manifest with
@@ -274,7 +274,7 @@ func getManifestPlatforms(t *testing.T, imageRef string) []manifestPlatform {
 	return filteredPlatforms
 }
 
-func waitForDockerImage(t *testing.T, refs ...string) string {
+func waitForRuntimeImage(t *testing.T, imageRuntime string, refs ...string) string {
 	t.Helper()
 
 	candidates := uniqueImageRefs(refs...)
@@ -284,8 +284,8 @@ func waitForDockerImage(t *testing.T, refs ...string) string {
 	lastOutput := make(map[string]string, len(candidates))
 	for {
 		for _, ref := range candidates {
-			args := dockerArgs("image", "inspect", ref)
-			cmd := exec.CommandContext(ctx, "docker", args...) // #nosec G204 -- refs come from pinned integration fixtures.
+			args := runtimeImageArgs(imageRuntime, "image", "inspect", ref)
+			cmd := exec.CommandContext(ctx, imageRuntime, args...) // #nosec G204 -- runtime and refs come from fixed integration fixtures.
 			output, err := cmd.CombinedOutput()
 			if err == nil {
 				if ref != candidates[0] {
@@ -295,13 +295,13 @@ func waitForDockerImage(t *testing.T, refs ...string) string {
 			}
 			lastOutput[ref] = string(output)
 			if ctx.Err() != nil {
-				failDockerImageWait(t, ctx.Err(), candidates, lastOutput)
+				failRuntimeImageWait(t, imageRuntime, ctx.Err(), candidates, lastOutput)
 			}
 		}
 
 		select {
 		case <-ctx.Done():
-			failDockerImageWait(t, ctx.Err(), candidates, lastOutput)
+			failRuntimeImageWait(t, imageRuntime, ctx.Err(), candidates, lastOutput)
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
@@ -320,27 +320,35 @@ func uniqueImageRefs(refs ...string) []string {
 	return candidates
 }
 
-func failDockerImageWait(t *testing.T, waitErr error, candidates []string, lastOutput map[string]string) {
+func failRuntimeImageWait(t *testing.T, imageRuntime string, waitErr error, candidates []string, lastOutput map[string]string) {
 	t.Helper()
 
 	diagnosticCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	listCmd := exec.CommandContext(diagnosticCtx, "docker", dockerArgs("images", "--format", "{{.Repository}}:{{.Tag}}")...) // #nosec G204 -- fixed diagnostic command.
+	listCmd := exec.CommandContext(
+		diagnosticCtx, imageRuntime,
+		runtimeImageArgs(imageRuntime, "images", "--format", "{{.Repository}}:{{.Tag}}")...,
+	) // #nosec G204 -- runtime is a fixed integration fixture.
 	images, diagnosticErr := listCmd.CombinedOutput()
 	t.Fatalf(
-		"none of the patched image candidates %v became visible in the Docker daemon: %v; "+
+		"none of the patched image candidates %v became visible in %s: %v; "+
 			"inspect errors: %v; available images: %s; diagnostic error: %v",
-		candidates, waitErr, lastOutput, string(images), diagnosticErr,
+		candidates, imageRuntime, waitErr, lastOutput, string(images), diagnosticErr,
 	)
 }
 
-func removeDockerImages(t *testing.T, refs ...string) {
+func removeRuntimeImages(t *testing.T, imageRuntime string, refs ...string) {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	for _, ref := range uniqueImageRefs(refs...) {
-		cmd := exec.CommandContext(ctx, "docker", dockerArgs("image", "rm", "--force", ref)...) // #nosec G204 -- refs come from pinned integration fixtures.
+		args := []string{"image", "rm", "--force"}
+		if imageRuntime == imageloader.Podman {
+			args = append(args, "--ignore")
+		}
+		args = runtimeImageArgs(imageRuntime, append(args, ref)...)
+		cmd := exec.CommandContext(ctx, imageRuntime, args...) // #nosec G204 -- runtime and refs come from fixed integration fixtures.
 		output, err := cmd.CombinedOutput()
 		if err == nil || strings.Contains(string(output), "No such image") {
 			continue
@@ -350,6 +358,13 @@ func removeDockerImages(t *testing.T, refs ...string) {
 		}
 		require.NoError(t, err, "failed to remove stale image %s: %s", ref, string(output))
 	}
+}
+
+func runtimeImageArgs(imageRuntime string, args ...string) []string {
+	if imageRuntime == imageloader.Docker {
+		return dockerArgs(args...)
+	}
+	return args
 }
 
 func dockerArgs(args ...string) []string {
@@ -442,10 +457,9 @@ func TestPatchDaemonOnlyImage(t *testing.T) {
 		t.Skip("daemon-only patching requires COPA_BUILDKIT_ADDR=docker://...")
 	}
 
-	// Use a small, stable image from the existing fixtures so we don't pull
-	// anything new. The digest pins the content to make the test reproducible.
+	// Pin the amd64 manifest to match --platform below, including on ARM64 hosts.
 	const (
-		source     = "docker.io/library/nginx:1.21.6@sha256:2bcabc23b45489fb0885d69a06ba1d648aeda973fae7bb981bafbb884165e514"
+		source     = "docker.io/library/nginx:1.27.0-bookworm@sha256:a3ab061d6909191271bcf24b9ab6eee9e8fc5f2fbf1525c5bd84d21f27a9d708"
 		daemonOnly = "127.0.0.1:1/copa-daemon-only:original"
 		bogusHost  = "127.0.0.1:1"
 	)

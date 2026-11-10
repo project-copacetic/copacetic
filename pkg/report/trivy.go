@@ -3,7 +3,6 @@ package report
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"regexp"
 	"sort"
@@ -17,6 +16,15 @@ import (
 )
 
 type TrivyParser struct{}
+
+var (
+	nodeVersionRe = regexp.MustCompile(`ENV NODE_VERSION=([0-9]+\.[0-9]+\.[0-9]+)`)
+	yarnVersionRe = regexp.MustCompile(`ENV YARN_VERSION=([0-9]+\.[0-9]+\.[0-9]+)`)
+
+	specialPackagePatchLevels = map[string]string{
+		"certifi": "major", // Always use latest version for certificate handling
+	}
+)
 
 // isUnpatchableDotnetRuntimePackage returns true for .NET runtime/platform packages
 // that have the DotnetPlatform NuGet package type and cannot be installed via
@@ -40,80 +48,133 @@ func isUnpatchableDotnetRuntimePackage(pkgName string) bool {
 	return false
 }
 
-// getSpecialPackagePatchLevels returns a map of package names to their special patch level handling rules.
-func getSpecialPackagePatchLevels() map[string]string {
-	return map[string]string{
-		"certifi": "major", // Always use latest version for certificate handling
-	}
-}
-
 // parseVersion parses a semantic version string and returns major, minor, patch as integers.
 func parseVersion(version string) (major, minor, patch int, err error) {
 	// Remove any prefix like 'v'
 	version = strings.TrimPrefix(version, "v")
 
-	// Split by dots
-	parts := strings.Split(version, ".")
-	if len(parts) < 1 {
-		return 0, 0, 0, errors.New("invalid version format")
-	}
-
-	major, err = strconv.Atoi(parts[0])
+	majorPart, rest, hasRest := strings.Cut(version, ".")
+	major, err = strconv.Atoi(majorPart)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-
-	if len(parts) >= 2 {
-		minor, err = strconv.Atoi(parts[1])
-		if err != nil {
-			return 0, 0, 0, err
-		}
+	if !hasRest {
+		return major, 0, 0, nil
 	}
 
-	if len(parts) >= 3 {
-		// Handle patch versions that might have additional suffixes (e.g., "16-1ubuntu2.1")
-		patchStr := strings.Split(parts[2], "-")[0]
-		patch, err = strconv.Atoi(patchStr)
-		if err != nil {
-			return 0, 0, 0, err
-		}
+	minorPart, rest, hasRest := strings.Cut(rest, ".")
+	minor, err = strconv.Atoi(minorPart)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if !hasRest {
+		return major, minor, 0, nil
+	}
+
+	// Match the previous strings.Split behavior: the patch is the third dot-separated
+	// segment, with any dash suffix ignored (e.g., "16-1ubuntu2.1" -> "16").
+	patchPart, _, _ := strings.Cut(rest, ".")
+	patchPart, _, _ = strings.Cut(patchPart, "-")
+	patch, err = strconv.Atoi(patchPart)
+	if err != nil {
+		return 0, 0, 0, err
 	}
 
 	return major, minor, patch, nil
 }
 
-// compareVersions compares two version strings, returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2.
-func compareVersions(v1, v2 string) int {
-	maj1, min1, patch1, err1 := parseVersion(v1)
-	maj2, min2, patch2, err2 := parseVersion(v2)
+type versionCandidate struct {
+	value      string
+	major      int
+	minor      int
+	patch      int
+	comparable bool
+	prefix     versionPartPrefix
+}
 
-	// If parsing fails, fall back to string comparison
-	if err1 != nil || err2 != nil {
-		return strings.Compare(v1, v2)
+type versionPartPrefix struct {
+	first  int
+	second int
+	length int
+}
+
+func newVersionCandidate(value string) versionCandidate {
+	major, minor, patch, err := parseVersion(value)
+	return versionCandidate{
+		value:      value,
+		major:      major,
+		minor:      minor,
+		patch:      patch,
+		comparable: err == nil,
+	}
+}
+
+func compareVersionCandidates(v1, v2 versionCandidate) int {
+	// If parsing fails, fall back to string comparison.
+	if !v1.comparable || !v2.comparable {
+		return strings.Compare(v1.value, v2.value)
 	}
 
-	if maj1 != maj2 {
-		if maj1 < maj2 {
+	if v1.major != v2.major {
+		if v1.major < v2.major {
 			return -1
 		}
 		return 1
 	}
 
-	if min1 != min2 {
-		if min1 < min2 {
+	if v1.minor != v2.minor {
+		if v1.minor < v2.minor {
 			return -1
 		}
 		return 1
 	}
 
-	if patch1 != patch2 {
-		if patch1 < patch2 {
+	if v1.patch != v2.patch {
+		if v1.patch < v2.patch {
 			return -1
 		}
 		return 1
 	}
 
 	return 0
+}
+
+func setHighestVersionCandidate(highest *versionCandidate, candidate versionCandidate) {
+	if highest.value == "" || compareVersionCandidates(candidate, *highest) > 0 {
+		*highest = candidate
+	}
+}
+
+func parseVersionPartPrefix(version string) versionPartPrefix {
+	version = strings.TrimPrefix(version, "v")
+	part, rest, found := strings.Cut(version, ".")
+	prefix := versionPartPrefix{
+		first:  parseLeadingInt(part),
+		length: 1,
+	}
+	if !found {
+		return prefix
+	}
+
+	part, _, _ = strings.Cut(rest, ".")
+	prefix.second = parseLeadingInt(part)
+	prefix.length = 2
+	return prefix
+}
+
+func parseLeadingInt(part string) int {
+	digitEnd := 0
+	for digitEnd < len(part) && part[digitEnd] >= '0' && part[digitEnd] <= '9' {
+		digitEnd++
+	}
+	if digitEnd == 0 {
+		return 0
+	}
+	num, err := strconv.Atoi(part[:digitEnd])
+	if err != nil {
+		return 0
+	}
+	return num
 }
 
 // findOptimalFixedVersion finds the best version that fixes all CVEs while being most compatible.
@@ -135,176 +196,96 @@ func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersion
 		return ""
 	}
 
-	// Detect if any version entries contain comma-separated values
+	installed := newVersionCandidate(installedVersion)
+	installed.prefix = parseVersionPartPrefix(installedVersion)
 	hasCommaSeparatedVersions := false
+	var highestPatch, highestMinor, highestMajor, highestAny versionCandidate
+
+	processCandidate := func(candidate string) {
+		version := strings.TrimSpace(candidate)
+		if version == "" {
+			return
+		}
+
+		candidateVersion := newVersionCandidate(version)
+
+		// Filter out versions that are not higher than installed version.
+		if compareVersionCandidates(candidateVersion, installed) <= 0 {
+			return
+		}
+
+		setHighestVersionCandidate(&highestAny, candidateVersion)
+
+		// Group versions by upgrade type (even for single candidates to respect patch level).
+		candidateVersion.prefix = parseVersionPartPrefix(version)
+		switch {
+		case candidateVersion.prefix.length >= 2 && installed.prefix.length >= 2 &&
+			candidateVersion.prefix.first == installed.prefix.first && candidateVersion.prefix.second == installed.prefix.second:
+			setHighestVersionCandidate(&highestPatch, candidateVersion)
+		case candidateVersion.prefix.length >= 1 && installed.prefix.length >= 1 && candidateVersion.prefix.first == installed.prefix.first:
+			setHighestVersionCandidate(&highestMinor, candidateVersion)
+		default:
+			setHighestVersionCandidate(&highestMajor, candidateVersion)
+		}
+	}
+
 	for _, versionStr := range fixedVersions {
 		if strings.Contains(versionStr, ",") {
 			hasCommaSeparatedVersions = true
-			break
-		}
-	}
-
-	// Collect all possible fixed versions
-	var allCandidates []string
-
-	for _, versionStr := range fixedVersions {
-		if strings.Contains(versionStr, ",") {
-			// Split comma-separated versions
-			parts := strings.Split(versionStr, ",")
-			for _, part := range parts {
-				trimmed := strings.TrimSpace(part)
-				if trimmed != "" {
-					allCandidates = append(allCandidates, trimmed)
+			for {
+				part, rest, found := strings.Cut(versionStr, ",")
+				processCandidate(part)
+				if !found {
+					break
 				}
+				versionStr = rest
 			}
 		} else {
-			trimmed := strings.TrimSpace(versionStr)
-			if trimmed != "" {
-				allCandidates = append(allCandidates, trimmed)
-			}
+			processCandidate(versionStr)
 		}
 	}
 
-	if len(allCandidates) == 0 {
+	if highestAny.value == "" {
+		// If no valid candidates (no versions higher than installed), do not update.
 		return ""
 	}
 
-	// Filter out versions that are not higher than installed version
-	var validCandidates []string
-	for _, version := range allCandidates {
-		if compareVersions(version, installedVersion) > 0 {
-			validCandidates = append(validCandidates, version)
-		}
-	}
-
-	if len(validCandidates) == 0 {
-		// If no valid candidates (no versions higher than installed), do not update
-		return ""
-	}
-
-	// Group versions by upgrade type (even for single candidates to respect patch level)
-	installedParts := parseVersionParts(installedVersion)
-	var patchVersions, minorVersions, majorVersions []string
-
-	for _, v := range validCandidates {
-		vParts := parseVersionParts(v)
-
-		// Categorize version by upgrade type
-		switch {
-		case len(vParts) >= 2 && len(installedParts) >= 2 &&
-			vParts[0] == installedParts[0] && vParts[1] == installedParts[1]:
-			// Patch-level upgrade (same major.minor)
-			patchVersions = append(patchVersions, v)
-		case len(vParts) >= 1 && len(installedParts) >= 1 && vParts[0] == installedParts[0]:
-			// Minor-level upgrade (same major)
-			minorVersions = append(minorVersions, v)
-		default:
-			// Major-level upgrade
-			majorVersions = append(majorVersions, v)
-		}
-	}
-
-	// Apply library patch level preference
+	// Apply library patch level preference.
 	switch libraryPatchLevel {
 	case "patch":
-		// Only update to patch versions, no fallback to minor/major
-		if len(patchVersions) > 0 {
-			return getHighestVersion(patchVersions)
-		}
-		// If no patch versions available, do not update
-		return ""
+		// Only update to patch versions, no fallback to minor/major.
+		return highestPatch.value
 
 	case "minor":
-		// Only update to patch or minor versions, never major
-		if len(patchVersions) > 0 {
-			return getHighestVersion(patchVersions)
+		// Only update to patch or minor versions, never major.
+		if highestPatch.value != "" {
+			return highestPatch.value
 		}
-		if len(minorVersions) > 0 {
-			return getHighestVersion(minorVersions)
-		}
-		// Do not fall back to major versions
-		return ""
+		return highestMinor.value
 
 	case "major":
-		// For major patch level, the behavior depends on whether we have comma-separated versions
+		// For major patch level, the behavior depends on whether we have comma-separated versions.
 		if hasCommaSeparatedVersions {
-			// When comma-separated versions exist, prefer patch > minor > major for compatibility
-			if len(patchVersions) > 0 {
-				return getHighestVersion(patchVersions)
+			// When comma-separated versions exist, prefer patch > minor > major for compatibility.
+			if highestPatch.value != "" {
+				return highestPatch.value
 			}
-			if len(minorVersions) > 0 {
-				return getHighestVersion(minorVersions)
+			if highestMinor.value != "" {
+				return highestMinor.value
 			}
-			if len(majorVersions) > 0 {
-				return getHighestVersion(majorVersions)
-			}
-		} else {
-			// When no comma-separated versions, pick the highest version to fix all CVEs.
-			// While this approach fixes the most vulnerabilities, it may introduce breaking changes
-			// or compatibility issues. Users should weigh the security benefits against the
-			// potential risks of upgrading to a higher version.
-			return getHighestVersion(validCandidates)
+			return highestMajor.value
 		}
-		return ""
+
+		// When no comma-separated versions, pick the highest version to fix all CVEs.
+		// While this approach fixes the most vulnerabilities, it may introduce breaking changes
+		// or compatibility issues. Users should weigh the security benefits against the
+		// potential risks of upgrading to a higher version.
+		return highestAny.value
 
 	default:
-		// Default to patch behavior for invalid values
-		if len(patchVersions) > 0 {
-			return getHighestVersion(patchVersions)
-		}
-		// If no patch versions available, do not update
-		return ""
+		// Default to patch behavior for invalid values.
+		return highestPatch.value
 	}
-}
-
-// getHighestVersion returns the highest version from a slice of version strings.
-func getHighestVersion(versions []string) string {
-	if len(versions) == 0 {
-		return ""
-	}
-
-	highest := versions[0]
-	for _, v := range versions[1:] {
-		if compareVersions(v, highest) > 0 {
-			highest = v
-		}
-	}
-	return highest
-}
-
-// parseVersionParts parses a version string into integer parts.
-func parseVersionParts(version string) []int {
-	// Remove common prefixes like 'v'
-	version = strings.TrimPrefix(version, "v")
-
-	// Split by dots and parse each part as integer
-	parts := strings.Split(version, ".")
-	var intParts []int
-
-	for _, part := range parts {
-		// Handle parts that might have additional suffixes like "-r1", "-alpha", etc.
-		// Take only the numeric prefix
-		var numStr string
-		for _, char := range part {
-			if char >= '0' && char <= '9' {
-				numStr += string(char)
-			} else {
-				break
-			}
-		}
-
-		if numStr != "" {
-			if num, err := strconv.Atoi(numStr); err == nil {
-				intParts = append(intParts, num)
-			} else {
-				intParts = append(intParts, 0)
-			}
-		} else {
-			intParts = append(intParts, 0)
-		}
-	}
-
-	return intParts
 }
 
 func parseTrivyReport(file string) (*trivyTypes.Report, error) {
@@ -322,10 +303,6 @@ func parseTrivyReport(file string) (*trivyTypes.Report, error) {
 // extractVersionsFromImageHistory extracts Node.js and Yarn versions from Docker image history.
 // It looks for ENV commands like "ENV NODE_VERSION=18.20.3" and "ENV YARN_VERSION=1.22.19".
 func extractVersionsFromImageHistory(history []v1.History) (nodeVersion, yarnVersion string) {
-	// Regular expressions to match version environment variables
-	nodeVersionRe := regexp.MustCompile(`ENV NODE_VERSION=([0-9]+\.[0-9]+\.[0-9]+)`)
-	yarnVersionRe := regexp.MustCompile(`ENV YARN_VERSION=([0-9]+\.[0-9]+\.[0-9]+)`)
-
 	for _, h := range history {
 		if h.CreatedBy == "" {
 			continue
@@ -364,6 +341,10 @@ func (t *TrivyParser) Parse(file string) (*unversioned.UpdateManifest, error) {
 }
 
 func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
+	return t.ParseWithPackageTypes(file, utils.PkgTypeOS+","+utils.PkgTypeLibrary, libraryPatchLevel)
+}
+
+func (t *TrivyParser) ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	report, err := parseTrivyReport(file)
 	if err != nil {
 		return nil, err
@@ -398,6 +379,9 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		},
 	}
 
+	includeOS := strings.Contains(pkgTypes, utils.PkgTypeOS)
+	includeLibrary := strings.Contains(pkgTypes, utils.PkgTypeLibrary)
+
 	// Summary counts, tracked separately for OS and library so that
 	// pkgTypes filtering in defaultParseScanReport can drop the irrelevant half.
 	osSummary := &unversioned.PatchSummary{}
@@ -406,16 +390,21 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 	// Process Language packages - group by (name, pkgPath) to find optimal fixed version.
 	// Using a composite key ensures the same package at different locations (e.g. system
 	// Python vs a venv) is treated as a separate upgrade target.
-	langPackageVulns := make(map[string][]trivyTypes.DetectedVulnerability)
-	langPackageInfo := make(map[string]unversioned.UpdatePackage)
+	var langPackageFixedVersions map[string][]string
+	var langPackageInfo map[string]unversioned.UpdatePackage
 	// track all vulnerability IDs per lang package for VEX emission
-	langPackageVulnIDs := make(map[string]map[string]struct{})
+	var langPackageVulnIDs map[string]map[string]struct{}
+	if includeLibrary {
+		langPackageFixedVersions = make(map[string][]string)
+		langPackageInfo = make(map[string]unversioned.UpdatePackage)
+		langPackageVulnIDs = make(map[string]map[string]struct{})
+	}
 
 	for i := range report.Results {
 		r := &report.Results[i]
 
 		// Process OS packages
-		if r.Class == "os-pkgs" {
+		if includeOS && r.Class == "os-pkgs" {
 			for v := range r.Vulnerabilities {
 				vuln := &r.Vulnerabilities[v]
 				osSummary.Total++
@@ -436,7 +425,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		}
 
 		// Process Language packages
-		if r.Class == utils.LangPackages {
+		if includeLibrary && r.Class == utils.LangPackages {
 			// Check if this is a Python, Node.js, or Go related target
 			if r.Type == utils.PythonPackages || r.Type == utils.NodePackages || r.Type == utils.GoModules || r.Type == utils.GoBinary {
 				for v := range r.Vulnerabilities {
@@ -452,8 +441,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 					if vuln.FixedVersion != "" {
 						// Composite key: same package at different paths is a separate upgrade target.
 						key := vuln.PkgName + "\x00" + pkgPath
-						if _, exists := langPackageVulns[key]; !exists {
-							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
+						if _, exists := langPackageFixedVersions[key]; !exists {
+							langPackageFixedVersions[key] = nil
 							langPackageInfo[key] = unversioned.UpdatePackage{
 								Name:             vuln.PkgName,
 								Type:             string(r.Type),
@@ -463,7 +452,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 							}
 							langPackageVulnIDs[key] = make(map[string]struct{})
 						}
-						langPackageVulns[key] = append(langPackageVulns[key], *vuln)
+						langPackageFixedVersions[key] = append(langPackageFixedVersions[key], vuln.FixedVersion)
 						if vuln.VulnerabilityID != "" {
 							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
@@ -489,8 +478,8 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 					libSummary.Total++
 					if vuln.FixedVersion != "" {
 						key := vuln.PkgName + "\x00" + vuln.PkgPath
-						if _, exists := langPackageVulns[key]; !exists {
-							langPackageVulns[key] = []trivyTypes.DetectedVulnerability{}
+						if _, exists := langPackageFixedVersions[key]; !exists {
+							langPackageFixedVersions[key] = nil
 							langPackageInfo[key] = unversioned.UpdatePackage{
 								Name:             vuln.PkgName,
 								Type:             string(r.Type),
@@ -500,7 +489,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 							}
 							langPackageVulnIDs[key] = make(map[string]struct{})
 						}
-						langPackageVulns[key] = append(langPackageVulns[key], *vuln)
+						langPackageFixedVersions[key] = append(langPackageFixedVersions[key], vuln.FixedVersion)
 						if vuln.VulnerabilityID != "" {
 							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
 						}
@@ -514,23 +503,29 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 
 	// Process Language packages to find optimal fixed versions.
 	// The key is a composite of PkgName + NUL + PkgPath.
-	for key, vulns := range langPackageVulns {
-		var fixedVersions []string
+	for key, fixedVersionValues := range langPackageFixedVersions {
+		fixedVersions := make([]string, 0, len(fixedVersionValues))
 
-		for i := range vulns {
-			if vulns[i].FixedVersion != "" {
-				// Handle comma-separated fixed versions
-				if strings.Contains(vulns[i].FixedVersion, ",") {
-					versions := strings.Split(vulns[i].FixedVersion, ",")
-					for _, v := range versions {
-						v = strings.TrimSpace(v)
-						if v != "" {
-							fixedVersions = append(fixedVersions, v)
-						}
+		for _, fixedVersion := range fixedVersionValues {
+			if fixedVersion == "" {
+				continue
+			}
+			// Handle comma-separated fixed versions. Keep this split here to preserve
+			// existing ParseWithLibraryPatchLevel behavior.
+			if strings.Contains(fixedVersion, ",") {
+				for {
+					version, rest, found := strings.Cut(fixedVersion, ",")
+					version = strings.TrimSpace(version)
+					if version != "" {
+						fixedVersions = append(fixedVersions, version)
 					}
-				} else {
-					fixedVersions = append(fixedVersions, vulns[i].FixedVersion)
+					if !found {
+						break
+					}
+					fixedVersion = rest
 				}
+			} else {
+				fixedVersions = append(fixedVersions, fixedVersion)
 			}
 		}
 
@@ -544,7 +539,7 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 			// Determine patch level to use, with special handling for certain packages.
 			// Use info.Name (the actual package name) not the composite key.
 			patchLevelToUse := libraryPatchLevel
-			if specialPatchLevel, exists := getSpecialPackagePatchLevels()[info.Name]; exists {
+			if specialPatchLevel, exists := specialPackagePatchLevels[info.Name]; exists {
 				patchLevelToUse = specialPatchLevel
 			}
 
@@ -592,8 +587,12 @@ func (t *TrivyParser) ParseWithLibraryPatchLevel(file, libraryPatchLevel string)
 		return updates.LangUpdates[i].VulnerabilityID < updates.LangUpdates[j].VulnerabilityID
 	})
 
-	updates.OSSummary = osSummary
-	updates.LibrarySummary = libSummary
+	if includeOS {
+		updates.OSSummary = osSummary
+	}
+	if includeLibrary {
+		updates.LibrarySummary = libSummary
+	}
 
 	return &updates, nil
 }

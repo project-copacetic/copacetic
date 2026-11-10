@@ -2,7 +2,7 @@
   {
     "originalImage": "docker.io/library/nginx",
     "localImage": "localhost:5000/nginx",
-    "tag": "1.21.6",
+    "tag": "1.27.0-bookworm",
     "distro": "debian", 
     "description": "Frontend test with nginx debian - inline report",
     "ignoreErrors": false,
@@ -32,7 +32,7 @@
   {
     "originalImage": "docker.io/library/nginx",
     "localImage": "localhost:5000/nginx-multiplatform",
-    "tag": "1.21.6",
+    "tag": "1.27.0-bookworm",
     "distro": "debian",
     "description": "Frontend test multiplatform nginx",
     "ignoreErrors": false,
