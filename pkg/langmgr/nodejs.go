@@ -62,9 +62,12 @@ func getNpmTarballURL(name, version string) string {
 // This is used instead of wget/curl which may not be available in all images.
 // Uses the same '\”...'\” quoting pattern as the rest of the codebase for single quotes
 // inside sh -c '...' commands. Returns non-zero exit code on download failure.
+// NODE_USE_ENV_PROXY=1 makes Node.js (>= 22.21 / >= 24.5) honour the HTTP_PROXY,
+// HTTPS_PROXY and NO_PROXY variables that llb.WithProxy sets on the RUN; older
+// Node.js versions ignore it.
 func nodeDownloadScript(url, destFile string) string {
 	return fmt.Sprintf(
-		`node -e "var h=require('\''https'\''),f=require('\''fs'\'');`+
+		`NODE_USE_ENV_PROXY=1 node -e "var h=require('\''https'\''),f=require('\''fs'\'');`+
 			`function dl(u){h.get(u,function(r){`+
 			`if(r.statusCode>300&&r.statusCode<400){dl(r.headers.location)}`+
 			`else if(r.statusCode!==200){console.error('\''HTTP '\''+r.statusCode+'\'' for '\''+u);process.exit(1)}`+
