@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.bbb483a2.css">
-<script src="/copacetic/website/assets/js/runtime~main.fdf84585.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.555bbcad.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.052dd6aa.js" defer="defer"></script>
 </head>
 <body>
@@ -82,8 +82,12 @@ instead.</p>
 <h3 class="anchor anchorTargetStickyNavbar_Vzrq" id="rpm">RPM<a href="#rpm" class="hash-link" aria-label="Direct link to RPM" title="Direct link to RPM" translate="no">​</a></h3>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="azure-linux-30">Azure Linux 3.0+<a href="#azure-linux-30" class="hash-link" aria-label="Direct link to Azure Linux 3.0+" title="Direct link to Azure Linux 3.0+" translate="no">​</a></h4>
 <p>Azure Linux based images will use <code>ghcr.io/project-copacetic/copacetic/azurelinux/base/core</code> with the same version as the image being patched.</p>
-<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="cbl-mariner-azure-linux-1-and-2-centos-oracle-linux-rocky-linux-alma-linux-and-amazon-linux">CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux<a href="#cbl-mariner-azure-linux-1-and-2-centos-oracle-linux-rocky-linux-alma-linux-and-amazon-linux" class="hash-link" aria-label="Direct link to CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux" title="Direct link to CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, and Amazon Linux" translate="no">​</a></h4>
+<h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="cbl-mariner-azure-linux-1-and-2-centos-oracle-linux-rocky-linux-alma-linux-fedora-and-amazon-linux">CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, Fedora, and Amazon Linux<a href="#cbl-mariner-azure-linux-1-and-2-centos-oracle-linux-rocky-linux-alma-linux-fedora-and-amazon-linux" class="hash-link" aria-label="Direct link to CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, Fedora, and Amazon Linux" title="Direct link to CBL-Mariner (Azure Linux 1 and 2), CentOS, Oracle Linux, Rocky Linux, Alma Linux, Fedora, and Amazon Linux" translate="no">​</a></h4>
 <p>These RPM-based distros will use <code>ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0</code></p>
+<p>Fedora images without package-management tools use <code>fedora:&lt;version&gt;</code> for the
+chroot update operation. Copa reads repository definitions from the target
+image, including Fedora 45&#x27;s <code>/usr/share/dnf5/repos.d</code>, rather than the tooling
+image&#x27;s repositories.</p>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="suse-sles-and-bci">SUSE (SLES and BCI)<a href="#suse-sles-and-bci" class="hash-link" aria-label="Direct link to SUSE (SLES and BCI)" title="Direct link to SUSE (SLES and BCI)" translate="no">​</a></h4>
 <p>These RPM-based distros will use <code>ghcr.io/project-copacetic/copacetic/bci/bci-base</code> with the same version as the image being patched. In case the mirrored image version isn&#x27;t available, it will fallback to the upstream image <code>registry.suse.com/bci/bci-base</code>.</p>
 <h4 class="anchor anchorTargetStickyNavbar_Vzrq" id="opensuse-leap">openSUSE Leap<a href="#opensuse-leap" class="hash-link" aria-label="Direct link to openSUSE Leap" title="Direct link to openSUSE Leap" translate="no">​</a></h4>
