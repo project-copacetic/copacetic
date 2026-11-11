@@ -79,17 +79,25 @@ jobs:
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - name: Build test fixtures
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh build
       - name: Run all gateway integration tests
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          .github/workflows/scripts/singlearch-fixture.sh load
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 25m
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
+      - name: Clean up test fixtures
+        if: always()
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh cleanup
 
   # Test Alpine/APK images (fast subset)
   test-gateway-alpine:

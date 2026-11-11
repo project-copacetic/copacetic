@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -14,6 +15,17 @@ import (
 	"github.com/project-copacetic/copacetic/test/testenv"
 )
 
+// almaLinux9Image returns the AlmaLinux 9 test image. CI sets
+// COPA_TEST_ALMALINUX9_IMAGE to a copy whose repositories use repo.almalinux.org
+// instead of the geo mirrorlist, so the tests don't depend on which mirror the
+// runner is given; see .github/workflows/scripts/singlearch-fixture.sh.
+func almaLinux9Image() string {
+	if image := os.Getenv("COPA_TEST_ALMALINUX9_IMAGE"); image != "" {
+		return image
+	}
+	return "docker.io/library/almalinux:9"
+}
+
 // TestPatchRPM tests Copa patching on RPM-based distributions.
 func TestPatchRPM(t *testing.T) {
 	t.Parallel()
@@ -22,6 +34,7 @@ func TestPatchRPM(t *testing.T) {
 		t.Skip("Skipping: no BuildKit address provided")
 	}
 
+	almaLinux9 := almaLinux9Image()
 	testCases := []patchTestCase{
 		// Mariner / CBL-Mariner
 		{
@@ -130,7 +143,7 @@ func TestPatchRPM(t *testing.T) {
 		// AlmaLinux
 		{
 			name:      "almalinux 9",
-			image:     "docker.io/library/almalinux:9",
+			image:     almaLinux9,
 			osType:    "almalinux",
 			osVersion: "9",
 			packages: []testenv.PackageUpdate{
@@ -146,7 +159,7 @@ func TestPatchRPM(t *testing.T) {
 		},
 		{
 			name:           "almalinux update all",
-			image:          "docker.io/library/almalinux:9",
+			image:          almaLinux9,
 			osType:         "almalinux",
 			osVersion:      "9",
 			packages:       nil,
@@ -395,7 +408,7 @@ func TestPatchUpdateAll(t *testing.T) {
 		{"azure linux", "mcr.microsoft.com/azurelinux/base/core:3.0", "Azure Linux"},
 		{"amazon linux", "docker.io/library/amazonlinux:2", "Amazon Linux"},
 		{"rocky linux", "docker.io/library/rockylinux:9", "Rocky Linux"},
-		{"almalinux", "docker.io/library/almalinux:9", "AlmaLinux"},
+		{"almalinux", almaLinux9Image(), "AlmaLinux"},
 	}
 
 	for _, tc := range testCases {
