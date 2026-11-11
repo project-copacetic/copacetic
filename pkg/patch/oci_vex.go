@@ -37,6 +37,13 @@ func writeOCIVEX(ctx context.Context, opts *types.Options, results []types.Patch
 	if err != nil {
 		return fmt.Errorf("read final OCI output for VEX: %w", err)
 	}
+	// The output did not exist when Patch first validated the VEX path, so an
+	// alias of it, such as a case variant on a case-insensitive filesystem,
+	// could only be compared by text then. Check again by identity now that
+	// the output exists, before writing anything into it.
+	if err := ocilayout.ValidateOutputWritePath(output.Path, opts.Output); err != nil {
+		return err
+	}
 	images := make([]vex.ImageUpdates, 0, len(eligible))
 	for _, result := range eligible {
 		if result.PatchedDesc == nil || result.PatchedDesc.Platform == nil {

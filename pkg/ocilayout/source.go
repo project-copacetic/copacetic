@@ -301,7 +301,34 @@ func pathsOverlap(left, right string) bool {
 	return pathWithin(left, right) || pathWithin(right, left)
 }
 
+// pathWithin reports whether target is root or a path below it. Both paths
+// must already be canonical (see canonicalTargetPath). A lexical comparison
+// alone misses aliases that name the same directory with different bytes:
+// case or Unicode-normalization variants on case-insensitive filesystems such
+// as the default macOS APFS volume, and bind mounts. So when root exists, the
+// existing ancestors of target are also compared with root by file identity.
 func pathWithin(root, target string) bool {
+	if lexicallyWithin(root, target) {
+		return true
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil || !rootInfo.IsDir() {
+		return false
+	}
+	for dir := filepath.Clean(target); ; {
+		// Missing components cannot be root; keep walking to their parents.
+		if info, err := os.Stat(dir); err == nil && os.SameFile(rootInfo, info) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
+func lexicallyWithin(root, target string) bool {
 	rel, err := filepath.Rel(root, target)
 	return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
 }
