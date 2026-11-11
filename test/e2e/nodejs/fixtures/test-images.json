@@ -1,8 +1,8 @@
 [
   {
     "image": "docker.io/library/ghost",
-    "tag": "latest",
-    "digest": "sha256:ffc213a6f2db7210b69396dc4330b4a9c5e27c8b044ae453854d53bd3937a6ec",
+    "tag": "6.60.0",
+    "digest": "sha256:3ed903b0b1ac0e98e82a818f544d6c46edbfa5de23c95e7fb5980ff193d9911b",
     "description": "Ghost CMS publishing platform"
   },
   {

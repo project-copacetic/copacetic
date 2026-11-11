@@ -51,6 +51,10 @@ func TestCanonicalOSType(t *testing.T) {
 		{name: "rocky exact", input: "rocky", expected: OSTypeRocky},
 		{name: "Rocky Linux", input: "Rocky Linux", expected: OSTypeRocky},
 
+		// Fedora variations
+		{name: "fedora exact", input: "fedora", expected: OSTypeFedora},
+		{name: "Fedora Linux", input: "Fedora Linux", expected: OSTypeFedora},
+
 		// Oracle Linux variations
 		{name: "oracle exact", input: "oracle", expected: OSTypeOracle},
 		{name: "Oracle Linux Server", input: "Oracle Linux Server", expected: OSTypeOracle},
