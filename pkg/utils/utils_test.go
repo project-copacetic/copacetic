@@ -272,6 +272,7 @@ func TestCanonicalPkgManagerType(t *testing.T) {
 		"rpm":                 "rpm",
 		"centos":              "rpm",
 		"rocky":               "rpm",
+		"fedora":              "rpm",
 		"alma":                "rpm",
 		"almalinux":           "rpm",
 		"amazon":              "rpm",

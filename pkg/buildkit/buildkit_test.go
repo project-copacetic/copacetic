@@ -1480,6 +1480,7 @@ func TestIsSupportedOsType(t *testing.T) {
 		utils.OSTypeOracle,
 		utils.OSTypeRedHat,
 		utils.OSTypeRocky,
+		utils.OSTypeFedora,
 		utils.OSTypeAmazon,
 		utils.OSTypeAlma,
 		utils.OSTypeSLES,
