@@ -19,8 +19,11 @@ import (
 )
 
 const (
-	npmInstallTimeoutSeconds    = 600
-	npmCheckFile                = "/copa-npm-check"
+	npmInstallTimeoutSeconds = 600
+	npmCheckFile             = "/copa-npm-check"
+	// Download failures of the tarball replace steps, one "WARN: failed to download <name>@<version>, skipping"
+	// line per package, read back by readDownloadFailures and removed by the final cleanup.
+	npmDownloadFailuresFile     = "/tmp/.copa-npm-download-failures"
 	packageJSONDetectFile       = "/copa-package-json-path"
 	globalNodeModulesDetectFile = "/copa-global-node-modules-path"
 	defaultToolingNodeTag       = "lts-alpine" // Latest Active LTS (automatically tracks current LTS version)
@@ -375,7 +378,7 @@ func (nm *nodejsManager) InstallUpdates(
 	log.Debugf("Attempting to update latest unique npm packages: %v", updatesToAttempt)
 
 	// Perform the upgrade
-	updatedImageState, upgradeErr := nm.upgradePackages(ctx, currentState, &manifest.Metadata, updatesToAttempt, ignoreErrors)
+	updatedImageState, failedDownloads, upgradeErr := nm.upgradePackages(ctx, currentState, &manifest.Metadata, updatesToAttempt, ignoreErrors)
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Node.js packages: %v", upgradeErr)
 		if !ignoreErrors {
@@ -389,6 +392,16 @@ func (nm *nodejsManager) InstallUpdates(
 			errPkgsReported = append(errPkgsReported, u.Name)
 		}
 		return currentState, errPkgsReported, nil
+	}
+
+	if len(failedDownloads) > 0 {
+		errPkgsReported = append(errPkgsReported, failedDownloads...)
+		if !ignoreErrors {
+			return currentState, errPkgsReported, fmt.Errorf(
+				"failed to download %d Node.js package(s), left unpatched: %v", len(failedDownloads), failedDownloads)
+		}
+		log.Warnf("Failed to download %d Node.js package(s), reported as not patched (ignore-errors): %v",
+			len(failedDownloads), failedDownloads)
 	}
 
 	if len(errPkgsReported) > 0 {
@@ -406,13 +419,13 @@ func (nm *nodejsManager) upgradePackages(
 	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
-) (*llb.State, error) {
+) (*llb.State, []string, error) {
 	// Validate all package names and versions first
 	for _, u := range updates {
 		if err := validateNodePackageName(u.Name); err != nil {
 			log.Errorf("Invalid package name %s: %v", u.Name, err)
 			if !ignoreErrors {
-				return nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
+				return nil, nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
 			}
 			continue
 		}
@@ -421,7 +434,7 @@ func (nm *nodejsManager) upgradePackages(
 			if err := validateNodeVersion(u.FixedVersion); err != nil {
 				log.Errorf("Invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
 				if !ignoreErrors {
-					return nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
+					return nil, nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
 				}
 				continue
 			}
@@ -436,7 +449,8 @@ func (nm *nodejsManager) upgradePackages(
 
 	if !npmExists {
 		log.Infof("npm not found in target image. Falling back to tooling container strategy for Node.js updates.")
-		return nm.upgradePackagesWithTooling(ctx, currentState, metadata, updates, ignoreErrors)
+		toolingState, toolingErr := nm.upgradePackagesWithTooling(ctx, currentState, metadata, updates, ignoreErrors)
+		return toolingState, nil, toolingErr
 	}
 
 	// Separate vulnerabilities into two lists
@@ -495,7 +509,7 @@ func (nm *nodejsManager) upgradePackages(
 		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, metadata, globalUpdates, ignoreErrors)
 		if globalErr != nil {
 			if !ignoreErrors {
-				return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
+				return nil, nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
 			}
 			log.Warnf("Failed to patch global packages but continuing due to ignore-errors: %v", globalErr)
 		} else {
@@ -505,10 +519,22 @@ func (nm *nodejsManager) upgradePackages(
 		log.Debug("No global package vulnerabilities found to patch.")
 	}
 
+	// Packages whose tarball could not be downloaded: the replace steps skip them and record
+	// them, so that they are reported as not patched instead of silently left vulnerable.
+	failedDownloads, readErr := nm.readDownloadFailures(ctx, &updatedState)
+	if readErr != nil {
+		if !ignoreErrors {
+			return nil, nil, fmt.Errorf("failed to check Node.js tarball downloads: %w", readErr)
+		}
+		log.Warnf("Could not check Node.js tarball downloads, continuing due to ignore-errors: %v", readErr)
+	}
+
 	// Clean up npm cache and remove old vulnerable package tarballs
 	// This is crucial to prevent Trivy from detecting old cached vulnerable packages
 	log.Info("Aggressively cleaning npm cache and removing all cached package files")
 	cleanupCmd := `sh -c '` +
+		// Remove the download failures record (already read above)
+		`rm -f ` + npmDownloadFailuresFile + `; ` +
 		// Run npm cache clean (may fail if npm not available, that's ok)
 		`npm cache clean --force 2>&1 || echo "WARN: npm cache clean command failed"; ` +
 		// Find and remove ALL .npm cache directories across the entire filesystem
@@ -521,7 +547,38 @@ func (nm *nodejsManager) upgradePackages(
 		`rm -rf /tmp/npm-* 2>&1 || echo "WARN: Failed to remove /tmp/npm-*"'`
 	updatedState = updatedState.Run(llb.Shlex(cleanupCmd), llb.WithProxy(utils.GetProxy())).Root()
 
-	return &updatedState, nil
+	return &updatedState, failedDownloads, nil
+}
+
+// downloadFailureRe matches the lines written by the replace steps to npmDownloadFailuresFile.
+// The name is greedy so that scoped packages (@scope/name@1.2.3) keep their scope.
+var downloadFailureRe = regexp.MustCompile(`failed to download (.+)@([^@,\s]+), skipping`)
+
+// parseDownloadFailures returns the unique package names recorded in npmDownloadFailuresFile.
+func parseDownloadFailures(data []byte) []string {
+	var failed []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if m := downloadFailureRe.FindStringSubmatch(line); m != nil {
+			failed = append(failed, m[1])
+		}
+	}
+	return utils.DeduplicateStringSlice(failed)
+}
+
+// readDownloadFailures returns the packages whose tarball download failed in the replace
+// steps applied to state. A missing record file means that no download failed.
+func (nm *nodejsManager) readDownloadFailures(ctx context.Context, state *llb.State) ([]string, error) {
+	if nm.config == nil || nm.config.Client == nil {
+		return nil, nil
+	}
+	data, rerr := buildkit.TryExtractFileFromState(ctx, nm.config.Client, state, npmDownloadFailuresFile)
+	if rerr != nil {
+		if rerr.ReadFailed {
+			return nil, nil
+		}
+		return nil, rerr.Err
+	}
+	return parseDownloadFailures(data), nil
 }
 
 // shellQuote wraps s in single quotes and escapes embedded single quotes so it can be
@@ -589,7 +646,7 @@ func (nm *nodejsManager) installNodePackages(
 					`    rm -f %s && `+
 					`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
 					`  else `+
-					`    echo "WARN: failed to download %s@%s, skipping"; `+
+					`    echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
 					`  fi; `+
 					`else `+
 					`  echo "WARN: %s not found in node_modules, skipping"; `+
@@ -652,7 +709,7 @@ func (nm *nodejsManager) installNodePackages(
 					`  rm -f %s && `+
 					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
 					`else `+
-					`  echo "WARN: failed to download %s@%s, skipping"; `+
+					`  echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
 					`fi' -- %s`,
 				downloadScript,
 				u.Name,
@@ -924,7 +981,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 					`  rm -f %s && `+
 					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in npm node_modules"; fi; `+
 					`else `+
-					`  echo "WARN: failed to download %s@%s, skipping"; `+
+					`  echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
 					`fi'`,
 				downloadScript,
 				u.Name,
@@ -1048,7 +1105,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`    rm -f %s && `+
 						`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
 						`  else `+
-						`    echo "WARN: failed to download %s@%s, skipping"; `+
+						`    echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
 						`  fi; `+
 						`else `+
 						`  echo "WARN: %s not found in node_modules, skipping"; `+
@@ -1104,7 +1161,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 						`  rm -f %s && `+
 						`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
 						`else `+
-						`  echo "WARN: failed to download %s@%s, skipping"; `+
+						`  echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
 						`fi' -- %s`,
 					downloadScript,
 					u.Name,
