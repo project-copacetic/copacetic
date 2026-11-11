@@ -10,6 +10,7 @@ import (
 // inputs to GetPackageManager.
 const (
 	OSTypeAlpine       = "alpine"
+	OSTypeWolfi        = "wolfi"
 	OSTypeDebian       = "debian"
 	OSTypeUbuntu       = "ubuntu"
 	OSTypeCBLMariner   = "cbl-mariner"
@@ -86,6 +87,8 @@ func CanonicalOSType(osType string) string {
 	// Other distros (no substring conflicts)
 	case strings.Contains(os, OSTypeAlpine):
 		return OSTypeAlpine
+	case strings.Contains(os, OSTypeWolfi):
+		return OSTypeWolfi
 	case strings.Contains(os, OSTypeDebian):
 		return OSTypeDebian
 	case strings.Contains(os, OSTypeUbuntu):

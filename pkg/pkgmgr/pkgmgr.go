@@ -82,7 +82,7 @@ func GetPackageManager(osType string, osVersion string, config *buildkit.Config,
 func GetPackageManagerWithOptions(osType string, osVersion string, config *buildkit.Config, workingFolder string, managerOptions PackageManagerOptions) (PackageManager, error) {
 	canonicalOSType := utils.CanonicalOSType(osType)
 	switch canonicalOSType {
-	case utils.OSTypeAlpine:
+	case utils.OSTypeAlpine, utils.OSTypeWolfi:
 		return &apkManager{
 			config:        config,
 			workingFolder: workingFolder,
