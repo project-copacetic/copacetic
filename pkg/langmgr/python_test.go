@@ -2,6 +2,9 @@ package langmgr
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1055,4 +1058,75 @@ func TestCollectVendorParentNames(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDistInfoNameGlob(t *testing.T) {
+	tests := []struct {
+		name     string
+		pkgName  string
+		expected string
+	}{
+		{name: "single word", pkgName: "requests", expected: "[rR][eE][qQ][uU][eE][sS][tT][sS]"},
+		{name: "hyphen", pkgName: "python-dotenv", expected: "[pP][yY][tT][hH][oO][nN][-_.][dD][oO][tT][eE][nN][vV]"},
+		{name: "dot", pkgName: "jaraco.context", expected: "[jJ][aA][rR][aA][cC][oO][-_.][cC][oO][nN][tT][eE][xX][tT]"},
+		{name: "separator run collapses", pkgName: "a_-.b", expected: "[aA][-_.][bB]"},
+		{name: "digits and mixed case", pkgName: "PyYAML2", expected: "[pP][yY][yY][aA][mM][lL]2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, distInfoNameGlob(tt.pkgName))
+		})
+	}
+}
+
+func TestStaleSitePackagesCleanupArgsSkipsInvalidNames(t *testing.T) {
+	args := staleSitePackagesCleanupArgs("/sp", []string{"Python_Dotenv==1.2.2", "bad;name==1.0", "requests==2.33.0"})
+	assert.Equal(t, []string{
+		"sh", "-c", staleSitePackagesCleanupScript, "clean-script", "/sp",
+		"python-dotenv", distInfoNameGlob("Python_Dotenv"),
+		"requests", distInfoNameGlob("requests"),
+	}, args)
+}
+
+// TestStaleSitePackagesCleanupScript runs the cleanup script with sh against a fake
+// site-packages directory and checks that every on-disk spelling of an upgraded
+// package's dist-info is removed while unrelated packages are left alone.
+func TestStaleSitePackagesCleanupScript(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	sp := t.TempDir()
+	dirs := []string{
+		"requests",
+		"requests-2.32.4.dist-info",
+		"dotenv",
+		"python_dotenv-1.0.1.dist-info", // wheel-escaped name; Trivy reports "python-dotenv"
+		"jaraco.context-5.3.0.dist-info",
+		"PyYAML-6.0.dist-info", // legacy install keeps original case
+		"requests_toolbelt-1.0.0.dist-info",
+		"requests_toolbelt",
+		"pyyaml_env_tag-0.1.dist-info",
+	}
+	for _, d := range dirs {
+		require.NoError(t, os.MkdirAll(filepath.Join(sp, d), 0o755))
+	}
+
+	args := staleSitePackagesCleanupArgs(sp, []string{
+		"requests==2.33.0", "python-dotenv==1.2.2", "jaraco.context==6.1.0", "pyyaml==6.0.2",
+	})
+	out, err := exec.Command(args[0], args[1:]...).CombinedOutput() //nolint:gosec // test-controlled args
+	require.NoError(t, err, string(out))
+
+	entries, err := os.ReadDir(sp)
+	require.NoError(t, err)
+	var remaining []string
+	for _, e := range entries {
+		remaining = append(remaining, e.Name())
+	}
+	assert.ElementsMatch(t, []string{
+		"dotenv", // import name differs from the distribution name; overwritten by the copy step
+		"requests_toolbelt-1.0.0.dist-info",
+		"requests_toolbelt",
+		"pyyaml_env_tag-0.1.dist-info",
+	}, remaining)
 }

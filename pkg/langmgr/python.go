@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unicode"
 
 	pep440 "github.com/aquasecurity/go-pep440-version"
 	"github.com/moby/buildkit/client/llb"
@@ -95,6 +96,60 @@ func isLessThanPythonVersion(v1, v2 string) bool {
 // validVenvRootPattern restricts venv root paths to safe filesystem characters,
 // preventing shell metacharacter injection when the path is interpolated into commands.
 var validVenvRootPattern = regexp.MustCompile(`^[A-Za-z0-9/_.\-~]+$`)
+
+// staleSitePackagesCleanupScript removes the old copy of each package from a
+// site-packages directory before the upgraded files are copied in. $1 is the
+// site-packages directory; the remaining arguments come in pairs of a package's
+// lowercase hyphenated name (removed as a top-level directory) and a glob that
+// matches the package's *.dist-info directory name. The glob is expanded unquoted.
+const staleSitePackagesCleanupScript = `sp="$1"; shift; ` +
+	`while [ "$#" -ge 2 ]; do p="$1"; g="$2"; shift 2; ` +
+	`rm -rf "$sp/$p" 2>/dev/null || true; ` +
+	`for d in "$sp"/$g-[0-9]*.dist-info; do [ -d "$d" ] && rm -rf "$d" || true; done; ` +
+	`done`
+
+// distInfoNameGlob returns a shell glob matching every on-disk spelling of a
+// package's dist-info name. Installers escape a distribution name differently:
+// wheels write "python_dotenv-1.0.1.dist-info" and "jaraco.context-5.3.0.dist-info",
+// older installs keep the original case, and Trivy reports "python-dotenv".
+// The glob ignores case and treats any run of "-", "_" and "." as one separator,
+// following the PEP 503 normalization rules.
+func distInfoNameGlob(name string) string {
+	var b strings.Builder
+	inSeparator := false
+	for _, r := range name {
+		switch {
+		case r == '-' || r == '_' || r == '.':
+			if !inSeparator {
+				b.WriteString("[-_.]")
+			}
+			inSeparator = true
+			continue
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			fmt.Fprintf(&b, "[%c%c]", unicode.ToLower(r), unicode.ToUpper(r))
+		default:
+			b.WriteRune(r)
+		}
+		inSeparator = false
+	}
+	return b.String()
+}
+
+// staleSitePackagesCleanupArgs builds the argv that runs staleSitePackagesCleanupScript
+// against sitePkgsDir for the given "name==version" install specs. Specs whose
+// name is not a valid package name are skipped, since the name becomes a shell glob.
+func staleSitePackagesCleanupArgs(sitePkgsDir string, installPkgSpecs []string) []string {
+	args := []string{"sh", "-c", staleSitePackagesCleanupScript, "clean-script", sitePkgsDir}
+	for _, spec := range installPkgSpecs {
+		name := strings.SplitN(spec, "==", 2)[0]
+		if err := validatePythonPackageName(name); err != nil {
+			log.Warnf("Skipping cleanup of old files for %q: %v", spec, err)
+			continue
+		}
+		args = append(args, strings.ToLower(strings.ReplaceAll(name, "_", "-")), distInfoNameGlob(name))
+	}
+	return args
+}
 
 // validateVenvRoot ensures a venv root path contains only safe filesystem characters
 // and cannot be used for shell command injection.
@@ -897,19 +952,9 @@ func (pm *pythonManager) upgradePackagesToSitePackagesDir(
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Build package base names (lowercase, hyphens) for cleanup.
-	var pkgBaseNames []string
-	for _, spec := range installPkgSpecs {
-		parts := strings.SplitN(spec, "==", 2)
-		name := strings.ToLower(strings.ReplaceAll(parts[0], "_", "-"))
-		pkgBaseNames = append(pkgBaseNames, name)
-	}
 	// Remove old package dir and dist-info, then copy in the new files.
-	// sitePkgsDir is passed as $1; package names as subsequent args — no shell interpolation.
-	cleanScript := `sp="$1"; shift; for p in "$@"; do rm -rf "$sp/$p" 2>/dev/null || true; for d in "$sp/$p"-*.dist-info; do [ -d "$d" ] && rm -rf "$d" || true; done; done`
-	cleanArgs := []string{"sh", "-c", cleanScript, "clean-script", sitePkgsDir}
-	cleanArgs = append(cleanArgs, pkgBaseNames...)
-	cleaned := currentState.Run(llb.Args(cleanArgs)).Root()
+	// sitePkgsDir and package names are passed as args — no shell interpolation.
+	cleaned := currentState.Run(llb.Args(staleSitePackagesCleanupArgs(sitePkgsDir, installPkgSpecs))).Root()
 
 	merged := cleaned.File(
 		llb.Copy(toolingState, "/copa-pkgs/", sitePkgsDir+"/", &llb.CopyInfo{CopyDirContentsOnly: true, CreateDestPath: true}),
@@ -1045,19 +1090,9 @@ func (pm *pythonManager) upgradeVenvPackagesWithTooling(
 		llb.WithProxy(utils.GetProxy()),
 	).Root()
 
-	// Clean old package directories then copy the new ones in.
-	var pkgBaseNames []string
-	for _, spec := range installPkgSpecs {
-		parts := strings.SplitN(spec, "==", 2)
-		name := strings.ToLower(strings.ReplaceAll(parts[0], "_", "-"))
-		pkgBaseNames = append(pkgBaseNames, name)
-	}
-	// Pass sitePkgsPath as $1 and package base names as subsequent positional args to
-	// prevent injection from sitePkgsPath being interpolated into the shell command.
-	cleanScript := `sp="$1"; shift; for p in "$@"; do rm -rf "$sp/$p" 2>/dev/null || true; for d in "$sp/$p"-*.dist-info; do [ -d "$d" ] && rm -rf "$d" || true; done; done`
-	cleanArgs := []string{"sh", "-c", cleanScript, "clean-script", sitePkgsPath}
-	cleanArgs = append(cleanArgs, pkgBaseNames...)
-	cleaned := currentState.Run(llb.Args(cleanArgs)).Root()
+	// Clean old package directories then copy the new ones in. sitePkgsPath and package
+	// names are passed as positional args so neither is interpolated into the shell command.
+	cleaned := currentState.Run(llb.Args(staleSitePackagesCleanupArgs(sitePkgsPath, installPkgSpecs))).Root()
 
 	merged := cleaned.File(
 		llb.Copy(toolingState, "/copa-pkgs/", sitePkgsPath+"/", &llb.CopyInfo{CopyDirContentsOnly: true, CreateDestPath: true}),
@@ -1220,17 +1255,7 @@ func (pm *pythonManager) upgradePackagesWithTooling(
 	).Root()
 
 	// Clean old versions of these packages in the detected site-packages path before copying new ones
-	cleanScriptBuilder := strings.Builder{}
-	cleanScriptBuilder.WriteString("set -e; sp=\"" + sitePkgsPath + "\"; pkgs=\"")
-	for i, n := range pkgBaseNames {
-		if i > 0 {
-			cleanScriptBuilder.WriteString(" ")
-		}
-		cleanScriptBuilder.WriteString(n)
-	}
-	cleanScriptBuilder.WriteString("\"; if [ -n \"$pkgs\" ]; then for p in $pkgs; do rm -rf \"$sp/$p\" 2>/dev/null || true; for d in $sp/$p-*.dist-info; do [ -d \"$d\" ] && rm -rf \"$d\" || true; done; done; fi") // nolint: lll
-	cleanCmd := fmt.Sprintf("sh -c '%s'", cleanScriptBuilder.String())
-	cleaned := currentState.Run(llb.Shlex(cleanCmd)).Root()
+	cleaned := currentState.Run(llb.Args(staleSitePackagesCleanupArgs(sitePkgsPath, installPkgSpecs))).Root()
 
 	// Copy installed packages into target site-packages path after cleanup
 	merged := cleaned.File(
