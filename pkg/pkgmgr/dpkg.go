@@ -2072,7 +2072,7 @@ func dpkgParseResultsManifest(b []byte) (map[string]string, error) {
 	// The result manifest contains Package, optional Architecture, and Version
 	// fields. Architecture is included when available so same-name multiarch
 	// instances remain distinct through validation. Field order is not assumed.
-	updateMap := map[string]string{}
+	updateMap := make(map[string]string, bytes.Count(b, []byte("Version: ")))
 	fs := bufio.NewScanner(bytes.NewReader(b))
 	packageName := ""
 	packageArchitecture := ""

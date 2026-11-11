@@ -167,7 +167,7 @@ jobs:
         with:
           paths: "test-results.xml"
 
-  # Test RPM-based images (Mariner, Azure Linux, Amazon Linux, Rocky, Alma, RHEL)
+  # Test RPM-based images (Mariner, Azure Linux, Amazon Linux, Rocky, Alma, RHEL, Fedora)
   test-gateway-rpm:
     needs: build
     name: Gateway RPM ${{ matrix.buildkit_mode }}
@@ -198,7 +198,7 @@ jobs:
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 15m -run "Mariner|AzureLinux|AmazonLinux|Rocky|Alma|Redhat|Symlink"
+          gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 15m -run "Mariner|AzureLinux|AmazonLinux|Rocky|Alma|Redhat|Fedora|Symlink"
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
