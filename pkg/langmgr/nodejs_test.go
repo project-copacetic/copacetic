@@ -351,7 +351,7 @@ func TestGetNpmTarballURL(t *testing.T) {
 func TestNodeDownloadScript(t *testing.T) {
 	script := nodeDownloadScript("https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz", "/tmp/lodash-4.17.21.tgz")
 
-	// Node.js only honours HTTP_PROXY/HTTPS_PROXY/NO_PROXY when NODE_USE_ENV_PROXY=1.
+	// Node.js only honors HTTP_PROXY/HTTPS_PROXY/NO_PROXY when NODE_USE_ENV_PROXY=1.
 	assert.True(t, strings.HasPrefix(script, `NODE_USE_ENV_PROXY=1 node -e "`), script)
 	assert.Contains(t, script, `dl('\''https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz'\'')`)
 	assert.Contains(t, script, `f.createWriteStream('\''/tmp/lodash-4.17.21.tgz'\'')`)
