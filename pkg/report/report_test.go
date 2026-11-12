@@ -8,6 +8,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestTryParseScanReport tests the TryParseScanReport function with different scan report files.
@@ -326,6 +327,11 @@ func TestTryParseScanReportPluginLibraryPatchLevel(t *testing.T) {
 			[]string{"2.33.0", "2.33.0"},
 		},
 		{
+			"explicit major groups rows of one package",
+			row("requests", "2.31.1", "CVE-1") + "," + row("requests", "3.0.0", "CVE-2"), utils.PatchTypeMajor,
+			[]string{"3.0.0", "3.0.0"},
+		},
+		{
 			"packages are not grouped together",
 			row("requests", "2.31.1", "CVE-1") + "," + row("urllib3", "2.32.0", "CVE-2"), utils.PatchTypeMinor,
 			[]string{"2.31.1", "2.32.0"},
@@ -348,4 +354,20 @@ func TestTryParseScanReportPluginLibraryPatchLevel(t *testing.T) {
 			assert.Equal(t, tc.wantFixed, got)
 		})
 	}
+}
+
+// TestTryParseScanReportTrivyDefaultsToPatch checks that Trivy reports still use the "patch" level
+// when --library-patch-level isn't set (an empty level).
+func TestTryParseScanReportTrivyDefaultsToPatch(t *testing.T) {
+	file := "testdata/pkg_types_test.json"
+	parse := func(level string) []unversioned.UpdatePackage {
+		manifest, err := TryParseScanReport(file, "trivy", utils.PkgTypeLibrary, level)
+		require.NoError(t, err)
+		return manifest.LangUpdates
+	}
+
+	unset := parse("")
+	assert.Equal(t, parse(utils.PatchTypePatch), unset)
+	// The fixture's only fix is a minor bump, so the levels disagree and the check above means something.
+	assert.NotEqual(t, parse(utils.PatchTypeMajor), unset)
 }
