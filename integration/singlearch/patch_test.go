@@ -35,6 +35,10 @@ type testImage struct {
 	Description    string        `json:"description"`
 	IgnoreErrors   bool          `json:"ignoreErrors"`
 	IsManifestList bool          `json:"isManifestList"`
+	// ImageEnv names an environment variable that can replace this image with
+	// a digest-pinned, single-platform copy, such as one CI builds in its
+	// loopback fixture registry. See fixtures/README.md.
+	ImageEnv string `json:"imageEnv,omitempty"`
 }
 
 type manifestPlatform struct {
@@ -84,6 +88,15 @@ func TestPatch(t *testing.T) {
 			dir := t.TempDir()
 
 			ref := fmt.Sprintf("%s:%s@%s", img.Image, img.Tag, img.Digest)
+			if override := os.Getenv(img.ImageEnv); img.ImageEnv != "" && override != "" {
+				overrideRef, parseErr := reference.ParseNormalizedNamed(override)
+				require.NoError(t, parseErr, "%s", img.ImageEnv)
+				_, pinned := overrideRef.(reference.Digested)
+				require.True(t, pinned, "%s must include a digest", img.ImageEnv)
+				t.Logf("using %s=%s", img.ImageEnv, override)
+				ref = override
+				img.IsManifestList = false
+			}
 			if img.LocalName != "" {
 				dockerPull(t, ref)
 				dockerTag(t, ref, img.LocalName)
