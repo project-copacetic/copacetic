@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,12 +140,6 @@ func compareVersionCandidates(v1, v2 versionCandidate) int {
 	return 0
 }
 
-func setHighestVersionCandidate(highest *versionCandidate, candidate versionCandidate) {
-	if highest.value == "" || compareVersionCandidates(candidate, *highest) > 0 {
-		*highest = candidate
-	}
-}
-
 func parseVersionPartPrefix(version string) versionPartPrefix {
 	version = strings.TrimPrefix(version, "v")
 	part, rest, found := strings.Cut(version, ".")
@@ -177,115 +172,117 @@ func parseLeadingInt(part string) int {
 	return num
 }
 
-// findOptimalFixedVersion finds the best version that fixes all CVEs while being most compatible.
-// The algorithm prefers patch versions over minor versions over major versions.
-// When multiple CVEs require different versions, it picks the highest version to ensure all are fixed.
+// findOptimalFixedVersion finds the best version that fixes the most CVEs while being most compatible.
+// See FindOptimalFixedVersionWithPatchLevel for how fixedVersions is interpreted.
 func findOptimalFixedVersion(installedVersion string, fixedVersions []string) string {
 	return FindOptimalFixedVersionWithPatchLevel(installedVersion, fixedVersions, "patch")
 }
 
-// FindOptimalFixedVersionWithPatchLevel finds the best version that fixes all CVEs based on library patch level preference.
-// libraryPatchLevel can be "patch", "minor", or "major":
-// - "patch": only updates to patch versions (same major.minor), no fallback to minor/major
-// - "minor": only updates to patch or minor versions, never major versions
-// - "major": behavior depends on version format:
-//   - If comma-separated versions exist: prefers patch > minor > major for compatibility
-//   - If no comma-separated versions: chooses highest available version to fix all CVEs
-func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
-	if len(fixedVersions) == 0 {
-		return ""
+// splitFixedVersions splits the fixed versions Trivy reports for a single CVE
+// (for example "6.29.1, 7.30.1, 8.12.2") into trimmed, non-empty versions.
+func splitFixedVersions(fixed string) []versionCandidate {
+	var versions []versionCandidate
+	for part := range strings.SplitSeq(fixed, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		candidate := newVersionCandidate(part)
+		candidate.prefix = parseVersionPartPrefix(part)
+		versions = append(versions, candidate)
 	}
+	return versions
+}
 
+// allowedByPatchLevel reports whether upgrading from installed to candidate stays
+// within the given library patch level. Unknown levels behave like "patch".
+func allowedByPatchLevel(installed, candidate versionCandidate, libraryPatchLevel string) bool {
+	switch libraryPatchLevel {
+	case "major":
+		return true
+	case "minor":
+		return candidate.prefix.length >= 1 && installed.prefix.length >= 1 &&
+			candidate.prefix.first == installed.prefix.first
+	default:
+		return candidate.prefix.length >= 2 && installed.prefix.length >= 2 &&
+			candidate.prefix.first == installed.prefix.first && candidate.prefix.second == installed.prefix.second
+	}
+}
+
+// versionFixesVulnerability reports whether installing version resolves a CVE with
+// the given Trivy FixedVersion, a comma-separated list with one fix per supported
+// release line. A version resolves the CVE when it is at or above the fix on its
+// own major line, or above every listed fix.
+func versionFixesVulnerability(version, fixed string) bool {
+	candidate := newVersionCandidate(version)
+	candidate.prefix = parseVersionPartPrefix(version)
+	return candidateFixesVulnerability(candidate, splitFixedVersions(fixed))
+}
+
+func candidateFixesVulnerability(candidate versionCandidate, fixed []versionCandidate) bool {
+	if len(fixed) == 0 {
+		return false
+	}
+	aboveAll := true
+	for _, f := range fixed {
+		cmp := compareVersionCandidates(f, candidate)
+		if cmp <= 0 && f.prefix.first == candidate.prefix.first {
+			return true
+		}
+		if cmp >= 0 {
+			aboveAll = false
+		}
+	}
+	return aboveAll
+}
+
+// FindOptimalFixedVersionWithPatchLevel picks the version to upgrade a package to.
+//
+// Each element of fixedVersions holds the FixedVersion reported for one CVE, which
+// may be a comma-separated list of alternative fixes on different release lines
+// (for example "6.29.1, 7.30.1, 8.12.2"). The result is the lowest version that is
+// newer than installedVersion, is allowed by libraryPatchLevel, and fixes the
+// largest number of CVEs. It returns "" when no allowed version fixes any CVE.
+//
+// libraryPatchLevel can be "patch", "minor", or "major":
+//   - "patch": only updates within the installed major.minor
+//   - "minor": only updates within the installed major
+//   - "major": any newer version
+func FindOptimalFixedVersionWithPatchLevel(installedVersion string, fixedVersions []string, libraryPatchLevel string) string {
 	installed := newVersionCandidate(installedVersion)
 	installed.prefix = parseVersionPartPrefix(installedVersion)
-	hasCommaSeparatedVersions := false
-	var highestPatch, highestMinor, highestMajor, highestAny versionCandidate
 
-	processCandidate := func(candidate string) {
-		version := strings.TrimSpace(candidate)
-		if version == "" {
-			return
+	cves := make([][]versionCandidate, 0, len(fixedVersions))
+	var candidates []versionCandidate
+	for _, fixed := range fixedVersions {
+		versions := splitFixedVersions(fixed)
+		if len(versions) == 0 {
+			continue
 		}
-
-		candidateVersion := newVersionCandidate(version)
-
-		// Filter out versions that are not higher than installed version.
-		if compareVersionCandidates(candidateVersion, installed) <= 0 {
-			return
-		}
-
-		setHighestVersionCandidate(&highestAny, candidateVersion)
-
-		// Group versions by upgrade type (even for single candidates to respect patch level).
-		candidateVersion.prefix = parseVersionPartPrefix(version)
-		switch {
-		case candidateVersion.prefix.length >= 2 && installed.prefix.length >= 2 &&
-			candidateVersion.prefix.first == installed.prefix.first && candidateVersion.prefix.second == installed.prefix.second:
-			setHighestVersionCandidate(&highestPatch, candidateVersion)
-		case candidateVersion.prefix.length >= 1 && installed.prefix.length >= 1 && candidateVersion.prefix.first == installed.prefix.first:
-			setHighestVersionCandidate(&highestMinor, candidateVersion)
-		default:
-			setHighestVersionCandidate(&highestMajor, candidateVersion)
-		}
-	}
-
-	for _, versionStr := range fixedVersions {
-		if strings.Contains(versionStr, ",") {
-			hasCommaSeparatedVersions = true
-			for {
-				part, rest, found := strings.Cut(versionStr, ",")
-				processCandidate(part)
-				if !found {
-					break
-				}
-				versionStr = rest
+		cves = append(cves, versions)
+		for _, v := range versions {
+			// Only versions newer than the installed one that the patch level allows can be installed.
+			if compareVersionCandidates(v, installed) > 0 && allowedByPatchLevel(installed, v, libraryPatchLevel) {
+				candidates = append(candidates, v)
 			}
-		} else {
-			processCandidate(versionStr)
 		}
 	}
 
-	if highestAny.value == "" {
-		// If no valid candidates (no versions higher than installed), do not update.
-		return ""
-	}
-
-	// Apply library patch level preference.
-	switch libraryPatchLevel {
-	case "patch":
-		// Only update to patch versions, no fallback to minor/major.
-		return highestPatch.value
-
-	case "minor":
-		// Only update to patch or minor versions, never major.
-		if highestPatch.value != "" {
-			return highestPatch.value
-		}
-		return highestMinor.value
-
-	case "major":
-		// For major patch level, the behavior depends on whether we have comma-separated versions.
-		if hasCommaSeparatedVersions {
-			// When comma-separated versions exist, prefer patch > minor > major for compatibility.
-			if highestPatch.value != "" {
-				return highestPatch.value
+	// Walk the candidates from lowest to highest so that ties keep the smallest upgrade.
+	slices.SortStableFunc(candidates, compareVersionCandidates)
+	best, bestFixed := "", 0
+	for _, candidate := range candidates {
+		fixedCount := 0
+		for _, versions := range cves {
+			if candidateFixesVulnerability(candidate, versions) {
+				fixedCount++
 			}
-			if highestMinor.value != "" {
-				return highestMinor.value
-			}
-			return highestMajor.value
 		}
-
-		// When no comma-separated versions, pick the highest version to fix all CVEs.
-		// While this approach fixes the most vulnerabilities, it may introduce breaking changes
-		// or compatibility issues. Users should weigh the security benefits against the
-		// potential risks of upgrading to a higher version.
-		return highestAny.value
-
-	default:
-		// Default to patch behavior for invalid values.
-		return highestPatch.value
+		if fixedCount > bestFixed {
+			best, bestFixed = candidate.value, fixedCount
+		}
 	}
+	return best
 }
 
 func parseTrivyReport(file string) (*trivyTypes.Report, error) {
@@ -392,12 +389,13 @@ func (t *TrivyParser) ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel st
 	// Python vs a venv) is treated as a separate upgrade target.
 	var langPackageFixedVersions map[string][]string
 	var langPackageInfo map[string]unversioned.UpdatePackage
-	// track all vulnerability IDs per lang package for VEX emission
-	var langPackageVulnIDs map[string]map[string]struct{}
+	// track all vulnerability IDs per lang package (with the fixed versions reported
+	// for each) for VEX emission and the patch summary
+	var langPackageVulnIDs map[string]map[string][]string
 	if includeLibrary {
 		langPackageFixedVersions = make(map[string][]string)
 		langPackageInfo = make(map[string]unversioned.UpdatePackage)
-		langPackageVulnIDs = make(map[string]map[string]struct{})
+		langPackageVulnIDs = make(map[string]map[string][]string)
 	}
 
 	for i := range report.Results {
@@ -450,11 +448,11 @@ func (t *TrivyParser) ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel st
 								InstalledVersion: vuln.InstalledVersion,
 								PkgPath:          pkgPath,
 							}
-							langPackageVulnIDs[key] = make(map[string]struct{})
+							langPackageVulnIDs[key] = make(map[string][]string)
 						}
 						langPackageFixedVersions[key] = append(langPackageFixedVersions[key], vuln.FixedVersion)
 						if vuln.VulnerabilityID != "" {
-							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
+							langPackageVulnIDs[key][vuln.VulnerabilityID] = append(langPackageVulnIDs[key][vuln.VulnerabilityID], vuln.FixedVersion)
 						}
 					} else {
 						libSummary.Skipped++
@@ -487,11 +485,11 @@ func (t *TrivyParser) ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel st
 								InstalledVersion: vuln.InstalledVersion,
 								PkgPath:          vuln.PkgPath,
 							}
-							langPackageVulnIDs[key] = make(map[string]struct{})
+							langPackageVulnIDs[key] = make(map[string][]string)
 						}
 						langPackageFixedVersions[key] = append(langPackageFixedVersions[key], vuln.FixedVersion)
 						if vuln.VulnerabilityID != "" {
-							langPackageVulnIDs[key][vuln.VulnerabilityID] = struct{}{}
+							langPackageVulnIDs[key][vuln.VulnerabilityID] = append(langPackageVulnIDs[key][vuln.VulnerabilityID], vuln.FixedVersion)
 						}
 					} else {
 						libSummary.Skipped++
@@ -504,27 +502,12 @@ func (t *TrivyParser) ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel st
 	// Process Language packages to find optimal fixed versions.
 	// The key is a composite of PkgName + NUL + PkgPath.
 	for key, fixedVersionValues := range langPackageFixedVersions {
+		// Each entry holds the FixedVersion of one vulnerability and may be a
+		// comma-separated list. Keep them grouped per vulnerability so the selection
+		// can tell which CVEs a candidate version actually fixes.
 		fixedVersions := make([]string, 0, len(fixedVersionValues))
-
 		for _, fixedVersion := range fixedVersionValues {
-			if fixedVersion == "" {
-				continue
-			}
-			// Handle comma-separated fixed versions. Keep this split here to preserve
-			// existing ParseWithLibraryPatchLevel behavior.
-			if strings.Contains(fixedVersion, ",") {
-				for {
-					version, rest, found := strings.Cut(fixedVersion, ",")
-					version = strings.TrimSpace(version)
-					if version != "" {
-						fixedVersions = append(fixedVersions, version)
-					}
-					if !found {
-						break
-					}
-					fixedVersion = rest
-				}
-			} else {
+			if strings.TrimSpace(fixedVersion) != "" {
 				fixedVersions = append(fixedVersions, fixedVersion)
 			}
 		}
@@ -545,37 +528,46 @@ func (t *TrivyParser) ParseWithPackageTypes(file, pkgTypes, libraryPatchLevel st
 
 			optimalVersion := FindOptimalFixedVersionWithPatchLevel(info.InstalledVersion, fixedVersions, patchLevelToUse)
 
-			// Count CVEs in this package group for the library summary.
-			// If patch-level constraints prevent patching (optimalVersion == ""),
-			// these vulns had a fix but it couldn't be applied — count as skipped.
-			vulnCount := len(langPackageVulnIDs[key])
-			if vulnCount == 0 {
-				// Defensive: langPackageVulnIDs is populated alongside langPackageVulns,
+			idsMap := langPackageVulnIDs[key]
+			if len(idsMap) == 0 {
+				// Defensive: langPackageVulnIDs is populated alongside langPackageFixedVersions,
 				// so this key should always have at least one entry. Guard against
 				// unexpected desync to ensure we never silently drop a count.
-				vulnCount = 1
-			}
-			if optimalVersion != "" {
-				libSummary.Patched += vulnCount
-			} else {
-				libSummary.Skipped += vulnCount
+				if optimalVersion != "" {
+					libSummary.Patched++
+				} else {
+					libSummary.Skipped++
+				}
+				continue
 			}
 
-			if idsMap, ok2 := langPackageVulnIDs[key]; ok2 {
-				var ids []string
-				for id := range idsMap {
-					ids = append(ids, id)
+			ids := make([]string, 0, len(idsMap))
+			for id := range idsMap {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, vid := range ids {
+				// A vulnerability counts as patched only if the selected version fixes it.
+				// If patch-level constraints prevent patching (optimalVersion == ""), or the
+				// selected version is still affected, the vulnerability had a fix that
+				// couldn't be applied, so count it as skipped and don't report it as fixed.
+				fixed := optimalVersion != ""
+				for _, fixedVersion := range idsMap[vid] {
+					if !versionFixesVulnerability(optimalVersion, fixedVersion) {
+						fixed = false
+						break
+					}
 				}
-				sort.Strings(ids)
-				for _, vid := range ids {
-					clone := info
+
+				clone := info
+				clone.VulnerabilityID = vid
+				if fixed {
 					clone.FixedVersion = optimalVersion
-					clone.VulnerabilityID = vid
-					updates.LangUpdates = append(updates.LangUpdates, clone)
+					libSummary.Patched++
+				} else {
+					libSummary.Skipped++
 				}
-			} else {
-				info.FixedVersion = optimalVersion
-				updates.LangUpdates = append(updates.LangUpdates, info)
+				updates.LangUpdates = append(updates.LangUpdates, clone)
 			}
 		}
 	}

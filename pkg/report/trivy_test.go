@@ -181,7 +181,7 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 		{
 			name:             "minor_level_prefers_patch",
 			installedVersion: "1.26.16",
-			fixedVersions:    []string{"1.26.19", "1.27.1", "2.0.6"},
+			fixedVersions:    []string{"1.26.19, 1.27.1, 2.0.6"}, // alternative fixes for a single CVE
 			patchLevel:       minorPatchLevel,
 			expected:         "1.26.19",
 			description:      "Should prefer patch over minor when minor level is specified",
@@ -258,6 +258,112 @@ func TestOptimalVersionSelectionWithPatchLevel(t *testing.T) {
 	}
 }
 
+// TestOptimalVersionSelectionPerCVE tests that the selected version is the lowest allowed
+// version that fixes the most CVEs, where each element of fixedVersions is one CVE.
+func TestOptimalVersionSelectionPerCVE(t *testing.T) {
+	testCases := []struct {
+		name             string
+		installedVersion string
+		fixedVersions    []string
+		patchLevel       string
+		expected         string
+	}{
+		{
+			// ip-address from https://github.com/project-copacetic/copacetic/issues/1767
+			name:             "minor_level_picks_same_major_version_fixing_all_cves",
+			installedVersion: "10.5.0",
+			fixedVersions:    []string{"10.5.1", "10.5.1", "10.7.1", "10.7.1", "10.7.4"},
+			patchLevel:       minorPatchLevel,
+			expected:         "10.7.4",
+		},
+		{
+			// undici from https://github.com/project-copacetic/copacetic/issues/1767
+			name:             "minor_level_picks_same_major_fix_from_alternatives",
+			installedVersion: "6.28.0",
+			fixedVersions: []string{
+				"6.28.1, 7.29.1, 8.10.2", "6.28.1, 7.29.1, 8.10.2", "6.28.1, 7.29.1, 8.10.2",
+				"6.29.1, 7.30.1, 8.12.2", "6.29.1, 7.30.1, 8.12.2", "6.29.1, 7.30.1, 8.12.2",
+				"6.29.1, 7.30.1, 8.12.2", "6.29.1, 7.30.1, 8.12.2",
+			},
+			patchLevel: minorPatchLevel,
+			expected:   "6.29.1",
+		},
+		{
+			name:             "major_level_does_not_jump_majors_when_same_major_fixes_all",
+			installedVersion: "6.28.0",
+			fixedVersions:    []string{"6.28.1, 7.29.1, 8.10.2", "6.29.1, 7.30.1, 8.12.2"},
+			patchLevel:       majorPatchLevel,
+			expected:         "6.29.1",
+		},
+		{
+			name:             "major_level_jumps_major_when_needed",
+			installedVersion: "6.28.0",
+			fixedVersions:    []string{"6.29.1, 7.30.1", "8.0.0"},
+			patchLevel:       majorPatchLevel,
+			expected:         "8.0.0",
+		},
+		{
+			name:             "patch_level_picks_highest_patch_fixing_all_allowed_cves",
+			installedVersion: "1.2.0",
+			fixedVersions:    []string{"1.2.3", "1.2.5", "1.3.0"},
+			patchLevel:       patchPatchLevel,
+			expected:         "1.2.5",
+		},
+		{
+			name:             "minor_level_fixes_what_it_can_when_a_cve_needs_a_major",
+			installedVersion: "10.2.5",
+			fixedVersions:    []string{"10.2.6", "10.3.0", "11.0.1"},
+			patchLevel:       minorPatchLevel,
+			expected:         "10.3.0",
+		},
+		{
+			name:             "ties_keep_the_lowest_version",
+			installedVersion: "1.0.0",
+			fixedVersions:    []string{"1.0.2, 1.1.0", "1.0.2, 1.1.0"},
+			patchLevel:       minorPatchLevel,
+			expected:         "1.0.2",
+		},
+		{
+			name:             "empty_fixed_versions",
+			installedVersion: "1.0.0",
+			fixedVersions:    nil,
+			patchLevel:       majorPatchLevel,
+			expected:         "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expected, FindOptimalFixedVersionWithPatchLevel(tc.installedVersion, tc.fixedVersions, tc.patchLevel))
+		})
+	}
+}
+
+func TestVersionFixesVulnerability(t *testing.T) {
+	testCases := []struct {
+		version  string
+		fixed    string
+		expected bool
+	}{
+		{"10.7.4", "10.7.1", true},
+		{"10.5.1", "10.7.1", false},
+		{"6.29.1", "6.29.1, 7.30.1, 8.12.2", true},
+		{"6.28.1", "6.29.1, 7.30.1, 8.12.2", false},
+		{"7.31.0", "6.29.1, 7.30.1, 8.12.2", true},
+		{"8.12.2", "6.29.1, 7.30.1, 8.12.2", true},
+		{"9.0.0", "6.29.1, 7.30.1, 8.12.2", true},
+		{"6.30.0", "7.30.1", false},
+		{"8.0.0", "7.30.1", true},
+		{"1.0.0", "", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.version+"_vs_"+tc.fixed, func(t *testing.T) {
+			assert.Equal(t, tc.expected, versionFixesVulnerability(tc.version, tc.fixed))
+		})
+	}
+}
+
 // Test for certifi exception - should always get latest version regardless of patch level setting.
 func TestCertifiExceptionWithMockData(t *testing.T) {
 	// Test the core logic using direct function calls since we can't easily mock file parsing
@@ -309,7 +415,7 @@ func TestCertifiExceptionWithMockData(t *testing.T) {
 		{
 			name:             "other_package_respects_minor_level",
 			installedVersion: "2.25.1",
-			fixedVersions:    []string{"2.25.2", "2.26.0", "3.0.0"},
+			fixedVersions:    []string{"2.25.2, 2.26.0, 3.0.0"}, // alternative fixes for a single CVE
 			patchLevel:       minorPatchLevel,
 			packageName:      "requests",
 			expected:         "2.25.2",
@@ -580,7 +686,7 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 		{
 			name:             "minor_level_prefers_patch",
 			installedVersion: "1.26.5",
-			fixedVersions:    []string{"1.26.6", "1.27.0", "2.0.0"},
+			fixedVersions:    []string{"1.26.6, 1.27.0, 2.0.0"}, // alternative fixes for a single CVE
 			patchLevel:       minorPatchLevel,
 			expected:         "1.26.6",
 			description:      "should prefer patch over minor with minor level",
@@ -617,7 +723,7 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 		{
 			name:             "comma_separated_with_patch_preference",
 			installedVersion: "41.0.6",
-			fixedVersions:    []string{"41.0.8, 42.0.4", "43.0.1"},
+			fixedVersions:    []string{"41.0.8, 42.0.4, 43.0.1"},
 			patchLevel:       majorPatchLevel,
 			expected:         "41.0.8", // Should prefer patch version from comma-separated list
 			description:      "should prefer patch version from comma-separated list even with major patch level",
@@ -675,7 +781,7 @@ func TestPatchLevelVersionSelection(t *testing.T) {
 				// Verify that when major patch level is used, we can fix CVEs
 				if tc.patchLevel == majorPatchLevel && result != "" {
 					t.Logf("✓ Major patch level successfully selected version %s to fix CVEs: %v", result, tc.cves)
-					t.Logf("  (behavior: highest version for non-comma-separated, prefer patch for comma-separated)")
+					t.Logf("  (behavior: lowest allowed version that fixes the most CVEs)")
 				} else if tc.patchLevel != majorPatchLevel && result == "" {
 					t.Logf("✓ Patch level '%s' correctly restricted upgrade, CVEs remain unfixed: %v", tc.patchLevel, tc.cves)
 				}
@@ -1074,6 +1180,71 @@ func TestPatchSummary_PatchLevelSkipsLibrary(t *testing.T) {
 	assert.Equal(t, 1, manifest.LibrarySummary.Total)
 	assert.Equal(t, 0, manifest.LibrarySummary.Patched)
 	assert.Equal(t, 1, manifest.LibrarySummary.Skipped)
+}
+
+func TestPatchSummary_LibraryCountsOnlyCVEsFixedBySelectedVersion(t *testing.T) {
+	// ip-address 10.5.0 has CVEs fixed in 10.5.1, 10.7.1 and 10.7.4.
+	// Whether a CVE is reported as patched depends on the version selected for the package.
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: utils.LangPackages,
+				Type:  utils.NodePackages,
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					{VulnerabilityID: "CVE-2099-0001", PkgName: "ip-address", PkgPath: "node_modules/ip-address/package.json", InstalledVersion: "10.5.0", FixedVersion: "10.5.1"},
+					{VulnerabilityID: "CVE-2099-0002", PkgName: "ip-address", PkgPath: "node_modules/ip-address/package.json", InstalledVersion: "10.5.0", FixedVersion: "10.7.1"},
+					{VulnerabilityID: "CVE-2099-0003", PkgName: "ip-address", PkgPath: "node_modules/ip-address/package.json", InstalledVersion: "10.5.0", FixedVersion: "10.7.4"},
+					{VulnerabilityID: "CVE-2099-0004", PkgName: "ip-address", PkgPath: "node_modules/ip-address/package.json", InstalledVersion: "10.5.0", FixedVersion: "11.0.1"},
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		patchLevel      string
+		expectedVersion map[string]string // vulnerability ID -> FixedVersion in the manifest
+		patched         int
+		skipped         int
+	}{
+		{
+			patchLevel:      patchPatchLevel,
+			expectedVersion: map[string]string{"CVE-2099-0001": "10.5.1", "CVE-2099-0002": "", "CVE-2099-0003": "", "CVE-2099-0004": ""},
+			patched:         1,
+			skipped:         3,
+		},
+		{
+			patchLevel:      minorPatchLevel,
+			expectedVersion: map[string]string{"CVE-2099-0001": "10.7.4", "CVE-2099-0002": "10.7.4", "CVE-2099-0003": "10.7.4", "CVE-2099-0004": ""},
+			patched:         3,
+			skipped:         1,
+		},
+		{
+			patchLevel:      majorPatchLevel,
+			expectedVersion: map[string]string{"CVE-2099-0001": "11.0.1", "CVE-2099-0002": "11.0.1", "CVE-2099-0003": "11.0.1", "CVE-2099-0004": "11.0.1"},
+			patched:         4,
+			skipped:         0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.patchLevel, func(t *testing.T) {
+			manifest := parseReportToManifest(t, report, tc.patchLevel)
+
+			assert.Equal(t, 4, manifest.LibrarySummary.Total)
+			assert.Equal(t, tc.patched, manifest.LibrarySummary.Patched)
+			assert.Equal(t, tc.skipped, manifest.LibrarySummary.Skipped)
+
+			got := map[string]string{}
+			for _, u := range manifest.LangUpdates {
+				got[u.VulnerabilityID] = u.FixedVersion
+			}
+			assert.Equal(t, tc.expectedVersion, got)
+		})
+	}
 }
 
 func TestPatchSummary_PkgTypesFiltering(t *testing.T) {
