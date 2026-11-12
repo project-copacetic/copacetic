@@ -679,6 +679,60 @@ func (r *cancelingBlobReader) ReadAt(p []byte, off int64) (int, error) {
 	return n, err
 }
 
+// swappingContentStore serves the real target blob on its first open and other
+// bytes of the same size on later opens, like an input file that is replaced
+// while Copa reads it.
+type swappingContentStore struct {
+	content.Store
+	target      digest.Digest
+	replacement []byte
+	opens       int
+}
+
+//nolint:gocritic // The content.Store interface passes descriptors by value.
+func (s *swappingContentStore) ReaderAt(ctx context.Context, desc ocispec.Descriptor) (content.ReaderAt, error) {
+	if desc.Digest != s.target {
+		return s.Store.ReaderAt(ctx, desc)
+	}
+	s.opens++
+	if s.opens == 1 {
+		return s.Store.ReaderAt(ctx, desc)
+	}
+	return bytesReaderAt{bytes.NewReader(s.replacement)}, nil
+}
+
+type bytesReaderAt struct{ *bytes.Reader }
+
+func (bytesReaderAt) Close() error { return nil }
+
+// Blob reads must use the bytes they verified. Verifying one open and then
+// reading a second would parse or copy content that does not match the digest.
+func TestBlobReadsUseVerifiedBytes(t *testing.T) {
+	fixture := newSingleLayout(t, nil)
+	source, err := Open(t.Context(), fixture.path, "", "")
+	require.NoError(t, err)
+	original := []byte(`{"value":"original"}`)
+	replacement := []byte(`{"value":"replaced"}`)
+	require.Len(t, replacement, len(original))
+	desc := writeBlob(t, fixture.path, ocispec.MediaTypeImageConfig, original)
+	base := source.store
+
+	t.Run("metadata read", func(t *testing.T) {
+		source.store = &swappingContentStore{Store: base, target: desc.Digest, replacement: replacement}
+		var got map[string]string
+		require.NoError(t, source.readJSONBlob(t.Context(), &desc, &got))
+		assert.Equal(t, "original", got["value"])
+	})
+	t.Run("preserved copy", func(t *testing.T) {
+		source.store = &swappingContentStore{Store: base, target: desc.Digest, replacement: replacement}
+		output := t.TempDir()
+		require.NoError(t, source.copyBlob(t.Context(), output, &desc, make(map[string]bool)))
+		data, err := os.ReadFile(filepath.Join(output, "blobs", desc.Digest.Algorithm().String(), desc.Digest.Encoded()))
+		require.NoError(t, err)
+		assert.Equal(t, original, data)
+	})
+}
+
 func TestBlobOperationsObserveCancellation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -688,8 +742,8 @@ func TestBlobOperationsObserveCancellation(t *testing.T) {
 	}{
 		{name: "already canceled"},
 		{name: "during validation", onOpen: 1},
-		{name: "during preserved transfer", copy: true, onOpen: 2},
-		{name: "during metadata read after validation", json: true, onOpen: 2},
+		{name: "during preserved copy", copy: true, onOpen: 1},
+		{name: "during metadata read", json: true, onOpen: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newSingleLayout(t, nil)

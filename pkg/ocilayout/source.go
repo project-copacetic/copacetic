@@ -1,6 +1,7 @@
 package ocilayout
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -704,25 +705,44 @@ func (r contextReader) Read(p []byte) (int, error) {
 }
 
 func (s *Source) validateBlob(ctx context.Context, desc *ocispec.Descriptor) error {
+	ra, err := s.openBlob(ctx, desc)
+	if err != nil {
+		return err
+	}
+	defer ra.Close()
+	return copyVerifiedBlob(ctx, io.Discard, ra, desc)
+}
+
+// openBlob checks a descriptor and opens its blob. Callers verify the bytes
+// they read from this reader with copyVerifiedBlob rather than opening the blob
+// again: a second open can return different content if the input changes.
+func (s *Source) openBlob(ctx context.Context, desc *ocispec.Descriptor) (content.ReaderAt, error) {
 	if err := desc.Digest.Validate(); err != nil {
-		return fmt.Errorf("invalid digest %q: %w", desc.Digest, err)
+		return nil, fmt.Errorf("invalid digest %q: %w", desc.Digest, err)
 	}
 	if desc.Size < 0 {
-		return fmt.Errorf("invalid negative size %d", desc.Size)
+		return nil, fmt.Errorf("invalid negative size %d", desc.Size)
 	}
 	if err := s.validateBlobPath(desc.Digest); err != nil {
-		return err
+		return nil, err
 	}
 	ra, err := s.store.ReaderAt(ctx, *desc)
 	if err != nil {
-		return fmt.Errorf("open blob: %w", err)
+		return nil, fmt.Errorf("open blob: %w", err)
 	}
-	defer ra.Close()
 	if ra.Size() != desc.Size {
-		return fmt.Errorf("size mismatch: descriptor declares %d bytes, blob contains %d", desc.Size, ra.Size())
+		ra.Close()
+		return nil, fmt.Errorf("size mismatch: descriptor declares %d bytes, blob contains %d", desc.Size, ra.Size())
 	}
+	return ra, nil
+}
+
+// copyVerifiedBlob copies at most desc.Size bytes of the blob to w and checks
+// their digest, which also rejects a short read. The bytes written to w are the
+// bytes that were verified, so w must not be used unless this returns nil.
+func copyVerifiedBlob(ctx context.Context, w io.Writer, ra content.ReaderAt, desc *ocispec.Descriptor) error {
 	verifier := desc.Digest.Verifier()
-	if _, err := io.Copy(verifier, contextReader{ctx: ctx, reader: content.NewReader(ra)}); err != nil {
+	if _, err := io.Copy(io.MultiWriter(w, verifier), io.LimitReader(contextReader{ctx: ctx, reader: content.NewReader(ra)}, desc.Size)); err != nil {
 		return fmt.Errorf("read blob: %w", err)
 	}
 	if !verifier.Verified() {
@@ -737,19 +757,16 @@ func (s *Source) validateBlobPath(dgst digest.Digest) error {
 }
 
 func (s *Source) readJSONBlob(ctx context.Context, desc *ocispec.Descriptor, target any) error {
-	if err := s.validateBlob(ctx, desc); err != nil {
-		return err
-	}
-	ra, err := s.store.ReaderAt(ctx, *desc)
+	ra, err := s.openBlob(ctx, desc)
 	if err != nil {
 		return err
 	}
 	defer ra.Close()
-	data, err := io.ReadAll(contextReader{ctx: ctx, reader: content.NewReader(ra)})
-	if err != nil {
+	var data bytes.Buffer
+	if err := copyVerifiedBlob(ctx, &data, ra, desc); err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, target); err != nil {
+	if err := json.Unmarshal(data.Bytes(), target); err != nil {
 		return fmt.Errorf("parse %s: %w", desc.Digest, err)
 	}
 	return nil
@@ -1022,12 +1039,9 @@ func (s *Source) copyBlob(ctx context.Context, outputDir string, desc *ocispec.D
 	if copied[rel] {
 		return nil
 	}
-	if err := s.validateBlob(ctx, desc); err != nil {
-		return fmt.Errorf("copy blob %s: %w", desc.Digest, err)
-	}
-	ra, err := s.store.ReaderAt(ctx, *desc)
+	ra, err := s.openBlob(ctx, desc)
 	if err != nil {
-		return fmt.Errorf("open blob %s for copy: %w", desc.Digest, err)
+		return fmt.Errorf("copy blob %s: %w", desc.Digest, err)
 	}
 	defer ra.Close()
 	destination := filepath.Join(outputDir, "blobs", rel)
@@ -1040,7 +1054,9 @@ func (s *Source) copyBlob(ctx context.Context, outputDir string, desc *ocispec.D
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
-	if _, err := io.Copy(temp, contextReader{ctx: ctx, reader: content.NewReader(ra)}); err != nil {
+	// Verify the bytes as they are copied. Validating one open and copying
+	// another could copy content that does not match the digest.
+	if err := copyVerifiedBlob(ctx, temp, ra, desc); err != nil {
 		temp.Close()
 		return fmt.Errorf("copy blob %s: %w", desc.Digest, err)
 	}
