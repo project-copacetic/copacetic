@@ -424,6 +424,7 @@ LABEL sh.copa.image.patched="%s"
 	tr := tar.NewReader(bytes.NewReader(patchLayer))
 	hardlinks := make(map[string]*tar.Header)
 	hardlinkTargets := make(map[string]struct{})
+	written := 0
 
 	for {
 		hdr, err := tr.Next()
@@ -449,6 +450,7 @@ LABEL sh.copa.image.patched="%s"
 		if err := tw.WriteHeader(hdr); err != nil {
 			return errors.Wrap(err, "failed to write patch file header")
 		}
+		written++
 
 		// Copy the file content with size limit to prevent decompression bombs
 		if hdr.Size > 0 {
@@ -459,6 +461,19 @@ LABEL sh.copa.image.patched="%s"
 			if _, err := io.CopyN(tw, tr, hdr.Size); err != nil {
 				return errors.Wrap(err, "failed to write patch file content")
 			}
+		}
+	}
+
+	// Nothing to patch gives an empty layer. Keep patch/ in the context so `COPY patch/ /` still builds.
+	if written == 0 {
+		dirHeader := &tar.Header{
+			Name:     "patch/",
+			Mode:     0o755,
+			ModTime:  time.Now(),
+			Typeflag: tar.TypeDir,
+		}
+		if err := tw.WriteHeader(dirHeader); err != nil {
+			return errors.Wrap(err, "failed to write patch directory header")
 		}
 	}
 

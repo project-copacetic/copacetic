@@ -217,6 +217,35 @@ func TestCreateTarStream_OutputToFile(t *testing.T) {
 	assert.Equal(t, "Dockerfile", hdr.Name)
 }
 
+// TestCreateTarStream_EmptyPatchLayer checks that a context with nothing to patch still has the
+// patch/ directory its Dockerfile copies, so `docker build` doesn't fail on a missing path.
+func TestCreateTarStream_EmptyPatchLayer(t *testing.T) {
+	patchBuf := &bytes.Buffer{}
+	require.NoError(t, tar.NewWriter(patchBuf).Close())
+
+	outputPath := filepath.Join(t.TempDir(), "output.tar")
+	require.NoError(t, createTarStream("alpine:3.18", patchBuf.Bytes(), outputPath))
+
+	f, err := os.Open(outputPath)
+	require.NoError(t, err)
+	defer f.Close()
+
+	var names []string
+	tr := tar.NewReader(f)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		names = append(names, hdr.Name)
+		if hdr.Name == "patch/" {
+			assert.Equal(t, byte(tar.TypeDir), hdr.Typeflag)
+		}
+	}
+	assert.Equal(t, []string{"Dockerfile", "patch/"}, names)
+}
+
 func TestCreateTarStream_LargeFile(t *testing.T) {
 	// Test is simplified since we can't easily create a 2GB file in tests
 	// The size check happens when reading the tar, not when creating it
