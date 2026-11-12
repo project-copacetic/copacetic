@@ -1638,12 +1638,16 @@ func solveMultiPlatformOCI(
 		return fmt.Errorf("mismatch between states (%d) and platform metadata (%d)", len(platformStates), len(platformMetadata))
 	}
 
-	// Remove output directory if it exists
-	os.RemoveAll(outputDir)
-
-	// Create output directory
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	// An atomic export passes in a new staging directory that only this process
+	// can use. Removing and recreating it would let another local user claim the
+	// path in between, and the publishing rename would then move their directory
+	// or link into place. A named export writes to --oci-dir itself and replaces
+	// any earlier layout there.
+	if !exportOpts.Atomic {
+		os.RemoveAll(outputDir)
+		if err := os.MkdirAll(outputDir, 0o755); err != nil {
+			return fmt.Errorf("failed to create output directory: %w", err)
+		}
 	}
 
 	if len(platformStates) == 1 {

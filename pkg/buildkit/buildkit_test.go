@@ -1384,6 +1384,53 @@ func TestOCIPublicationHonorsLateCancellation(t *testing.T) {
 	assert.Equal(t, "unchanged", string(data))
 }
 
+// An atomic export owns the staging directory it is given. The BuildKit export
+// must write into that directory, not remove and recreate it, or another local
+// user could claim the path in between. A named export still replaces the
+// contents of --oci-dir. The solve itself fails here; only the directory
+// handling before it is under test.
+func TestMultiPlatformOCIExportKeepsAtomicStagingDirectory(t *testing.T) {
+	c, err := client.New(t.Context(), "tcp://127.0.0.1:1")
+	require.NoError(t, err)
+	defer c.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	amd64 := ispec.Platform{OS: "linux", Architecture: "amd64"}
+	arm64 := ispec.Platform{OS: "linux", Architecture: "arm64"}
+	for _, platforms := range [][]ispec.Platform{{amd64}, {amd64, arm64}} {
+		for _, atomic := range []bool{true, false} {
+			t.Run(fmt.Sprintf("platforms=%d/atomic=%v", len(platforms), atomic), func(t *testing.T) {
+				staging, err := os.MkdirTemp(t.TempDir(), ".copa-oci-output-*")
+				require.NoError(t, err)
+				marker := filepath.Join(staging, "owned")
+				require.NoError(t, os.WriteFile(marker, nil, 0o600))
+				before, err := os.Lstat(staging)
+				require.NoError(t, err)
+
+				states := make([]llb.State, len(platforms))
+				metadata := make([]platformExportMetadata, len(platforms))
+				for i := range platforms {
+					states[i] = llb.Scratch()
+				}
+				err = solveMultiPlatformOCI(ctx, c, staging, states, platforms, metadata,
+					OCILayoutExportOptions{Atomic: atomic}.WithContext(ctx))
+				require.Error(t, err)
+
+				after, err := os.Lstat(staging)
+				require.NoError(t, err)
+				if atomic {
+					assert.True(t, os.SameFile(before, after), "the staging directory must not be replaced")
+					assert.Equal(t, before.Mode(), after.Mode())
+					assert.FileExists(t, marker)
+					return
+				}
+				assert.NoFileExists(t, marker, "a named export replaces the earlier --oci-dir contents")
+			})
+		}
+	}
+}
+
 func TestCanceledOCIExportRemovesStagingDirectory(t *testing.T) {
 	source, _, _ := newOCIInputTestSource(t)
 	parent := t.TempDir()
