@@ -258,3 +258,44 @@ func TestValidScannerNamePattern(t *testing.T) {
 		})
 	}
 }
+
+// writeV1alpha2Report writes a native v1alpha2 report with the given OS and language updates.
+func writeV1alpha2Report(t *testing.T, osUpdates, langUpdates string) string {
+	t.Helper()
+	content := fmt.Sprintf(`{
+		"apiVersion": "v1alpha2",
+		"metadata": {"os": {"type": "debian", "version": "12"}, "config": {"arch": "amd64"}},
+		"osupdates": [%s],
+		"langupdates": [%s]
+	}`, osUpdates, langUpdates)
+	file := t.TempDir() + "/report.json"
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	return file
+}
+
+// TestTryParseScanReportPluginPkgTypes checks that plugin reports honor pkg-types like Trivy reports do.
+func TestTryParseScanReportPluginPkgTypes(t *testing.T) {
+	file := writeV1alpha2Report(t,
+		`{"name": "openssl", "installedVersion": "3.0.1", "fixedVersion": "3.0.2", "vulnerabilityID": "CVE-2024-0001", "type": "debian", "class": "os-pkgs"}`,
+		`{"name": "requests", "installedVersion": "2.31.0", "fixedVersion": "2.31.1", "vulnerabilityID": "CVE-2024-0002", "type": "python-pkg", "class": "lang-pkgs"}`)
+
+	tests := []struct {
+		pkgTypes string
+		wantOS   int
+		wantLang int
+	}{
+		{utils.PkgTypeOS, 1, 0},
+		{utils.PkgTypeLibrary, 0, 1},
+		{utils.PkgTypeOS + "," + utils.PkgTypeLibrary, 1, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.pkgTypes, func(t *testing.T) {
+			manifest, err := TryParseScanReport(file, "native", tc.pkgTypes, utils.PatchTypePatch)
+			assert.NoError(t, err)
+			assert.Len(t, manifest.OSUpdates, tc.wantOS)
+			assert.Len(t, manifest.LangUpdates, tc.wantLang)
+		})
+	}
+}

@@ -41,7 +41,29 @@ func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unv
 	if scanner == "trivy" {
 		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
 	}
-	return customParseScanReport(file, scanner)
+	manifest, err := customParseScanReport(file, scanner)
+	if err != nil {
+		return nil, err
+	}
+	filterByPkgTypes(manifest, pkgTypes)
+	return manifest, nil
+}
+
+// filterByPkgTypes drops the update classes that pkg-types leaves out.
+func filterByPkgTypes(manifest *unversioned.UpdateManifest, pkgTypes string) {
+	if manifest == nil {
+		return
+	}
+	// Only process library updates if "library" is in pkg-types
+	if !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
+		manifest.LangUpdates = []unversioned.UpdatePackage{}
+		manifest.LibrarySummary = nil
+	}
+	// Only process OS updates if "os" is in pkg-types
+	if !strings.Contains(pkgTypes, utils.PkgTypeOS) {
+		manifest.OSUpdates = []unversioned.UpdatePackage{}
+		manifest.OSSummary = nil
+	}
 }
 
 // validScannerNamePattern ensures the scanner name is safe for use in binary lookups.
@@ -99,18 +121,7 @@ func defaultParseScanReport(file, pkgTypes, libraryPatchLevel string) (*unversio
 		}
 		if err == nil {
 			// Filter updates based on pkg-types early
-			if manifest != nil {
-				// Only process library updates if "library" is in pkg-types
-				if !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
-					manifest.LangUpdates = []unversioned.UpdatePackage{}
-					manifest.LibrarySummary = nil
-				}
-				// Only process OS updates if "os" is in pkg-types
-				if !strings.Contains(pkgTypes, utils.PkgTypeOS) {
-					manifest.OSUpdates = []unversioned.UpdatePackage{}
-					manifest.OSSummary = nil
-				}
-			}
+			filterByPkgTypes(manifest, pkgTypes)
 			return manifest, nil
 		} else if _, ok := err.(*ErrorUnsupported); ok {
 			continue
