@@ -1053,7 +1053,8 @@ func updateImageConfigData(
 // platform than the image being re-patched. The recorded digest establishes
 // content identity only: a single-platform manifest resolves regardless of the
 // requested platform, so metadata naming another platform's manifest would
-// otherwise rebuild the patch on a foreign root filesystem.
+// otherwise rebuild the patch on a foreign root filesystem. An origin that
+// cannot be compared with any platform is rejected rather than trusted.
 func verifyRecoveredOriginPlatform(inputConfig, originConfig []byte, requested *specs.Platform) error {
 	var input, origin specs.Platform
 	if err := json.Unmarshal(inputConfig, &input); err != nil {
@@ -1061,7 +1062,7 @@ func verifyRecoveredOriginPlatform(inputConfig, originConfig []byte, requested *
 	}
 	inputDeclared := input.OS != "" && input.Architecture != ""
 	if !inputDeclared && requested == nil {
-		return nil
+		return errors.New("cannot verify recorded patch origin platform: the patched image config does not declare its platform and no target platform was requested")
 	}
 	if err := json.Unmarshal(originConfig, &origin); err != nil {
 		return fmt.Errorf("parse recorded patch origin platform: %w", err)

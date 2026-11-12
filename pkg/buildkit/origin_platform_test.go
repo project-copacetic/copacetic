@@ -71,6 +71,18 @@ func TestUpdateImageConfigDataRejectsCrossPlatformOrigin(t *testing.T) {
 			wantErr:   "does not match requested platform",
 		},
 		{
+			name:    "frontend default platform cannot verify origin when input omits its platform",
+			input:   repatchInput(t, specs.Platform{}),
+			origin:  imageConfig(t, arm64, nil),
+			wantErr: "no target platform was requested",
+		},
+		{
+			name:    "frontend default platform rejects undeclared input and origin",
+			input:   repatchInput(t, specs.Platform{}),
+			origin:  imageConfig(t, specs.Platform{}, nil),
+			wantErr: "no target platform was requested",
+		},
+		{
 			name:    "origin without a declared platform cannot be verified",
 			input:   repatchInput(t, amd64),
 			origin:  imageConfig(t, specs.Platform{}, nil),
