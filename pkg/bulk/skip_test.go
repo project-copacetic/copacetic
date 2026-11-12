@@ -321,6 +321,26 @@ func TestCheckReportForVulnerabilities(t *testing.T) {
 		// Verify the function is callable
 		assert.NotNil(t, checkReportForVulnerabilities)
 	})
+
+	t.Run("plugin report honors pkg-types", func(t *testing.T) {
+		// A plugin report with only a library fix has nothing to patch under the default pkg-types "os".
+		reportPath := filepath.Join(t.TempDir(), "report.json")
+		report := `{
+			"apiVersion": "v1alpha2",
+			"metadata": {"os": {"type": "alpine", "version": "3.20.2"}, "config": {"arch": "amd64"}},
+			"osupdates": [],
+			"langupdates": [{"name": "urllib3", "installedVersion": "2.2.1", "fixedVersion": "2.2.2", "vulnerabilityID": "CVE-2024-37891", "type": "python-pkg", "class": "lang-pkgs"}]
+		}`
+		require.NoError(t, os.WriteFile(reportPath, []byte(report), 0o600))
+
+		hasVulns, err := checkReportForVulnerabilities(reportPath, "native", "os", "")
+		require.NoError(t, err)
+		assert.False(t, hasVulns)
+
+		hasVulns, err = checkReportForVulnerabilities(reportPath, "native", "os,library", "")
+		require.NoError(t, err)
+		assert.True(t, hasVulns)
+	})
 }
 
 func TestBuildReportIndex(t *testing.T) {
