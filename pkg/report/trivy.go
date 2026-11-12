@@ -212,28 +212,48 @@ func allowedByPatchLevel(installed, candidate versionCandidate, libraryPatchLeve
 // versionFixesVulnerability reports whether installing version resolves a CVE with
 // the given Trivy FixedVersion, a comma-separated list with one fix per supported
 // release line. A version resolves the CVE when it is at or above the fix on its
-// own major line, or above every listed fix.
+// closest release line (same major.minor, else same major), or above every listed
+// fix when none shares its major.
 func versionFixesVulnerability(version, fixed string) bool {
 	candidate := newVersionCandidate(version)
 	candidate.prefix = parseVersionPartPrefix(version)
 	return candidateFixesVulnerability(candidate, splitFixedVersions(fixed))
 }
 
+// candidateFixesVulnerability compares the candidate against the fix on its closest
+// release line: the listed fixes sharing its major.minor, else those sharing its
+// major. The highest of those decides. When no fix shares the candidate's major,
+// the candidate only fixes the CVE if it is above every listed fix.
 func candidateFixesVulnerability(candidate versionCandidate, fixed []versionCandidate) bool {
 	if len(fixed) == 0 {
 		return false
 	}
+	var sameMajor, sameMinor *versionCandidate
 	aboveAll := true
-	for _, f := range fixed {
-		cmp := compareVersionCandidates(f, candidate)
-		if cmp <= 0 && f.prefix.first == candidate.prefix.first {
-			return true
-		}
-		if cmp >= 0 {
+	for i := range fixed {
+		f := &fixed[i]
+		if compareVersionCandidates(*f, candidate) >= 0 {
 			aboveAll = false
 		}
+		if f.prefix.first != candidate.prefix.first {
+			continue
+		}
+		if sameMajor == nil || compareVersionCandidates(*f, *sameMajor) > 0 {
+			sameMajor = f
+		}
+		if f.prefix.second == candidate.prefix.second &&
+			(sameMinor == nil || compareVersionCandidates(*f, *sameMinor) > 0) {
+			sameMinor = f
+		}
 	}
-	return aboveAll
+	closest := sameMinor
+	if closest == nil {
+		closest = sameMajor
+	}
+	if closest == nil {
+		return aboveAll
+	}
+	return compareVersionCandidates(*closest, candidate) <= 0
 }
 
 // FindOptimalFixedVersionWithPatchLevel picks the version to upgrade a package to.

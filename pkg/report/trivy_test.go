@@ -324,6 +324,13 @@ func TestOptimalVersionSelectionPerCVE(t *testing.T) {
 			expected:         "1.0.2",
 		},
 		{
+			name:             "per_minor_fixes_use_the_fix_on_the_candidates_own_line",
+			installedVersion: "1.29.0",
+			fixedVersions:    []string{"1.29.10, 1.30.6", "1.30.0"},
+			patchLevel:       minorPatchLevel,
+			expected:         "1.30.6",
+		},
+		{
 			name:             "empty_fixed_versions",
 			installedVersion: "1.0.0",
 			fixedVersions:    nil,
@@ -355,6 +362,12 @@ func TestVersionFixesVulnerability(t *testing.T) {
 		{"6.30.0", "7.30.1", false},
 		{"8.0.0", "7.30.1", true},
 		{"1.0.0", "", false},
+		{"1.30.0", "1.29.10, 1.30.6", false},
+		{"1.30.6", "1.29.10, 1.30.6", true},
+		{"1.31.0", "1.29.10, 1.30.6", true},
+		{"1.28.5", "1.29.10, 1.30.6", false},
+		{"1.29.10", "1.29.10, 1.30.6", true},
+		{"1.30.0", "1.30.0", true},
 	}
 
 	for _, tc := range testCases {
