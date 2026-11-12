@@ -73,6 +73,10 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
 			}
+			// Leave the level empty when the flag isn't set, so plugin reports keep their own fixed versions.
+			if !cmd.Flags().Changed("library-patch-level") {
+				ua.libraryPatchLevel = ""
+			}
 
 			// Create a context that is canceled on SIGINT/SIGTERM.
 			// This ensures BuildKit and all child operations stop promptly on Ctrl+C.

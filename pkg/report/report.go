@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -37,8 +38,14 @@ type packageTypeScanReportParser interface {
 	ParseWithPackageTypes(string, string, string) (*unversioned.UpdateManifest, error)
 }
 
+// TryParseScanReport parses a scan report. An empty libraryPatchLevel means the user did not set
+// --library-patch-level: Trivy reports use the default "patch", and plugin reports keep the plugin's
+// own fixed versions.
 func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
+		if libraryPatchLevel == "" {
+			libraryPatchLevel = utils.PatchTypePatch
+		}
 		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
 	}
 	manifest, err := customParseScanReport(file, scanner)
@@ -46,7 +53,39 @@ func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unv
 		return nil, err
 	}
 	filterByPkgTypes(manifest, pkgTypes)
+	if manifest != nil {
+		applyLibraryPatchLevel(manifest.LangUpdates, libraryPatchLevel)
+	}
 	return manifest, nil
+}
+
+// applyLibraryPatchLevel picks one fixed version per plugin library package, the way the Trivy parser
+// does, from all the candidates its rows list (plugins write one row per vulnerability).
+// With no explicit level, only packages whose rows list several comma-separated candidates are
+// changed, using the default "patch", since such a value can't be installed as is.
+func applyLibraryPatchLevel(updates []unversioned.UpdatePackage, libraryPatchLevel string) {
+	type pkgKey struct{ name, pkgType, installed string }
+	candidates := map[pkgKey][]string{}
+	for _, u := range updates {
+		k := pkgKey{u.Name, u.Type, u.InstalledVersion}
+		candidates[k] = append(candidates[k], u.FixedVersion)
+	}
+
+	for i := range updates {
+		u := &updates[i]
+		fixedVersions := candidates[pkgKey{u.Name, u.Type, u.InstalledVersion}]
+		level := libraryPatchLevel
+		if level == "" {
+			if !slices.ContainsFunc(fixedVersions, func(v string) bool { return strings.Contains(v, ",") }) {
+				continue
+			}
+			level = utils.PatchTypePatch
+		}
+		if specialLevel, ok := specialPackagePatchLevels[u.Name]; ok {
+			level = specialLevel
+		}
+		u.FixedVersion = FindOptimalFixedVersionWithPatchLevel(u.InstalledVersion, fixedVersions, level)
+	}
 }
 
 // filterByPkgTypes drops the update classes that pkg-types leaves out.

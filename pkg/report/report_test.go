@@ -299,3 +299,48 @@ func TestTryParseScanReportPluginPkgTypes(t *testing.T) {
 		})
 	}
 }
+
+// TestTryParseScanReportPluginLibraryPatchLevel checks how plugin library updates get their fixed version.
+func TestTryParseScanReportPluginLibraryPatchLevel(t *testing.T) {
+	row := func(name, fixed, vuln string) string {
+		return fmt.Sprintf(`{"name": %q, "installedVersion": "2.31.0", "fixedVersion": %q, "vulnerabilityID": %q, "type": "python-pkg", "class": "lang-pkgs"}`,
+			name, fixed, vuln)
+	}
+	tests := []struct {
+		name      string
+		rows      string
+		level     string
+		wantFixed []string // per row, in report order
+	}{
+		{"flag unset keeps the plugin's minor bump", row("requests", "2.32.0", "CVE-1"), "", []string{"2.32.0"}},
+		{"flag unset picks a patch from several candidates", row("requests", "2.31.1, 2.32.0", "CVE-1"), "", []string{"2.31.1"}},
+		{"explicit patch skips a minor-only fix", row("requests", "2.32.0", "CVE-1"), utils.PatchTypePatch, []string{""}},
+		{
+			"explicit patch groups rows of one package",
+			row("requests", "2.31.1", "CVE-1") + "," + row("requests", "2.32.0", "CVE-2"), utils.PatchTypePatch,
+			[]string{"2.31.1", "2.31.1"},
+		},
+		{
+			"explicit minor groups rows of one package",
+			row("requests", "2.32.0", "CVE-1") + "," + row("requests", "2.33.0", "CVE-2"), utils.PatchTypeMinor,
+			[]string{"2.33.0", "2.33.0"},
+		},
+		{
+			"packages are not grouped together",
+			row("requests", "2.31.1", "CVE-1") + "," + row("urllib3", "2.32.0", "CVE-2"), utils.PatchTypeMinor,
+			[]string{"2.31.1", "2.32.0"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			file := writeV1alpha2Report(t, "", tc.rows)
+			manifest, err := TryParseScanReport(file, "native", utils.PkgTypeLibrary, tc.level)
+			assert.NoError(t, err)
+			var got []string
+			for _, u := range manifest.LangUpdates {
+				got = append(got, u.FixedVersion)
+			}
+			assert.Equal(t, tc.wantFixed, got)
+		})
+	}
+}

@@ -57,7 +57,7 @@ This command produces a build context with the patch diff layer and a Dockerfile
   
   # Save context to file
   copa generate -i alpine:3.18 -r scan.json --output-context patch.tar`,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			// Check if stdout is a TTY when not writing to file
 			if ga.outputContext == "" && term.IsTerminal(int(os.Stdout.Fd())) { //nolint:gosec // G115: fd always fits in int
 				return fmt.Errorf("refusing to write tar stream to terminal. Use --output-context to save to file or redirect stdout")
@@ -66,6 +66,10 @@ This command produces a build context with the patch diff layer and a Dockerfile
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ga.libraryPatchLevel, ga.pkgTypes); err != nil {
 				return err
+			}
+			// Leave the level empty when the flag isn't set, so plugin reports keep their own fixed versions.
+			if !cmd.Flags().Changed("library-patch-level") {
+				ga.libraryPatchLevel = ""
 			}
 
 			opts := &types.Options{
