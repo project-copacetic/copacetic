@@ -1936,7 +1936,7 @@ func solveAndCombineAllPlatforms(
 	exportOpts OCILayoutExportOptions,
 ) error {
 	// Create temporary directory for platform tars
-	tempDir, err := os.MkdirTemp("", "copa-platforms-*")
+	tempDir, err := utils.MkdirTemp("copa-platforms-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp directory: %w", err)
 	}
@@ -1996,7 +1996,7 @@ func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platfo
 		platformSpec := platformSpecs[i]
 
 		// Extract platform tar to temporary directory
-		platformTempDir, err := os.MkdirTemp("", "copa-platform-extract-*")
+		platformTempDir, err := utils.MkdirTemp("copa-platform-extract-*")
 		if err != nil {
 			return fmt.Errorf("failed to create temp directory for platform: %w", err)
 		}
@@ -2236,7 +2236,7 @@ func createMixedOCILayout(
 
 	if len(platformStates) > 0 {
 		// Create temporary directory for patched platforms
-		patchedTempDir, err := os.MkdirTemp("", "copa-patched-platforms-*")
+		patchedTempDir, err := utils.MkdirTemp("copa-patched-platforms-*")
 		if err != nil {
 			return fmt.Errorf("failed to create temp directory for patched platforms: %w", err)
 		}
