@@ -15,7 +15,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
 
@@ -36,7 +36,7 @@ jobs:
         run: make version-docs
 
       - name: Create release pull request
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           commit-message: "chore: Generate ${{ env.NEWVERSION }} docs"
           title: "chore: Generate ${{ env.NEWVERSION }} docs"
