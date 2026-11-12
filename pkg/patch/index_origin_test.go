@@ -118,6 +118,46 @@ func TestRecordedIndexAllowsUnverifiedPreservedChildren(t *testing.T) {
 	require.NoError(t, validateRecordedIndexChildren(t.Context(), source))
 }
 
+// Agreeing child surfaces cannot move a recorded index origin into another
+// repository, even when the digest names the original child.
+func TestRecordedIndexRejectsChildOriginFromAnotherRepository(t *testing.T) {
+	reader := readIndexChildMetadata
+	t.Cleanup(func() { readIndexChildMetadata = reader })
+	platform := specs.Platform{OS: "linux", Architecture: "amd64"}
+	original := digest.FromString("original child")
+	parent := &types.SourceLineage{Kind: types.PatchOriginImage, Name: "example.com/app:original", Digest: digest.FromString("index")}
+	for _, tc := range []struct {
+		name    string
+		origin  string
+		wantErr string
+	}{
+		{name: "another repository", origin: "example.com/other:original", wantErr: "origin contradicts the recorded original index"},
+		{name: "same repository with another tag", origin: "example.com/app:moved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			claims := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: tc.origin, Digest: original}).Annotations()
+			source := &multiPlatformSource{
+				Current: &buildkit.ImageSource{Name: "example.com/app:patched", Index: &specs.Index{Manifests: []specs.Descriptor{{
+					Digest: digest.FromString("patched child"), MediaType: specs.MediaTypeImageManifest, Platform: &platform, Annotations: claims,
+				}}}},
+				Base:         &buildkit.ImageSource{Index: &specs.Index{Manifests: []specs.Descriptor{{Digest: original, Platform: &platform}}}},
+				IndexLineage: parent,
+			}
+			readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+				labels := maps.Clone(claims)
+				labels["BaseImage"] = tc.origin
+				return maps.Clone(claims), labels, nil
+			}
+			err := validateRecordedIndexChildren(t.Context(), source)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
 func TestPreservedChildOriginSurfacesMustAgree(t *testing.T) {
 	oldResolver, oldReader, oldBuilder := resolveImageSource, readIndexChildMetadata, bkNewClient
 	t.Cleanup(func() { resolveImageSource, readIndexChildMetadata, bkNewClient = oldResolver, oldReader, oldBuilder })
