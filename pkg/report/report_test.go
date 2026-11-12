@@ -330,6 +330,11 @@ func TestTryParseScanReportPluginLibraryPatchLevel(t *testing.T) {
 			row("requests", "2.31.1", "CVE-1") + "," + row("urllib3", "2.32.0", "CVE-2"), utils.PatchTypeMinor,
 			[]string{"2.31.1", "2.32.0"},
 		},
+		{
+			"a row without a fix stays unfixed",
+			row("requests", "2.31.1", "CVE-1") + "," + row("requests", "", "CVE-2"), utils.PatchTypePatch,
+			[]string{"2.31.1", ""},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

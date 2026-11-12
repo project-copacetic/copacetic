@@ -73,6 +73,10 @@ func applyLibraryPatchLevel(updates []unversioned.UpdatePackage, libraryPatchLev
 
 	for i := range updates {
 		u := &updates[i]
+		// A row without a fix stays unfixed, so it never borrows another vulnerability's version.
+		if u.FixedVersion == "" {
+			continue
+		}
 		fixedVersions := candidates[pkgKey{u.Name, u.Type, u.InstalledVersion}]
 		level := libraryPatchLevel
 		if level == "" {
