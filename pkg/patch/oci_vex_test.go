@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
@@ -206,8 +207,12 @@ func TestValidateOCIVEXDestination(t *testing.T) {
 	require.NoError(t, os.Symlink(existing, fileLink))
 	dirLink := filepath.Join(dir, "dir-link")
 	require.NoError(t, os.Symlink(subdir, dirLink))
-	danglingLink := filepath.Join(dir, "dangling-link.json")
-	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "vex.json"), danglingLink))
+	newFileLink := filepath.Join(dir, "new-file-link.json")
+	require.NoError(t, os.Symlink(filepath.Join(subdir, "vex.json"), newFileLink))
+	relativeLink := filepath.Join(dir, "relative-link.json")
+	require.NoError(t, os.Symlink(filepath.Join("subdir", "relative.json"), relativeLink))
+	missingDirLink := filepath.Join(dir, "missing-dir-link.json")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "vex.json"), missingDirLink))
 
 	tests := []struct {
 		name    string
@@ -220,9 +225,12 @@ func TestValidateOCIVEXDestination(t *testing.T) {
 		{name: "link to existing file", path: fileLink, format: "openvex"},
 		{name: "existing directory", path: subdir, format: "openvex", wantErr: "exists and is not a regular file"},
 		{name: "link to directory", path: dirLink, format: "openvex", wantErr: "exists and is not a regular file"},
-		{name: "link to missing file", path: danglingLink, format: "openvex", wantErr: "is a link to a missing or unreadable file"},
+		// The writer creates a missing link target in an existing directory.
+		{name: "link to new file in existing directory", path: newFileLink, format: "openvex"},
+		{name: "relative link to new file", path: relativeLink, format: "openvex"},
+		{name: "link to new file in missing directory", path: missingDirLink, format: "openvex", wantErr: "parent directory"},
 		{name: "missing parent", path: filepath.Join(dir, "missing", "vex.json"), format: "openvex", wantErr: "parent directory"},
-		{name: "parent is a file", path: filepath.Join(existing, "vex.json"), format: "openvex", wantErr: "stat VEX output"},
+		{name: "parent is a file", path: filepath.Join(existing, "vex.json"), format: "openvex", wantErr: "resolve VEX output"},
 		{name: "unsupported format", path: filepath.Join(dir, "vex.json"), format: "csaf", wantErr: "unsupported output format csaf"},
 	}
 	for _, tt := range tests {
@@ -243,6 +251,9 @@ func TestValidateOCIVEXDestination(t *testing.T) {
 func TestPatchRejectsUnusableOCIVEXDestinationBeforeExport(t *testing.T) {
 	input, _, _ := writeTwoPlatformLayout(t)
 	dir := t.TempDir()
+	// The check runs before the report is read, so its contents do not matter.
+	report := filepath.Join(t.TempDir(), "report.json")
+	require.NoError(t, os.WriteFile(report, []byte("{}"), 0o600))
 	tests := []struct {
 		name    string
 		output  string
@@ -260,6 +271,7 @@ func TestPatchRejectsUnusableOCIVEXDestinationBeforeExport(t *testing.T) {
 				InputOCILayout: input,
 				OCIDir:         ociDir,
 				PatchedTag:     "registry.invalid/acme/output:patched",
+				Report:         report,
 				Output:         tt.output,
 				Format:         tt.format,
 				BkAddr:         "tcp://127.0.0.1:1",
@@ -268,6 +280,26 @@ func TestPatchRejectsUnusableOCIVEXDestinationBeforeExport(t *testing.T) {
 			assert.NoDirExists(t, ociDir)
 		})
 	}
+}
+
+// VEX is written only for updates from a report, so a run without one must
+// not reject the VEX output or format. This run stops later, when it cannot
+// reach BuildKit.
+func TestPatchIgnoresOCIVEXDestinationWithoutReport(t *testing.T) {
+	input, _, _ := writeTwoPlatformLayout(t)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	err := patchWithContext(ctx, &types.Options{
+		InputOCILayout: input,
+		OCIDir:         filepath.Join(t.TempDir(), "output"),
+		PatchedTag:     "registry.invalid/acme/output:patched",
+		Output:         t.TempDir(),
+		Format:         "csaf",
+		BkAddr:         "tcp://127.0.0.1:1",
+	})
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "VEX output")
+	assert.NotContains(t, err.Error(), "unsupported output format")
 }
 
 func TestOCIExportOptionsCarrySourcePolicy(t *testing.T) {

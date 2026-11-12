@@ -137,8 +137,12 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			if err := source.ValidateNotInputFile(opts.Output); err != nil {
 				return err
 			}
-			if err := validateOCIVEXDestination(opts.Output, opts.Format); err != nil {
-				return err
+			// VEX is written only for updates from a report; a run without one
+			// ignores the VEX output and format, as with registry images.
+			if opts.Report != "" {
+				if err := validateOCIVEXDestination(opts.Output, opts.Format); err != nil {
+					return err
+				}
 			}
 		}
 		opts.OCISource = source

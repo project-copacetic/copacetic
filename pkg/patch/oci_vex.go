@@ -18,29 +18,29 @@ import (
 // validateOCIVEXDestination rejects a VEX format or destination that the VEX
 // writer would refuse. With OCI layout input, VEX is written only after the
 // output layout is published, so failing then would leave a published layout
-// without its VEX document. A destination is either an existing regular file,
-// including through a link, or a new file in an existing directory.
+// without its VEX document. The writer follows links, including a final link
+// whose target does not exist yet, so the check applies to the file the write
+// reaches: an existing regular file, or a new file in an existing directory.
 func validateOCIVEXDestination(path, format string) error {
 	if err := vex.ValidateFormat(format); err != nil {
 		return err
 	}
-	info, err := os.Lstat(path)
+	target, err := ocilayout.ResolveWritePath(path)
+	if err != nil {
+		// Includes a parent that is not a directory (ENOTDIR).
+		return fmt.Errorf("resolve VEX output %q: %w", path, err)
+	}
+	info, err := os.Stat(target)
 	if err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			if info, err = os.Stat(path); err != nil {
-				return fmt.Errorf("VEX output %q is a link to a missing or unreadable file: %w", path, err)
-			}
-		}
 		if !info.Mode().IsRegular() {
 			return fmt.Errorf("VEX output %q exists and is not a regular file", path)
 		}
 		return nil
 	}
 	if !os.IsNotExist(err) {
-		// Includes a parent that is not a directory (ENOTDIR).
 		return fmt.Errorf("stat VEX output %q: %w", path, err)
 	}
-	parent := filepath.Dir(path)
+	parent := filepath.Dir(target)
 	if _, err := os.Stat(parent); err != nil {
 		return fmt.Errorf("VEX output %q: parent directory %q: %w", path, parent, err)
 	}

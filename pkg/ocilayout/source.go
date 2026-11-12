@@ -283,6 +283,13 @@ func CanonicalNewPath(path string) (string, error) {
 	return filepath.Join(parent, base), nil
 }
 
+// ResolveWritePath returns the absolute path that a write to path reaches,
+// following every link in it, including a final link whose target does not
+// exist yet.
+func ResolveWritePath(path string) (string, error) {
+	return canonicalTargetPath(path)
+}
+
 func canonicalTargetPath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		cwd, err := os.Getwd()
