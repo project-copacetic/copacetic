@@ -56,3 +56,34 @@ source the selected `buildkitenvs` script, and run `load` before the singlearch
 tests. Run `cleanup` afterward with the recorded environment. The pinned recipe
 is the source of truth; do not add a registry digest for this generated fixture
 to `test-images.json`.
+
+## AlmaLinux repository fixtures
+
+The stock AlmaLinux images resolve their repositories through the geo-located
+mirrorlist, which sometimes hands the CI runners a mirror slow enough to push
+the AlmaLinux cases past their deadlines. The same `build` phase therefore also
+builds two copies from [`almalinux-baseurl/Dockerfile`](almalinux-baseurl/Dockerfile),
+which only switches the `.repo` files from `mirrorlist=` to the `baseurl=` on
+`repo.almalinux.org` that they already carry:
+
+| Variable | Base image | Used by |
+| --- | --- | --- |
+| `COPA_TEST_ALMALINUX9_IMAGE` | `docker.io/library/almalinux:9` | AlmaLinux cases in the gateway tests |
+| `COPA_TEST_ALMALINUX94_IMAGE` | The pinned `test-images.json` entry whose `imageEnv` names it | That entry in `TestPatch` |
+
+Both are pushed to the same loopback registry and exported with their manifest
+digests, and `load` verifies them in the custom-unix daemon's registry. When a
+variable is unset, as in a plain local run, the tests use the stock image. The
+gateway jobs that run the AlmaLinux cases call the same `build`, `load` and
+`cleanup` phases.
+
+The copies are single-platform `linux/amd64` images, so with
+`COPA_TEST_ALMALINUX94_IMAGE` set, the 9.4 entry patches a plain image instead
+of selecting a platform from the multi-platform index. The other
+`isManifestList` entries still cover that path.
+
+`build` always builds all three fixtures and `load` requires all three
+variables, so every job that calls the script gets the full set. The
+`buildkitenvs` scripts select a host-network BuildKit when
+`COPA_TEST_OPENSSL_IMAGE` is set, and the AlmaLinux cases rely on that switch
+to reach the loopback registry as well.
