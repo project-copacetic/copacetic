@@ -646,9 +646,15 @@ func (s *Source) imagePlatform(ctx context.Context, desc *ocispec.Descriptor) (*
 		return nil, nil
 	}
 	platform := desc.Platform
-	if platform != nil && (platform.OS == "" || platform.Architecture == "" ||
-		platform.OS == unknownPlatformField || platform.Architecture == unknownPlatformField) {
-		return nil, nil
+	if platform != nil {
+		if platform.OS == unknownPlatformField || platform.Architecture == unknownPlatformField {
+			return nil, nil
+		}
+		// The image spec requires both fields when platform is present. Treating
+		// a partial platform as unknown would drop the image from the output.
+		if platform.OS == "" || platform.Architecture == "" {
+			return nil, fmt.Errorf("descriptor %s platform %+v must declare both os and architecture", desc.Digest, *platform)
+		}
 	}
 	manifest, err := s.selectedManifest(ctx, desc)
 	if err != nil {

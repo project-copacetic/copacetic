@@ -105,3 +105,41 @@ func TestIndexInferenceStillFiltersArtifacts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []ocispec.Platform{{OS: "linux", Architecture: "amd64"}}, found)
 }
+
+// A descriptor platform must have both os and architecture. One with a single
+// field is rejected, rather than skipped like an unknown platform, because a
+// skipped image would be neither patched nor preserved in the output. A
+// platform with an explicit "unknown" field is still skipped.
+func TestIndexRejectsIncompleteDescriptorPlatform(t *testing.T) {
+	tests := []struct {
+		name     string
+		platform ocispec.Platform
+		wantErr  string
+	}{
+		{name: "architecture only", platform: ocispec.Platform{Architecture: "arm64"}, wantErr: "must declare both os and architecture"},
+		{name: "os only", platform: ocispec.Platform{OS: "linux"}, wantErr: "must declare both os and architecture"},
+		{name: "unknown os", platform: ocispec.Platform{OS: "unknown"}},
+		{name: "unknown architecture", platform: ocispec.Platform{Architecture: "unknown"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			image := newImageManifest(t, root, &ocispec.Platform{OS: "linux", Architecture: "amd64"}, nil, nil)
+			child := newImageManifest(t, root, &ocispec.Platform{OS: "linux", Architecture: "arm64"}, nil, nil)
+			child.Platform = &tt.platform
+			index := writeBlob(t, root, ocispec.MediaTypeImageIndex, marshalJSON(t, ocispec.Index{
+				Versioned: specs.Versioned{SchemaVersion: 2}, Manifests: []ocispec.Descriptor{image, child},
+			}))
+			newLayoutAt(t, root, []ocispec.Descriptor{index})
+			source, err := Open(t.Context(), root, "", "")
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			found, err := source.Platforms(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, []ocispec.Platform{{OS: "linux", Architecture: "amd64"}}, found)
+		})
+	}
+}
