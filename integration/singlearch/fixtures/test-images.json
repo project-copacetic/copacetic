@@ -187,7 +187,8 @@
         "distro": "AlmaLinux",
         "description": "Valid rpm DB, microdnf & rpm present",
         "ignoreErrors": false,
-        "isManifestList": true
+        "isManifestList": true,
+        "imageEnv": "COPA_TEST_ALMALINUX94_IMAGE"
     },
     {
         "image": "ghcr.io/project-copacetic/copacetic/test/openssl",
