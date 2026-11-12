@@ -169,6 +169,33 @@ func TestWriteOCIVEXReadsOutputOnlyForEligibleResults(t *testing.T) {
 	require.ErrorContains(t, writeOCIVEX(t.Context(), opts, eligible, "example.com/app:patched"), "read final OCI output for VEX")
 }
 
+// Before the export, Patch can only compare the VEX path with the output path
+// it names, because the output does not exist yet. Once the output exists,
+// writeOCIVEX checks again, so a VEX path that reaches the output through an
+// alias, here a link to it, cannot add a file to the finished layout.
+func TestWriteOCIVEXRejectsOutputAlias(t *testing.T) {
+	root, _, _ := writeTwoPlatformLayout(t)
+	alias := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(root, alias))
+	indexBefore, err := os.ReadFile(filepath.Join(root, "index.json"))
+	require.NoError(t, err)
+
+	opts := &types.Options{
+		OCISource: &ocilayout.Source{},
+		OCIDir:    root,
+		Output:    filepath.Join(alias, "vex.json"),
+		Format:    "openvex",
+	}
+	results := []types.PatchResult{ociVEXResult(t, "amd64")}
+	require.ErrorContains(t, writeOCIVEX(t.Context(), opts, results, "registry.invalid/acme/output:patched"),
+		"must not be inside OCI layout output")
+
+	assert.NoFileExists(t, filepath.Join(root, "vex.json"))
+	indexAfter, err := os.ReadFile(filepath.Join(root, "index.json"))
+	require.NoError(t, err)
+	assert.Equal(t, indexBefore, indexAfter)
+}
+
 func TestOCIExportOptionsCarrySourcePolicy(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "policy.json")
 	require.NoError(t, os.WriteFile(policyPath, []byte(`{"rules":[{"action":"CONVERT","selector":{"identifier":"docker-image://example.invalid/tooling:1"},`+
