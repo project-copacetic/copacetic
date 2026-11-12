@@ -196,6 +196,80 @@ func TestWriteOCIVEXRejectsOutputAlias(t *testing.T) {
 	assert.Equal(t, indexBefore, indexAfter)
 }
 
+func TestValidateOCIVEXDestination(t *testing.T) {
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "existing.json")
+	require.NoError(t, os.WriteFile(existing, []byte("{}"), 0o600))
+	subdir := filepath.Join(dir, "subdir")
+	require.NoError(t, os.Mkdir(subdir, 0o755))
+	fileLink := filepath.Join(dir, "file-link.json")
+	require.NoError(t, os.Symlink(existing, fileLink))
+	dirLink := filepath.Join(dir, "dir-link")
+	require.NoError(t, os.Symlink(subdir, dirLink))
+	danglingLink := filepath.Join(dir, "dangling-link.json")
+	require.NoError(t, os.Symlink(filepath.Join(dir, "missing", "vex.json"), danglingLink))
+
+	tests := []struct {
+		name    string
+		path    string
+		format  string
+		wantErr string
+	}{
+		{name: "new file", path: filepath.Join(dir, "vex.json"), format: "openvex"},
+		{name: "existing file", path: existing, format: "openvex"},
+		{name: "link to existing file", path: fileLink, format: "openvex"},
+		{name: "existing directory", path: subdir, format: "openvex", wantErr: "exists and is not a regular file"},
+		{name: "link to directory", path: dirLink, format: "openvex", wantErr: "exists and is not a regular file"},
+		{name: "link to missing file", path: danglingLink, format: "openvex", wantErr: "is a link to a missing or unreadable file"},
+		{name: "missing parent", path: filepath.Join(dir, "missing", "vex.json"), format: "openvex", wantErr: "parent directory"},
+		{name: "parent is a file", path: filepath.Join(existing, "vex.json"), format: "openvex", wantErr: "stat VEX output"},
+		{name: "unsupported format", path: filepath.Join(dir, "vex.json"), format: "csaf", wantErr: "unsupported output format csaf"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateOCIVEXDestination(tt.path, tt.format)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
+// With OCI layout input, VEX is written after the output layout is published.
+// A destination the VEX writer cannot use must fail before anything is
+// exported, rather than leaving a published layout without its VEX document.
+func TestPatchRejectsUnusableOCIVEXDestinationBeforeExport(t *testing.T) {
+	input, _, _ := writeTwoPlatformLayout(t)
+	dir := t.TempDir()
+	tests := []struct {
+		name    string
+		output  string
+		format  string
+		wantErr string
+	}{
+		{name: "existing directory", output: dir, format: "openvex", wantErr: "exists and is not a regular file"},
+		{name: "missing parent", output: filepath.Join(dir, "missing", "vex.json"), format: "openvex", wantErr: "parent directory"},
+		{name: "unsupported format", output: filepath.Join(dir, "vex.json"), format: "csaf", wantErr: "unsupported output format"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ociDir := filepath.Join(t.TempDir(), "output")
+			err := patchWithContext(t.Context(), &types.Options{
+				InputOCILayout: input,
+				OCIDir:         ociDir,
+				PatchedTag:     "registry.invalid/acme/output:patched",
+				Output:         tt.output,
+				Format:         tt.format,
+				BkAddr:         "tcp://127.0.0.1:1",
+			})
+			require.ErrorContains(t, err, tt.wantErr)
+			assert.NoDirExists(t, ociDir)
+		})
+	}
+}
+
 func TestOCIExportOptionsCarrySourcePolicy(t *testing.T) {
 	policyPath := filepath.Join(t.TempDir(), "policy.json")
 	require.NoError(t, os.WriteFile(policyPath, []byte(`{"rules":[{"action":"CONVERT","selector":{"identifier":"docker-image://example.invalid/tooling:1"},`+

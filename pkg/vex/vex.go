@@ -24,6 +24,16 @@ type ImageUpdates struct {
 	PatchedImageName string
 }
 
+// ValidateFormat returns an error unless format is a supported VEX output format.
+func ValidateFormat(format string) error {
+	switch format {
+	case "openvex":
+		return nil
+	default:
+		return fmt.Errorf("unsupported output format %s specified", format)
+	}
+}
+
 func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedImageName, format, file string) error {
 	switch format {
 	case "openvex":

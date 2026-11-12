@@ -137,6 +137,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 			if err := source.ValidateNotInputFile(opts.Output); err != nil {
 				return err
 			}
+			if err := validateOCIVEXDestination(opts.Output, opts.Format); err != nil {
+				return err
+			}
 		}
 		opts.OCISource = source
 		opts.Image = ""

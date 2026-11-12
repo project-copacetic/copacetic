@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
@@ -12,6 +14,38 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 )
+
+// validateOCIVEXDestination rejects a VEX format or destination that the VEX
+// writer would refuse. With OCI layout input, VEX is written only after the
+// output layout is published, so failing then would leave a published layout
+// without its VEX document. A destination is either an existing regular file,
+// including through a link, or a new file in an existing directory.
+func validateOCIVEXDestination(path, format string) error {
+	if err := vex.ValidateFormat(format); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			if info, err = os.Stat(path); err != nil {
+				return fmt.Errorf("VEX output %q is a link to a missing or unreadable file: %w", path, err)
+			}
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("VEX output %q exists and is not a regular file", path)
+		}
+		return nil
+	}
+	if !os.IsNotExist(err) {
+		// Includes a parent that is not a directory (ENOTDIR).
+		return fmt.Errorf("stat VEX output %q: %w", path, err)
+	}
+	parent := filepath.Dir(path)
+	if _, err := os.Stat(parent); err != nil {
+		return fmt.Errorf("VEX output %q: parent directory %q: %w", path, parent, err)
+	}
+	return nil
+}
 
 // writeOCIVEX binds only validated patches to manifests in the final output.
 // Using each platform manifest avoids claiming remediation for preserved peers.
