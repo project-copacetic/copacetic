@@ -31,10 +31,11 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 
 	opts := c.BuildOpts()
 
+	// LibraryPatchLevel stays empty unless library-patch-level is passed, like the CLI: Trivy reports
+	// then use "patch", and plugin reports keep their own fixed versions.
 	options := &types.Options{
-		Scanner:           "trivy", // default scanner
-		PkgTypes:          "os",    // default to OS packages only
-		LibraryPatchLevel: "patch", // default to patch-level updates for libraries
+		Scanner:  "trivy", // default scanner
+		PkgTypes: "os",    // default to OS packages only
 	}
 
 	// Helper function to get option value, checking both direct and build-arg prefixed keys
@@ -147,11 +148,10 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	if v, ok := getOpt(keyLibraryPatchLevel); ok {
 		options.LibraryPatchLevel = v
 		bklog.G(ctx).WithField("component", "copa-frontend").WithField("libraryPatchLevel", v).Debug("Library patch level specified")
-	}
 
-	// Validate library patch level
-	if err := validateLibraryPatchLevel(options.LibraryPatchLevel, options.PkgTypes); err != nil {
-		return nil, errors.Wrap(err, "invalid library patch level configuration")
+		if err := validateLibraryPatchLevel(options.LibraryPatchLevel, options.PkgTypes); err != nil {
+			return nil, errors.Wrap(err, "invalid library patch level configuration")
+		}
 	}
 
 	// Validate that library package types require a report
