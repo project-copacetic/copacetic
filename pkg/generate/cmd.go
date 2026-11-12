@@ -94,7 +94,7 @@ This command produces a build context with the patch diff layer and a Dockerfile
 				LibraryPatchLevel: ga.libraryPatchLevel,
 				Progress:          progressui.DisplayMode(ga.progress),
 			}
-			return Generate(context.Background(), opts)
+			return runGenerate(context.Background(), opts)
 		},
 	}
 

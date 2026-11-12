@@ -47,6 +47,7 @@ var maxPatchLayerSize int64 = 1 << 30 // 1GB
 // for testing.
 var (
 	bkNewClient = buildkit.NewClient
+	runGenerate = Generate
 )
 
 // Generate creates a tar stream containing a Dockerfile and patch layer.

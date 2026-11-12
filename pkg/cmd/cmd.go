@@ -60,6 +60,9 @@ type patchArgs struct {
 	chartRepo           string
 }
 
+// for testing.
+var patchImage = patch.Patch
+
 func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
@@ -178,7 +181,7 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 			}
 
 			log.Info("Starting in single image patching mode...")
-			return patch.Patch(ctx, opts)
+			return patchImage(ctx, opts)
 		},
 	}
 	flags := patchCmd.Flags()
