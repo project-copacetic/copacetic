@@ -2,7 +2,7 @@
 title: OCI Image Layouts
 ---
 
-An [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) is a directory that stores an image on disk: an `oci-layout` marker file, an `index.json`, and a `blobs/` directory. Tools such as `skopeo copy`, `docker save`, and `docker buildx build --output type=oci` produce them, and they are common in air-gapped and pipeline workflows where images are passed around as files instead of through a registry.
+An [OCI Image Layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) is a directory that stores an image on disk: an `oci-layout` marker file, an `index.json`, and a `blobs/` directory. `skopeo copy` writes one directly. `docker save` (Docker 25 and later) and `docker buildx build --output type=oci` write it as a tar archive, so extract the archive into a directory before passing it to Copa, or use `--output type=oci,dest=<dir>,tar=false` with buildx. Layouts are common in air-gapped and pipeline workflows where images are passed around as files instead of through a registry.
 
 Copa works with OCI layouts in two directions:
 
@@ -125,6 +125,8 @@ skopeo copy oci:./nginx-patched docker://example.com/acme/nginx:1.25.3-patched
 # Load it into Docker
 tar -C ./nginx-patched -cf - . | docker load
 ```
+
+`docker load` reads an OCI layout archive only when Docker uses the [containerd image store](https://docs.docker.com/engine/storage/containerd/).
 
 For a multi-platform layout:
 

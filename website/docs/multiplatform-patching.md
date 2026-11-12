@@ -113,7 +113,7 @@ These flags are essential for multi-platform patching:
 
 - **OCI layout export**: The `--oci-dir` flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. `--push` and `--oci-dir` cannot be used together.
 
-- **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
+- **Normal local image loading**: Without `--push`, Copa loads the individually patched platform images into the local runtime, also when `--oci-dir` is set. Unchanged platforms remain available from the source registry but are not loaded locally. Images patched from `--input-oci-layout` are written only to the output layout.
 
 - **No-report platform discovery**: In comprehensive no-report mode, Copa inspects the image. A single-platform image is patched as that discovered platform; otherwise the selected or discovered multi-platform set is used.
 
