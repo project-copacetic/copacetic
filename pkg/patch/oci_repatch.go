@@ -38,21 +38,21 @@ func rejectPatchedOCITargets(ctx context.Context, source *ocilayout.Source, plat
 		}
 		location := ""
 		if _, marked := desc.Annotations[copaPatchedAnnotation]; marked {
-			location = "descriptor"
+			location = "descriptor annotation"
 		} else {
 			manifestAnnotations, err := source.PlatformAnnotations(ctx, platform)
 			if err != nil {
 				return err
 			}
 			if _, marked := manifestAnnotations[copaPatchedAnnotation]; marked {
-				location = "manifest"
+				location = "manifest annotation"
 			}
 		}
 		if location == "" {
 			continue
 		}
 		return fmt.Errorf(
-			"OCI layout image %s for platform %s was already patched by Copa (%s annotation %s); re-patching a patched layout is not supported. "+
+			"OCI layout image %s for platform %s was already patched by Copa (%s %s); re-patching a patched layout is not supported. "+
 				"Patch the original, unpatched layout instead, and rescan that original image rather than reusing a report scanned from the patched image, "+
 				"which omits the fixes the patched image already contains",
 			desc.Digest, buildkit.FormatPlatform(*platform), location, copaPatchedAnnotation,
