@@ -29,6 +29,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
+	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/project-copacetic/copacetic/pkg/vex"
 )
 
@@ -138,7 +139,7 @@ func generateWithContext(
 
 	// Create working folder if needed
 	if workingFolder == "" {
-		workingFolder, err = os.MkdirTemp("", "copa-*")
+		workingFolder, err = utils.MkdirTemp("copa-*")
 		if err != nil {
 			return err
 		}

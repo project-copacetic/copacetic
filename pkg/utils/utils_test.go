@@ -355,7 +355,7 @@ func TestPodmanImageDescriptor(t *testing.T) {
 func TestRemoteImageDescriptor(t *testing.T) {
 	// Test with truly invalid image reference format that will fail parsing
 	t.Run("truly_invalid_image_reference", func(t *testing.T) {
-		desc, err := remoteImageDescriptor("")
+		desc, err := remoteImageDescriptor(t.Context(), "")
 		assert.Error(t, err)
 		assert.Nil(t, desc)
 		assert.Contains(t, err.Error(), "failed to parse image reference")
@@ -363,7 +363,7 @@ func TestRemoteImageDescriptor(t *testing.T) {
 
 	// Test with non-existent image reference (will hit registry but get auth/not found error)
 	t.Run("nonexistent_image", func(t *testing.T) {
-		desc, err := remoteImageDescriptor("definitely/does/not/exist:anywhere")
+		desc, err := remoteImageDescriptor(t.Context(), "definitely/does/not/exist:anywhere")
 		assert.Error(t, err)
 		assert.Nil(t, desc)
 		assert.Contains(t, err.Error(), "failed to get remote descriptor")

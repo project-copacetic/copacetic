@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -127,7 +128,7 @@ func frontendResultAnnotations(configData []byte, managerAnnotations map[string]
 	return annotations, nil
 }
 
-func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocispecs.Platform, managerAnnotations map[string]string) (map[string][]byte, error) {
+func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocispecs.Platform, managerAnnotations map[string]string, lineage *types.SourceLineage) (map[string][]byte, error) {
 	if patchedConfigData != nil {
 		merged, err := common.MergeImageRuntimeConfig(configData, patchedConfigData)
 		if err != nil {
@@ -136,14 +137,31 @@ func frontendResultMetadata(configData, patchedConfigData []byte, platform *ocis
 		configData = merged
 	}
 
-	resultAnnotations, err := frontendResultAnnotations(configData, managerAnnotations)
+	// Replace the entire origin tuple after merging runtime config and manager
+	// annotations so a missing optional name or an unverified origin cannot
+	// retain stale values from the supplied image.
+	configLabels := maps.Clone(managerAnnotations)
+	for _, key := range []string{types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
+		delete(configLabels, key)
+	}
+	if configLabels == nil {
+		configLabels = make(map[string]string)
+	}
+	maps.Copy(configLabels, lineage.Annotations())
+	var err error
+	configData, err = copabuildkit.RemoveImageConfigLabels(configData,
+		types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest)
 	if err != nil {
 		return nil, err
 	}
-	// Only manager-produced annotations are written into the config. Existing
+	resultAnnotations, err := frontendResultAnnotations(configData, configLabels)
+	if err != nil {
+		return nil, err
+	}
+	// Manager output and the validated origin are written into the config. Existing
 	// Chisel labels are already present and are merely mirrored back to the
 	// manifest metadata on no-op exports.
-	configData, err = common.AddImageConfigLabels(configData, managerAnnotations)
+	configData, err = common.AddImageConfigLabels(configData, configLabels)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +324,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 	if updatesInstalled {
 		managerAnnotations = pkgmgr.GetPackageManagerAnnotations(pm)
 	}
-	metadata, err := frontendResultMetadata(config.ConfigData, config.PatchedConfigData, platform, managerAnnotations)
+	metadata, err := frontendResultMetadata(config.ConfigData, config.PatchedConfigData, platform, managerAnnotations, config.SourceLineage)
 	if err != nil {
 		return llb.State{}, errors.Wrap(err, "failed to prepare frontend image metadata")
 	}
