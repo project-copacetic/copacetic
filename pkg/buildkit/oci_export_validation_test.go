@@ -35,6 +35,8 @@ type fakeOCIExport struct {
 	// exporter writes when a solve requests attestations: index.json lists an
 	// image index that holds the image manifest and its attestation manifest.
 	attestation bool
+	// extraEntry is written to the tar after the layout files.
+	extraEntry *tar.Header
 }
 
 // ociExportFile is one file in a fake OCI exporter tar, a blob or layout metadata.
@@ -132,6 +134,9 @@ func writeFakeOCIExport(t *testing.T, solveOpt *client.SolveOpt, platform *ispec
 		require.NoError(t, archive.WriteHeader(&tar.Header{Name: file.name, Mode: 0o644, Size: int64(len(file.data)), Typeflag: tar.TypeReg}))
 		_, err := archive.Write(file.data)
 		require.NoError(t, err)
+	}
+	if export.extraEntry != nil {
+		require.NoError(t, archive.WriteHeader(export.extraEntry))
 	}
 	require.NoError(t, archive.Close())
 	return output.Close()

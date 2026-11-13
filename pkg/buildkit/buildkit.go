@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -2461,6 +2462,11 @@ func solveSinglePlatformOCI(
 	if err := extractTarToDirectory(ctx, tarPath, outputDir); err != nil {
 		return fmt.Errorf("failed to extract OCI layout: %w", err)
 	}
+	if len(exportOpts.state.sources) > 0 {
+		if err := rejectNonRegularOCIExportEntries(outputDir, platformSpec); err != nil {
+			return err
+		}
+	}
 
 	// Clean up tar file
 	os.Remove(tarPath)
@@ -2567,11 +2573,13 @@ func solveAndCombineAllPlatforms(
 	}
 
 	// Extract and combine all platform tars into multi-platform OCI layout
-	return extractAndCombinePlatformTars(ctx, outputDir, platformTars, platformSpecs, exportOpts.IndexAnnotations)
+	return extractAndCombinePlatformTars(ctx, outputDir, platformTars, platformSpecs, exportOpts.IndexAnnotations, len(exportOpts.state.sources) > 0)
 }
 
 // extractAndCombinePlatformTars extracts platform tars and combines them into multi-platform OCI layout.
-func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string) error {
+// With requireRegular, an export holding an entry other than a regular file or
+// directory is rejected before it is read.
+func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string, requireRegular bool) error {
 	// Create output directory structure
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -2605,6 +2613,11 @@ func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platfo
 		// Extract tar file
 		if err := extractTarToDirectory(ctx, platformTar, platformTempDir); err != nil {
 			return fmt.Errorf("failed to extract tar for platform: %w", err)
+		}
+		if requireRegular {
+			if err := rejectNonRegularOCIExportEntries(platformTempDir, &platformSpec); err != nil {
+				return err
+			}
 		}
 
 		// Read the platform's index.json
@@ -2798,6 +2811,26 @@ func extractTarToDirectory(ctx context.Context, tarPath, destDir string) error {
 	return nil
 }
 
+// rejectNonRegularOCIExportEntries fails if an extracted OCI export holds an
+// entry other than a regular file or directory. BuildKit's OCI exporter writes
+// only those, and the export is read and copied by path afterwards, which would
+// follow a symlink out of the export or block opening a FIFO.
+func rejectNonRegularOCIExportEntries(dir string, platformSpec *specs.Platform) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type().IsRegular() {
+			return nil
+		}
+		name, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("OCI export for platform %s holds %s, which is not a regular file or directory", FormatPlatform(*platformSpec), filepath.ToSlash(name))
+	})
+}
+
 // getPlatformSuffix returns the expected image tag suffix for a platform.
 func getPlatformSuffix(platform *specs.Platform) string {
 	suffix := "-" + platform.Architecture
@@ -2934,11 +2967,17 @@ func exportPatchedPlatformsToTemp(
 		if err := extractTarToDirectory(ctx, platformTarPath, platformExtractDir); err != nil {
 			return nil, fmt.Errorf("failed to extract platform tar: %w", err)
 		}
+		layoutInput := len(exportOpts.state.sources) > 0
+		if layoutInput {
+			if err := rejectNonRegularOCIExportEntries(platformExtractDir, &platformSpec); err != nil {
+				return nil, err
+			}
+		}
 
 		// Read the platform's index.json and extract manifest. Layout input is
 		// validated once staged, which cannot see entries dropped here, so its
 		// export must list only the platform's manifest.
-		manifest, err := extractManifestFromOCI(platformExtractDir, &platformSpec, len(exportOpts.state.sources) > 0)
+		manifest, err := extractManifestFromOCI(platformExtractDir, &platformSpec, layoutInput)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract manifest: %w", err)
 		}
