@@ -71,7 +71,7 @@ func patchMultiPlatformImage(
 			}
 			reportFiles := make(map[string]string, len(reportPlatforms))
 			for _, platform := range reportPlatforms {
-				match, err := resolveOCIPlatform(platforms, &platform.Platform)
+				match, err := resolveOCIReportDirPlatform(platforms, &platform)
 				if err != nil {
 					return fmt.Errorf("report %s: %w", platform.ReportFile, err)
 				}
@@ -649,6 +649,19 @@ func patchPreparedMultiPlatformImage(
 		return writeOCIVEX(ctx, opts, resultsInPlatformOrder(platforms, patchResults), patchedImageName.String())
 	}
 	return nil
+}
+
+// resolveOCIReportDirPlatform matches a report in a report directory to a
+// layout platform. As with a single report, a report without platform
+// metadata applies only when the layout has exactly one platform.
+func resolveOCIReportDirPlatform(discovered []types.PatchPlatform, report *types.PatchPlatform) (types.PatchPlatform, error) {
+	if strings.TrimSpace(report.Architecture) == "" {
+		if len(discovered) != 1 {
+			return types.PatchPlatform{}, fmt.Errorf("scan report has no platform metadata; it can only target an OCI image with one platform, not %d", len(discovered))
+		}
+		return discovered[0], nil
+	}
+	return resolveOCIPlatform(discovered, &report.Platform)
 }
 
 func platformsForSingleReport(

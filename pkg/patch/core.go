@@ -341,8 +341,12 @@ func initializePatchConfig(ctx context.Context, c gwclient.Client, opts *Options
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
-		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+	// Layout input treats its own content as authoritative and records no
+	// patch origin, so origin metadata it carries is removed, not recovered.
+	if opts.OCISource == nil {
+		if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
+			return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+		}
 	}
 	config.SourceLineage, err = sourceLineageForPatch(config, opts)
 	if err != nil {

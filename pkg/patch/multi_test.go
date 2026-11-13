@@ -718,3 +718,19 @@ func TestCaptureMultiPlatformSourceKeepsUnrecordedOriginOmitted(t *testing.T) {
 		require.Nil(t, source.IndexLineage)
 	}
 }
+
+func TestResolveOCIReportDirPlatformInfersSolePlatform(t *testing.T) {
+	sole := types.PatchPlatform{Platform: platformSpec("linux", "arm64", "v8")}
+	unlabeled := &types.PatchPlatform{Platform: v1.Platform{OS: "linux"}, ReportFile: "report.json"}
+
+	match, err := resolveOCIReportDirPlatform([]types.PatchPlatform{sole}, unlabeled)
+	require.NoError(t, err)
+	assert.Equal(t, sole.Platform, match.Platform)
+
+	_, err = resolveOCIReportDirPlatform([]types.PatchPlatform{sole, {Platform: platformSpec("linux", "amd64", "")}}, unlabeled)
+	require.ErrorContains(t, err, "scan report has no platform metadata")
+
+	labeled := &types.PatchPlatform{Platform: platformSpec("linux", "amd64", "")}
+	_, err = resolveOCIReportDirPlatform([]types.PatchPlatform{sole}, labeled)
+	require.ErrorContains(t, err, "matches 0 platforms")
+}

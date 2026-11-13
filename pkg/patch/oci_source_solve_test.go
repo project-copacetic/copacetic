@@ -12,8 +12,10 @@ import (
 	digest "github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 )
@@ -89,4 +91,24 @@ func TestSinglePlatformOCIExportOnlyForLayoutInput(t *testing.T) {
 	require.NoError(t, exportSinglePlatformOCI(t.Context(), opts, result, platform))
 	_, err = os.Lstat(output)
 	assert.True(t, os.IsNotExist(err), "a named single-platform patch keeps its load-only behavior and does not write --oci-dir")
+}
+
+// Origin metadata carried by layout input is removed rather than recovered, so
+// it must not be checked against a recovered origin that does not exist.
+func TestInitializePatchConfigIgnoresLayoutOriginAnnotations(t *testing.T) {
+	source := openSolveTestSource(t)
+	ref, err := source.ResolveReference()
+	require.NoError(t, err)
+	configData := []byte(`{"architecture":"amd64","os":"linux","config":{},"rootfs":{"type":"layers","diff_ids":[]}}`)
+	gateway := &mocks.MockGWClient{}
+	gateway.On("ResolveImageConfig", mock.Anything, ref, mock.Anything).Return(ref, source.Descriptor.Digest, configData, nil)
+	annotations := map[string]string{
+		types.AnnotationPatchOriginKind: types.PatchOriginImage,
+		types.AnnotationPatchOriginName: "registry.invalid/app:1.0",
+	}
+	platform := &types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
+
+	config, err := initializePatchConfig(t.Context(), gateway, &Options{TargetPlatform: platform, OCISource: source}, annotations)
+	require.NoError(t, err)
+	assert.Nil(t, config.SourceLineage)
 }
