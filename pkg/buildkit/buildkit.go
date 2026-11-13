@@ -128,7 +128,7 @@ var (
 	getRemoteImageDescriptor      = remote.Get
 	getImageFromDaemon            = daemon.Image
 	tryGetManifestFromLocal       = getManifestFromLocal
-	solveOCIPlatform              = solvePlatformOCI
+	buildOCIExport                = buildOCIExportWithClient
 )
 
 // ImageSource captures the immutable identity and, for indexes, the platform
@@ -2407,7 +2407,7 @@ func solvePlatformOCI(
 ) error {
 	ensureAuthSession(solveOpt)
 
-	_, err := c.Build(ctx, *solveOpt, "copa-oci-export", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
+	return buildOCIExport(ctx, c, *solveOpt, func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
 		def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
 		if err != nil {
 			return nil, fmt.Errorf("marshal platform state: %w", err)
@@ -2420,7 +2420,12 @@ func solvePlatformOCI(
 			return nil, err
 		}
 		return result, nil
-	}, nil)
+	})
+}
+
+// buildOCIExportWithClient runs an OCI export solve on the BuildKit client.
+func buildOCIExportWithClient(ctx context.Context, c *client.Client, solveOpt client.SolveOpt, build gwclient.BuildFunc) error { //nolint:gocritic
+	_, err := c.Build(ctx, solveOpt, "copa-oci-export", build, nil)
 	return err
 }
 
@@ -2447,7 +2452,7 @@ func solveSinglePlatformOCI(
 	}
 	prepareExportSolveOpt(&solveOpt, exportOpts)
 
-	if err := solveOCIPlatform(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
+	if err := solvePlatformOCI(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
 		return fmt.Errorf("BuildKit solve failed: %w", err)
 	}
 
@@ -2556,7 +2561,7 @@ func solveAndCombineAllPlatforms(
 		}
 		prepareExportSolveOpt(&platformSolveOpt, exportOpts)
 
-		if err := solveOCIPlatform(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
+		if err := solvePlatformOCI(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
 			return fmt.Errorf("failed to solve platform: %w", err)
 		}
 	}
@@ -2916,7 +2921,7 @@ func exportPatchedPlatformsToTemp(
 		}
 		prepareExportSolveOpt(&solveOpt, exportOpts)
 
-		if err := solveOCIPlatform(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
+		if err := solvePlatformOCI(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
 			return nil, fmt.Errorf("failed to solve platform: %w", err)
 		}
 

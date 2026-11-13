@@ -11,13 +11,17 @@ import (
 
 	"github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
+	exptypes "github.com/moby/buildkit/exporter/containerimage/exptypes"
+	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	sourcepolicy "github.com/moby/buildkit/sourcepolicy/pb"
 	"github.com/opencontainers/go-digest"
 	"github.com/opencontainers/image-spec/specs-go"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -133,17 +137,31 @@ func writeFakeOCIExport(t *testing.T, solveOpt *client.SolveOpt, platform *ispec
 	return output.Close()
 }
 
-// stubOCIExporter replaces the BuildKit solve with a fake OCI exporter and
-// records each solve's options. Each platform gets the export from exports,
-// keyed by PlatformKey, or a valid one if it has no entry.
+// stubOCIExporter replaces BuildKit at the export solve: it records the
+// options each solve hands to BuildKit, runs the solve's build function
+// against a gateway whose solves return an empty result, and writes a fake
+// export for the platform in the result's image config. Each platform gets the
+// export from exports, keyed by PlatformKey, or a valid one if it has no entry.
 func stubOCIExporter(t *testing.T, exports map[string]fakeOCIExport) *[]client.SolveOpt {
 	t.Helper()
-	original := solveOCIPlatform
-	t.Cleanup(func() { solveOCIPlatform = original })
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	original := buildOCIExport
+	t.Cleanup(func() { buildOCIExport = original })
 	var solves []client.SolveOpt
-	solveOCIPlatform = func(_ context.Context, _ *client.Client, _ *llb.State, platform *ispec.Platform, _ platformExportMetadata, solveOpt *client.SolveOpt) error {
-		solves = append(solves, *solveOpt)
-		return writeFakeOCIExport(t, solveOpt, platform, exports[PlatformKey(*platform)])
+	buildOCIExport = func(ctx context.Context, _ *client.Client, solveOpt client.SolveOpt, build gwclient.BuildFunc) error {
+		solves = append(solves, solveOpt)
+		gateway := &mocks.MockGWClient{}
+		gateway.On("Solve", mock.Anything, mock.Anything).Return(&gwclient.Result{}, nil)
+		result, err := build(ctx, gateway)
+		if err != nil {
+			return err
+		}
+		// BuildKit writes an attestation manifest for each attestation the
+		// result carries, whatever the solve options request.
+		assert.Empty(t, result.Attestations, "export result carries attestations")
+		var config ispec.Image
+		require.NoError(t, json.Unmarshal(result.Metadata[exptypes.ExporterImageConfigKey], &config))
+		return writeFakeOCIExport(t, &solveOpt, &config.Platform, exports[PlatformKey(config.Platform)])
 	}
 	return &solves
 }
@@ -265,8 +283,8 @@ func TestOCIExportPublishesValidatedLayoutWithPatchSolveSources(t *testing.T) {
 
 			// Each export re-solves a patched state, so it needs the layout's
 			// content store and the source policy that the patch solve used.
-			// It must not request attestations, which the staged layout check
-			// would reject.
+			// The options BuildKit receives must not request attestations,
+			// which the staged layout check would reject.
 			require.Len(t, run.solves, len(tc.patched))
 			for _, solve := range run.solves {
 				assert.Same(t, run.policy, solve.SourcePolicy)
