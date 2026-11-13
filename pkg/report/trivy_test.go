@@ -1284,6 +1284,85 @@ func TestPatchSummary_LibraryCountsOnlyCVEsFixedBySelectedVersion(t *testing.T) 
 	}
 }
 
+func TestPatchSummary_GoBinaryMajorZeroModules(t *testing.T) {
+	// golang.org/x/crypto v0.43.0 in a Go binary, as in prom/pushgateway. All fixes are
+	// on a later 0.minor line, so "minor" must leave the module alone (a 0.x minor bump is
+	// breaking) and the Go manager receives no fixed version, while "major" selects the
+	// lowest version that fixes the most CVEs.
+	const (
+		pkgPath      = "bin/pushgateway"
+		highestFixed = "0.56.0"
+	)
+	vuln := func(id, fixed string) trivyTypes.DetectedVulnerability {
+		return trivyTypes.DetectedVulnerability{
+			VulnerabilityID: id, PkgName: "golang.org/x/crypto", PkgPath: pkgPath,
+			InstalledVersion: "v0.43.0", FixedVersion: fixed,
+		}
+	}
+	report := &trivyTypes.Report{
+		SchemaVersion: 2,
+		Metadata: trivyTypes.Metadata{
+			OS: &ftypes.OS{Family: "alpine", Name: "3.14.0"},
+		},
+		Results: []trivyTypes.Result{
+			{
+				Class: utils.LangPackages,
+				Type:  utils.GoBinary,
+				Vulnerabilities: []trivyTypes.DetectedVulnerability{
+					vuln("CVE-2099-0001", "0.45.0"),
+					vuln("CVE-2099-0002", "0.52.0"),
+					vuln("CVE-2099-0003", "0.52.0"),
+					vuln("CVE-2099-0004", highestFixed),
+				},
+			},
+		},
+	}
+
+	testCases := []struct {
+		patchLevel      string
+		expectedVersion map[string]string // vulnerability ID -> FixedVersion in the manifest
+		patched         int
+		skipped         int
+	}{
+		{
+			patchLevel:      patchPatchLevel,
+			expectedVersion: map[string]string{"CVE-2099-0001": "", "CVE-2099-0002": "", "CVE-2099-0003": "", "CVE-2099-0004": ""},
+			patched:         0,
+			skipped:         4,
+		},
+		{
+			patchLevel:      minorPatchLevel,
+			expectedVersion: map[string]string{"CVE-2099-0001": "", "CVE-2099-0002": "", "CVE-2099-0003": "", "CVE-2099-0004": ""},
+			patched:         0,
+			skipped:         4,
+		},
+		{
+			patchLevel:      majorPatchLevel,
+			expectedVersion: map[string]string{"CVE-2099-0001": highestFixed, "CVE-2099-0002": highestFixed, "CVE-2099-0003": highestFixed, "CVE-2099-0004": highestFixed},
+			patched:         4,
+			skipped:         0,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.patchLevel, func(t *testing.T) {
+			manifest := parseReportToManifest(t, report, tc.patchLevel)
+
+			assert.Equal(t, 4, manifest.LibrarySummary.Total)
+			assert.Equal(t, tc.patched, manifest.LibrarySummary.Patched)
+			assert.Equal(t, tc.skipped, manifest.LibrarySummary.Skipped)
+
+			got := map[string]string{}
+			for _, u := range manifest.LangUpdates {
+				assert.Equal(t, utils.GoBinary, u.Type)
+				assert.Equal(t, "golang.org/x/crypto", u.Name)
+				got[u.VulnerabilityID] = u.FixedVersion
+			}
+			assert.Equal(t, tc.expectedVersion, got)
+		})
+	}
+}
+
 func TestPatchSummary_PkgTypesFiltering(t *testing.T) {
 	report := &trivyTypes.Report{
 		SchemaVersion: 2,
