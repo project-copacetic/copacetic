@@ -35,7 +35,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,7 +65,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -78,18 +78,26 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: Build test fixtures
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh build
       - name: Run all gateway integration tests
         shell: bash
         run: |
           set -eu -o pipefail
           . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode}}
+          .github/workflows/scripts/singlearch-fixture.sh load
           gotestsum --format testname --junitfile test-results.xml -- ./integration/gateway/... -addr="${COPA_BUILDKIT_ADDR}" -timeout 25m
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         if: always()
         with:
           paths: "test-results.xml"
+      - name: Clean up test fixtures
+        if: always()
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh cleanup
 
   # Test Alpine/APK images (fast subset)
   test-gateway-alpine:
@@ -103,7 +111,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -116,7 +124,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Run Alpine tests
         shell: bash
         run: |
@@ -141,7 +149,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -154,7 +162,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Run Debian tests
         shell: bash
         run: |
@@ -179,7 +187,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -192,7 +200,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Run RPM-based distro tests
         shell: bash
         run: |
@@ -217,7 +225,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -230,7 +238,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Run cross-architecture tests
         shell: bash
         run: |
@@ -255,7 +263,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.3.1
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -268,7 +276,7 @@ jobs:
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Run layer and config tests
         shell: bash
         run: |

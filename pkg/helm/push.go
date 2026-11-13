@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/project-copacetic/copacetic/pkg/utils"
 )
 
 // PackageAndPushFunc is replaceable in tests.
@@ -19,7 +21,7 @@ func PackageAndPush(ctx context.Context, ch *Chart, ociRef string) (string, erro
 }
 
 func packageAndPush(ctx context.Context, ch *Chart, ociRef string) (string, error) {
-	tmpDir, err := os.MkdirTemp("", "copa-chart-push-*")
+	tmpDir, err := utils.MkdirTemp("copa-chart-push-*")
 	if err != nil {
 		return "", fmt.Errorf("create chart package directory: %w", err)
 	}
