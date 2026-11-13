@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/moby/buildkit/client"
@@ -26,6 +27,9 @@ import (
 type fakeOCIExport struct {
 	editManifests func([]ispec.Descriptor) []ispec.Descriptor
 	omitLayerBlob bool
+	// attestation adds an attestation manifest after the image manifest, in
+	// the shape BuildKit writes when a solve requests attestations.
+	attestation bool
 }
 
 // ociExportFile is one file in a fake OCI exporter tar, a blob or layout metadata.
@@ -68,6 +72,28 @@ func writeFakeOCIExport(t *testing.T, solveOpt *client.SolveOpt, platform *ispec
 		Layers:    []ispec.Descriptor{layer.desc},
 	}))
 	manifests := []ispec.Descriptor{manifest.desc}
+	var attestationFiles []ociExportFile
+	if export.attestation {
+		statement := newOCIExportBlob("application/vnd.in-toto+json", []byte(`{"_type":"https://in-toto.io/Statement/v0.1"}`))
+		attestationConfig := newOCIExportBlob(ispec.MediaTypeImageConfig, mustMarshalJSON(t, ispec.Image{
+			Platform: ispec.Platform{OS: "unknown", Architecture: "unknown"},
+			RootFS:   ispec.RootFS{Type: "layers", DiffIDs: []digest.Digest{statement.desc.Digest}},
+		}))
+		attestationManifest := newOCIExportBlob(ispec.MediaTypeImageManifest, mustMarshalJSON(t, ispec.Manifest{
+			Versioned: specs.Versioned{SchemaVersion: 2},
+			MediaType: ispec.MediaTypeImageManifest,
+			Config:    attestationConfig.desc,
+			Layers:    []ispec.Descriptor{statement.desc},
+		}))
+		desc := attestationManifest.desc
+		desc.Platform = &ispec.Platform{OS: "unknown", Architecture: "unknown"}
+		desc.Annotations = map[string]string{
+			"vnd.docker.reference.type":   "attestation-manifest",
+			"vnd.docker.reference.digest": manifest.desc.Digest.String(),
+		}
+		manifests = append(manifests, desc)
+		attestationFiles = []ociExportFile{statement, attestationConfig, attestationManifest}
+	}
 	if export.editManifests != nil {
 		manifests = export.editManifests(manifests)
 	}
@@ -78,6 +104,7 @@ func writeFakeOCIExport(t *testing.T, solveOpt *client.SolveOpt, platform *ispec
 		manifest,
 		config,
 	}
+	files = append(files, attestationFiles...)
 	if !export.omitLayerBlob {
 		files = append(files, layer)
 	}
@@ -230,13 +257,46 @@ func TestOCIExportPublishesValidatedLayoutWithPatchSolveSources(t *testing.T) {
 
 			// Each export re-solves a patched state, so it needs the layout's
 			// content store and the source policy that the patch solve used.
+			// It must not request attestations, which the staged layout check
+			// would reject.
 			require.Len(t, run.solves, len(tc.patched))
 			for _, solve := range run.solves {
 				assert.Same(t, run.policy, solve.SourcePolicy)
 				assert.Contains(t, solve.OCIStores, run.source.StoreID)
+				for key := range solve.FrontendAttrs {
+					assert.False(t, strings.HasPrefix(key, "attest:"), "export solve requests attestation %s", key)
+				}
 			}
 		})
 	}
+}
+
+// BuildKit writes attestation manifests only for solves that request them,
+// which the export solves do not. If one appears anyway it must not be
+// published: the single and multi-platform paths stamp the exported platform
+// on every index entry, so it would claim a platform its config does not
+// declare. The mixed path keeps only the first manifest of each export, which
+// is the image manifest, so the attestation is dropped.
+func TestOCIExportDoesNotPublishAttestationManifests(t *testing.T) {
+	attested := fakeOCIExport{attestation: true}
+	t.Run("single platform export", func(t *testing.T) {
+		run, err := runOCIExport(t, []ispec.Platform{ociExportAMD64}, nil, map[string]fakeOCIExport{PlatformKey(ociExportAMD64): attested})
+		assertOCIExportNotPublished(t, run.output, err)
+	})
+	t.Run("multi-platform export", func(t *testing.T) {
+		run, err := runOCIExport(t, []ispec.Platform{ociExportAMD64, ociExportARM64}, nil, map[string]fakeOCIExport{PlatformKey(ociExportARM64): attested})
+		assertOCIExportNotPublished(t, run.output, err)
+	})
+	t.Run("mixed export", func(t *testing.T) {
+		run, err := runOCIExport(t, []ispec.Platform{ociExportAMD64}, []ispec.Platform{ociExportARM64}, map[string]fakeOCIExport{PlatformKey(ociExportAMD64): attested})
+		require.NoError(t, err)
+		assertOCIExportPublished(t, run.output, ociExportAMD64, ociExportARM64)
+		published, err := ocilayout.Open(t.Context(), run.output, "", "")
+		require.NoError(t, err)
+		listed, err := published.Manifests(t.Context())
+		require.NoError(t, err)
+		assert.Len(t, listed, 2, "the published index must list only the platform manifests")
+	})
 }
 
 func TestOCIExportRejectsMalformedStagedLayout(t *testing.T) {
