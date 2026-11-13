@@ -122,6 +122,18 @@ func TestBuildxDialStdioUsesEffectiveBuilderEnvironment(t *testing.T) {
 			want:               "builder-flag=desktop-linux builder=desktop-linux docker-host=",
 		},
 		{
+			name:               "default URL builder takes precedence over BUILDX_BUILDER",
+			addr:               "buildx://default",
+			environmentBuilder: "desktop-linux",
+			want:               "builder-flag=default builder=default docker-host=" + dockerHost,
+		},
+		{
+			name:               "URL builder takes precedence over default BUILDX_BUILDER",
+			addr:               "buildx://desktop-linux",
+			environmentBuilder: "default",
+			want:               "builder-flag=desktop-linux builder=desktop-linux docker-host=",
+		},
+		{
 			name:               "BUILDX_BUILDER omits Docker host",
 			addr:               "buildx://",
 			environmentBuilder: "desktop-linux",
@@ -180,6 +192,7 @@ func TestBuildxDialStdioReturnsEarlyProgressError(t *testing.T) {
 
 	conn, err := buildxDialStdio(ctx, "desktop-linux")
 	require.ErrorContains(t, err, "buildx dial-stdio failed before connecting")
+	assert.ErrorContains(t, err, "use `docker --context=desktop-linux buildx`")
 	assert.Nil(t, conn)
 }
 
