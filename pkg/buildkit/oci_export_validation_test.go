@@ -486,3 +486,42 @@ func TestOCIExportRejectsUnplaceableResults(t *testing.T) {
 		})
 	}
 }
+
+// Registry and daemon input keep the mixed path's first-entry behavior: only
+// layout input requires an export to list a single entry.
+func TestMixedOCIExportKeepsFirstEntryWithoutLayoutInput(t *testing.T) {
+	stubOCIExporter(t, map[string]fakeOCIExport{PlatformKey(ociExportAMD64): {
+		editManifests: func(manifests []ispec.Descriptor) []ispec.Descriptor {
+			return append(manifests, ispec.Descriptor{MediaType: "application/vnd.example.unknown+json", Digest: digest.FromString("second entry"), Size: 12})
+		},
+	}})
+	config := mustMarshalJSON(t, ispec.Image{Platform: ociExportAMD64, RootFS: ispec.RootFS{Type: "layers"}})
+
+	manifests, err := exportPatchedPlatformsToTemp(t.Context(), nil, t.TempDir(),
+		[]llb.State{llb.Scratch()}, []ispec.Platform{ociExportAMD64}, []platformExportMetadata{{Config: config}},
+		OCILayoutExportOptions{}.WithContext(t.Context()))
+	require.NoError(t, err)
+	require.Len(t, manifests, 1)
+	assert.Equal(t, ispec.MediaTypeImageManifest, manifests[0]["mediaType"])
+}
+
+// A non-atomic export writes into a directory its caller manages, such as the
+// caller's own staging directory. It is validated like an atomic export, so the
+// caller gets the error before it publishes that directory.
+func TestNonAtomicOCIExportOfLayoutInputIsValidated(t *testing.T) {
+	source, descriptors, configs := newMultiPlatformOCIInputTestSource(t, ociExportAMD64)
+	stubOCIExporter(t, map[string]fakeOCIExport{PlatformKey(ociExportAMD64): {
+		editManifests: func(manifests []ispec.Descriptor) []ispec.Descriptor {
+			return append(manifests, ispec.Descriptor{MediaType: "application/vnd.example.unknown+json", Digest: digest.FromString("blob that the export does not contain"), Size: 37})
+		},
+	}})
+	desc := descriptors[PlatformKey(ociExportAMD64)]
+	state := llb.Scratch()
+
+	err := CreateOCILayoutFromResultsWithOptions(t.TempDir(),
+		[]types.PatchResult{{OCISource: source, PatchedDesc: &desc, PatchedState: &state, ConfigData: configs[PlatformKey(ociExportAMD64)]}},
+		[]types.PatchPlatform{{Platform: ociExportAMD64}},
+		OCILayoutExportOptions{OutputReference: "registry.invalid/output:patched", BuildkitOpts: &Opts{Addr: "tcp://127.0.0.1:1"}})
+	require.ErrorContains(t, err, "validate staged OCI layout output")
+	assert.ErrorContains(t, err, "is not the manifest of an exported platform")
+}

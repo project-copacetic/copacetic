@@ -1907,28 +1907,25 @@ func CreateOCILayoutFromResultsWithContext(ctx context.Context, outputDir string
 		exportOpts.IndexAnnotations = annotations
 	}
 
+	// A layout written for layout input is validated in both modes. A
+	// non-atomic export writes into a directory its caller manages, so the
+	// caller gets the validation error before it publishes that directory.
+	write := func(dir string) error {
+		if err := createOCILayoutFromResultsAt(ctx, dir, results, platforms, exportOpts); err != nil {
+			return err
+		}
+		if len(exportOpts.state.sources) == 0 {
+			return nil
+		}
+		if err := wrapOCIOutputIndex(dir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations); err != nil {
+			return err
+		}
+		return validateStagedOCILayout(ctx, dir, platforms)
+	}
 	if exportOpts.Atomic {
-		return createAtomicOCILayout(ctx, outputDir, func(tempDir string) error {
-			if err := createOCILayoutFromResultsAt(ctx, tempDir, results, platforms, exportOpts); err != nil {
-				return err
-			}
-			if len(exportOpts.state.sources) == 0 {
-				return nil
-			}
-			if err := wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations); err != nil {
-				return err
-			}
-			return validateStagedOCILayout(ctx, tempDir, platforms)
-		})
+		return createAtomicOCILayout(ctx, outputDir, write)
 	}
-
-	if err := createOCILayoutFromResultsAt(ctx, outputDir, results, platforms, exportOpts); err != nil {
-		return err
-	}
-	if len(exportOpts.state.sources) > 0 {
-		return wrapOCIOutputIndex(outputDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
-	}
-	return nil
+	return write(outputDir)
 }
 
 // validateStagedOCILayout reads a staged layout the way Copa reads layout
