@@ -11,8 +11,8 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.badf9b53.css">
-<script src="/copacetic/website/assets/js/runtime~main.41c68d0c.js" defer="defer"></script>
-<script src="/copacetic/website/assets/js/main.1a8cde4d.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.0f869d15.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/main.4cfa101b.js" defer="defer"></script>
 </head>
 <body>
 <svg style="display: none;"><defs>
@@ -58,7 +58,7 @@ supported for images that use <code>/var/lib/chisel/manifest.wall</code>. See
 <p><strong>OCI layout export</strong>: The <code>--oci-dir</code> flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. <code>--push</code> and <code>--oci-dir</code> cannot be used together.</p>
 </li>
 <li class="">
-<p><strong>Normal local image loading</strong>: Without <code>--push</code> or <code>--oci-dir</code>, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.</p>
+<p><strong>Normal local image loading</strong>: Without <code>--push</code>, Copa loads the individually patched platform images into the local runtime, also when <code>--oci-dir</code> is set. Unchanged platforms remain available from the source registry but are not loaded locally.</p>
 </li>
 <li class="">
 <p><strong>No-report platform discovery</strong>: In comprehensive no-report mode, Copa inspects the image. A single-platform image is patched as that discovered platform; otherwise the selected or discovered multi-platform set is used.</p>
