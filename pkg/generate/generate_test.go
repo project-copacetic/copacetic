@@ -217,6 +217,51 @@ func TestCreateTarStream_OutputToFile(t *testing.T) {
 	assert.Equal(t, "Dockerfile", hdr.Name)
 }
 
+// TestCreateTarStream_PatchDirectory checks that the context always has the patch/ path its Dockerfile
+// copies: an empty patch layer gets an empty patch/ directory, and a layer with files gets no extra entry.
+func TestCreateTarStream_PatchDirectory(t *testing.T) {
+	tests := []struct {
+		name      string
+		files     []string
+		wantNames []string
+	}{
+		{name: "empty patch layer", files: nil, wantNames: []string{"Dockerfile", "patch/"}},
+		{name: "patch layer with a file", files: []string{"etc/test.conf"}, wantNames: []string{"Dockerfile", "patch/etc/test.conf"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			patchBuf := &bytes.Buffer{}
+			patchTw := tar.NewWriter(patchBuf)
+			for _, name := range tt.files {
+				require.NoError(t, patchTw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Typeflag: tar.TypeReg}))
+			}
+			require.NoError(t, patchTw.Close())
+
+			outputPath := filepath.Join(t.TempDir(), "output.tar")
+			require.NoError(t, createTarStream("alpine:3.18", patchBuf.Bytes(), outputPath))
+
+			f, err := os.Open(outputPath)
+			require.NoError(t, err)
+			defer f.Close()
+
+			var names []string
+			tr := tar.NewReader(f)
+			for {
+				hdr, err := tr.Next()
+				if err == io.EOF {
+					break
+				}
+				require.NoError(t, err)
+				names = append(names, hdr.Name)
+				if hdr.Name == "patch/" {
+					assert.Equal(t, byte(tar.TypeDir), hdr.Typeflag)
+				}
+			}
+			assert.Equal(t, tt.wantNames, names)
+		})
+	}
+}
+
 func TestCreateTarStream_LargeFile(t *testing.T) {
 	// Test is simplified since we can't easily create a 2GB file in tests
 	// The size check happens when reading the tar, not when creating it
