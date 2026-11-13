@@ -90,13 +90,23 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 // patchWithContext orchestrates the main patching workflow.
 func patchWithContext(ctx context.Context, opts *types.Options) error {
+	// A source policy can select a different registry or daemon input. Layout
+	// input is read only from the layout, where Image only selects an image,
+	// so the policy applies to its tooling sources but not to that selector.
+	var err error
+	if opts.InputOCILayout == "" {
+		opts, err = policyPatchOptions(ctx, opts)
+		if err != nil {
+			return err
+		}
+	}
+	image := opts.Image
 	// Configure EOL API if provided
 	if opts.EOLAPIBaseURL != "" {
 		utils.SetEOLAPIBaseURL(opts.EOLAPIBaseURL)
 		log.Debugf("Configured EOL API base URL: %s", opts.EOLAPIBaseURL)
 	}
 
-	image := opts.Image
 	reportPath := opts.Report
 	targetPlatforms := opts.Platforms
 	pkgTypes := opts.PkgTypes
@@ -175,6 +185,9 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 		if err != nil {
 			if opts.OCISource != nil {
 				return fmt.Errorf("discover platforms in OCI layout input: %w", err)
+			}
+			if err := ctx.Err(); err != nil {
+				return err
 			}
 			// Failed to discover platforms - treat as single-platform image
 			log.Warnf("Failed to discover platforms for image %s (treating as single-platform): %v", image, err)
@@ -327,7 +340,7 @@ func patchWithContext(ctx context.Context, opts *types.Options) error {
 
 func discoverPlatformsForOptions(ctx context.Context, opts *types.Options) ([]types.PatchPlatform, error) {
 	if opts.OCISource == nil {
-		return buildkit.DiscoverPlatformsFromReference(opts.Image)
+		return buildkit.DiscoverPlatformsFromReferenceWithContext(ctx, opts.Image)
 	}
 	discovered, err := opts.OCISource.Platforms(ctx)
 	if err != nil {

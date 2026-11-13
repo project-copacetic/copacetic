@@ -83,6 +83,7 @@ For a multi-platform index:
 - `--oci-dir` is required and must be a new directory outside the input layout. Copa writes the result atomically: it fails, and leaves the existing path untouched, if the destination already exists or is created by another process during the export.
 - With a report, `--output` writes VEX that names the patched platform manifest digests in the output layout. Preserved platforms get no remediation claim, and no VEX is written without a report.
 - Copa adds its patch annotations and keeps the source's index, manifest, and descriptor annotations in their original places.
+- Copa does not record a [patch origin](./multiplatform-patching.md#multi-platform-behavior) (`sh.copa.patch.origin.*`) for an image patched from a layout, and removes any origin metadata the input carries from the patched platforms.
 
 ### Limitations
 

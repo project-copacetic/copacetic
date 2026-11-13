@@ -147,7 +147,8 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		// An application built FROM the patched image inherits its config
 		// labels but not its manifest annotations, so it is still patched. Its
 		// inherited BaseImage names an unresolvable image: the patch must use
-		// the layout's own content rather than follow that label.
+		// the layout's own content rather than follow that label, and it must
+		// not keep an inherited patch origin.
 		derivedInput := writeLayout(t, map[string]v1.Image{amd64Arch: derivedApplication(t, output)}, false, false)
 		derivedBefore := snapshot(t, derivedInput)
 		derived := options(derivedInput, filepath.Join(t.TempDir(), "derived"))
@@ -159,6 +160,12 @@ func TestOCILayoutRoundTrip(t *testing.T) {
 		derivedConfig, err := derivedImage.ConfigFile()
 		require.NoError(t, err)
 		for key, value := range inheritedLabels {
+			if strings.HasPrefix(key, "sh.copa.patch.origin.") {
+				// Copa records no patch origin for OCI layout input, so an
+				// inherited origin cannot describe the patched image.
+				assert.NotContains(t, derivedConfig.Config.Labels, key, "inherited origin label %s is removed", key)
+				continue
+			}
 			assert.Equal(t, value, derivedConfig.Config.Labels[key], "inherited label %s passes through unchanged", key)
 		}
 	})

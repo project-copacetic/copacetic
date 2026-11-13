@@ -42,6 +42,13 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      # OCI layout export options are copied once per export so each export
+      # owns its private state; the copy cost is negligible.
+      - path: pkg/buildkit/buildkit\.go
+        linters:
+          - gocritic
+        text: "hugeParam: (opts|exportOpts) is heavy"
     paths:
       - third_party$
       - builtin$

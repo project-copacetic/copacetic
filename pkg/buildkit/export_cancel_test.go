@@ -28,18 +28,19 @@ func (r *cancelingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func TestCopyWithContextStopsAfterCancellation(t *testing.T) {
+func TestContextReaderStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	source := &cancelingReader{reader: bytes.NewReader(bytes.Repeat([]byte("x"), 8<<20)), cancel: cancel}
 	var copied bytes.Buffer
-	err := copyWithContext(ctx, &copied, source)
+	_, err := io.Copy(&copied, &contextReader{ctx: ctx, reader: source})
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, source.reads, "no further reads after cancellation")
 	assert.Less(t, copied.Len(), 8<<20)
 
 	copied.Reset()
-	require.NoError(t, copyWithContext(t.Context(), &copied, bytes.NewReader([]byte("complete"))))
+	_, err = io.Copy(&copied, &contextReader{ctx: t.Context(), reader: bytes.NewReader([]byte("complete"))})
+	require.NoError(t, err)
 	assert.Equal(t, "complete", copied.String())
 }
 

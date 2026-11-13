@@ -11,6 +11,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,7 +116,10 @@ func TestPatchPreparedMultiPlatformImageDefersOCISourceVEX(t *testing.T) {
 	require.NoError(t, err)
 
 	const image = "registry.invalid/acme/output:patched"
-	patchPlatformImage = func(_ context.Context, opts *types.Options, p types.PatchPlatform, _ bool, _ chan<- *client.SolveStatus) (*types.PatchResult, error) {
+	patchPlatformImage = func(
+		_ context.Context, opts *types.Options, p types.PatchPlatform, _ bool, _ chan<- *client.SolveStatus,
+		_ *unversioned.UpdateManifest, _, _ string, _ map[string]string, _ digest.Digest,
+	) (*types.PatchResult, error) {
 		assert.Empty(t, opts.Output, "a platform build must not write the shared VEX file")
 		ref, err := reference.ParseNormalizedNamed(image)
 		if err != nil {
@@ -326,4 +330,25 @@ func TestOCIExportOptionsCarrySourcePolicy(t *testing.T) {
 	exportOpts, err = ociExportOptions(t.Context(), opts, "example.com/app:patched")
 	require.NoError(t, err)
 	assert.Nil(t, exportOpts.SourcePolicy)
+}
+
+// A source policy selects registry and daemon inputs, so it must not rewrite
+// or parse the optional image selector of layout input.
+func TestSourcePolicyDoesNotSelectOCILayoutInput(t *testing.T) {
+	policyPath := filepath.Join(t.TempDir(), "policy.json")
+	require.NoError(t, os.WriteFile(policyPath, []byte(`{"rules":[{"action":"CONVERT","selector":{"identifier":"docker-image://example.com/app:1.0"},`+
+		`"updates":{"identifier":"docker-image://example.com/mirror/app:1.0"}}]}`), 0o600))
+	t.Setenv("EXPERIMENTAL_BUILDKIT_SOURCE_POLICY", policyPath)
+
+	for _, image := range []string{"", "example.com/app:1.0"} {
+		opts := &types.Options{
+			Image:          image,
+			InputOCILayout: t.TempDir(),
+			OCIDir:         filepath.Join(t.TempDir(), "output"),
+			Push:           true,
+		}
+		err := patchWithContext(t.Context(), opts)
+		require.EqualError(t, err, "--input-oci-layout cannot be used with --push", "image selector %q", image)
+		assert.Equal(t, image, opts.Image)
+	}
 }
