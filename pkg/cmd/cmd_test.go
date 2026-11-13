@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"testing"
 
+	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -124,6 +126,38 @@ func TestChartModeValidatesRequiredFlags(t *testing.T) {
 			cmd := NewPatchCmd()
 			cmd.SetArgs(tt.args)
 			assert.ErrorContains(t, cmd.Execute(), tt.want)
+		})
+	}
+}
+
+// TestNewPatchCmdLibraryPatchLevel checks that the level reaches the options only when the flag is set,
+// so plugin reports keep their own fixed versions by default.
+func TestNewPatchCmdLibraryPatchLevel(t *testing.T) {
+	t.Setenv("COPA_EXPERIMENTAL", "1")
+	originalPatchImage := patchImage
+	t.Cleanup(func() { patchImage = originalPatchImage })
+
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "flag unset", args: []string{"--pkg-types", "os,library"}, want: ""},
+		{name: "explicit patch", args: []string{"--pkg-types", "os,library", "--library-patch-level", "patch"}, want: "patch"},
+		{name: "explicit minor", args: []string{"--pkg-types", "os,library", "--library-patch-level", "minor"}, want: "minor"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got *types.Options
+			patchImage = func(_ context.Context, opts *types.Options) error {
+				got = opts
+				return nil
+			}
+			cmd := NewPatchCmd()
+			cmd.SetArgs(append([]string{"--image", "alpine:latest"}, tt.args...))
+			require.NoError(t, cmd.Execute())
+			require.NotNil(t, got)
+			assert.Equal(t, tt.want, got.LibraryPatchLevel)
 		})
 	}
 }
