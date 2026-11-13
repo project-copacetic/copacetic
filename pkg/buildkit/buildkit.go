@@ -2935,8 +2935,10 @@ func exportPatchedPlatformsToTemp(
 			return nil, fmt.Errorf("failed to extract platform tar: %w", err)
 		}
 
-		// Read the platform's index.json and extract manifest
-		manifest, err := extractManifestFromOCI(platformExtractDir, &platformSpec)
+		// Read the platform's index.json and extract manifest. Layout input is
+		// validated once staged, which cannot see entries dropped here, so its
+		// export must list only the platform's manifest.
+		manifest, err := extractManifestFromOCI(platformExtractDir, &platformSpec, len(exportOpts.state.sources) > 0)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract manifest: %w", err)
 		}
@@ -3323,7 +3325,9 @@ func exportPreservedPlatformsToOutput(
 }
 
 // extractManifestFromOCI extracts manifest information from an OCI layout directory.
-func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform) (map[string]interface{}, error) {
+// With requireSole, an index.json that lists more than one entry is rejected
+// instead of having the entries after the first dropped.
+func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform, requireSole bool) (map[string]interface{}, error) {
 	indexPath := filepath.Join(ociDir, "index.json")
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -3337,6 +3341,9 @@ func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform) (map[st
 
 	// Extract the first manifest and fix its platform information
 	if manifests, ok := index["manifests"].([]interface{}); ok && len(manifests) > 0 {
+		if requireSole && len(manifests) != 1 {
+			return nil, fmt.Errorf("OCI export for platform %s lists %d entries (expected 1)", FormatPlatform(*platformSpec), len(manifests))
+		}
 		if manifestMap, ok := manifests[0].(map[string]interface{}); ok {
 			// Set the correct platform information
 			targetPlatform := map[string]interface{}{

@@ -260,6 +260,11 @@ func assertOCIExportPublished(t *testing.T, output string, platforms ...ispec.Pl
 func assertOCIExportNotPublished(t *testing.T, output string, err error) {
 	t.Helper()
 	require.ErrorContains(t, err, "validate staged OCI layout output")
+	assertOCIOutputAbsent(t, output)
+}
+
+func assertOCIOutputAbsent(t *testing.T, output string) {
+	t.Helper()
 	assert.NoDirExists(t, output)
 	staged, globErr := filepath.Glob(filepath.Join(filepath.Dir(output), ".copa-oci-output-*"))
 	require.NoError(t, globErr)
@@ -354,6 +359,9 @@ func TestOCIExportRejectsMalformedStagedLayout(t *testing.T) {
 		patched   []ispec.Platform
 		preserved []ispec.Platform
 		exports   map[string]fakeOCIExport
+		// err is set when the export is rejected before its staged layout is
+		// validated.
+		err string
 	}{
 		{
 			name:    "single platform export with no manifests",
@@ -396,10 +404,38 @@ func TestOCIExportRejectsMalformedStagedLayout(t *testing.T) {
 			preserved: []ispec.Platform{ociExportARM64},
 			exports:   map[string]fakeOCIExport{PlatformKey(ociExportAMD64): missingManifestBlob},
 		},
+		// The mixed path keeps one entry from each patched platform's export,
+		// so any other entry would be dropped without being validated.
+		{
+			name:      "mixed export with an unknown descriptor beside its patched manifest",
+			patched:   []ispec.Platform{ociExportAMD64},
+			preserved: []ispec.Platform{ociExportARM64},
+			exports:   map[string]fakeOCIExport{PlatformKey(ociExportAMD64): unknownBesideManifest},
+			err:       "OCI export for platform linux/amd64 lists 2 entries (expected 1)",
+		},
+		{
+			name:      "mixed export with an artifact beside its patched manifest",
+			patched:   []ispec.Platform{ociExportAMD64},
+			preserved: []ispec.Platform{ociExportARM64},
+			exports:   map[string]fakeOCIExport{PlatformKey(ociExportAMD64): artifactBesideManifest},
+			err:       "OCI export for platform linux/amd64 lists 2 entries (expected 1)",
+		},
+		{
+			name:      "mixed export listing its patched manifest again under another media type",
+			patched:   []ispec.Platform{ociExportAMD64},
+			preserved: []ispec.Platform{ociExportARM64},
+			exports:   map[string]fakeOCIExport{PlatformKey(ociExportAMD64): manifestListedAgain},
+			err:       "OCI export for platform linux/amd64 lists 2 entries (expected 1)",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			run, err := runOCIExport(t, tc.patched, tc.preserved, tc.exports)
-			assertOCIExportNotPublished(t, run.output, err)
+			if tc.err == "" {
+				assertOCIExportNotPublished(t, run.output, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.err)
+			assertOCIOutputAbsent(t, run.output)
 		})
 	}
 }
