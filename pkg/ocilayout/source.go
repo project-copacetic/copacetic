@@ -920,6 +920,17 @@ func (s *Source) selectedIndex(ctx context.Context) (*ocispec.Index, error) {
 	return &index, nil
 }
 
+// Manifests returns every descriptor the selected image index lists,
+// including artifacts and other entries that Open and PlatformDescriptor skip
+// without reading.
+func (s *Source) Manifests(ctx context.Context) ([]ocispec.Descriptor, error) {
+	index, err := s.selectedIndex(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return index.Manifests, nil
+}
+
 func (s *Source) selectedManifest(ctx context.Context, desc *ocispec.Descriptor) (*ocispec.Manifest, error) {
 	if !isImageManifest(desc.MediaType) {
 		return nil, fmt.Errorf("descriptor %s is not an image manifest", desc.Digest)

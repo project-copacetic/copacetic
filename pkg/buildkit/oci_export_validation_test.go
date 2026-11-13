@@ -249,6 +249,24 @@ func TestOCIExportRejectsMalformedStagedLayout(t *testing.T) {
 		manifests[0].Digest = digest.FromString("manifest that the export does not contain")
 		return manifests
 	}}
+	// Layout reads skip entries that are not image manifests without opening
+	// them, so each of these sits beside a valid manifest unverified.
+	unknownBesideManifest := fakeOCIExport{editManifests: func(manifests []ispec.Descriptor) []ispec.Descriptor {
+		return append(manifests, ispec.Descriptor{MediaType: "application/vnd.example.unknown+json", Digest: digest.FromString("blob that the export does not contain"), Size: 37})
+	}}
+	artifactBesideManifest := fakeOCIExport{editManifests: func(manifests []ispec.Descriptor) []ispec.Descriptor {
+		return append(manifests, ispec.Descriptor{
+			MediaType:    ispec.MediaTypeImageManifest,
+			ArtifactType: "application/vnd.example.sbom",
+			Digest:       digest.FromString("artifact that the export does not contain"),
+			Size:         41,
+		})
+	}}
+	manifestListedAgain := fakeOCIExport{editManifests: func(manifests []ispec.Descriptor) []ispec.Descriptor {
+		again := manifests[0]
+		again.MediaType = "application/vnd.example.unknown+json"
+		return append(manifests, again)
+	}}
 	for _, tc := range []struct {
 		name      string
 		patched   []ispec.Platform
@@ -274,6 +292,21 @@ func TestOCIExportRejectsMalformedStagedLayout(t *testing.T) {
 			name:    "multi-platform export with no manifests for one platform",
 			patched: []ispec.Platform{ociExportAMD64, ociExportARM64},
 			exports: map[string]fakeOCIExport{PlatformKey(ociExportARM64): noManifests},
+		},
+		{
+			name:    "single platform export with an unknown descriptor beside its manifest",
+			patched: []ispec.Platform{ociExportAMD64},
+			exports: map[string]fakeOCIExport{PlatformKey(ociExportAMD64): unknownBesideManifest},
+		},
+		{
+			name:    "single platform export listing its manifest again under another media type",
+			patched: []ispec.Platform{ociExportAMD64},
+			exports: map[string]fakeOCIExport{PlatformKey(ociExportAMD64): manifestListedAgain},
+		},
+		{
+			name:    "multi-platform export with an artifact beside a manifest",
+			patched: []ispec.Platform{ociExportAMD64, ociExportARM64},
+			exports: map[string]fakeOCIExport{PlatformKey(ociExportARM64): artifactBesideManifest},
 		},
 		{
 			name:      "mixed export whose patched manifest blob is missing",

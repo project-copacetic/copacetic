@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -1930,18 +1931,33 @@ func CreateOCILayoutFromResultsWithContext(ctx context.Context, outputDir string
 }
 
 // validateStagedOCILayout reads a staged layout the way Copa reads layout
-// input, which verifies every reachable descriptor and blob, and requires a
-// manifest for each exported platform. The staged index is assembled from
-// what BuildKit's OCI exporter wrote, so a malformed or incomplete export is
-// rejected here rather than published as a layout that lacks a platform.
+// input, which verifies every image manifest it reaches and their blobs, and
+// requires the staged index to list exactly one manifest for each exported
+// platform. The staged index is assembled from what BuildKit's OCI exporter
+// wrote, so a malformed or incomplete export is rejected here rather than
+// published as a layout that lacks a platform or lists unverified entries.
 func validateStagedOCILayout(ctx context.Context, dir string, platforms []types.PatchPlatform) error {
 	staged, err := ocilayout.Open(ctx, dir, "", "")
 	if err != nil {
 		return fmt.Errorf("validate staged OCI layout output: %w", err)
 	}
+	exported := make([]*specs.Descriptor, 0, len(platforms))
 	for i := range platforms {
-		if _, err := staged.PlatformDescriptor(ctx, &platforms[i].Platform); err != nil {
+		desc, err := staged.PlatformDescriptor(ctx, &platforms[i].Platform)
+		if err != nil {
 			return fmt.Errorf("validate staged OCI layout output: %w", err)
+		}
+		exported = append(exported, desc)
+	}
+	// Layout reads skip entries that are not image manifests without opening
+	// them, so anything listed besides the exported manifests is unverified.
+	listed, err := staged.Manifests(ctx)
+	if err != nil {
+		return fmt.Errorf("validate staged OCI layout output: %w", err)
+	}
+	for i := range listed {
+		if !slices.ContainsFunc(exported, func(desc *specs.Descriptor) bool { return reflect.DeepEqual(*desc, listed[i]) }) {
+			return fmt.Errorf("validate staged OCI layout output: descriptor %s (%s) is not the manifest of an exported platform", listed[i].Digest, listed[i].MediaType)
 		}
 	}
 	return nil
