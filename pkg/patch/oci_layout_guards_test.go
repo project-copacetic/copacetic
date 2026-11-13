@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,8 @@ import (
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
+	log "github.com/sirupsen/logrus"
+	logtest "github.com/sirupsen/logrus/hooks/test"
 	"github.com/stretchr/testify/require"
 
 	"github.com/project-copacetic/copacetic/pkg/ocilayout"
@@ -127,4 +130,79 @@ func TestPatchRejectsVEXOutputHardLinkedToOCILayoutInput(t *testing.T) {
 		Progress:       "quiet",
 	})
 	require.ErrorContains(t, err, "is the same file as OCI layout input file")
+}
+
+// Cancellation during the layout annotation read returns the context error,
+// not a read failure.
+func TestOCILayoutPatchReturnsContextErrorWhenCanceledDuringAnnotationRead(t *testing.T) {
+	originalListWorkers := listWorkers
+	t.Cleanup(func() { listWorkers = originalListWorkers })
+	platform := ispec.Platform{OS: "linux", Architecture: "amd64"}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	listWorkers = func(context.Context, *client.Client) ([]*client.WorkerInfo, error) {
+		// Platform validation is the last step before the annotation read.
+		cancel()
+		return []*client.WorkerInfo{{ID: "oci-annotations-cancel-test", Platforms: []ispec.Platform{platform}}}, nil
+	}
+
+	// The read fails whether or not it observes the cancellation.
+	source := openSolveTestSource(t)
+	manifest := source.Descriptor.Digest
+	require.NoError(t, os.Remove(filepath.Join(source.Path, "blobs", manifest.Algorithm().String(), manifest.Encoded())))
+	updates := &unversioned.UpdateManifest{OSUpdates: unversioned.UpdatePackages{{
+		Name: "openssl", InstalledVersion: "3.0.0-r0", FixedVersion: "3.0.1-r0", VulnerabilityID: "CVE-2099-0001",
+	}}}
+
+	result, err := patchSingleArchImageWithUpdates(ctx, &types.Options{
+		OCISource:  source,
+		PatchedTag: "registry.invalid/acme/app:patched",
+		PkgTypes:   "os",
+		Progress:   "quiet",
+	}, types.PatchPlatform{Platform: platform}, false, nil, updates)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotContains(t, err.Error(), "read OCI layout manifest annotations")
+	require.Nil(t, result)
+}
+
+// Registry and daemon images keep warning when their manifest annotations
+// cannot be read, and patch on without them.
+func TestRegistryPatchWarnsWhenManifestAnnotationsCannotBeRead(t *testing.T) {
+	originalListWorkers := listWorkers
+	t.Cleanup(func() { listWorkers = originalListWorkers })
+	platform := ispec.Platform{OS: "linux", Architecture: "amd64"}
+	listWorkers = func(context.Context, *client.Client) ([]*client.WorkerInfo, error) {
+		return []*client.WorkerInfo{{ID: "registry-annotations-test", Platforms: []ispec.Platform{platform}}}, nil
+	}
+	t.Setenv("DOCKER_HOST", "unix:///nonexistent/docker.sock")
+	t.Setenv("DOCKER_CONFIG", t.TempDir())
+	logger := log.StandardLogger()
+	originalHooks := logger.ReplaceHooks(make(log.LevelHooks))
+	t.Cleanup(func() { logger.ReplaceHooks(originalHooks) })
+	hook := logtest.NewGlobal()
+	updates := &unversioned.UpdateManifest{OSUpdates: unversioned.UpdatePackages{{
+		Name: "openssl", InstalledVersion: "3.0.0-r0", FixedVersion: "3.0.1-r0", VulnerabilityID: "CVE-2099-0001",
+	}}}
+
+	// Nothing listens on the registry, so the annotation read fails. The patch
+	// goes on and fails later at the unreachable BuildKit daemon; pushing keeps
+	// it from starting a local image loader.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, err := patchSingleArchImageWithUpdates(ctx, &types.Options{
+		Image:      "127.0.0.1:1/acme/app:1.0",
+		PatchedTag: "patched",
+		Push:       true,
+		PkgTypes:   "os",
+		Progress:   "quiet",
+	}, types.PatchPlatform{Platform: platform}, true, nil, updates)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "manifest annotations")
+	warned := false
+	for _, entry := range hook.AllEntries() {
+		if entry.Level == log.WarnLevel && strings.Contains(entry.Message, "Failed to get original manifest level annotations for platform linux/amd64") {
+			warned = true
+		}
+	}
+	require.True(t, warned, "registry input must warn that its manifest annotations could not be read")
 }
