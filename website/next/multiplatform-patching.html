@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.badf9b53.css">
-<script src="/copacetic/website/assets/js/runtime~main.400cd50e.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.8db8babd.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.1a8cde4d.js" defer="defer"></script>
 </head>
 <body>
@@ -61,6 +61,16 @@ supported for images that use <code>/var/lib/chisel/manifest.wall</code>. See
 <p><strong>OCI layout export</strong>: The <code>--oci-dir</code> flag creates a complete local OCI Image Layout containing the output index, patched platforms, and unchanged platform descriptors and blobs. Use it when not pushing to a registry. <code>--push</code> and <code>--oci-dir</code> cannot be used together.</p>
 </li>
 <li class="">
+<p><strong>Single-platform inputs</strong>: A report directory can also be used with an ordinary single-manifest image. Copa patches its matching platform without claiming an original index.</p>
+</li>
+<li class="">
+<p><strong>Patch origin</strong>: Newly patched OCI manifests and their image-config labels record <code>sh.copa.patch.origin.kind</code>, <code>sh.copa.patch.origin.name</code>, and <code>sh.copa.patch.origin.digest</code>. They identify the original non-Copa image that was patched: kind <code>image-ref</code>, its name, and the digest of the exact platform manifest. A patched index also records the original index when every output platform maps to it. Re-patching records the same original, so every generation points directly to it. These fields describe content identity, not authenticated provenance. Application-owned <code>org.opencontainers.image.base.*</code> metadata and unchanged platforms are left as they are. The <code>oci-layout</code> kind (a digest, an optional portable name, and never a local path) is reserved for OCI layout input; Copa doesn&#x27;t produce it yet. On an older BuildKit server without image-blob support, a remote-only single-platform source can record its index digest. For the BuildKit frontend, see <a class="" href="/copacetic/website/next/docker-build#patch-origin-metadata">patch origin metadata</a>.</p>
+<p>Copa validates the selected patch origins before patching. If a recorded original can&#x27;t be recovered by its digest, or recovery fails during patching, Copa returns an error even with <code>--ignore-errors</code> and doesn&#x27;t publish the final index; restore the original and retry. Platform images exported before such a failure remain available. Images patched by older Copa versions carry only the <code>BaseImage</code> label; they are re-patched as before, with a warning and no origin.</p>
+</li>
+<li class="">
+<p><strong>Source access</strong>: Multi-platform discovery and source capture require registry or local-daemon access from the Copa process. Gateway-only capture through an authenticated BuildKit session supports single-platform patching, including one selected child of an index.</p>
+</li>
+<li class="">
 <p><strong>Normal local image loading</strong>: Without <code>--push</code> or <code>--oci-dir</code>, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.</p>
 </li>
 <li class="">
@@ -81,7 +91,7 @@ supported for images that use <code>/var/lib/chisel/manifest.wall</code>. See
 <p>When using neither flag, Copa patches all available platforms if the image is multi-platform.</p>
 </li>
 </ul></div></div>
-<div class="theme-admonition theme-admonition-warning admonition_xJq3 alert alert--warning"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.893 1.5c-.183-.31-.52-.5-.887-.5s-.703.19-.886.5L.138 13.499a.98.98 0 0 0 0 1.001c.193.31.53.501.886.501h13.964c.367 0 .704-.19.877-.5a1.03 1.03 0 0 0 .01-1.002L8.893 1.5zm.133 11.497H6.987v-2.003h2.039v2.003zm0-3.004H6.987V5.987h2.039v4.006z"></path></svg></span>warning</div><div class="admonitionContent_BuS1"><p>Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.</p></div></div>
+<div class="theme-admonition theme-admonition-warning admonition_xJq3 alert alert--warning"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.893 1.5c-.183-.31-.52-.5-.887-.5s-.703.19-.886.5L.138 13.499a.98.98 0 0 0 0 1.001c.193.31.53.501.886.501h13.964c.367 0 .704-.19.877-.5a1.03 1.03 0 0 0 .01-1.002L8.893 1.5zm.133 11.497H6.987v-2.003h2.039v2.003zm0-3.004H6.987V5.987h2.039v4.006z"></path></svg></span>warning</div><div class="admonitionContent_BuS1"><p>Copa does not transfer source signatures or attestations to newly patched subjects or copy registry referrers to the new output. OCI layout export retains embedded attestation-manifest descriptors associated with unchanged platform manifests and their referenced blobs; it does not verify or renew those attestations.</p><p>Docker schema 2 manifests and manifest lists do not define OCI annotations; consumers may discard nonstandard annotation fields even if an exporter includes them. Patch-origin annotations are therefore guaranteed only for OCI manifests, OCI indexes, and OCI layouts; Copa does not silently convert Docker-format output to OCI.</p></div></div>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="understanding-the-results">Understanding the Results<a href="#understanding-the-results" class="hash-link" aria-label="Direct link to Understanding the Results" title="Direct link to Understanding the Results" translate="no">​</a></h2>
 <p>After a multi-platform run, Copa prints a tabular summary so you can quickly see what happened for each platform.
 A typical example looks like (including a failure case):</p>

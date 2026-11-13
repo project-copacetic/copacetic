@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.badf9b53.css">
-<script src="/copacetic/website/assets/js/runtime~main.400cd50e.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.8db8babd.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.1a8cde4d.js" defer="defer"></script>
 </head>
 <body>
@@ -134,6 +134,7 @@ image&#x27;s repositories.</p>
 <blockquote>
 <p>The tooling image for Debian-based images can be <code>ghcr.io/project-copacetic/copacetic/debian:11-slim</code> or <code>ghcr.io/project-copacetic/copacetic/debian:12-slim</code> depending on the target image version. RPM-based repos use <code>ghcr.io/project-copacetic/copacetic/cbl-mariner/base/core:2.0</code>. For more details, see <a href="#how-does-copa-determine-what-tooling-image-to-use" class="">How does Copa determine what tooling image to use?</a>.</p>
 </blockquote>
+<p>Input-image <code>CONVERT</code> rules are applied before Copa captures the source digest. The policy-selected image is used for patching and recorded as the recovery locator and patch origin; the requested output repository and tag are unchanged. This also keeps exact tag selectors effective after Copa pins the input by digest. A policy that sets attributes on the patch input, such as <code>image.resolvemode</code>, is rejected with an error.</p>
 <p>For more information on source policies, see <a href="https://docs.docker.com/build/building/env-vars/#experimental_buildkit_source_policy" target="_blank" rel="noopener noreferrer" class="">Buildkit Source Policies</a>.</p>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="why-do-package-updates-fail-with-expired-gpg-keys">Why do package updates fail with expired GPG keys?<a href="#why-do-package-updates-fail-with-expired-gpg-keys" class="hash-link" aria-label="Direct link to Why do package updates fail with expired GPG keys?" title="Direct link to Why do package updates fail with expired GPG keys?" translate="no">​</a></h2>
 <p>Copa can fail when it runs the distro package manager&#x27;s repository refresh inside the target image, such as <code>apt-get update</code>, <code>dnf makecache</code>, <code>yum makecache</code>, <code>zypper refresh</code>, or <code>apk update</code> equivalents, if the image contains expired package repository GPG keys or other stale trust material. Copa uses the package repositories and trust material already present in the image and does not automatically replace expired repository keys.</p>

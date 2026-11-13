@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.badf9b53.css">
-<script src="/copacetic/website/assets/js/runtime~main.400cd50e.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.8db8babd.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.1a8cde4d.js" defer="defer"></script>
 </head>
 <body>
@@ -78,7 +78,7 @@ supported for images that use <code>/var/lib/chisel/manifest.wall</code>. See
 <p>When using neither flag, Copa patches all available platforms if the image is multi-platform.</p>
 </li>
 </ul></div></div>
-<div class="theme-admonition theme-admonition-warning admonition_xJq3 alert alert--warning"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.893 1.5c-.183-.31-.52-.5-.887-.5s-.703.19-.886.5L.138 13.499a.98.98 0 0 0 0 1.001c.193.31.53.501.886.501h13.964c.367 0 .704-.19.877-.5a1.03 1.03 0 0 0 .01-1.002L8.893 1.5zm.133 11.497H6.987v-2.003h2.039v2.003zm0-3.004H6.987V5.987h2.039v4.006z"></path></svg></span>warning</div><div class="admonitionContent_BuS1"><p>Build attestations, signatures, and OCI referrers from the original image are not preserved or copied to the patched image.</p></div></div>
+<div class="theme-admonition theme-admonition-warning admonition_xJq3 alert alert--warning"><div class="admonitionHeading_Gvgb"><span class="admonitionIcon_Rf37"><svg viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8.893 1.5c-.183-.31-.52-.5-.887-.5s-.703.19-.886.5L.138 13.499a.98.98 0 0 0 0 1.001c.193.31.53.501.886.501h13.964c.367 0 .704-.19.877-.5a1.03 1.03 0 0 0 .01-1.002L8.893 1.5zm.133 11.497H6.987v-2.003h2.039v2.003zm0-3.004H6.987V5.987h2.039v4.006z"></path></svg></span>warning</div><div class="admonitionContent_BuS1"><p>Copa does not transfer source signatures or attestations to newly patched subjects or copy registry referrers to the new output. OCI layout export retains embedded attestation-manifest descriptors associated with unchanged platform manifests and their referenced blobs; it does not verify or renew those attestations.</p></div></div>
 <h2 class="anchor anchorTargetStickyNavbar_Vzrq" id="understanding-the-results">Understanding the Results<a href="#understanding-the-results" class="hash-link" aria-label="Direct link to Understanding the Results" title="Direct link to Understanding the Results" translate="no">​</a></h2>
 <p>After a multi-platform run, Copa prints a tabular summary so you can quickly see what happened for each platform.
 A typical example looks like (including a failure case):</p>
