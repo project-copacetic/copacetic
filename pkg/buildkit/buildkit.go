@@ -127,6 +127,7 @@ var (
 	getRemoteImageDescriptor      = remote.Get
 	getImageFromDaemon            = daemon.Image
 	tryGetManifestFromLocal       = getManifestFromLocal
+	solveOCIPlatform              = solvePlatformOCI
 )
 
 // ImageSource captures the immutable identity and, for indexes, the platform
@@ -1909,10 +1910,13 @@ func CreateOCILayoutFromResultsWithContext(ctx context.Context, outputDir string
 			if err := createOCILayoutFromResultsAt(ctx, tempDir, results, platforms, exportOpts); err != nil {
 				return err
 			}
-			if len(exportOpts.state.sources) > 0 {
-				return wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
+			if len(exportOpts.state.sources) == 0 {
+				return nil
 			}
-			return nil
+			if err := wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations); err != nil {
+				return err
+			}
+			return validateStagedOCILayout(ctx, tempDir, platforms)
 		})
 	}
 
@@ -1921,6 +1925,24 @@ func CreateOCILayoutFromResultsWithContext(ctx context.Context, outputDir string
 	}
 	if len(exportOpts.state.sources) > 0 {
 		return wrapOCIOutputIndex(outputDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
+	}
+	return nil
+}
+
+// validateStagedOCILayout reads a staged layout the way Copa reads layout
+// input, which verifies every reachable descriptor and blob, and requires a
+// manifest for each exported platform. The staged index is assembled from
+// what BuildKit's OCI exporter wrote, so a malformed or incomplete export is
+// rejected here rather than published as a layout that lacks a platform.
+func validateStagedOCILayout(ctx context.Context, dir string, platforms []types.PatchPlatform) error {
+	staged, err := ocilayout.Open(ctx, dir, "", "")
+	if err != nil {
+		return fmt.Errorf("validate staged OCI layout output: %w", err)
+	}
+	for i := range platforms {
+		if _, err := staged.PlatformDescriptor(ctx, &platforms[i].Platform); err != nil {
+			return fmt.Errorf("validate staged OCI layout output: %w", err)
+		}
 	}
 	return nil
 }
@@ -2409,7 +2431,7 @@ func solveSinglePlatformOCI(
 	}
 	prepareExportSolveOpt(&solveOpt, exportOpts)
 
-	if err := solvePlatformOCI(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
+	if err := solveOCIPlatform(ctx, c, state, platformSpec, metadata, &solveOpt); err != nil {
 		return fmt.Errorf("BuildKit solve failed: %w", err)
 	}
 
@@ -2518,7 +2540,7 @@ func solveAndCombineAllPlatforms(
 		}
 		prepareExportSolveOpt(&platformSolveOpt, exportOpts)
 
-		if err := solvePlatformOCI(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
+		if err := solveOCIPlatform(ctx, c, &platformStates[i], &platformSpecs[i], platformMetadata[i], &platformSolveOpt); err != nil {
 			return fmt.Errorf("failed to solve platform: %w", err)
 		}
 	}
@@ -2878,7 +2900,7 @@ func exportPatchedPlatformsToTemp(
 		}
 		prepareExportSolveOpt(&solveOpt, exportOpts)
 
-		if err := solvePlatformOCI(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
+		if err := solveOCIPlatform(ctx, c, &platformState, &platformSpec, platformMetadata[i], &solveOpt); err != nil {
 			return nil, fmt.Errorf("failed to solve platform: %w", err)
 		}
 
