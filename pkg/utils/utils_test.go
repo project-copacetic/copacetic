@@ -267,6 +267,8 @@ func TestCanonicalPkgManagerType(t *testing.T) {
 	tests := map[string]string{
 		"alpine":              "apk",
 		"AlPiNe":              "apk",
+		"wolfi":               "apk",
+		"Wolfi":               "apk",
 		"debian":              "deb",
 		"ubuntu":              "deb",
 		"rpm":                 "rpm",

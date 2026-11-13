@@ -71,7 +71,7 @@ func CanonicalPkgManagerType(raw string) string {
 	// Normalize once for matching; we still return the original raw when already canonical
 	lowered := strings.ToLower(raw)
 	switch lowered { // normalize case defensively
-	case OSTypeAlpine:
+	case OSTypeAlpine, OSTypeWolfi:
 		return "apk"
 	case OSTypeDebian, OSTypeUbuntu:
 		return "deb"

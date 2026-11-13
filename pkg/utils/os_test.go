@@ -14,6 +14,8 @@ func TestCanonicalOSType(t *testing.T) {
 		{name: "alpine exact", input: "alpine", expected: OSTypeAlpine},
 		{name: "alpine linux", input: "alpine linux", expected: OSTypeAlpine},
 		{name: "Alpine Linux uppercase", input: "Alpine Linux", expected: OSTypeAlpine},
+		{name: "wolfi exact", input: "wolfi", expected: OSTypeWolfi},
+		{name: "Wolfi uppercase", input: "Wolfi", expected: OSTypeWolfi},
 
 		// Debian variations
 		{name: "debian exact", input: "debian", expected: OSTypeDebian},

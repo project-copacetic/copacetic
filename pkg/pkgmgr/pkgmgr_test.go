@@ -44,6 +44,13 @@ func TestGetPackageManager(t *testing.T) {
 	// Create a mock config and workingFolder
 	config := &buildkit.Config{}
 
+	t.Run("should return an apkManager for Wolfi", func(t *testing.T) {
+		manager, err := GetPackageManager(utils.OSTypeWolfi, "20230201", config, utils.DefaultTempWorkingFolder)
+		require.NoError(t, err)
+		assert.IsType(t, &apkManager{}, manager)
+		assert.Equal(t, "apk", manager.GetPackageType())
+	})
+
 	t.Run("should return an apkManager for alpine", func(t *testing.T) {
 		manager, err := GetPackageManager(utils.OSTypeAlpine, "1.0", config, utils.DefaultTempWorkingFolder)
 

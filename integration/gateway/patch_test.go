@@ -111,6 +111,41 @@ func TestPatchAlpine(t *testing.T) {
 	runPatchTests(t, testCases)
 }
 
+func TestPatchWolfiWithAPK(t *testing.T) {
+	t.Parallel()
+
+	if buildkitAddr == "" {
+		t.Skip("Skipping: no BuildKit address provided")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	updates := testenv.CreateUpdateManifest("wolfi", "20230201", "amd64", []testenv.PackageUpdate{
+		{
+			Name:             "busybox",
+			InstalledVersion: "1.36.1-r0",
+			FixedVersion:     "1.37.0-r0",
+			VulnerabilityID:  "CVE-2099-TEST",
+		},
+	})
+	err := testEnv.RunPatchTestWithInspection(ctx, t, testenv.PatchTestConfig{
+		ImageName: "cgr.dev/chainguard/wolfi-base:latest@sha256:94fa13e26d449f7d78dbcd02d12ea37a0da80d24fcc3e1f17b95d515dec607a7",
+		Platform:  &specs.Platform{OS: "linux", Architecture: "amd64"},
+		Updates:   updates,
+	}, func(ctx context.Context, t *testing.T, c gwclient.Client, result *patch.Result) {
+		require.NotNil(t, result)
+		require.Equal(t, "apk", result.PackageType)
+		require.Empty(t, result.ErroredPackages)
+
+		inspector, err := testenv.NewRefInspector(ctx, result.Result)
+		require.NoError(t, err)
+		inspector.AssertFileContains(t, "/etc/os-release", "ID=wolfi")
+		inspector.AssertFileExists(t, "/lib/apk/db/installed")
+	})
+	require.NoError(t, err)
+}
+
 // TestPatchDebian tests Copa patching on Debian-based images.
 func TestPatchDebian(t *testing.T) {
 	t.Parallel()
