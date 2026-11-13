@@ -196,11 +196,17 @@ func splitFixedVersions(fixed string) []versionCandidate {
 
 // allowedByPatchLevel reports whether upgrading from installed to candidate stays
 // within the given library patch level. Unknown levels behave like "patch".
+// On major version 0 a minor bump is breaking, so "minor" is treated like "patch".
 func allowedByPatchLevel(installed, candidate versionCandidate, libraryPatchLevel string) bool {
 	switch libraryPatchLevel {
 	case "major":
 		return true
 	case "minor":
+		if candidate.prefix.length >= 1 && installed.prefix.length >= 1 &&
+			installed.prefix.first == 0 && candidate.prefix.first == 0 {
+			return candidate.prefix.length >= 2 && installed.prefix.length >= 2 &&
+				candidate.prefix.second == installed.prefix.second
+		}
 		return candidate.prefix.length >= 1 && installed.prefix.length >= 1 &&
 			candidate.prefix.first == installed.prefix.first
 	default:
