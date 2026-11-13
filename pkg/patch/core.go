@@ -19,6 +19,7 @@ import (
 	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/common"
 	"github.com/project-copacetic/copacetic/pkg/langmgr"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
@@ -43,6 +44,7 @@ type Options struct {
 	// multi-platform children rather than publishing a top-level index digest as
 	// though it were the selected child-manifest digest.
 	RequireBaseManifest bool
+	OCISource           *ocilayout.Source
 
 	// Update information
 	Updates          *unversioned.UpdateManifest
@@ -335,12 +337,16 @@ var errOriginIntegrity = buildkit.ErrOriginIntegrity
 // and inside each patch build. This includes recovering the recorded original,
 // not just validating the shape of its labels.
 func initializePatchConfig(ctx context.Context, c gwclient.Client, opts *Options, annotations map[string]string) (*buildkit.Config, error) {
-	config, err := buildkit.InitializeBuildkitConfigWithBaseImage(ctx, c, opts.ImageName, opts.BaseImageLocator, &opts.TargetPlatform.Platform)
+	config, err := buildkit.InitializeBuildkitConfigWithSource(ctx, c, opts.ImageName, opts.BaseImageLocator, &opts.TargetPlatform.Platform, opts.OCISource)
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
-		return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+	// Layout input treats its own content as authoritative and records no
+	// patch origin, so origin metadata it carries is removed, not recovered.
+	if opts.OCISource == nil {
+		if err := validateSourceOriginAnnotations(annotations, config.SourceLineage); err != nil {
+			return nil, fmt.Errorf("%w: %w", errOriginIntegrity, err)
+		}
 	}
 	config.SourceLineage, err = sourceLineageForPatch(config, opts)
 	if err != nil {

@@ -162,9 +162,9 @@ func TestPlatformResultCancellation(t *testing.T) {
 				case stage == "utility registry":
 					_, err = utils.GetImageDescriptor(ctx, input, "docker")
 				case stage == "original result":
-					_, err = createOriginalImageResult(ctx, ref, platform, input)
+					_, err = createOriginalImageResult(ctx, ref, platform, input, nil)
 				case strings.HasPrefix(stage, "patched result"):
-					_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil, nil)
+					_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil, nil, nil)
 				default:
 					_, err = getPlatformDescriptorFromManifest(ctx, input, platform)
 				}
@@ -222,9 +222,9 @@ func TestPlatformResultExpiredContext(t *testing.T) {
 			platform := &types.PatchPlatform{Platform: ispec.Platform{OS: "linux", Architecture: "amd64"}}
 			_, err = getPlatformDescriptorFromManifest(ctx, input, platform)
 			require.ErrorIs(t, err, want)
-			_, err = createOriginalImageResult(ctx, ref, platform, input)
+			_, err = createOriginalImageResult(ctx, ref, platform, input, nil)
 			require.ErrorIs(t, err, want)
-			_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil, nil)
+			_, err = createPatchResultWithStates(ctx, ref, input, platform, nil, "docker", false, nil, nil, nil)
 			require.ErrorIs(t, err, want)
 		})
 	}

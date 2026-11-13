@@ -82,6 +82,10 @@ Update all platforms with the latest patches:
 copa patch --image $IMAGE --tag nginx:1.25.0-patched
 ```
 
+### OCI Image Layouts
+
+To patch a multi-platform image that is stored on disk as an OCI Image Layout, or to write the patched index to a layout with `--oci-dir`, see [OCI Image Layouts](./oci-layouts.md).
+
 ## Multi-Platform Command Reference
 
 ### Platform-Specific Flags
@@ -94,7 +98,8 @@ These flags are essential for multi-platform patching:
 | `--report`        | One report file or a directory of platform-specific reports      | `--report ./platform-reports/`       |
 | `--ignore-errors` | Continue patching other platforms if one fails                  | `--ignore-errors`                    |
 | `--push`          | Push all manifests and index/manifest list to registry          | `--push`                             |
-| `--oci-dir`       | Export multi-platform index/manifest as OCI layout directory    | `--oci-dir ./output-directory`       |
+| `--input-oci-layout` | Read the source image from a local [OCI Image Layout](./oci-layouts.md) | `--input-oci-layout ./input-layout`  |
+| `--oci-dir`       | Export the patched image as an OCI layout directory (required with `--input-oci-layout`) | `--oci-dir ./output-directory`       |
 
 ## Multi-Platform Behavior
 
@@ -110,13 +115,13 @@ These flags are essential for multi-platform patching:
 
 - **Single-platform inputs**: A report directory can also be used with an ordinary single-manifest image. Copa patches its matching platform without claiming an original index.
 
-- **Patch origin**: Newly patched OCI manifests and their image-config labels record `sh.copa.patch.origin.kind`, `sh.copa.patch.origin.name`, and `sh.copa.patch.origin.digest`. They identify the original non-Copa image that was patched: kind `image-ref`, its name, and the digest of the exact platform manifest. A patched index also records the original index when every output platform maps to it. Re-patching records the same original, so every generation points directly to it. These fields describe content identity, not authenticated provenance. Application-owned `org.opencontainers.image.base.*` metadata and unchanged platforms are left as they are. The `oci-layout` kind (a digest, an optional portable name, and never a local path) is reserved for OCI layout input; Copa doesn't produce it yet. On an older BuildKit server without image-blob support, a remote-only single-platform source can record its index digest. For the BuildKit frontend, see [patch origin metadata](docker-build.md#patch-origin-metadata).
+- **Patch origin**: Newly patched OCI manifests and their image-config labels record `sh.copa.patch.origin.kind`, `sh.copa.patch.origin.name`, and `sh.copa.patch.origin.digest`. They identify the original non-Copa image that was patched: kind `image-ref`, its name, and the digest of the exact platform manifest. A patched index also records the original index when every output platform maps to it. Re-patching records the same original, so every generation points directly to it. These fields describe content identity, not authenticated provenance. Application-owned `org.opencontainers.image.base.*` metadata and unchanged platforms are left as they are. The `oci-layout` kind (a digest, an optional portable name, and never a local path) is reserved for OCI layout input; Copa doesn't produce it yet, so images patched from `--input-oci-layout` record no patch origin. On an older BuildKit server without image-blob support, a remote-only single-platform source can record its index digest. For the BuildKit frontend, see [patch origin metadata](docker-build.md#patch-origin-metadata).
 
   Copa validates the selected patch origins before patching. If a recorded original can't be recovered by its digest, or recovery fails during patching, Copa returns an error even with `--ignore-errors` and doesn't publish the final index; restore the original and retry. Platform images exported before such a failure remain available. Images patched by older Copa versions carry only the `BaseImage` label; they are re-patched as before, with a warning and no origin.
 
-- **Source access**: Multi-platform discovery and source capture require registry or local-daemon access from the Copa process. Gateway-only capture through an authenticated BuildKit session supports single-platform patching, including one selected child of an index.
+- **Source access**: Multi-platform discovery and source capture require registry or local-daemon access from the Copa process, except with `--input-oci-layout`, which reads only the layout. Gateway-only capture through an authenticated BuildKit session supports single-platform patching, including one selected child of an index.
 
-- **Normal local image loading**: Without `--push` or `--oci-dir`, Copa loads the individually patched platform images into the local runtime. Unchanged platforms remain available from the source registry but are not loaded locally.
+- **Normal local image loading**: Without `--push`, Copa loads the individually patched platform images into the local runtime, also when `--oci-dir` is set. Unchanged platforms remain available from the source registry but are not loaded locally. Images patched from `--input-oci-layout` are written only to the output layout.
 
 - **No-report platform discovery**: In comprehensive no-report mode, Copa inspects the image. A single-platform image is patched as that discovered platform; otherwise the selected or discovered multi-platform set is used.
 

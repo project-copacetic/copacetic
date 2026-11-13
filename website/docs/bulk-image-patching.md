@@ -146,7 +146,7 @@ private archive credentials are not forwarded. See
 - Targeting platforms: Use `platforms` in the YAML to restrict which platforms are patched; other platforms are preserved unchanged in the final manifest.
 - End result: Patched images are pushed when `--push` is set, or exported to OCI layout with `--oci-dir` when not pushing.
 
-See also: [Multi‑Platform Patching](./multiplatform-patching.md)
+See also: [Multi‑Platform Patching](./multiplatform-patching.md) and [OCI Image Layouts](./oci-layouts.md)
 
 ## Running Bulk Patching
 

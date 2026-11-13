@@ -11,6 +11,9 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 )
 
+// openVEXFormat is the --format value for OpenVEX output.
+const openVEXFormat = "openvex"
+
 type Vex interface {
 	CreateVEXDocument(updates *unversioned.UpdateManifest, patchedImageName string, pkgmgr pkgmgr.PackageManager) (string, error)
 }
@@ -24,9 +27,19 @@ type ImageUpdates struct {
 	PatchedImageName string
 }
 
+// ValidateFormat returns an error unless format is a supported VEX output format.
+func ValidateFormat(format string) error {
+	switch format {
+	case openVEXFormat:
+		return nil
+	default:
+		return fmt.Errorf("unsupported output format %s specified", format)
+	}
+}
+
 func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedImageName, format, file string) error {
 	switch format {
-	case "openvex":
+	case openVEXFormat:
 		ov := &OpenVex{}
 		doc, err := ov.createVEXDocument(updates, patchedImageName, pkgType)
 		if err != nil {
@@ -43,7 +56,7 @@ func TryOutputVexDocument(updates *unversioned.UpdateManifest, pkgType, patchedI
 // products lists one product per image, in the order of images.
 func TryOutputMultiVexDocument(images []ImageUpdates, format, file string) error {
 	switch format {
-	case "openvex":
+	case openVEXFormat:
 		ov := &OpenVex{}
 		doc, err := ov.createMultiVEXDocument(images)
 		if err != nil {

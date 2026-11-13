@@ -45,7 +45,7 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 			lineage := sourceLineageFromAnnotations(values)
 			if expectedErr != nil || !lineage.Valid() || lineage.Kind != source.IndexLineage.Kind ||
 				!sameOriginRepository(lineage.Name, source.IndexLineage.Name) || (lineage.Digest != expected.Digest && lineage.Digest != source.IndexLineage.Digest) {
-				return fmt.Errorf("platform %s origin contradicts the recorded original index", buildkit.PlatformKey(*child.Platform))
+				return fmt.Errorf("platform %s origin contradicts the recorded original index", buildkit.FormatPlatform(*child.Platform))
 			}
 			return nil
 		}
@@ -58,16 +58,16 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 		}
 		manifest, labels, err := read(ctx, source.local, source.Current.Name, ref, child.Platform)
 		if err != nil {
-			return fmt.Errorf("inspect platform %s origin: %w", buildkit.PlatformKey(*child.Platform), err)
+			return fmt.Errorf("inspect platform %s origin: %w", buildkit.FormatPlatform(*child.Platform), err)
 		}
 		// A parent may legitimately identify an index or a selected child,
 		// but the three surfaces of one image must agree on that identity.
 		combined, err := buildkit.MergeImageSourceAnnotations(child.Annotations, manifest)
 		if err != nil {
-			return fmt.Errorf("platform %s origin surfaces disagree: %w", buildkit.PlatformKey(*child.Platform), err)
+			return fmt.Errorf("platform %s origin surfaces disagree: %w", buildkit.FormatPlatform(*child.Platform), err)
 		}
 		if _, err := buildkit.MergeImageSourceAnnotations(combined, labels); err != nil {
-			return fmt.Errorf("platform %s origin surfaces disagree: %w", buildkit.PlatformKey(*child.Platform), err)
+			return fmt.Errorf("platform %s origin surfaces disagree: %w", buildkit.FormatPlatform(*child.Platform), err)
 		}
 		if err := check(manifest); err != nil {
 			return err
@@ -80,7 +80,7 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 		// satisfy a recorded index claim merely by having no origin labels.
 		// Legacy patched children still have an unverified BaseImage locator.
 		if labels["BaseImage"] == "" && (expectedErr != nil || child.Digest != expected.Digest) {
-			return fmt.Errorf("platform %s unpatched manifest contradicts the recorded original index", buildkit.PlatformKey(*child.Platform))
+			return fmt.Errorf("platform %s unpatched manifest contradicts the recorded original index", buildkit.FormatPlatform(*child.Platform))
 		}
 	}
 	return nil

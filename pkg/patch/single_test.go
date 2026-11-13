@@ -411,6 +411,7 @@ func TestCreatePatchResultWithStatesRejectsInvalidPatchedImageName(t *testing.T)
 		false,
 		nil,
 		nil,
+		nil,
 	)
 
 	require.Error(t, err)
@@ -432,6 +433,7 @@ func TestCreatePatchResultWithStatesKeepsVEX(t *testing.T) {
 		nil,
 		imageloader.Docker,
 		false,
+		nil,
 		nil,
 		vexData,
 	)
@@ -669,6 +671,7 @@ func TestEmptyReportPreflightUsesNativeSuppliedPatchedImage(t *testing.T) {
 		bkClient,
 		testNativeSuppliedImage,
 		platform,
+		nil,
 	)
 
 	require.ErrorIs(t, err, errNativeChiselTargetedPatch)

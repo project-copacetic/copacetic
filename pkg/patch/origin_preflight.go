@@ -73,7 +73,7 @@ func preflightMultiPlatformOrigins(ctx context.Context, opts *types.Options, pla
 					return nil, err
 				}
 				if err := primeLocalSourceWithClient(ctx, c, opts.Image, root, input.digest, &p.Platform); err != nil {
-					return nil, fmt.Errorf("prepare captured local source for platform %s: %w", key, err)
+					return nil, fmt.Errorf("prepare captured local source for platform %s: %w", buildkit.FormatPlatform(p.Platform), err)
 				}
 			}
 			_, err := initializePatchConfig(ctx, c, &Options{
@@ -81,7 +81,7 @@ func preflightMultiPlatformOrigins(ctx context.Context, opts *types.Options, pla
 				ExpectedSourceDigest: input.digest, RequireBaseManifest: true,
 			}, input.annotations)
 			if err != nil {
-				return nil, fmt.Errorf("validate origin for platform %s: %w", key, err)
+				return nil, fmt.Errorf("validate origin for platform %s: %w", buildkit.FormatPlatform(p.Platform), err)
 			}
 		}
 		return gwclient.NewResult(), nil

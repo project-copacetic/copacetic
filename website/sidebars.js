@@ -43,6 +43,7 @@ const sidebars = {
         'bulk-image-patching',
         'chiseled-images',
         "multiplatform-patching",
+        'oci-layouts',
         'demos',
       ],
     },

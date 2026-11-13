@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/distribution/reference"
 	"github.com/moby/buildkit/client"
+	"github.com/opencontainers/go-digest"
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
@@ -45,16 +48,46 @@ func patchMultiPlatformImage(
 ) error {
 	image := opts.Image
 	reportDir := opts.Report
-	ignoreError := opts.IgnoreError
-	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
 
 	var platforms []types.PatchPlatform
 	if reportDir != "" {
-		// Using report directory - discover platforms from reports
-		var err error
-		platforms, err = buildkit.DiscoverPlatformsWithContext(ctx, image, reportDir, opts.Scanner)
-		if err != nil {
-			return err
+		// Using report directory - discover platforms from the selected image
+		// source, then mark only platforms with reports for patching.
+		if opts.OCISource == nil {
+			var err error
+			platforms, err = buildkit.DiscoverPlatformsWithContext(ctx, image, reportDir, opts.Scanner)
+			if err != nil {
+				return err
+			}
+		} else {
+			var err error
+			platforms, err = discoverPlatformsForOptions(ctx, opts)
+			if err != nil {
+				return err
+			}
+			reportPlatforms, err := buildkit.DiscoverPlatformsFromReportStrict(reportDir, opts.Scanner)
+			if err != nil {
+				return err
+			}
+			reportFiles := make(map[string]string, len(reportPlatforms))
+			for _, platform := range reportPlatforms {
+				match, err := resolveOCIReportDirPlatform(platforms, &platform)
+				if err != nil {
+					return fmt.Errorf("report %s: %w", platform.ReportFile, err)
+				}
+				if !isSupportedPatchPlatform(&match.Platform) {
+					return fmt.Errorf("unsupported scan report platform %q in report %s", buildkit.FormatPlatform(match.Platform), platform.ReportFile)
+				}
+				key := buildkit.PlatformKey(match.Platform)
+				if _, exists := reportFiles[key]; exists {
+					return fmt.Errorf("multiple reports target OCI platform %s", buildkit.FormatPlatform(match.Platform))
+				}
+				reportFiles[key] = platform.ReportFile
+			}
+			for i := range platforms {
+				platforms[i].ReportFile = reportFiles[buildkit.PlatformKey(platforms[i].Platform)]
+				platforms[i].ShouldPreserve = platforms[i].ShouldPreserve || platforms[i].ReportFile == ""
+			}
 		}
 		if len(platforms) == 0 {
 			return fmt.Errorf("no patchable platforms found for image %s", image)
@@ -67,7 +100,16 @@ func patchMultiPlatformImage(
 
 		if len(opts.Platforms) > 0 {
 			// Filter platforms based on user specification and validate
-			patchPlatforms := filterPlatforms(discoveredPlatforms, opts.Platforms)
+			var patchPlatforms []types.PatchPlatform
+			if opts.OCISource != nil {
+				var err error
+				patchPlatforms, err = filterOCIPlatforms(discoveredPlatforms, opts.Platforms)
+				if err != nil {
+					return err
+				}
+			} else {
+				patchPlatforms = filterPlatforms(discoveredPlatforms, opts.Platforms)
+			}
 			if len(patchPlatforms) == 0 {
 				return fmt.Errorf("none of the specified platforms %v are available in the image", opts.Platforms)
 			}
@@ -94,44 +136,72 @@ func patchMultiPlatformImage(
 				platforms = append(platforms, platformCopy)
 			}
 		} else {
-			// Patch all available platforms since no specific platforms were requested
+			// Patch supported platforms, retaining any source preservation decisions.
 			for _, p := range discoveredPlatforms {
 				platformCopy := p
 				platformCopy.ReportFile = "" // No vulnerability report, just patch with latest packages
-				platformCopy.ShouldPreserve = false
 				platforms = append(platforms, platformCopy)
 			}
 			log.Infof("Patching all available platforms")
 		}
 	}
 
-	source, err := captureMultiPlatformSource(ctx, image)
-	if err != nil {
-		return fmt.Errorf("capture source index metadata for %s: %w", image, err)
+	return patchPreparedMultiPlatformImage(ctx, opts, platforms)
+}
+
+// patchPreparedMultiPlatformImage patches and preserves the already classified
+// platforms. Keeping orchestration separate from discovery lets a single scan
+// report target one platform in an OCI layout without dropping its siblings.
+func patchPreparedMultiPlatformImage(
+	ctx context.Context,
+	opts *types.Options,
+	platforms []types.PatchPlatform,
+) error {
+	image := opts.Image
+	reportDir := opts.Report
+	ignoreError := opts.IgnoreError
+	log.Debugf("Handling platform specific errors with ignore-errors=%t", ignoreError)
+
+	if err := rejectPatchedOCITargets(ctx, opts.OCISource, platforms); err != nil {
+		return err
 	}
 
-	// Pin every selected platform before any platform can publish. A source
-	// selection failure cannot fall back to a later mutable-tag lookup.
+	// OCI layout input is read only from the layout, so it has no registry or
+	// daemon source to capture and records no patch origin.
+	var source *multiPlatformSource
 	sourceImages := make(map[string]string, len(platforms))
 	sourceDescriptors := make(map[string]*ispec.Descriptor, len(platforms))
-	for _, p := range platforms {
-		key := buildkit.PlatformKey(p.Platform)
-		ref, err := platformSourceReference(source.Current, &p.Platform)
+	var sourceAnnotations map[string]map[string]string
+	var capturedRoot digest.Digest
+	if opts.OCISource == nil {
+		var err error
+		source, err = captureMultiPlatformSource(ctx, image)
 		if err != nil {
-			return fmt.Errorf("capture source platform %s: %w", key, err)
+			return fmt.Errorf("capture source index metadata for %s: %w", image, err)
 		}
-		desc, err := sourcePlatformDescriptor(source.Current, &p.Platform)
-		if err != nil {
-			return fmt.Errorf("capture source descriptor %s: %w", key, err)
-		}
-		sourceImages[key], sourceDescriptors[key] = ref, desc
-	}
+		capturedRoot = source.Current.Descriptor.Digest
 
-	// Capture annotations through the locally named index, or through the
-	// immutable remote child, before any platform can publish or move the tag.
-	sourceAnnotations, err := captureSelectedSourceAnnotations(ctx, image, source.local, platforms, sourceImages, sourceDescriptors)
-	if err != nil {
-		return err
+		// Pin every selected platform before any platform can publish. A source
+		// selection failure cannot fall back to a later mutable-tag lookup.
+		for _, p := range platforms {
+			key := buildkit.PlatformKey(p.Platform)
+			ref, err := platformSourceReference(source.Current, &p.Platform)
+			if err != nil {
+				return fmt.Errorf("capture source platform %s: %w", buildkit.FormatPlatform(p.Platform), err)
+			}
+			desc, err := sourcePlatformDescriptor(source.Current, &p.Platform)
+			if err != nil {
+				return fmt.Errorf("capture source descriptor %s: %w", buildkit.FormatPlatform(p.Platform), err)
+			}
+			sourceImages[key], sourceDescriptors[key] = ref, desc
+		}
+
+		// Capture annotations through the locally named index, or through the
+		// immutable remote child, before any platform can publish or move the tag.
+		sourceAnnotations, err = captureSelectedSourceAnnotations(ctx, image, source.local, platforms, sourceImages, sourceDescriptors)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Preserve report errors and no-update exits, while validating every child
@@ -148,13 +218,19 @@ func patchMultiPlatformImage(
 			patchOpts.Report = ""
 		}
 		updates, reportErr := preparePatchUpdates(&patchOpts, &p, nil)
-		patchInputs[key] = platformPatchInput{
-			image: sourceImages[key], locator: multiPlatformBaseImageLocator(image, source.Current, sourceImages[key]),
-			digest: sourceDescriptors[key].Digest, annotations: sourceAnnotations[key], updates: updates, reportErr: reportErr,
+		input := platformPatchInput{updates: updates, reportErr: reportErr}
+		if source != nil {
+			input.image = sourceImages[key]
+			input.locator = multiPlatformBaseImageLocator(image, source.Current, sourceImages[key])
+			input.digest = sourceDescriptors[key].Digest
+			input.annotations = sourceAnnotations[key]
 		}
+		patchInputs[key] = input
 	}
-	if err := preflightPlatformOrigins(ctx, opts, platforms, patchInputs, source.Current.Descriptor.Digest); err != nil {
-		return err
+	if source != nil {
+		if err := preflightPlatformOrigins(ctx, opts, platforms, patchInputs, capturedRoot); err != nil {
+			return err
+		}
 	}
 
 	// Display styled patching plan before starting
@@ -200,6 +276,7 @@ func patchMultiPlatformImage(
 		// rebind
 		p := p //nolint
 		platformKey := buildkit.PlatformKey(p.Platform)
+		platformLabel := buildkit.FormatPlatform(p.Platform)
 		g.Go(func() error {
 			select {
 			case sem <- struct{}{}:
@@ -213,11 +290,11 @@ func patchMultiPlatformImage(
 				log.Debugf("Platform %s marked for preservation, preserving original in manifest", p.OS+"/"+p.Architecture)
 
 				// Parse the original image reference for the result
-				originalRef, err := reference.ParseNormalizedNamed(image)
+				originalRef, _, _, err := resolvePatchNames(opts)
 				if err != nil {
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Error",
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to parse original image reference: %v", err),
@@ -229,13 +306,13 @@ func patchMultiPlatformImage(
 				}
 
 				// Handle Windows platform without push enabled
-				if !opts.Push && p.OS == "windows" {
+				if opts.OCISource == nil && !opts.Push && p.OS == "windows" {
 					mu.Lock()
 					defer mu.Unlock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Ignored",
-						Ref:      originalRef.String() + " (original reference)",
+						Ref:      sourceDisplayName(opts) + " (original reference)",
 						Message:  "Windows images are not patched and will be preserved as-is",
 					}
 					log.Warn("Cannot save Windows platform image without pushing to registry. Use --push flag to save Windows images to a registry.")
@@ -244,9 +321,12 @@ func patchMultiPlatformImage(
 
 				// Get the original platform descriptor from the manifest
 				var originalDesc *ispec.Descriptor
-				if source != nil && source.Current != nil {
+				switch {
+				case opts.OCISource != nil:
+					originalDesc, err = opts.OCISource.PlatformDescriptor(gctx, &p.Platform)
+				case source != nil && source.Current != nil:
 					originalDesc, err = source.Current.PlatformDescriptor(&p.Platform)
-				} else {
+				default:
 					originalDesc, err = getPlatformDescriptorFromManifest(gctx, image, &p)
 				}
 				if err != nil {
@@ -255,7 +335,7 @@ func patchMultiPlatformImage(
 					}
 					mu.Lock()
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Error",
 						Ref:      "",
 						Message:  fmt.Sprintf("failed to get original descriptor for platform %s: %v", p.OS+"/"+p.Architecture, err),
@@ -271,21 +351,25 @@ func patchMultiPlatformImage(
 					OriginalRef: originalRef,
 					PatchedRef:  originalRef,
 					PatchedDesc: originalDesc,
+					OCISource:   opts.OCISource,
 				}
 
 				mu.Lock()
 				patchResults = append(patchResults, result)
 				var preserveReason string
-				if reportDir != "" && p.ReportFile == "" {
+				switch {
+				case !isSupportedPatchPlatform(&p.Platform):
+					preserveReason = "Unsupported patch platform"
+				case reportDir != "" && p.ReportFile == "":
 					preserveReason = "No scan report for platform"
-				} else {
+				default:
 					preserveReason = "Not in --platform list"
 				}
 				// Add summary entry for unpatched platform
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
-					Platform: platformKey,
+					Platform: platformLabel,
 					Status:   "Not Patched",
-					Ref:      originalRef.String() + " (original reference)",
+					Ref:      sourceDisplayName(opts) + " (original reference)",
 					Message:  preserveReason,
 				}
 				mu.Unlock()
@@ -311,7 +395,7 @@ func patchMultiPlatformImage(
 			err := input.reportErr
 			if err == nil {
 				res, err = patchPlatformImage(gctx, patchOpts, p, true, sharedProgressCh, input.updates,
-					input.image, input.locator, input.annotations, source.Current.Descriptor.Digest)
+					input.image, input.locator, input.annotations, capturedRoot)
 			}
 
 			// Track completion to know when to close shared channel
@@ -323,18 +407,18 @@ func patchMultiPlatformImage(
 			defer mu.Unlock()
 			if err != nil {
 				if errors.Is(err, errOriginIntegrity) {
-					return fmt.Errorf("platform %s: %w", platformKey, err)
+					return fmt.Errorf("platform %s: %w", platformLabel, err)
 				}
 				if errors.Is(err, types.ErrNoUpdatesFound) {
-					if res != nil {
+					if res != nil && source != nil {
 						res.PatchedDesc = sourceDescriptors[platformKey]
 					}
 					patchResults = append(patchResults, *res)
 					markPlatformPreserved(platforms, platformKey)
 					summaryMap[platformKey] = &types.MultiPlatformSummary{
-						Platform: platformKey,
+						Platform: platformLabel,
 						Status:   "Up-to-date",
-						Ref:      res.OriginalRef.String() + " (original)",
+						Ref:      sourceDisplayName(opts) + " (original)",
 						Message:  "Already up-to-date",
 					}
 					patchedSuccesses++ // Count up-to-date as success
@@ -344,9 +428,21 @@ func patchMultiPlatformImage(
 				status := "Error"
 				if ignoreError {
 					status = "Ignored"
+					if opts.OCISource != nil {
+						originalRef, _, _, resolveErr := resolvePatchNames(opts)
+						if resolveErr != nil {
+							return resolveErr
+						}
+						original, preserveErr := createOriginalImageResult(gctx, originalRef, &p, image, opts.OCISource)
+						if preserveErr != nil {
+							return fmt.Errorf("preserve failed platform %s: %w", platformLabel, preserveErr)
+						}
+						patchResults = append(patchResults, *original)
+						markPlatformPreserved(platforms, platformKey)
+					}
 				}
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
-					Platform: platformKey,
+					Platform: platformLabel,
 					Status:   status,
 					Ref:      "",
 					Message:  err.Error(),
@@ -357,7 +453,7 @@ func patchMultiPlatformImage(
 			}
 			if res == nil {
 				summaryMap[platformKey] = &types.MultiPlatformSummary{
-					Platform: platformKey,
+					Platform: platformLabel,
 					Status:   "Error",
 					Ref:      "",
 					Message:  "patchSingleArchImage returned nil result",
@@ -371,7 +467,7 @@ func patchMultiPlatformImage(
 				vexByPlatform[platformKey] = res.VEX
 			}
 			summaryMap[platformKey] = &types.MultiPlatformSummary{
-				Platform: platformKey,
+				Platform: platformLabel,
 				Status:   "Patched",
 				Ref:      res.PatchedRef.String(),
 				Message:  "Successfully patched",
@@ -381,8 +477,9 @@ func patchMultiPlatformImage(
 		})
 	}
 
-	// Origin-integrity and context failures abort remaining workers even with
-	// ignore-errors. Ordinary platform failures were recorded above.
+	// Origin-integrity, context and OCI source-preservation failures abort
+	// remaining workers even with ignore-errors. Ordinary platform failures
+	// were recorded above.
 	if err := g.Wait(); err != nil {
 		closeProgressOnce.Do(func() { close(sharedProgressCh) })
 		_ = displayEg.Wait()
@@ -424,13 +521,7 @@ func patchMultiPlatformImage(
 		return fmt.Errorf("all platform patches failed")
 	}
 
-	// resolve image ref
-	imageName, err := reference.ParseNormalizedNamed(image)
-	if err != nil {
-		return fmt.Errorf("failed to parse reference: %w", err)
-	}
-
-	resolvedImage, resolvedPatchedTag, err := common.ResolvePatchedImageName(imageName, opts.PatchedTag, opts.Suffix)
+	_, resolvedImage, resolvedPatchedTag, err := resolvePatchNames(opts)
 	if err != nil {
 		return err
 	}
@@ -458,7 +549,7 @@ func patchMultiPlatformImage(
 		}
 	}
 
-	if !opts.Push {
+	if !opts.Push && opts.OCISource == nil {
 		// Show push commands only for actually patched images (not preserved originals)
 		log.Debugf("Total patch results: %d", len(patchResults))
 		patchedOnlyResults := make([]types.PatchResult, 0)
@@ -516,36 +607,101 @@ func patchMultiPlatformImage(
 	if !anySuccesses && len(summaryMap) > 0 {
 		return types.ErrNoUpdatesFound
 	}
-	if err := writeMultiPlatformVEX(platforms, vexByPlatform, opts.Format, opts.Output); err != nil {
-		return err
+	// OCI layout input has no final manifest digests until the export below,
+	// so writeOCIVEX writes its document after the export instead.
+	if opts.OCISource == nil {
+		if err := writeMultiPlatformVEX(platforms, vexByPlatform, opts.Format, opts.Output); err != nil {
+			return err
+		}
 	}
 	// Create OCI layout if requested and not pushing to registry
 	if opts.OCIDir != "" && !opts.Push {
-		compression := opts.Compression
-		if compression == "" {
-			compression = DefaultLocalExportCompression
-		}
-		preservedSourceRef, err := immutableCurrentIndexReference(source)
+		exportOpts, err := ociExportOptions(ctx, opts, patchedImageName.String())
 		if err != nil {
-			return fmt.Errorf("failed to identify immutable source for preserved platforms: %w", err)
+			return err
+		}
+		if source != nil {
+			exportOpts.IndexAnnotations = multiPlatformIndexAnnotations(patchedImageName, originalIndexAnnotations, indexLineage, time.Now().UTC())
+			exportOpts.PreservedSourceRef, err = immutableCurrentIndexReference(source)
+			if err != nil {
+				return fmt.Errorf("failed to identify immutable source for preserved platforms: %w", err)
+			}
+			// Export re-solves states that read their inputs by digest. Keep
+			// the policy decision for the requested image applicable to them,
+			// as each platform's patch solve did.
+			exportOpts.SourcePolicy, err = authorizePinnedInput(ctx, exportOpts.SourcePolicy, image, slices.Collect(maps.Values(sourceImages))...)
+			if err != nil {
+				return err
+			}
 		}
 		if err := buildkit.CreateOCILayoutFromResultsWithContext(ctx,
 			opts.OCIDir,
 			patchResults,
 			platforms,
-			buildkit.OCILayoutExportOptions{
-				Compression:        compression,
-				ForceCompression:   opts.ForceCompression,
-				IndexAnnotations:   multiPlatformIndexAnnotations(patchedImageName, originalIndexAnnotations, indexLineage, time.Now().UTC()),
-				PreservedSourceRef: preservedSourceRef,
-			},
+			exportOpts,
 		); err != nil {
 			log.Warnf("Failed to create OCI layout: %v", err)
 			return fmt.Errorf("failed to create OCI layout: %w", err)
 		}
 	}
 
+	if opts.OCIDir != "" && opts.OCISource != nil {
+		return writeOCIVEX(ctx, opts, resultsInPlatformOrder(platforms, patchResults), patchedImageName.String())
+	}
 	return nil
+}
+
+// resolveOCIReportDirPlatform matches a report in a report directory to a
+// layout platform. As with a single report, a report without platform
+// metadata applies only when the layout has exactly one platform.
+func resolveOCIReportDirPlatform(discovered []types.PatchPlatform, report *types.PatchPlatform) (types.PatchPlatform, error) {
+	if strings.TrimSpace(report.Architecture) == "" {
+		if len(discovered) != 1 {
+			return types.PatchPlatform{}, fmt.Errorf("scan report has no platform metadata; it can only target an OCI image with one platform, not %d", len(discovered))
+		}
+		return discovered[0], nil
+	}
+	return resolveOCIPlatform(discovered, &report.Platform)
+}
+
+func platformsForSingleReport(
+	discovered []types.PatchPlatform,
+	target *types.PatchPlatform,
+	reportFile string,
+) ([]types.PatchPlatform, error) {
+	resolved, err := resolveOCIPlatform(discovered, &target.Platform)
+	if err != nil {
+		return nil, err
+	}
+	if !isSupportedPatchPlatform(&resolved.Platform) {
+		return nil, fmt.Errorf("unsupported scan report platform %q", buildkit.FormatPlatform(resolved.Platform))
+	}
+	targetKey := buildkit.PlatformKey(resolved.Platform)
+	available := make([]string, 0, len(discovered))
+	platforms := make([]types.PatchPlatform, 0, len(discovered))
+	matched := false
+	for _, platform := range discovered {
+		platformCopy := platform
+		key := buildkit.PlatformKey(platform.Platform)
+		available = append(available, buildkit.FormatPlatform(platform.Platform))
+		if key == targetKey {
+			platformCopy.ReportFile = reportFile
+			platformCopy.ShouldPreserve = false
+			matched = true
+		} else {
+			platformCopy.ReportFile = ""
+			platformCopy.ShouldPreserve = true
+		}
+		platforms = append(platforms, platformCopy)
+	}
+	if !matched {
+		return nil, fmt.Errorf(
+			"report target platform %s is not available in the selected OCI image; available platforms: %s",
+			buildkit.FormatPlatform(resolved.Platform),
+			strings.Join(available, ", "),
+		)
+	}
+	return platforms, nil
 }
 
 // captureSelectedSourceAnnotations captures each patching platform's source
@@ -567,7 +723,7 @@ func captureSelectedSourceAnnotations(
 		key := buildkit.PlatformKey(p.Platform)
 		annotations, err := captureSourceAnnotationsWith(ctx, image, sourceImages[key], sourceDescriptors[key], &p.Platform, readLocal)
 		if err != nil {
-			return nil, fmt.Errorf("capture source annotations for platform %s: %w", key, err)
+			return nil, fmt.Errorf("capture source annotations for platform %s: %w", buildkit.FormatPlatform(p.Platform), err)
 		}
 		sourceAnnotations[key] = annotations
 	}
@@ -746,7 +902,7 @@ func commonBaseIndexLineage(ctx context.Context, source *multiPlatformSource, it
 		}
 		expected, err := source.Base.PlatformDescriptor(item.PatchedDesc.Platform)
 		if err != nil {
-			log.Debugf("Omitting index source lineage: source descriptor for platform %s is unavailable: %v", buildkit.PlatformKey(*item.PatchedDesc.Platform), err)
+			log.Debugf("Omitting index source lineage: source descriptor for platform %s is unavailable: %v", buildkit.FormatPlatform(*item.PatchedDesc.Platform), err)
 			return nil
 		}
 
@@ -756,21 +912,21 @@ func commonBaseIndexLineage(ctx context.Context, source *multiPlatformSource, it
 			if !lineage.Valid() || lineage.Kind != source.IndexLineage.Kind ||
 				!sameOriginRepository(lineage.Name, source.IndexLineage.Name) ||
 				(lineage.Digest != expected.Digest && lineage.Digest != source.IndexLineage.Digest) {
-				log.Debugf("Omitting index source lineage: patched platform %s does not map to source descriptor %s", buildkit.PlatformKey(*item.PatchedDesc.Platform), expected.Digest)
+				log.Debugf("Omitting index source lineage: patched platform %s does not map to source descriptor %s", buildkit.FormatPlatform(*item.PatchedDesc.Platform), expected.Digest)
 				return nil
 			}
 			continue
 		}
 		if item.PatchedDesc.Digest == expected.Digest {
 			if !unpatchedIndexChild(ctx, source.baseLocal, source.Base, expected) {
-				log.Debugf("Omitting index source lineage: unchanged platform %s has unverified original ancestry", buildkit.PlatformKey(*item.PatchedDesc.Platform))
+				log.Debugf("Omitting index source lineage: unchanged platform %s has unverified original ancestry", buildkit.FormatPlatform(*item.PatchedDesc.Platform))
 				return nil
 			}
 			continue
 		}
 		// Preserved descriptor annotations are unverified ancestry assertions.
 		// Only unchanged original bytes establish this child's common origin.
-		log.Debugf("Omitting index source lineage: preserved platform %s differs from original descriptor %s", buildkit.PlatformKey(*item.PatchedDesc.Platform), expected.Digest)
+		log.Debugf("Omitting index source lineage: preserved platform %s differs from original descriptor %s", buildkit.FormatPlatform(*item.PatchedDesc.Platform), expected.Digest)
 		return nil
 	}
 	lineage := *source.IndexLineage
@@ -843,10 +999,8 @@ func buildPatchingPlan(opts *types.Options, platforms []types.PatchPlatform) tui
 
 	// Use the same resolution logic as the actual patching to get accurate name
 	patchedName := opts.Image + "-patched" // fallback
-	if ref, err := reference.ParseNormalizedNamed(opts.Image); err == nil {
-		if imageName, tag, err := common.ResolvePatchedImageName(ref, opts.PatchedTag, opts.Suffix); err == nil {
-			patchedName = fmt.Sprintf("%s:%s", imageName, tag)
-		}
+	if _, imageName, tag, err := resolvePatchNames(opts); err == nil {
+		patchedName = fmt.Sprintf("%s:%s", imageName, tag)
 	}
 
 	return tui.PatchingPlan{
