@@ -60,6 +60,9 @@ type patchArgs struct {
 	chartRepo           string
 }
 
+// for testing.
+var patchImage = patch.Patch
+
 func NewPatchCmd() *cobra.Command {
 	ua := patchArgs{}
 	patchCmd := &cobra.Command{
@@ -72,6 +75,10 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 			// Validate library patch level
 			if err := validateLibraryPatchLevel(ua.libraryPatchLevel, ua.pkgTypes); err != nil {
 				return err
+			}
+			// Leave the level empty when the flag isn't set, so plugin reports keep their own fixed versions.
+			if !cmd.Flags().Changed("library-patch-level") {
+				ua.libraryPatchLevel = ""
 			}
 
 			// Create a context that is canceled on SIGINT/SIGTERM.
@@ -174,7 +181,7 @@ copa patch --chart reloader --chart-version 1.2.1 --chart-repo oci://ghcr.io/sta
 			}
 
 			log.Info("Starting in single image patching mode...")
-			return patch.Patch(ctx, opts)
+			return patchImage(ctx, opts)
 		},
 	}
 	flags := patchCmd.Flags()

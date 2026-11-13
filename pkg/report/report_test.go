@@ -8,6 +8,7 @@ import (
 	"github.com/project-copacetic/copacetic/pkg/types/unversioned"
 	"github.com/project-copacetic/copacetic/pkg/utils"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestTryParseScanReport tests the TryParseScanReport function with different scan report files.
@@ -257,4 +258,116 @@ func TestValidScannerNamePattern(t *testing.T) {
 			}
 		})
 	}
+}
+
+// writeV1alpha2Report writes a native v1alpha2 report with the given OS and language updates.
+func writeV1alpha2Report(t *testing.T, osUpdates, langUpdates string) string {
+	t.Helper()
+	content := fmt.Sprintf(`{
+		"apiVersion": "v1alpha2",
+		"metadata": {"os": {"type": "debian", "version": "12"}, "config": {"arch": "amd64"}},
+		"osupdates": [%s],
+		"langupdates": [%s]
+	}`, osUpdates, langUpdates)
+	file := t.TempDir() + "/report.json"
+	if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+	return file
+}
+
+// TestTryParseScanReportPluginPkgTypes checks that plugin reports honor pkg-types like Trivy reports do.
+func TestTryParseScanReportPluginPkgTypes(t *testing.T) {
+	file := writeV1alpha2Report(t,
+		`{"name": "openssl", "installedVersion": "3.0.1", "fixedVersion": "3.0.2", "vulnerabilityID": "CVE-2024-0001", "type": "debian", "class": "os-pkgs"}`,
+		`{"name": "requests", "installedVersion": "2.31.0", "fixedVersion": "2.31.1", "vulnerabilityID": "CVE-2024-0002", "type": "python-pkg", "class": "lang-pkgs"}`)
+
+	tests := []struct {
+		pkgTypes string
+		wantOS   int
+		wantLang int
+	}{
+		{utils.PkgTypeOS, 1, 0},
+		{utils.PkgTypeLibrary, 0, 1},
+		{utils.PkgTypeOS + "," + utils.PkgTypeLibrary, 1, 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.pkgTypes, func(t *testing.T) {
+			manifest, err := TryParseScanReport(file, "native", tc.pkgTypes, utils.PatchTypePatch)
+			assert.NoError(t, err)
+			assert.Len(t, manifest.OSUpdates, tc.wantOS)
+			assert.Len(t, manifest.LangUpdates, tc.wantLang)
+		})
+	}
+}
+
+// TestTryParseScanReportPluginLibraryPatchLevel checks how plugin library updates get their fixed version.
+func TestTryParseScanReportPluginLibraryPatchLevel(t *testing.T) {
+	row := func(name, fixed, vuln string) string {
+		return fmt.Sprintf(`{"name": %q, "installedVersion": "2.31.0", "fixedVersion": %q, "vulnerabilityID": %q, "type": "python-pkg", "class": "lang-pkgs"}`,
+			name, fixed, vuln)
+	}
+	tests := []struct {
+		name      string
+		rows      string
+		level     string
+		wantFixed []string // per row, in report order
+	}{
+		{"flag unset keeps the plugin's minor bump", row("requests", "2.32.0", "CVE-1"), "", []string{"2.32.0"}},
+		{"flag unset picks a patch from several candidates", row("requests", "2.31.1, 2.32.0", "CVE-1"), "", []string{"2.31.1"}},
+		{"explicit patch skips a minor-only fix", row("requests", "2.32.0", "CVE-1"), utils.PatchTypePatch, []string{""}},
+		{
+			"explicit patch groups rows of one package",
+			row("requests", "2.31.1", "CVE-1") + "," + row("requests", "2.32.0", "CVE-2"), utils.PatchTypePatch,
+			[]string{"2.31.1", "2.31.1"},
+		},
+		{
+			"explicit minor groups rows of one package",
+			row("requests", "2.32.0", "CVE-1") + "," + row("requests", "2.33.0", "CVE-2"), utils.PatchTypeMinor,
+			[]string{"2.33.0", "2.33.0"},
+		},
+		{
+			"explicit major groups rows of one package",
+			row("requests", "2.31.1", "CVE-1") + "," + row("requests", "3.0.0", "CVE-2"), utils.PatchTypeMajor,
+			[]string{"3.0.0", "3.0.0"},
+		},
+		{
+			"packages are not grouped together",
+			row("requests", "2.31.1", "CVE-1") + "," + row("urllib3", "2.32.0", "CVE-2"), utils.PatchTypeMinor,
+			[]string{"2.31.1", "2.32.0"},
+		},
+		{
+			"a row without a fix stays unfixed",
+			row("requests", "2.31.1", "CVE-1") + "," + row("requests", "", "CVE-2"), utils.PatchTypePatch,
+			[]string{"2.31.1", ""},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			file := writeV1alpha2Report(t, "", tc.rows)
+			manifest, err := TryParseScanReport(file, "native", utils.PkgTypeLibrary, tc.level)
+			assert.NoError(t, err)
+			var got []string
+			for _, u := range manifest.LangUpdates {
+				got = append(got, u.FixedVersion)
+			}
+			assert.Equal(t, tc.wantFixed, got)
+		})
+	}
+}
+
+// TestTryParseScanReportTrivyDefaultsToPatch checks that Trivy reports still use the "patch" level
+// when --library-patch-level isn't set (an empty level).
+func TestTryParseScanReportTrivyDefaultsToPatch(t *testing.T) {
+	file := "testdata/pkg_types_test.json"
+	parse := func(level string) []unversioned.UpdatePackage {
+		manifest, err := TryParseScanReport(file, "trivy", utils.PkgTypeLibrary, level)
+		require.NoError(t, err)
+		return manifest.LangUpdates
+	}
+
+	unset := parse("")
+	assert.Equal(t, parse(utils.PatchTypePatch), unset)
+	// The fixture's only fix is a minor bump, so the levels disagree and the check above means something.
+	assert.NotEqual(t, parse(utils.PatchTypeMajor), unset)
 }

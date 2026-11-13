@@ -47,7 +47,7 @@ type Options struct {
 
 	// Package types and library patch level
 	PkgTypes          string
-	LibraryPatchLevel string
+	LibraryPatchLevel string // empty when --library-patch-level isn't set
 
 	// Toolchain patch level (e.g., Go stdlib upgrade)
 	ToolchainPatchLevel string
