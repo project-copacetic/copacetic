@@ -66,6 +66,8 @@ copa patch -i $IMAGE --pkg-types library --library-patch-level major ...
 
 Please note that the `--library-patch-level` flag requires the `--pkg-types library` option to be set. Default behavior is `patch` level if not specified.
 
+With a [scanner plugin](./scanner-plugins.md) report, Copa applies the patch level only when you set `--library-patch-level`. Otherwise it installs the fixed versions the plugin reports, and uses `patch` only for a package whose fixed version lists several versions (such as `2.6.1, 2.7.0`).
+
 ### Patch Level Behavior
 
 The patch level determines the maximum version bump allowed for library updates:
