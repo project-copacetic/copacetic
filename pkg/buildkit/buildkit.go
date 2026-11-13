@@ -1885,9 +1885,7 @@ func CreateOCILayoutFromResultsWithContext(ctx context.Context, outputDir string
 		}
 		// Copa records no patch origin for OCI layout input, so an origin
 		// carried by the source index must not describe the output.
-		delete(annotations, types.AnnotationPatchOriginKind)
-		delete(annotations, types.AnnotationPatchOriginName)
-		delete(annotations, types.AnnotationPatchOriginDigest)
+		deletePatchOriginAnnotations(annotations)
 		now := time.Now().UTC().Format(time.RFC3339)
 		annotations["org.opencontainers.image.created"] = now
 		annotations["sh.copa.patched"] = now
@@ -1962,6 +1960,13 @@ func createAtomicOCILayout(ctx context.Context, outputDir string, write func(str
 	return nil
 }
 
+// deletePatchOriginAnnotations removes the patch origin keys from annotations.
+func deletePatchOriginAnnotations(annotations map[string]string) {
+	delete(annotations, types.AnnotationPatchOriginKind)
+	delete(annotations, types.AnnotationPatchOriginName)
+	delete(annotations, types.AnnotationPatchOriginDigest)
+}
+
 func wrapOCIOutputIndex(outputDir, outputReference string, sourceAnnotations map[string]string) error {
 	if outputReference == "" {
 		return fmt.Errorf("OCI layout output reference is required for OCI layout input")
@@ -1998,6 +2003,9 @@ func wrapOCIOutputIndex(outputDir, outputReference string, sourceAnnotations map
 		annotations = make(map[string]string)
 	}
 	delete(annotations, specs.AnnotationRefName)
+	// The source descriptor may carry a patch origin, but Copa records none
+	// for OCI layout input, so it must not describe the output index either.
+	deletePatchOriginAnnotations(annotations)
 	annotations["io.containerd.image.name"] = named.String()
 	if tagged, ok := named.(reference.Tagged); ok {
 		annotations[specs.AnnotationRefName] = tagged.Tag()
