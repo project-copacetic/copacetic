@@ -261,3 +261,41 @@ func TestShouldIncludeLibraryUpdates(t *testing.T) {
 		assert.False(t, shouldIncludeLibraryUpdates(pkgTypes))
 	})
 }
+
+// TestParseOptionsLibraryPatchLevel checks that the level stays empty unless library-patch-level is passed,
+// like the CLI, and that a passed value is still validated.
+func TestParseOptionsLibraryPatchLevel(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    map[string]string
+		want    string
+		wantErr string
+	}{
+		{name: "not passed", opts: map[string]string{}, want: ""},
+		{name: "direct frontend option", opts: map[string]string{keyLibraryPatchLevel: utils.PatchTypePatch}, want: utils.PatchTypePatch},
+		{name: "build argument", opts: map[string]string{"build-arg:" + keyLibraryPatchLevel: utils.PatchTypePatch}, want: utils.PatchTypePatch},
+		{name: "minor without library in pkg-types", opts: map[string]string{keyLibraryPatchLevel: utils.PatchTypeMinor}, wantErr: "can only be used when 'library' is included"},
+		{name: "invalid value", opts: map[string]string{keyLibraryPatchLevel: "invalid"}, wantErr: "invalid library patch level"},
+		{name: "empty value", opts: map[string]string{keyLibraryPatchLevel: ""}, wantErr: "invalid library patch level"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.opts[keyImage] = "alpine:3.18"
+			client := new(mocks.MockGWClient)
+			client.On("BuildOpts").Return(gwclient.BuildOpts{
+				Opts:    tt.opts,
+				LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
+			})
+
+			opts, err := ParseOptions(context.Background(), client)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, opts.LibraryPatchLevel)
+		})
+	}
+}
