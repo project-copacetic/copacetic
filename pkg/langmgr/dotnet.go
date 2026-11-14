@@ -601,8 +601,24 @@ RESOLVED_LIB_KEY=$(jq -r --arg name "%s" '.libraries | keys[] | select(startswit
 if [ -n "$RESOLVED_KEY" ] && [ "$RESOLVED_KEY" != "null" ] && [ -n "$RESOLVED_LIB_KEY" ] && [ "$RESOLVED_LIB_KEY" != "null" ]; then
 	RESOLVED_VERSION="${RESOLVED_KEY#%s/}"
 	echo "  Resolved version: $RESOLVED_VERSION"
-	NEW_TARGET=$(jq -r --arg key "$RESOLVED_KEY" --arg targetKey "$GEN_TARGET_KEY" '.targets[$targetKey][$key]' /output/patch.deps.json 2>/dev/null)
-	NEW_LIBRARY=$(jq -r --arg key "$RESOLVED_LIB_KEY" '.libraries[$key]' /output/patch.deps.json 2>/dev/null)
+	# A normal publish emits one document. Compact JSON keeps each value on one line.
+	# Strings and other input shapes retain the existing raw extraction semantics.
+	if NEW_METADATA=$(jq -cn --arg key "$RESOLVED_KEY" --arg libKey "$RESOLVED_LIB_KEY" --arg targetKey "$GEN_TARGET_KEY" '
+		[limit(2; inputs)] |
+		if length == 1 then
+			.[0] | .targets[$targetKey][$key] as $target | .libraries[$libKey] as $library |
+			if ($target | type) != "string" and ($library | type) != "string"
+			then $target, $library else empty end
+		else empty end
+	' /output/patch.deps.json 2>/dev/null) && [ -n "$NEW_METADATA" ]; then
+		NEW_TARGET=${NEW_METADATA%%%%'
+'*}
+		NEW_LIBRARY=${NEW_METADATA#*'
+'}
+	else
+		NEW_TARGET=$(jq -r --arg key "$RESOLVED_KEY" --arg targetKey "$GEN_TARGET_KEY" '.targets[$targetKey][$key]' /output/patch.deps.json 2>/dev/null)
+		NEW_LIBRARY=$(jq -r --arg key "$RESOLVED_LIB_KEY" '.libraries[$key]' /output/patch.deps.json 2>/dev/null)
+	fi
 	echo "  Extracted package metadata from generated deps.json"
 
 	# Update targets section: remove old package entry, add resolved one with correct metadata
