@@ -27,7 +27,7 @@ require (
 	github.com/knqyf263/go-deb-version v0.0.0-20241115132648-6f4aee6ccd23
 	github.com/knqyf263/go-rpm-version v0.0.0-20260811110310-1815e1f1b790
 	github.com/moby/buildkit v0.32.2
-	github.com/moby/moby/api v1.55.0
+	github.com/moby/moby/api v1.57.0
 	github.com/moby/moby/client v0.5.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
@@ -43,7 +43,7 @@ require (
 	github.com/vito/progrock v0.10.1
 	golang.org/x/exp v0.0.0-20260603202125-055de637280b
 	golang.org/x/mod v0.41.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.46.0
 	google.golang.org/grpc v1.83.2
