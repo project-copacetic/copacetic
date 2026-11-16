@@ -98,7 +98,6 @@ func TestFrontendPatch(t *testing.T) {
 		baseImage  string
 		localImage string
 		extraOpts  map[string]string // Extra build options for pkg-types, library-patch-level, etc.
-		wantErr    string            // Expected in the build output when the build must fail
 		skipTest   string            // Skip reason if test should be skipped
 	}{
 		{
@@ -124,7 +123,6 @@ func TestFrontendPatch(t *testing.T) {
 				"pkg-types":           "library",
 				"library-patch-level": "patch",
 			},
-			wantErr: "pkg-types=library is not supported by the BuildKit frontend yet",
 		},
 		{
 			name:       "python-app-library-and-os",
@@ -142,7 +140,7 @@ func TestFrontendPatch(t *testing.T) {
 			if tc.skipTest != "" {
 				t.Skip(tc.skipTest)
 			}
-			runFrontendTest(t, tc.baseImage, tc.localImage, tc.extraOpts, tc.wantErr)
+			runFrontendTest(t, tc.baseImage, tc.localImage, tc.extraOpts)
 		})
 	}
 
@@ -165,7 +163,7 @@ func TestFrontendPatch(t *testing.T) {
 	})
 }
 
-func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[string]string, wantErr string) {
+func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[string]string) {
 	// Copy image to local registry
 	t.Logf("Copying %s to %s", baseImage, localImage)
 	copyCmd := exec.Command("oras", "cp", baseImage, localImage)
@@ -279,11 +277,6 @@ func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[s
 	t.Logf("BuildKit command: %v", args)
 	cmd := exec.Command("buildctl", args...)
 	output, err = cmd.CombinedOutput()
-	if wantErr != "" {
-		require.Error(t, err, "buildctl should have failed: %s", string(output))
-		require.Contains(t, string(output), wantErr)
-		return
-	}
 	require.NoError(t, err, fmt.Sprintf("buildctl failed: %s", string(output)))
 
 	// Verify the output tar was created

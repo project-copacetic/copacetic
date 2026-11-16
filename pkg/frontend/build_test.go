@@ -756,7 +756,7 @@ func TestInstallFrontendUpdatesNativeNoUpdatesReturnsSuppliedState(t *testing.T)
 				PatchedImageState: suppliedState,
 			}
 
-			state, installed, err := installFrontendUpdates(t.Context(), config, manager, nil, ignoreErrors)
+			state, installed, err := installFrontendUpdates(t.Context(), config, manager, nil, "", ignoreErrors)
 
 			require.NoError(t, err)
 			assert.False(t, installed)
@@ -781,7 +781,7 @@ func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing
 		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
 		emptyReport := &unversioned.UpdateManifest{}
 
-		state, installed, err := installFrontendUpdates(t.Context(), config, manager, emptyReport, true)
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, emptyReport, "", true)
 
 		require.NoError(t, err)
 		assert.False(t, installed)
@@ -797,7 +797,7 @@ func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing
 	t.Run("unrelated install error remains fatal", func(t *testing.T) {
 		manager := &frontendInstallManager{err: installErr}
 
-		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, false)
+		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", false)
 
 		require.ErrorContains(t, err, "failed to install package updates: repository unavailable")
 		assert.False(t, installed)
@@ -809,13 +809,52 @@ func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing
 	t.Run("ignore-errors returns supplied image for unrelated failures", func(t *testing.T) {
 		manager := &frontendInstallManager{err: installErr}
 
-		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, true)
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", true)
 
 		require.NoError(t, err)
 		assert.False(t, installed)
 		assert.Equal(t, 1, manager.calls)
 		assert.Same(t, report, manager.gotManifest)
 		assert.True(t, manager.gotIgnoreError)
+		requireFrontendStateEqual(t, &suppliedState, &state)
+	})
+}
+
+// TestInstallFrontendUpdatesLibraryOnlyReport checks that a report with only library updates skips the OS
+// package manager and runs the language managers, as the CLI does. An unparseable fixed version makes the
+// Python manager fail before it needs BuildKit, so its error handling can be checked here.
+func TestInstallFrontendUpdatesLibraryOnlyReport(t *testing.T) {
+	baseState := llb.Scratch().File(llb.Mkfile("/base", 0o644, []byte("base")))
+	suppliedState := llb.Scratch().File(llb.Mkfile("/supplied", 0o644, []byte("supplied")))
+	config := &copabuildkit.Config{
+		ImageState:        baseState,
+		PatchedConfigData: []byte(`{"config":{}}`),
+		PatchedImageState: suppliedState,
+	}
+	report := &unversioned.UpdateManifest{
+		LangUpdates: unversioned.LangUpdatePackages{
+			{Name: "setuptools", InstalledVersion: "72.1.0", FixedVersion: "not-a-version", Type: utils.PythonPackages},
+		},
+	}
+
+	t.Run("library install error is fatal", func(t *testing.T) {
+		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
+
+		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", false)
+
+		require.ErrorContains(t, err, "failed to install library updates")
+		assert.False(t, installed)
+		assert.Zero(t, manager.calls)
+	})
+
+	t.Run("ignore-errors returns supplied image", func(t *testing.T) {
+		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
+
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", true)
+
+		require.NoError(t, err)
+		assert.False(t, installed)
+		assert.Zero(t, manager.calls)
 		requireFrontendStateEqual(t, &suppliedState, &state)
 	})
 }

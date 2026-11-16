@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	trueStr         = "true"
-	libraryIssueURL = "https://github.com/project-copacetic/copacetic/issues/1789"
+	trueStr = "true"
 )
 
 // ParseOptions parses the frontend options from the build context.
@@ -159,20 +158,6 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 	pkgTypesList, err := parsePkgTypes(options.PkgTypes)
 	if err != nil {
 		return nil, errors.Wrap(err, "invalid package types")
-	}
-
-	// The frontend only installs OS updates so far (#1789): refuse a library-only run, which
-	// would change nothing, and say so when library comes with os.
-	if shouldIncludeLibraryUpdates(pkgTypesList) {
-		if !slices.Contains(pkgTypesList, utils.PkgTypeOS) {
-			return nil, errors.New("pkg-types=library is not supported by the BuildKit frontend yet, " +
-				"it only patches OS packages (" + libraryIssueURL + "); use the copa CLI to patch library packages")
-		}
-		msg := "pkg-types includes library, but the BuildKit frontend only patches OS packages so far; " +
-			"library packages are left unchanged (" + libraryIssueURL + ")"
-		if err := client.Warn(ctx, "", msg, gwclient.WarnOpts{}); err != nil {
-			bklog.G(ctx).WithError(err).Warn(msg)
-		}
 	}
 
 	reportProvided := options.Report != ""

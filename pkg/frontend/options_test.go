@@ -3,7 +3,6 @@ package frontend
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -11,7 +10,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -298,50 +296,6 @@ func TestParseOptionsLibraryPatchLevel(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, opts.LibraryPatchLevel)
-		})
-	}
-}
-
-// TestParseOptionsLibraryPkgTypes checks that the frontend refuses pkg-types=library, which it can't patch
-// yet (#1789), and warns in the build output when library comes with os.
-func TestParseOptionsLibraryPkgTypes(t *testing.T) {
-	tests := []struct {
-		pkgTypes string
-		wantErr  string
-		wantWarn bool
-	}{
-		{pkgTypes: utils.PkgTypeOS},
-		{pkgTypes: utils.PkgTypeLibrary, wantErr: "pkg-types=library is not supported by the BuildKit frontend yet"},
-		{pkgTypes: "os,library", wantWarn: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.pkgTypes, func(t *testing.T) {
-			t.Setenv("TMPDIR", t.TempDir()) // the extracted report lands here
-			ref := new(mocks.MockReference)
-			ref.On("StatFile", mock.Anything, mock.Anything).Return(&fstypes.Stat{Size: 2}, nil)
-			ref.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("{}"), nil)
-			client := new(mocks.MockGWClient)
-			client.On("BuildOpts").Return(gwclient.BuildOpts{
-				Opts:    map[string]string{keyImage: "alpine:3.18", keyReport: "report.json", keyPkgTypes: tt.pkgTypes},
-				LLBCaps: pb.Caps.CapSet(pb.Caps.All()),
-			})
-			client.On("Solve", mock.Anything, mock.Anything).Return(&gwclient.Result{Ref: ref}, nil)
-			if tt.wantWarn {
-				// A daemon that can't show warnings must not fail the build.
-				client.On("Warn", mock.Anything, mock.Anything, mock.MatchedBy(func(msg string) bool {
-					return strings.Contains(msg, "only patches OS packages")
-				}), mock.Anything).Return(errors.New("warnings not supported")).Once()
-			}
-
-			_, err := ParseOptions(context.Background(), client)
-			if tt.wantErr != "" {
-				require.Error(t, err)
-				assert.Contains(t, err.Error(), tt.wantErr)
-			} else {
-				require.NoError(t, err)
-			}
-			client.AssertExpectations(t)
 		})
 	}
 }
