@@ -80,8 +80,12 @@ func createMultiPlatformManifest(
 			return fmt.Errorf("patched descriptor is nil for %s", it.OriginalRef.String())
 		}
 
+		srcLoc, err := imagetools.ParseLocation(it.PatchedRef.String())
+		if err != nil {
+			return fmt.Errorf("invalid patched reference %s: %w", it.PatchedRef.String(), err)
+		}
 		srcRefs = append(srcRefs, &imagetools.Source{
-			Ref:  it.PatchedRef,
+			Ref:  srcLoc,
 			Desc: *it.PatchedDesc,
 		})
 	}
@@ -97,7 +101,11 @@ func createMultiPlatformManifest(
 	}
 
 	log.Infof("Successfully created manifest list, pushing to %s", imageName.String())
-	err = resolver.Push(ctx, imageName, desc, idxBytes)
+	target, err := imagetools.ParseLocation(imageName.String())
+	if err != nil {
+		return fmt.Errorf("invalid target reference %s: %w", imageName.String(), err)
+	}
+	err = resolver.Push(ctx, target, desc, idxBytes)
 	if err != nil {
 		return fmt.Errorf("failed to push multi-platform manifest list: %w", err)
 	}
