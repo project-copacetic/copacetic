@@ -175,6 +175,9 @@ func scanAndParse(t *testing.T, image string, outputFile string) map[string]Vuln
 		"--pkg-types=library",
 		"--ignore-unfixed",
 		"--skip-db-update",
+		// pip 26.2+ ships an SBOM of the packages it bundles, which Copa can't patch. Without
+		// this, upgrading pip makes those bundled packages look like new vulnerabilities.
+		"--skip-files=**/pip/_vendor/bom.cdx.json",
 		image,
 	}
 
