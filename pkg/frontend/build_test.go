@@ -756,7 +756,7 @@ func TestInstallFrontendUpdatesNativeNoUpdatesReturnsSuppliedState(t *testing.T)
 				PatchedImageState: suppliedState,
 			}
 
-			state, installed, err := installFrontendUpdates(t.Context(), config, manager, nil, "", ignoreErrors)
+			state, installed, err := installFrontendUpdates(t.Context(), config, manager, nil, "", "", ignoreErrors)
 
 			require.NoError(t, err)
 			assert.False(t, installed)
@@ -781,7 +781,7 @@ func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing
 		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
 		emptyReport := &unversioned.UpdateManifest{}
 
-		state, installed, err := installFrontendUpdates(t.Context(), config, manager, emptyReport, "", true)
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, emptyReport, "", "", true)
 
 		require.NoError(t, err)
 		assert.False(t, installed)
@@ -797,7 +797,7 @@ func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing
 	t.Run("unrelated install error remains fatal", func(t *testing.T) {
 		manager := &frontendInstallManager{err: installErr}
 
-		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", false)
+		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", "", false)
 
 		require.ErrorContains(t, err, "failed to install package updates: repository unavailable")
 		assert.False(t, installed)
@@ -809,7 +809,7 @@ func TestInstallFrontendUpdatesPreservesReportAndIgnoreErrorsBehavior(t *testing
 	t.Run("ignore-errors returns supplied image for unrelated failures", func(t *testing.T) {
 		manager := &frontendInstallManager{err: installErr}
 
-		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", true)
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", "", true)
 
 		require.NoError(t, err)
 		assert.False(t, installed)
@@ -840,7 +840,7 @@ func TestInstallFrontendUpdatesLibraryOnlyReport(t *testing.T) {
 	t.Run("library install error is fatal", func(t *testing.T) {
 		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
 
-		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", false)
+		_, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", "", false)
 
 		require.ErrorContains(t, err, "failed to install library updates")
 		assert.False(t, installed)
@@ -850,7 +850,7 @@ func TestInstallFrontendUpdatesLibraryOnlyReport(t *testing.T) {
 	t.Run("ignore-errors returns supplied image", func(t *testing.T) {
 		manager := &frontendInstallManager{err: fmt.Errorf("must not be called")}
 
-		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", true)
+		state, installed, err := installFrontendUpdates(t.Context(), config, manager, report, "", "", true)
 
 		require.NoError(t, err)
 		assert.False(t, installed)
