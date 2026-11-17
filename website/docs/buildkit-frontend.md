@@ -196,8 +196,8 @@ These options are experimental and subject to change. Use with caution in produc
 
 | Option                 | Description                                                                                 | Default | Example              |
 | ---------------------- | ------------------------------------------------------------------------------------------- | ------- | -------------------- |
-| `pkg-types`            | Package types to patch. The frontend patches only `os` for now, see [Library Vulnerability Patching](#library-vulnerability-patching-experimental) | `os`    | `os`                 |
-| `library-patch-level`  | Library patch level preference: `patch`, `minor`, or `major`. No effect until the frontend patches library packages | `patch` | `minor`              |
+| `pkg-types`            | Package types to patch, comma-separated list of `os` and `library`                         | `os`    | `os,library`         |
+| `library-patch-level`  | Library patch level preference: `patch`, `minor`, or `major` (only when `library` is set)  | `patch` | `minor`              |
 
 ## Context Handling
 
@@ -331,8 +331,42 @@ buildctl --addr tcp://buildkit-server:1234 build \
 
 ### Library Vulnerability Patching (Experimental)
 
-:::warning Not supported by the frontend yet
-The BuildKit frontend patches OS packages only. It refuses `pkg-types=library`, and with `pkg-types=os,library` it patches the OS packages, leaves library packages unchanged and prints a build warning. Use the Copa CLI to patch library packages, see [App-level Patching](./app-level-patching.md). Progress is tracked in [#1789](https://github.com/project-copacetic/copacetic/issues/1789).
+:::warning Experimental Feature
+Library patching features (`pkg-types` and `library-patch-level`) are experimental and may change in future releases. When using the Copa CLI, set `COPA_EXPERIMENTAL=1` to enable these options. The BuildKit frontend supports these options without requiring the environment variable - simply include them as `--build-arg` or `--opt` parameters.
+:::
+
+Patch both OS and library vulnerabilities with preferred update level:
+
+```bash
+# Create build context
+mkdir build-context
+
+# Generate comprehensive vulnerability report
+trivy image --format json --output build-context/report.json myapp:latest
+
+# Patch both OS and library vulnerabilities, preferring minor version updates for libraries
+docker buildx build \
+  --build-arg BUILDKIT_SYNTAX=ghcr.io/project-copacetic/copacetic-frontend:latest \
+  --build-arg image=myapp:latest \
+  --build-arg report=report.json \
+  --build-arg pkg-types=os,library \
+  --build-arg library-patch-level=minor \
+  --build-context report=./build-context \
+  --output type=image,name=myapp:latest-patched \
+  -f /dev/null \
+  ./build-context
+
+# Clean up report
+rm build-context/report.json
+rmdir build-context
+```
+
+:::note Library Patching
+
+- The `pkg-types` option accepts comma-separated values: `os`, `library`, or `os,library`
+- The `library-patch-level` option is only used when `library` is included in `pkg-types`
+- Patch levels: `patch` (safest, minimal changes), `minor` (moderate changes), `major` (significant changes)
+
 :::
 
 ### SBOM and Provenance Attestations
