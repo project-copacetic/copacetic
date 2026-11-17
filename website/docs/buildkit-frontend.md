@@ -198,6 +198,7 @@ These options are experimental and subject to change. Use with caution in produc
 | ---------------------- | ------------------------------------------------------------------------------------------- | ------- | -------------------- |
 | `pkg-types`            | Package types to patch, comma-separated list of `os` and `library`                         | `os`    | `os,library`         |
 | `library-patch-level`  | Library patch level preference: `patch`, `minor`, or `major` (only when `library` is set)  | `patch` | `minor`              |
+| `toolchain-patch-level` | Upgrade the Go compiler to fix Go stdlib vulnerabilities: `patch`, `minor`, or `major` (only when `library` is set). See [the `--toolchain-patch-level` flag](app-level-patching.md#the---toolchain-patch-level-flag) | unset | `patch` |
 
 ## Context Handling
 
