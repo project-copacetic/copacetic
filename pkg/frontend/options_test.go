@@ -3,6 +3,7 @@ package frontend
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	fstypes "github.com/tonistiigi/fsutil/types"
 
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/project-copacetic/copacetic/pkg/utils"
@@ -296,6 +298,48 @@ func TestParseOptionsLibraryPatchLevel(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, opts.LibraryPatchLevel)
+		})
+	}
+}
+
+// TestParseOptionsToolchainPatchLevel checks that toolchain-patch-level reaches the options, and that it is
+// refused when it would do nothing (no library in pkg-types) or names an unknown level.
+func TestParseOptionsToolchainPatchLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		pkgTypes string
+		opts     map[string]string
+		want     string
+		wantErr  string
+	}{
+		{name: "not passed", pkgTypes: utils.PkgTypeLibrary, want: ""},
+		{name: "minor with library", pkgTypes: utils.PkgTypeLibrary, opts: map[string]string{keyToolchainPatchLevel: utils.PatchTypeMinor}, want: utils.PatchTypeMinor},
+		{name: "patch with os and library", pkgTypes: "os,library", opts: map[string]string{keyToolchainPatchLevel: utils.PatchTypePatch}, want: utils.PatchTypePatch},
+		{name: "without library in pkg-types", pkgTypes: utils.PkgTypeOS, opts: map[string]string{keyToolchainPatchLevel: utils.PatchTypePatch}, wantErr: "can only be used when 'library' is included"},
+		{name: "invalid value", pkgTypes: utils.PkgTypeLibrary, opts: map[string]string{keyToolchainPatchLevel: "latest"}, wantErr: "invalid toolchain patch level"},
+		{name: "empty value", pkgTypes: utils.PkgTypeLibrary, opts: map[string]string{keyToolchainPatchLevel: ""}, wantErr: "invalid toolchain patch level"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir()) // the extracted report lands here
+			ref := new(mocks.MockReference)
+			ref.On("StatFile", mock.Anything, mock.Anything).Return(&fstypes.Stat{Size: 2}, nil)
+			ref.On("ReadFile", mock.Anything, mock.Anything).Return([]byte("{}"), nil)
+			opts := map[string]string{keyImage: "alpine:3.18", keyReport: "report.json", keyPkgTypes: tt.pkgTypes}
+			maps.Copy(opts, tt.opts)
+			client := new(mocks.MockGWClient)
+			client.On("BuildOpts").Return(gwclient.BuildOpts{Opts: opts, LLBCaps: pb.Caps.CapSet(pb.Caps.All())})
+			client.On("Solve", mock.Anything, mock.Anything).Return(&gwclient.Result{Ref: ref}, nil)
+
+			got, err := ParseOptions(context.Background(), client)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got.ToolchainPatchLevel)
 		})
 	}
 }

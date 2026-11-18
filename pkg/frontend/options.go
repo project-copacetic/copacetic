@@ -154,6 +154,16 @@ func ParseOptions(ctx context.Context, client gwclient.Client) (*types.Options, 
 		}
 	}
 
+	// Parse toolchain patch level (experimental)
+	if v, ok := getOpt(keyToolchainPatchLevel); ok {
+		options.ToolchainPatchLevel = v
+		bklog.G(ctx).WithField("component", "copa-frontend").WithField("toolchainPatchLevel", v).Debug("Toolchain patch level specified")
+
+		if err := validateToolchainPatchLevel(options.ToolchainPatchLevel, options.PkgTypes); err != nil {
+			return nil, errors.Wrap(err, "invalid toolchain patch level configuration")
+		}
+	}
+
 	// Validate that library package types require a report
 	pkgTypesList, err := parsePkgTypes(options.PkgTypes)
 	if err != nil {
@@ -206,6 +216,22 @@ func validateLibraryPatchLevel(libraryPatchLevel, pkgTypes string) error {
 	// If library patch level is specified and not the default, ensure library is in pkg-types
 	if libraryPatchLevel != utils.PatchTypePatch && !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
 		return fmt.Errorf("library-patch-level can only be used when 'library' is included in pkg-types")
+	}
+
+	return nil
+}
+
+// validateToolchainPatchLevel validates the toolchain patch level option. Only the Go library manager reads
+// it, so without library in pkg-types it would silently do nothing.
+func validateToolchainPatchLevel(toolchainPatchLevel, pkgTypes string) error {
+	switch toolchainPatchLevel {
+	case utils.PatchTypePatch, utils.PatchTypeMinor, utils.PatchTypeMajor:
+	default:
+		return fmt.Errorf("invalid toolchain patch level '%s': must be one of 'patch', 'minor', or 'major'", toolchainPatchLevel)
+	}
+
+	if !strings.Contains(pkgTypes, utils.PkgTypeLibrary) {
+		return fmt.Errorf("toolchain-patch-level can only be used when 'library' is included in pkg-types")
 	}
 
 	return nil

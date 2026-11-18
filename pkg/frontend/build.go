@@ -316,7 +316,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		}
 	}
 
-	patchedState, updatesInstalled, err := installFrontendUpdates(ctx, config, pm, um, opts.Image, opts.IgnoreError)
+	patchedState, updatesInstalled, err := installFrontendUpdates(ctx, config, pm, um, opts.ToolchainPatchLevel, opts.Image, opts.IgnoreError)
 	if err != nil {
 		return llb.State{}, err
 	}
@@ -404,7 +404,7 @@ func installFrontendUpdates(
 	config *copabuildkit.Config,
 	pm pkgmgr.PackageManager,
 	manifest *unversioned.UpdateManifest,
-	image string,
+	toolchainPatchLevel, image string,
 	ignoreErrors bool,
 ) (llb.State, bool, error) {
 	if manifest != nil && len(manifest.OSUpdates) == 0 && len(manifest.LangUpdates) == 0 {
@@ -431,8 +431,8 @@ func installFrontendUpdates(
 	}
 
 	// Library updates go on top of the OS updates, in the same order as pkg/patch/core.go. The empty
-	// working folder and Go toolchain and VCS options are the CLI's defaults; the frontend has no flags for them.
-	for _, manager := range langmgr.GetLanguageManagers(config, "", manifest, "", "", image) {
+	// working folder and Go VCS URL are the CLI's defaults; the frontend has no options for them.
+	for _, manager := range langmgr.GetLanguageManagers(config, "", manifest, toolchainPatchLevel, "", image) {
 		newState, _, err := manager.InstallUpdates(ctx, &state, manifest, ignoreErrors)
 		if err != nil {
 			if !ignoreErrors {
