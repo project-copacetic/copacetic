@@ -22,6 +22,7 @@ import (
 	copabuildkit "github.com/project-copacetic/copacetic/pkg/buildkit"
 	copachisel "github.com/project-copacetic/copacetic/pkg/chisel"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/langmgr"
 	"github.com/project-copacetic/copacetic/pkg/pkgmgr"
 	"github.com/project-copacetic/copacetic/pkg/report"
 	"github.com/project-copacetic/copacetic/pkg/types"
@@ -315,7 +316,7 @@ func (f *Frontend) buildPatchedImage(ctx context.Context, opts *types.Options, p
 		}
 	}
 
-	patchedState, updatesInstalled, err := installFrontendUpdates(ctx, config, pm, um, opts.IgnoreError)
+	patchedState, updatesInstalled, err := installFrontendUpdates(ctx, config, pm, um, opts.ToolchainPatchLevel, opts.Image, opts.IgnoreError)
 	if err != nil {
 		return llb.State{}, err
 	}
@@ -393,15 +394,17 @@ func validateFrontendReportPlatform(updates *unversioned.UpdateManifest, targetP
 	return nil
 }
 
-// installFrontendUpdates applies OS updates and reports whether a new state was
-// produced. Empty scanner reports retain their existing fast path, while the
-// no-update sentinel is a successful idempotent result that returns the image
-// the caller actually supplied (which may itself be a previously patched image).
+// installFrontendUpdates applies OS updates, then library updates, and reports
+// whether the OS package manager produced a new state. Empty scanner reports
+// retain their existing fast path, while the no-update sentinel is a successful
+// idempotent result that returns the image the caller actually supplied (which
+// may itself be a previously patched image).
 func installFrontendUpdates(
 	ctx context.Context,
 	config *copabuildkit.Config,
 	pm pkgmgr.PackageManager,
 	manifest *unversioned.UpdateManifest,
+	toolchainPatchLevel, image string,
 	ignoreErrors bool,
 ) (llb.State, bool, error) {
 	if manifest != nil && len(manifest.OSUpdates) == 0 && len(manifest.LangUpdates) == 0 {
@@ -409,20 +412,40 @@ func installFrontendUpdates(
 		return currentFrontendImageState(config), false, nil
 	}
 
-	patchedState, _, err := pm.InstallUpdates(ctx, manifest, ignoreErrors)
-	if errors.Is(err, types.ErrNoUpdatesFound) {
-		bklog.G(ctx).WithField("component", "copa-frontend").Info("No package updates found, returning current image")
-		return currentFrontendImageState(config), false, nil
-	}
-	if err != nil {
-		if ignoreErrors {
+	state := currentFrontendImageState(config)
+	osUpdated := false
+	// Like the CLI, a report with only library updates skips the OS package manager.
+	if manifest == nil || len(manifest.OSUpdates) > 0 {
+		patchedState, _, err := pm.InstallUpdates(ctx, manifest, ignoreErrors)
+		switch {
+		case errors.Is(err, types.ErrNoUpdatesFound):
+			bklog.G(ctx).WithField("component", "copa-frontend").Info("No package updates found, returning current image")
+		case err != nil && ignoreErrors:
 			bklog.G(ctx).WithError(err).WithField("component", "copa-frontend").Warn("Failed to install updates (ignored)")
-			return currentFrontendImageState(config), false, nil
+		case err != nil:
+			return llb.State{}, false, errors.Wrap(err, "failed to install package updates")
+		default:
+			state = *patchedState
+			osUpdated = true
 		}
-		return llb.State{}, false, errors.Wrap(err, "failed to install package updates")
 	}
 
-	return *patchedState, true, nil
+	// Library updates go on top of the OS updates, in the same order as pkg/patch/core.go. The empty
+	// working folder and Go VCS URL are the CLI's defaults; the frontend has no options for them.
+	for _, manager := range langmgr.GetLanguageManagers(config, "", manifest, toolchainPatchLevel, "", image) {
+		newState, _, err := manager.InstallUpdates(ctx, &state, manifest, ignoreErrors)
+		if err != nil {
+			if !ignoreErrors {
+				return llb.State{}, false, errors.Wrap(err, "failed to install library updates")
+			}
+			bklog.G(ctx).WithError(err).WithField("component", "copa-frontend").Warn("Failed to install library updates (ignored)")
+		}
+		if newState != nil {
+			state = *newState
+		}
+	}
+
+	return state, osUpdated, nil
 }
 
 // extractReportFromContext extracts a report file or directory from the BuildKit context.

@@ -120,8 +120,9 @@ func TestFrontendPatch(t *testing.T) {
 			baseImage:  frontendPythonBaseImage,
 			localImage: "localhost:5000/python:3.11.9-slim-bookworm",
 			extraOpts: map[string]string{
-				"pkg-types":           "library",
-				"library-patch-level": "patch",
+				"pkg-types": "library",
+				// The fixture's library fixes are all minor or major bumps.
+				"library-patch-level": "major",
 			},
 		},
 		{
@@ -284,6 +285,11 @@ func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[s
 		t.Fatalf("Output tar was not created: %v", err)
 	}
 
+	// A library run must upgrade library packages, not only build an image (#1789).
+	if strings.Contains(pkgTypes, "library") {
+		requireFewerLibraryVulns(t, reportFile, outputTar, tempDir)
+	}
+
 	// Load the patched image
 	t.Logf("Loading patched image from %s", outputTar)
 	loadCmd := exec.Command("docker", "load", "-i", outputTar)
@@ -301,6 +307,53 @@ func runFrontendTest(t *testing.T, baseImage, localImage string, extraOpts map[s
 	} else {
 		t.Logf("Image loaded but couldn't parse image name from output")
 	}
+}
+
+// requireFewerLibraryVulns rescans the patched OCI tar and requires fewer library vulnerabilities than
+// the original report.
+func requireFewerLibraryVulns(t *testing.T, reportFile, patchedTar, dir string) {
+	t.Helper()
+	// Trivy reads an OCI layout directory, not an OCI tar.
+	layoutDir := filepath.Join(dir, "patched-oci")
+	require.NoError(t, os.MkdirAll(layoutDir, 0o755))
+	out, err := exec.Command("tar", "-xf", patchedTar, "-C", layoutDir).CombinedOutput()
+	require.NoErrorf(t, err, "failed to unpack the patched image:\n%s", out)
+
+	patchedReport := filepath.Join(dir, "patched-report.json")
+	out, err = exec.Command("trivy", "image",
+		"--input", layoutDir,
+		"--format", "json",
+		outputFlag, patchedReport,
+		"--quiet",
+		"--pkg-types", "library",
+		// pip 26.2+ ships an SBOM of the packages it bundles, which Copa can't patch (see test/e2e/python).
+		"--skip-files", "**/pip/_vendor/bom.cdx.json",
+	).CombinedOutput()
+	require.NoErrorf(t, err, "trivy scan of the patched image failed:\n%s", out)
+
+	before, after := countLibraryVulns(t, reportFile), countLibraryVulns(t, patchedReport)
+	t.Logf("Library vulnerabilities: %d before patching, %d after", before, after)
+	require.Less(t, after, before, "library packages were not patched")
+}
+
+func countLibraryVulns(t *testing.T, reportFile string) int {
+	t.Helper()
+	data, err := os.ReadFile(reportFile)
+	require.NoError(t, err)
+	var report struct {
+		Results []struct {
+			Class           string
+			Vulnerabilities []json.RawMessage
+		}
+	}
+	require.NoError(t, json.Unmarshal(data, &report))
+	count := 0
+	for _, result := range report.Results {
+		if result.Class == "lang-pkgs" {
+			count += len(result.Vulnerabilities)
+		}
+	}
+	return count
 }
 
 func setupLocalRegistry(ctx context.Context, t *testing.T) {

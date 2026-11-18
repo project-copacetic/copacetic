@@ -198,6 +198,7 @@ These options are experimental and subject to change. Use with caution in produc
 | ---------------------- | ------------------------------------------------------------------------------------------- | ------- | -------------------- |
 | `pkg-types`            | Package types to patch, comma-separated list of `os` and `library`                         | `os`    | `os,library`         |
 | `library-patch-level`  | Library patch level preference: `patch`, `minor`, or `major` (only when `library` is set)  | `patch` | `minor`              |
+| `toolchain-patch-level` | Upgrade the Go compiler to fix Go stdlib vulnerabilities: `patch`, `minor`, or `major` (only when `library` is set). See [the `--toolchain-patch-level` flag](app-level-patching.md#the---toolchain-patch-level-flag) | unset | `patch` |
 
 ## Context Handling
 
@@ -205,7 +206,7 @@ The Copa frontend uses BuildKit's context system to access vulnerability reports
 
 ### Single Report File
 
-For single-platform patching with one vulnerability report:
+For single-platform patching with one vulnerability report. The frontend reads the report in 8MB chunks, so reports of any size work:
 
 ```bash
 # Directory structure
@@ -366,7 +367,6 @@ rmdir build-context
 - The `pkg-types` option accepts comma-separated values: `os`, `library`, or `os,library`
 - The `library-patch-level` option is only used when `library` is included in `pkg-types`
 - Patch levels: `patch` (safest, minimal changes), `minor` (moderate changes), `major` (significant changes)
-- **Large reports**: The frontend automatically reads vulnerability reports in chunks (8MB per chunk) to handle reports of any size, including those with many library vulnerabilities.
 
 :::
 
