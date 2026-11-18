@@ -72,7 +72,7 @@ To diagnose this, look at the Trivy report and find the applicable vulnerability
 
 - Scanner reports are not up to date. Make sure to run the scanner with the latest vulnerability database. If you are using Trivy, it is recommended to pull the latest version of the Trivy DB, and not rely on cached or stale versions.
 
-To verify the package version discrepancies, you can compare the package version provided by the package repositories and the scanner reports. Follow the Trivy documentation on [how to find the security advisory data sources](https://aquasecurity.github.io/trivy/dev/community/contribute/discussion/#false-detection), and then compare the package version in the scanner report with the applicable security advisory, and applicable package repository.
+To verify the package version discrepancies, you can compare the package version provided by the package repositories and the scanner reports. Follow the Trivy documentation on [how to find the security advisory data sources](https://trivy.dev/docs/latest/community/contribute/discussion/#false-detection), and then compare the package version in the scanner report with the applicable security advisory, and applicable package repository.
 
 If you are continuing to see this and the package repositories and vulnerability databases are not updated, you can either:
 
@@ -156,4 +156,4 @@ CVE-2018-14618
 ```
 In the above example, the vulnerability CVE-2018-14618 is ignored while scanning, and hence while patching the image.
 
-For a more detailed explanation on how to ignore certain vulnerabilities with Trivy, please refer to the official documentation [here](https://aquasecurity.github.io/trivy/v0.44/docs/configuration/filtering/).
+For a more detailed explanation on how to ignore certain vulnerabilities with Trivy, please refer to the official documentation [here](https://trivy.dev/docs/latest/configuration/filtering/).
