@@ -3,6 +3,7 @@ package buildkit
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -75,5 +76,42 @@ func TestExportPreservedPlatformsFromLocalIndexArchive(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(outputDir, path))
 		require.NoError(t, err, path)
 		require.Equal(t, want, got, path)
+	}
+}
+
+// A blob the save returns must match its descriptor size and its digest, and a
+// rejected blob must not stay in the layout.
+func TestCopyLocalArchiveBlobsVerifiesContent(t *testing.T) {
+	good := []byte("original layer bytes")
+	hash, err := v1.NewHash(digest.FromBytes(good).String())
+	require.NoError(t, err)
+	path := archiveBlobPath(hash)
+
+	for name, tc := range map[string]struct {
+		content []byte
+		size    int64
+		wantErr string
+	}{
+		"ok":       {good, int64(len(good)), ""},
+		"tampered": {[]byte("tampered layer bytes"), int64(len(good)), "does not match digest"},
+		"size":     {good, int64(len(good)) + 1, "bytes, want"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			old := localImageArchive
+			t.Cleanup(func() { localImageArchive = old })
+			localImageArchive = func(context.Context, string) (io.ReadCloser, error) {
+				return io.NopCloser(archiveTestStream(t, map[string][]byte{path: tc.content})), nil
+			}
+			outputDir := t.TempDir()
+			err := copyLocalArchiveBlobs(t.Context(), "example.com/local:parent", map[string]int64{path: tc.size}, outputDir, map[string]bool{})
+			_, statErr := os.Stat(filepath.Join(outputDir, path))
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				require.NoError(t, statErr)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+		})
 	}
 }

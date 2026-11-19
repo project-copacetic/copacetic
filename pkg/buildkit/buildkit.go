@@ -3216,7 +3216,7 @@ func exportPreservedPlatformsToOutput(
 		// from one save of it: manifests now, config and layer blobs afterwards.
 		var localArchive *localArchiveMetadata
 		localArchiveRead := false
-		pendingBlobs := map[string]bool{}
+		pendingBlobs := map[string]int64{} // archive blob path -> descriptor size
 		materializeFromLocalArchive := func(mdesc *v1.Descriptor) (bool, error) {
 			if !localArchiveRead {
 				localArchiveRead = true
@@ -3241,9 +3241,9 @@ func exportPreservedPlatformsToOutput(
 			if err := json.Unmarshal(body, &m); err != nil {
 				return false, fmt.Errorf("failed to parse preserved manifest %s: %w", mdesc.Digest, err)
 			}
-			pendingBlobs[archiveBlobPath(m.Config.Digest)] = true
+			pendingBlobs[archiveBlobPath(m.Config.Digest)] = m.Config.Size
 			for i := range m.Layers {
-				pendingBlobs[archiveBlobPath(m.Layers[i].Digest)] = true
+				pendingBlobs[archiveBlobPath(m.Layers[i].Digest)] = m.Layers[i].Size
 			}
 			return true, nil
 		}
