@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -290,4 +292,58 @@ func archiveManifest(blobs map[string][]byte, desc *v1.Descriptor) ([]byte, erro
 		return nil, fmt.Errorf("local image archive manifest has an invalid media type")
 	}
 	return data, nil
+}
+
+// copyLocalArchiveBlobs streams one save of image and writes the wanted blobs
+// (archive paths such as blobs/sha256/<hex>) into outputDir/blobs. A blob that
+// is already in blobsSet is skipped; a wanted blob the save lacks is an error.
+// shortcut: blob bytes are not re-hashed, upgrade if the daemon is untrusted.
+func copyLocalArchiveBlobs(ctx context.Context, image string, want map[string]bool, outputDir string, blobsSet map[string]bool) error {
+	stream, err := localImageArchive(ctx, image)
+	if err != nil {
+		return fmt.Errorf("save local image %s for preserved platforms: %w", image, err)
+	}
+	defer stream.Close()
+
+	missing := map[string]bool{}
+	for path := range want {
+		if !blobsSet[strings.TrimPrefix(path, "blobs/")] {
+			missing[path] = true
+		}
+	}
+	reader := tar.NewReader(&contextReader{ctx: ctx, reader: stream})
+	for len(missing) > 0 {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read local image archive: %w", err)
+		}
+		if !missing[header.Name] || !header.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		rel := strings.TrimPrefix(header.Name, "blobs/")
+		outPath := filepath.Join(outputDir, "blobs", rel)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			return fmt.Errorf("failed to create blob dir: %w", err)
+		}
+		f, err := os.Create(outPath)
+		if err != nil {
+			return fmt.Errorf("failed to create preserved blob %s: %w", outPath, err)
+		}
+		if _, err := io.CopyN(f, reader, header.Size); err != nil {
+			f.Close()
+			return fmt.Errorf("failed to copy preserved blob %s: %w", header.Name, err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("failed to close preserved blob %s: %w", outPath, err)
+		}
+		blobsSet[rel] = true
+		delete(missing, header.Name)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("local image archive for %s is missing %d preserved blob(s)", image, len(missing))
+	}
+	return nil
 }
