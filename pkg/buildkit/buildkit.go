@@ -3200,7 +3200,64 @@ func exportPreservedPlatformsToOutput(
 		// Resolve and materialize any image-manifest descriptor from the source
 		// index. Attestation manifests use the same OCI image-manifest shape, so
 		// this also copies their config and in-toto layer blobs.
+		descriptorEntry := func(mdesc *v1.Descriptor) (map[string]interface{}, error) {
+			descriptorJSON, err := json.Marshal(mdesc)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal preserved descriptor %s: %w", mdesc.Digest, err)
+			}
+			var entry map[string]interface{}
+			if err := json.Unmarshal(descriptorJSON, &entry); err != nil {
+				return nil, fmt.Errorf("failed to decode preserved descriptor %s: %w", mdesc.Digest, err)
+			}
+			return entry, nil
+		}
+
+		// A containerd-store daemon names only the index, so children are read
+		// from one save of it: manifests now, config and layer blobs afterwards.
+		var localArchive *localArchiveMetadata
+		localArchiveRead := false
+		pendingBlobs := map[string]int64{} // archive blob path -> descriptor size
+		materializeFromLocalArchive := func(mdesc *v1.Descriptor) (bool, error) {
+			if !localArchiveRead {
+				localArchiveRead = true
+				archive, err := readLocalImageArchive(ctx, ref.String())
+				if err != nil {
+					log.Debugf("Could not save local image %s to read preserved platforms: %v", ref.String(), err)
+				} else {
+					localArchive = archive
+				}
+			}
+			if localArchive == nil {
+				return false, nil // Classic store or unreadable save: use the daemon image.
+			}
+			body, err := archiveManifest(localArchive.blobs, mdesc)
+			if err != nil {
+				return false, fmt.Errorf("failed to read preserved descriptor %s from local image archive: %w", mdesc.Digest, err)
+			}
+			if err := writeBlobIfAbsent(mdesc.Digest, body); err != nil {
+				return false, err
+			}
+			var m v1.Manifest
+			if err := json.Unmarshal(body, &m); err != nil {
+				return false, fmt.Errorf("failed to parse preserved manifest %s: %w", mdesc.Digest, err)
+			}
+			pendingBlobs[archiveBlobPath(m.Config.Digest)] = m.Config.Size
+			for i := range m.Layers {
+				pendingBlobs[archiveBlobPath(m.Layers[i].Digest)] = m.Layers[i].Size
+			}
+			return true, nil
+		}
+
 		materializeDescriptor := func(mdesc *v1.Descriptor) (map[string]interface{}, error) {
+			if isLocal {
+				handled, err := materializeFromLocalArchive(mdesc)
+				if err != nil {
+					return nil, err
+				}
+				if handled {
+					return descriptorEntry(mdesc)
+				}
+			}
 			var img v1.Image
 			if isLocal {
 				digestRef := fmt.Sprintf("%s@%s", originalRef.Name(), mdesc.Digest.String())
@@ -3250,15 +3307,7 @@ func exportPreservedPlatformsToOutput(
 				}
 			}
 
-			descriptorJSON, err := json.Marshal(mdesc)
-			if err != nil {
-				return nil, fmt.Errorf("failed to marshal preserved descriptor %s: %w", mdesc.Digest, err)
-			}
-			var entry map[string]interface{}
-			if err := json.Unmarshal(descriptorJSON, &entry); err != nil {
-				return nil, fmt.Errorf("failed to decode preserved descriptor %s: %w", mdesc.Digest, err)
-			}
-			return entry, nil
+			return descriptorEntry(mdesc)
 		}
 
 		// Filter image manifests for the preserved platforms, then preserve any
@@ -3287,6 +3336,11 @@ func exportPreservedPlatformsToOutput(
 					return nil, fmt.Errorf("failed to preserve attestation for %s: %w", subject, err)
 				}
 				manifests = append(manifests, attestationEntry)
+			}
+		}
+		if len(pendingBlobs) > 0 {
+			if err := copyLocalArchiveBlobs(ctx, ref.String(), pendingBlobs, outputDir, blobsSet); err != nil {
+				return nil, err
 			}
 		}
 	} else {

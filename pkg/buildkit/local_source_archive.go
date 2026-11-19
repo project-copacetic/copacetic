@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	v1 "github.com/google/go-containerregistry/pkg/v1"
@@ -290,4 +292,87 @@ func archiveManifest(blobs map[string][]byte, desc *v1.Descriptor) ([]byte, erro
 		return nil, fmt.Errorf("local image archive manifest has an invalid media type")
 	}
 	return data, nil
+}
+
+// copyLocalArchiveBlobs streams one save of image and writes the wanted blobs
+// (archive paths such as blobs/sha256/<hex>) into outputDir/blobs. A blob that
+// is already in blobsSet is skipped; a wanted blob the save lacks is an error.
+// want maps each archive path to its descriptor size; every blob must match
+// both its size and the digest in its path, and a failed copy leaves no file.
+func copyLocalArchiveBlobs(ctx context.Context, image string, want map[string]int64, outputDir string, blobsSet map[string]bool) error {
+	wantSize := want
+	stream, err := localImageArchive(ctx, image)
+	if err != nil {
+		return fmt.Errorf("save local image %s for preserved platforms: %w", image, err)
+	}
+	defer stream.Close()
+
+	missing := map[string]bool{}
+	for path := range want {
+		if !blobsSet[strings.TrimPrefix(path, "blobs/")] {
+			missing[path] = true
+		}
+	}
+	reader := tar.NewReader(&contextReader{ctx: ctx, reader: stream})
+	for len(missing) > 0 {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read local image archive: %w", err)
+		}
+		if !missing[header.Name] || !header.FileInfo().Mode().IsRegular() {
+			continue
+		}
+		rel := strings.TrimPrefix(header.Name, "blobs/")
+		// header.Name already matched a path built from a parsed digest; this
+		// keeps the write inside outputDir/blobs even if that ever changes.
+		algorithm, hex, found := strings.Cut(rel, "/")
+		wantDigest := digest.Digest(algorithm + ":" + hex)
+		if !found || wantDigest.Validate() != nil || !filepath.IsLocal(rel) {
+			return fmt.Errorf("local image archive has an invalid blob path %q", header.Name)
+		}
+		if header.Size != wantSize[header.Name] {
+			return fmt.Errorf("preserved blob %s is %d bytes, want %d", header.Name, header.Size, wantSize[header.Name])
+		}
+		outPath := filepath.Join(outputDir, "blobs", rel)
+		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+			return fmt.Errorf("failed to create blob dir: %w", err)
+		}
+		if err := writeVerifiedBlob(outPath, reader, header.Size, wantDigest); err != nil {
+			return fmt.Errorf("failed to copy preserved blob %s: %w", header.Name, err)
+		}
+		blobsSet[rel] = true
+		delete(missing, header.Name)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("local image archive for %s is missing %d preserved blob(s)", image, len(missing))
+	}
+	return nil
+}
+
+// writeVerifiedBlob copies exactly size bytes from r to path and keeps the file
+// only if they hash to want; otherwise the partial file is removed.
+func writeVerifiedBlob(path string, r io.Reader, size int64, want digest.Digest) (err error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			os.Remove(path)
+		}
+	}()
+	verifier := want.Verifier()
+	if _, err := io.CopyN(io.MultiWriter(f, verifier), r, size); err != nil {
+		return err
+	}
+	if !verifier.Verified() {
+		return fmt.Errorf("content does not match digest %s", want)
+	}
+	return nil
 }
