@@ -361,6 +361,12 @@ func patchSingleArchImageWithSourceAndUpdates(
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			// A layout source was validated when it was opened, and this read is
+			// local, so a failure means the input changed or is broken. Patching on
+			// would publish the image without its manifest annotations.
+			if opts.OCISource != nil {
+				return nil, fmt.Errorf("read OCI layout manifest annotations for platform %s: %w", platforms.Format(targetPlatform.Platform), err)
+			}
 			log.Warnf("Failed to get original manifest level annotations for platform %s: %v", platforms.Format(targetPlatform.Platform), err)
 			originalAnnotations = map[string]string{}
 		}

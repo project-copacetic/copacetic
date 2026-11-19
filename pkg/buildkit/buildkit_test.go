@@ -764,6 +764,34 @@ func TestDiscoverPlatformsReportMetadata(t *testing.T) {
 	require.ErrorContains(t, err, "matches 2 image platforms")
 }
 
+// Two reports for one image platform must be rejected; otherwise the report
+// read last would silently decide what is patched.
+func TestDiscoverPlatformsRejectsMultipleReportsForOnePlatform(t *testing.T) {
+	t.Setenv("DOCKER_HOST", "unix:///copa-report-test-no-daemon.sock")
+	server := httptest.NewServer(registry.New())
+	t.Cleanup(server.Close)
+	ref, err := name.NewTag(server.Listener.Addr().String()+"/test/duplicate-reports:latest", name.Insecure)
+	require.NoError(t, err)
+	image, err := random.Image(128, 1)
+	require.NoError(t, err)
+	index := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: &remotev1.Platform{OS: "linux", Architecture: "amd64"}}},
+		mutate.IndexAddendum{Add: image, Descriptor: remotev1.Descriptor{Platform: &remotev1.Platform{OS: "linux", Architecture: "arm64"}}},
+	)
+	require.NoError(t, remote.WriteIndex(ref, index))
+
+	reportDir := t.TempDir()
+	for _, file := range []string{"amd64.json", "amd64-again.json"} {
+		require.NoError(t, os.WriteFile(filepath.Join(reportDir, file), []byte(`{
+			"SchemaVersion":2,"ArtifactName":"example.com/test/image:latest","ArtifactType":"container_image",
+			"Metadata":{"OS":{"Family":"alpine","Name":"3.21.0"},"ImageConfig":{"architecture":"amd64"}},
+			"Results":[]
+		}`), 0o600))
+	}
+	_, err = DiscoverPlatforms(ref.String(), reportDir, "trivy")
+	require.ErrorContains(t, err, "multiple reports target platform linux/amd64")
+}
+
 func TestPreservedPlatformsSourceRefKeepsCapturedDigestAfterTagMoves(t *testing.T) {
 	mutableRef, err := reference.ParseNormalizedNamed("registry.example.com/team/app:latest")
 	require.NoError(t, err)

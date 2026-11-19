@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -127,6 +129,7 @@ var (
 	getRemoteImageDescriptor      = remote.Get
 	getImageFromDaemon            = daemon.Image
 	tryGetManifestFromLocal       = getManifestFromLocal
+	buildOCIExport                = buildOCIExportWithClient
 )
 
 // ImageSource captures the immutable identity and, for indexes, the platform
@@ -1904,23 +1907,56 @@ func CreateOCILayoutFromResultsWithContext(ctx context.Context, outputDir string
 		exportOpts.IndexAnnotations = annotations
 	}
 
-	if exportOpts.Atomic {
-		return createAtomicOCILayout(ctx, outputDir, func(tempDir string) error {
-			if err := createOCILayoutFromResultsAt(ctx, tempDir, results, platforms, exportOpts); err != nil {
-				return err
-			}
-			if len(exportOpts.state.sources) > 0 {
-				return wrapOCIOutputIndex(tempDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
-			}
+	// A layout written for layout input is validated in both modes. A
+	// non-atomic export writes into a directory its caller manages, so the
+	// caller gets the validation error before it publishes that directory.
+	write := func(dir string) error {
+		if err := createOCILayoutFromResultsAt(ctx, dir, results, platforms, exportOpts); err != nil {
+			return err
+		}
+		if len(exportOpts.state.sources) == 0 {
 			return nil
-		})
+		}
+		if err := wrapOCIOutputIndex(dir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations); err != nil {
+			return err
+		}
+		return validateStagedOCILayout(ctx, dir, platforms)
 	}
+	if exportOpts.Atomic {
+		return createAtomicOCILayout(ctx, outputDir, write)
+	}
+	return write(outputDir)
+}
 
-	if err := createOCILayoutFromResultsAt(ctx, outputDir, results, platforms, exportOpts); err != nil {
-		return err
+// validateStagedOCILayout reads a staged layout the way Copa reads layout
+// input, which verifies every image manifest it reaches and their blobs, and
+// requires the staged index to list exactly one manifest for each exported
+// platform. The staged index is assembled from what BuildKit's OCI exporter
+// wrote, so a malformed or incomplete export is rejected here rather than
+// published as a layout that lacks a platform or lists unverified entries.
+func validateStagedOCILayout(ctx context.Context, dir string, platforms []types.PatchPlatform) error {
+	staged, err := ocilayout.Open(ctx, dir, "", "")
+	if err != nil {
+		return fmt.Errorf("validate staged OCI layout output: %w", err)
 	}
-	if len(exportOpts.state.sources) > 0 {
-		return wrapOCIOutputIndex(outputDir, exportOpts.OutputReference, exportOpts.state.sources[0].Descriptor.Annotations)
+	exported := make([]*specs.Descriptor, 0, len(platforms))
+	for i := range platforms {
+		desc, err := staged.PlatformDescriptor(ctx, &platforms[i].Platform)
+		if err != nil {
+			return fmt.Errorf("validate staged OCI layout output: %w", err)
+		}
+		exported = append(exported, desc)
+	}
+	// Layout reads skip entries that are not image manifests without opening
+	// them, so anything listed besides the exported manifests is unverified.
+	listed, err := staged.Manifests(ctx)
+	if err != nil {
+		return fmt.Errorf("validate staged OCI layout output: %w", err)
+	}
+	for i := range listed {
+		if !slices.ContainsFunc(exported, func(desc *specs.Descriptor) bool { return reflect.DeepEqual(*desc, listed[i]) }) {
+			return fmt.Errorf("validate staged OCI layout output: descriptor %s (%s) is not the manifest of an exported platform", listed[i].Digest, listed[i].MediaType)
+		}
 	}
 	return nil
 }
@@ -2369,7 +2405,7 @@ func solvePlatformOCI(
 ) error {
 	ensureAuthSession(solveOpt)
 
-	_, err := c.Build(ctx, *solveOpt, "copa-oci-export", func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
+	return buildOCIExport(ctx, c, *solveOpt, func(ctx context.Context, gateway gwclient.Client) (*gwclient.Result, error) {
 		def, err := state.Marshal(ctx, llb.Platform(*platformSpec))
 		if err != nil {
 			return nil, fmt.Errorf("marshal platform state: %w", err)
@@ -2382,7 +2418,12 @@ func solvePlatformOCI(
 			return nil, err
 		}
 		return result, nil
-	}, nil)
+	})
+}
+
+// buildOCIExportWithClient runs an OCI export solve on the BuildKit client.
+func buildOCIExportWithClient(ctx context.Context, c *client.Client, solveOpt client.SolveOpt, build gwclient.BuildFunc) error { //nolint:gocritic
+	_, err := c.Build(ctx, solveOpt, "copa-oci-export", build, nil)
 	return err
 }
 
@@ -2417,6 +2458,11 @@ func solveSinglePlatformOCI(
 	tarPath := filepath.Join(outputDir, "image.tar")
 	if err := extractTarToDirectory(ctx, tarPath, outputDir); err != nil {
 		return fmt.Errorf("failed to extract OCI layout: %w", err)
+	}
+	if len(exportOpts.state.sources) > 0 {
+		if err := rejectNonRegularOCIExportEntries(outputDir, platformSpec); err != nil {
+			return err
+		}
 	}
 
 	// Clean up tar file
@@ -2524,11 +2570,13 @@ func solveAndCombineAllPlatforms(
 	}
 
 	// Extract and combine all platform tars into multi-platform OCI layout
-	return extractAndCombinePlatformTars(ctx, outputDir, platformTars, platformSpecs, exportOpts.IndexAnnotations)
+	return extractAndCombinePlatformTars(ctx, outputDir, platformTars, platformSpecs, exportOpts.IndexAnnotations, len(exportOpts.state.sources) > 0)
 }
 
 // extractAndCombinePlatformTars extracts platform tars and combines them into multi-platform OCI layout.
-func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string) error {
+// With requireRegular, an export holding an entry other than a regular file or
+// directory is rejected before it is read.
+func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platformTars []string, platformSpecs []specs.Platform, indexAnnotations map[string]string, requireRegular bool) error {
 	// Create output directory structure
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -2562,6 +2610,11 @@ func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platfo
 		// Extract tar file
 		if err := extractTarToDirectory(ctx, platformTar, platformTempDir); err != nil {
 			return fmt.Errorf("failed to extract tar for platform: %w", err)
+		}
+		if requireRegular {
+			if err := rejectNonRegularOCIExportEntries(platformTempDir, &platformSpec); err != nil {
+				return err
+			}
 		}
 
 		// Read the platform's index.json
@@ -2755,6 +2808,26 @@ func extractTarToDirectory(ctx context.Context, tarPath, destDir string) error {
 	return nil
 }
 
+// rejectNonRegularOCIExportEntries fails if an extracted OCI export holds an
+// entry other than a regular file or directory. BuildKit's OCI exporter writes
+// only those, and the export is read and copied by path afterwards, which would
+// follow a symlink out of the export or block opening a FIFO.
+func rejectNonRegularOCIExportEntries(dir string, platformSpec *specs.Platform) error {
+	return filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Type().IsRegular() {
+			return nil
+		}
+		name, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("OCI export for platform %s holds %s, which is not a regular file or directory", FormatPlatform(*platformSpec), filepath.ToSlash(name))
+	})
+}
+
 // getPlatformSuffix returns the expected image tag suffix for a platform.
 func getPlatformSuffix(platform *specs.Platform) string {
 	suffix := "-" + platform.Architecture
@@ -2891,9 +2964,17 @@ func exportPatchedPlatformsToTemp(
 		if err := extractTarToDirectory(ctx, platformTarPath, platformExtractDir); err != nil {
 			return nil, fmt.Errorf("failed to extract platform tar: %w", err)
 		}
+		layoutInput := len(exportOpts.state.sources) > 0
+		if layoutInput {
+			if err := rejectNonRegularOCIExportEntries(platformExtractDir, &platformSpec); err != nil {
+				return nil, err
+			}
+		}
 
-		// Read the platform's index.json and extract manifest
-		manifest, err := extractManifestFromOCI(platformExtractDir, &platformSpec)
+		// Read the platform's index.json and extract manifest. Layout input is
+		// validated once staged, which cannot see entries dropped here, so its
+		// export must list only the platform's manifest.
+		manifest, err := extractManifestFromOCI(platformExtractDir, &platformSpec, layoutInput)
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract manifest: %w", err)
 		}
@@ -3280,7 +3361,9 @@ func exportPreservedPlatformsToOutput(
 }
 
 // extractManifestFromOCI extracts manifest information from an OCI layout directory.
-func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform) (map[string]interface{}, error) {
+// With requireSole, an index.json that lists more than one entry is rejected
+// instead of having the entries after the first dropped.
+func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform, requireSole bool) (map[string]interface{}, error) {
 	indexPath := filepath.Join(ociDir, "index.json")
 	indexData, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -3294,6 +3377,9 @@ func extractManifestFromOCI(ociDir string, platformSpec *specs.Platform) (map[st
 
 	// Extract the first manifest and fix its platform information
 	if manifests, ok := index["manifests"].([]interface{}); ok && len(manifests) > 0 {
+		if requireSole && len(manifests) != 1 {
+			return nil, fmt.Errorf("OCI export for platform %s lists %d entries (expected 1)", FormatPlatform(*platformSpec), len(manifests))
+		}
 		if manifestMap, ok := manifests[0].(map[string]interface{}); ok {
 			// Set the correct platform information
 			targetPlatform := map[string]interface{}{
