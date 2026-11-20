@@ -1520,9 +1520,9 @@ func TestUpdateImageConfigData(t *testing.T) {
 		mockClient := &mocks.MockGWClient{}
 		mockClient.On("ResolveImageConfig",
 			mock.Anything, "rockylinux:latest", mock.Anything).
-			Return("imageConfigString", digest.FromString("rockylinux:latest"), []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`), nil)
+			Return("imageConfigString", digest.FromString("rockylinux:latest"), originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`)), nil)
 
-		configData := []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"rockylinux:latest"}}}`)
+		configData := copaOutputTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"rockylinux:latest"}}}`))
 		image := "rockylinux:latest-patched"
 
 		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)

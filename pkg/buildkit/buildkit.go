@@ -1141,7 +1141,19 @@ func updateImageConfigData(
 	resolveOpt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{
 		ResolveMode: llb.ResolveModePreferLocal.String(), Platform: platform,
 	}}
-	var baseConfig []byte
+	// Dockerfile FROM copies the BaseImage and origin labels into images built
+	// on a Copa output, so the labels alone do not show that Copa produced this
+	// image. An image built on the labeled base with layers of its own is
+	// patched as supplied and recorded as its own origin, like a first patch.
+	patchAsSupplied := func(reason error) ([]byte, []byte, string, *types.SourceLineage, bool, error) {
+		log.Warnf("Patching %s as supplied rather than re-patching from %s: %v. Its inherited BaseImage and patch origin labels are ignored", image, baseImage, reason)
+		supplied, err := imageConfigWithBaseImage(document, locator)
+		if err != nil {
+			return nil, nil, "", nil, false, err
+		}
+		return supplied, nil, image, newSourceLineage(image, imageDigest), false, nil
+	}
+	var baseConfig, baseWithLabels []byte
 	if hasOrigin {
 		// Keep the recorded BaseImage locator for the output label. Reads of the
 		// recovered original are pinned to its recorded digest by the caller.
@@ -1157,11 +1169,26 @@ func updateImageConfigData(
 		if parseErr != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: parse recorded patch origin config: %w", ErrOriginIntegrity, parseErr)
 		}
-		if baseDocument.labels["BaseImage"] != "" {
-			return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image", ErrOriginIntegrity)
-		}
 		if err := verifyRecoveredOriginPlatform(configData, baseConfig, platform); err != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: %w", ErrOriginIntegrity, err)
+		}
+		// The origin may carry a BaseImage label of its own when it was an image
+		// built FROM a Copa output and patched as supplied. It is still this
+		// image's origin when this image is its layers plus Copa patch layers.
+		// A derived image whose recorded origin cannot be recovered fails above,
+		// because without the origin's layers it cannot be told from a Copa output.
+		switch kind, layersErr := classifyPatchLayers(configData, baseConfig); kind {
+		case patchLayersNotOnBase:
+			if baseDocument.labels["BaseImage"] != "" {
+				return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image: %w", ErrOriginIntegrity, layersErr)
+			}
+			return nil, nil, "", nil, false, fmt.Errorf("%w: image is not built on its recorded patch origin: %w", ErrOriginIntegrity, layersErr)
+		case patchLayersDerived:
+			return patchAsSupplied(layersErr)
+		}
+		baseWithLabels, err = imageConfigWithBaseImage(baseDocument, baseImage)
+		if err != nil {
+			return nil, nil, "", nil, false, err
 		}
 	} else {
 		// Legacy images have only a mutable BaseImage locator. Preserve their
@@ -1185,22 +1212,22 @@ func updateImageConfigData(
 			log.Warnf("Not using legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, err, image)
 			return useCurrentImage()
 		}
+		// The tag may also have moved to a rebuild of the base that this image
+		// was not built on, such as a new upstream build of the same tag. Treat
+		// that like an unresolvable tag: keep the image's layers without claiming
+		// that it, or the moved tag, is the original.
+		switch kind, layersErr := classifyPatchLayers(configData, baseConfig); kind {
+		case patchLayersNotOnBase:
+			log.Warnf("Not using legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, layersErr, image)
+			return useCurrentImage()
+		case patchLayersDerived:
+			return patchAsSupplied(layersErr)
+		}
 		log.Warn("Re-patching a legacy BaseImage-only image without verified patch origin")
-	}
-	// Dockerfile FROM copies the BaseImage and origin labels into images built
-	// on a Copa output. Rebuild from the recorded base only when the layers show
-	// that Copa produced this image; otherwise patch the image as supplied.
-	if layersErr := verifyPreviousPatchLayers(configData, baseConfig); layersErr != nil {
-		log.Warnf("Patching %s as supplied rather than re-patching from %s: %v. Its inherited BaseImage and patch origin labels are ignored", image, baseImage, layersErr)
-		supplied, err := suppliedImageConfig(document, locator)
+		_, baseWithLabels, err = setupLabels(baseImage, baseConfig)
 		if err != nil {
 			return nil, nil, "", nil, false, err
 		}
-		return supplied, nil, image, newSourceLineage(image, imageDigest), false, nil
-	}
-	_, baseWithLabels, err := setupLabels(baseImage, baseConfig)
-	if err != nil {
-		return nil, nil, "", nil, false, err
 	}
 	return baseWithLabels, userImageConfig, baseImage, recorded, hasOrigin, nil
 }

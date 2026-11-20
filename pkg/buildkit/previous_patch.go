@@ -15,7 +15,8 @@ import (
 // (and Docker's) adds for layers the exported image config does not describe.
 // Copa exports the config of the image it patches, so every layer a Copa patch
 // adds gets one of these entries. Layers added by a Dockerfile or most other
-// builders carry their own history.
+// builders carry their own history. LLB clients that write no history get the
+// same entries, so an image they build on a Copa output looks like a re-patch.
 const exporterHistoryComment = "buildkit.exporter.image.v0"
 
 // imageLayersConfig holds the image config fields that describe its layers.
@@ -24,31 +25,47 @@ type imageLayersConfig struct {
 	History []specs.History `json:"history,omitempty"`
 }
 
-// verifyPreviousPatchLayers checks that inputConfig describes an image Copa
-// produced from baseConfig: the base image's layers, followed only by layers
-// the image exporter added for a patch. A first patch can add several layers
-// and a re-patch adds one, so the number of added layers is not checked. An
-// image built FROM a Copa output inherits its labels, but has its own layers on
-// top, and an image whose layers do not start with the base was not built on it.
-func verifyPreviousPatchLayers(inputConfig, baseConfig []byte) error {
+// patchLayers says how an image's layers relate to the base image a
+// BaseImage or origin label names.
+type patchLayers int
+
+const (
+	// patchLayersNotOnBase: the image's layers do not start with the base's
+	// layers, or cannot be compared with them.
+	patchLayersNotOnBase patchLayers = iota
+	// patchLayersDerived: the image is built on the base, but has layers above
+	// it that a Copa patch did not add, as an image built FROM a Copa output does.
+	patchLayersDerived
+	// patchLayersCopaOutput: the image is the base's layers followed only by
+	// layers the image exporter added for a patch.
+	patchLayersCopaOutput
+)
+
+// classifyPatchLayers reports whether inputConfig describes an image Copa
+// produced from baseConfig. A first patch can add several layers and a
+// re-patch adds one, so the number of added layers is not checked. The error
+// explains any other result.
+func classifyPatchLayers(inputConfig, baseConfig []byte) (patchLayers, error) {
 	var input, base imageLayersConfig
 	if err := json.Unmarshal(inputConfig, &input); err != nil {
-		return fmt.Errorf("parse image config: %w", err)
+		return patchLayersNotOnBase, fmt.Errorf("parse image config: %w", err)
 	}
 	if err := json.Unmarshal(baseConfig, &base); err != nil {
-		return fmt.Errorf("parse base image config: %w", err)
+		return patchLayersNotOnBase, fmt.Errorf("parse base image config: %w", err)
 	}
 	if input.RootFS.Type != "layers" || base.RootFS.Type != "layers" {
-		return errors.New("its layers cannot be compared with the base image's layers")
+		return patchLayersNotOnBase, errors.New("its layers cannot be compared with the base image's layers")
 	}
 	inputLayers, baseLayers := input.RootFS.DiffIDs, base.RootFS.DiffIDs
 	if len(inputLayers) < len(baseLayers) || !slices.Equal(inputLayers[:len(baseLayers)], baseLayers) {
-		return errors.New("its layers do not start with the base image's layers")
+		return patchLayersNotOnBase, errors.New("its layers do not start with the base image's layers")
 	}
 	if len(inputLayers) == len(baseLayers) {
-		return nil
+		return patchLayersCopaOutput, nil
 	}
 
+	// BuildKit gives every layer of an exported image a history entry, so a
+	// history that does not line up with the layers was rewritten by another tool.
 	var layerHistory []specs.History
 	for _, entry := range input.History {
 		if !entry.EmptyLayer {
@@ -56,20 +73,20 @@ func verifyPreviousPatchLayers(inputConfig, baseConfig []byte) error {
 		}
 	}
 	if len(layerHistory) != len(inputLayers) {
-		return errors.New("its history does not describe each of its layers")
+		return patchLayersDerived, errors.New("its history does not describe each of its layers")
 	}
 	for i, entry := range layerHistory[len(baseLayers):] {
 		if entry.Comment != exporterHistoryComment {
-			return fmt.Errorf("layer %d above the base image's layers was not added by a Copa patch", i+1)
+			return patchLayersDerived, fmt.Errorf("layer %d above the base image's layers was not added by a Copa patch", i+1)
 		}
 	}
-	return nil
+	return patchLayersCopaOutput, nil
 }
 
-// suppliedImageConfig returns the config of an image patched as supplied. Its
-// BaseImage label names the supplied image, and inherited origin labels are
-// dropped so they cannot describe the output.
-func suppliedImageConfig(document *imageConfigLabelsDocument, locator string) ([]byte, error) {
+// imageConfigWithBaseImage returns the config in document with its BaseImage
+// label set to locator and any origin labels removed, so labels inherited
+// through FROM cannot describe the output.
+func imageConfigWithBaseImage(document *imageConfigLabelsDocument, locator string) ([]byte, error) {
 	document.labels["BaseImage"] = locator
 	for _, key := range []string{types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
 		delete(document.labels, key)
