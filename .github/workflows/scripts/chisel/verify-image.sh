@@ -47,6 +47,19 @@ if [[ -n "${expected_go_version}" && ! "${expected_go_version}" =~ ^[0-9]+\.[0-9
 	fail "expected Go version must use major.minor.patch form"
 fi
 
+# Platforms whose image is executed for the runtime smoke and isolation checks. All
+# other checks cover every platform. An arm64 runner can't execute the amd64 image,
+# so it limits this to linux/arm64.
+read -r -a runtime_platforms <<<"${CHISEL_VERIFY_RUNTIME_PLATFORMS:-linux/amd64 linux/arm64}"
+if (( ${#runtime_platforms[@]} == 0 )); then
+	fail "CHISEL_VERIFY_RUNTIME_PLATFORMS must name at least one platform"
+fi
+for platform in "${runtime_platforms[@]}"; do
+	if [[ "${platform}" != "linux/amd64" && "${platform}" != "linux/arm64" ]]; then
+		fail "unsupported runtime verification platform ${platform}; expected linux/amd64 or linux/arm64"
+	fi
+done
+
 mkdir -p "$(dirname -- "${report_path}")"
 
 docker buildx imagetools inspect "${image_ref}" --raw >"${index_file}"
@@ -222,7 +235,7 @@ verify_tooling_image_isolation() {
 	fi
 }
 
-for platform in linux/amd64 linux/arm64; do
+for platform in "${runtime_platforms[@]}"; do
 	IFS=/ read -r platform_os platform_arch platform_variant <<<"${platform}"
 	runtime_digests=()
 	while IFS= read -r digest; do
