@@ -127,6 +127,41 @@ func validateNodeVersion(version string) error {
 	return nil
 }
 
+// validNodeUpdates returns the updates whose package name and fixed version are valid,
+// and the names of the others. Without ignoreErrors, the first invalid update is an
+// error. A fixed version must be a single version: validateNodeVersion also accepts
+// Trivy's comma-separated lists, which cannot be installed as such.
+func validNodeUpdates(updates unversioned.LangUpdatePackages, ignoreErrors bool) (unversioned.LangUpdatePackages, []string, error) {
+	var valid unversioned.LangUpdatePackages
+	var invalid []string
+	for _, u := range updates {
+		if err := validateNodePackageName(u.Name); err != nil {
+			log.Errorf("Invalid package name %s: %v", u.Name, err)
+			if !ignoreErrors {
+				return nil, nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
+			}
+			invalid = append(invalid, u.Name)
+			continue
+		}
+		if u.FixedVersion != "" {
+			err := validateNodeVersion(u.FixedVersion)
+			if err == nil && strings.ContainsAny(u.FixedVersion, ", \t\r\n") {
+				err = fmt.Errorf("not a single version: %q", u.FixedVersion)
+			}
+			if err != nil {
+				log.Errorf("Invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
+				if !ignoreErrors {
+					return nil, nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
+				}
+				invalid = append(invalid, u.Name)
+				continue
+			}
+		}
+		valid = append(valid, u)
+	}
+	return valid, utils.DeduplicateStringSlice(invalid), nil
+}
+
 // isValidNodeVersion checks if a version string is a valid semver version.
 func isValidNodeVersion(v string) bool {
 	// Trivy can return a list like "1.2.3, 2.0.0". We just need one to be valid.
@@ -372,6 +407,21 @@ func (nm *nodejsManager) InstallUpdates(
 		log.Warn("No Node.js update packages were specified to apply.")
 		return currentState, []string{}, nil
 	}
+	// Validate all package names and versions first. Invalid updates are dropped (and
+	// reported as not patched) under ignore-errors, never passed on: the names and
+	// versions end up in shell commands and in the replace steps' item lists.
+	updatesToAttempt, invalidPkgs, err := validNodeUpdates(updatesToAttempt, ignoreErrors)
+	if err != nil {
+		for _, u := range nodeUpdates {
+			errPkgsReported = append(errPkgsReported, u.Name)
+		}
+		return currentState, utils.DeduplicateStringSlice(errPkgsReported), fmt.Errorf("nodejs package upgrade operation failed: %w", err)
+	}
+	errPkgsReported = append(errPkgsReported, invalidPkgs...)
+	if len(updatesToAttempt) == 0 {
+		log.Warn("No valid Node.js update packages to apply.")
+		return currentState, errPkgsReported, nil
+	}
 	log.Debugf("Attempting to update latest unique npm packages: %v", updatesToAttempt)
 
 	// Perform the upgrade. The replace steps record in report the packages they left at
@@ -435,27 +485,6 @@ func (nm *nodejsManager) upgradePackages(
 	ignoreErrors bool,
 	report *npmReport,
 ) (*llb.State, error) {
-	// Validate all package names and versions first
-	for _, u := range updates {
-		if err := validateNodePackageName(u.Name); err != nil {
-			log.Errorf("Invalid package name %s: %v", u.Name, err)
-			if !ignoreErrors {
-				return nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
-			}
-			continue
-		}
-
-		if u.FixedVersion != "" {
-			if err := validateNodeVersion(u.FixedVersion); err != nil {
-				log.Errorf("Invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
-				if !ignoreErrors {
-					return nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
-				}
-				continue
-			}
-		}
-	}
-
 	// Detect if npm exists in the target image
 	npmExists, detectErr := nm.detectNpm(ctx, currentState)
 	if detectErr != nil {

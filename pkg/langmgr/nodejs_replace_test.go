@@ -72,6 +72,35 @@ func TestNpmItemsFile(t *testing.T) {
 		got)
 }
 
+func TestNpmItemsFileSkipsInvalidItems(t *testing.T) {
+	got := string(npmItemsFile([]npmReplaceItem{
+		{Name: "ms", Version: "2.1.3, 3.0.0"},
+		{Name: "bad name", Version: "1.0.0"},
+		{Name: "lodash", Version: ""},
+		{Name: "ms", Version: "2.1.3", Select: "only:2"},
+	}))
+	assert.Equal(t, "ms 2.1.3 0 https://registry.npmjs.org/ms/-/ms-2.1.3.tgz /tmp/ms-2.1.3.tgz only:2\n", got)
+}
+
+func TestValidNodeUpdates(t *testing.T) {
+	updates := unversioned.LangUpdatePackages{
+		{Name: "lodash", FixedVersion: "4.17.21"},
+		{Name: "bad;name", FixedVersion: "1.0.0"},
+		{Name: "ms", FixedVersion: "2.1.3, 3.0.0"},
+		{Name: "debug", FixedVersion: "not-a-version"},
+		{Name: "nofix"},
+	}
+	valid, invalid, err := validNodeUpdates(updates, true)
+	require.NoError(t, err)
+	assert.Equal(t, unversioned.LangUpdatePackages{{Name: "lodash", FixedVersion: "4.17.21"}, {Name: "nofix"}}, valid)
+	assert.Equal(t, []string{"bad;name", "ms", "debug"}, invalid)
+
+	_, _, err = validNodeUpdates(updates, false)
+	assert.ErrorContains(t, err, "package name validation failed for bad;name")
+	_, _, err = validNodeUpdates(updates[2:3], false)
+	assert.ErrorContains(t, err, "not a single version")
+}
+
 // TestNpmReplaceStepSize checks that the size of the command line of a replace step
 // does not grow with the number of packages (the Linux limit for one argument is
 // 128 KiB), and that the step can be marshaled.

@@ -197,10 +197,16 @@ func npmReplaceItems(updates unversioned.LangUpdatePackages, directDeps map[stri
 
 // npmItemsFile returns the items file read by npmReplaceSh, one
 // "<name> <version> <top-level-only 0|1> <tarball URL> <tarball file> <select>"
-// line per item. Names and versions are validated, so they contain no spaces.
+// line per item. Names and versions are validated upstream (validNodeUpdates); an item
+// with whitespace in a field would shift the fields, so it is left out with an error
+// logged rather than written.
 func npmItemsFile(items []npmReplaceItem) []byte {
 	var b strings.Builder
 	for _, it := range items {
+		if it.Name == "" || it.Version == "" || strings.ContainsAny(it.Name+it.Version+it.Select, " \t\r\n") {
+			log.Errorf("Not replacing npm package %q at version %q: invalid name or version", it.Name, it.Version)
+			continue
+		}
 		top := "0"
 		if it.TopLevelOnly {
 			top = "1"
