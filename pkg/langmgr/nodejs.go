@@ -468,6 +468,8 @@ func (nm *nodejsManager) InstallUpdates(
 	// Report packages left at their installed version as not patched instead of
 	// counting them as fixed. This does not fail the run (see reportSkippedPackages).
 	errPkgsReported = utils.DeduplicateStringSlice(append(errPkgsReported, reportSkippedPackages(skipped)...))
+	// Packages the experimental npm self-upgrade could not verify as fixed (see upgradeNpmSelf).
+	errPkgsReported = utils.DeduplicateStringSlice(append(errPkgsReported, report.selfUpgradeSkipped...))
 
 	if len(errPkgsReported) > 0 {
 		log.Infof("Node.js packages reported as problematic: %v", errPkgsReported)
@@ -552,7 +554,7 @@ func (nm *nodejsManager) upgradePackages(
 		// Pass ONLY the global updates to the global patcher.
 		// The state is discarded on error, so must be what the replace steps recorded.
 		reportBefore := report.snapshot()
-		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, metadata, globalUpdates, ignoreErrors, report)
+		globalPatchedState, globalErr := nm.upgradeNpmThenGlobalPackages(ctx, &updatedState, metadata, globalUpdates, ignoreErrors, report)
 		if globalErr != nil {
 			report.restore(&reportBefore)
 			if !ignoreErrors {
@@ -843,9 +845,9 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 	state := *currentState
 
 	// Check if npm itself has vulnerabilities - if so, replace the specific vulnerable
-	// packages within npm's node_modules via direct tarball download, instead of
-	// upgrading npm entirely (which re-resolves npm's dependency tree and can
-	// introduce new vulnerabilities).
+	// packages within npm's node_modules via direct tarball download. When the
+	// experimental npm self-upgrade is enabled, upgradeNpmThenGlobalPackages has already
+	// tried upgrading npm itself, and these are the packages it left.
 	if hasNpmVulnerabilities(updates) {
 		log.Info("Detected vulnerabilities in npm dependencies. Replacing vulnerable packages within npm...")
 
@@ -869,7 +871,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 
 		// If no more updates after filtering npm, we're done
 		if len(updates) == 0 {
-			log.Info("All vulnerabilities were in npm dependencies, which have been addressed by upgrading npm")
+			log.Info("All remaining vulnerabilities were in npm's dependencies")
 			return &state, nil
 		}
 	}

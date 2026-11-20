@@ -29,6 +29,7 @@ func TestTryParseScanReport(t *testing.T) {
 					Config: unversioned.Config{
 						Arch: "amd64",
 					},
+					LibraryPatchLevel: "patch",
 				},
 				OSUpdates: []unversioned.UpdatePackage{
 					{

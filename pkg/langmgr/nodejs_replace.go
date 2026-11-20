@@ -47,6 +47,9 @@ const (
 type npmReport struct {
 	state llb.State
 	used  bool
+	// selfUpgradeSkipped are the packages that the npm self-upgrade reported as not
+	// patched (see upgradeNpmSelf).
+	selfUpgradeSkipped []string
 }
 
 func newNpmReport() *npmReport {

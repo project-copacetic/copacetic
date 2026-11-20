@@ -67,6 +67,9 @@ type Metadata struct {
 	Config      Config `json:"config"`
 	NodeVersion string `json:"nodeVersion,omitempty"` // Detected Node.js version from image
 	YarnVersion string `json:"yarnVersion,omitempty"` // Detected Yarn version from image
+	// LibraryPatchLevel is the --library-patch-level the library fixed versions were
+	// chosen with ("patch" by default for Trivy reports; empty when unknown).
+	LibraryPatchLevel string `json:"libraryPatchLevel,omitempty"`
 }
 
 type OS struct {

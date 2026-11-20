@@ -39,7 +39,11 @@ type packageTypeScanReportParser interface {
 
 func TryParseScanReport(file, scanner, pkgTypes, libraryPatchLevel string) (*unversioned.UpdateManifest, error) {
 	if scanner == "trivy" {
-		return defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
+		manifest, err := defaultParseScanReport(file, pkgTypes, libraryPatchLevel)
+		if manifest != nil {
+			manifest.Metadata.LibraryPatchLevel = libraryPatchLevel
+		}
+		return manifest, err
 	}
 	return customParseScanReport(file, scanner)
 }
