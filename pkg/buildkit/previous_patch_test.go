@@ -450,10 +450,36 @@ func TestUpdateImageConfigDataChecksOriginWithBaseImage(t *testing.T) {
 			wantErr: []string{"recorded patch origin is itself a Copa-patched image"},
 		},
 		{
-			name:    "origin with a BaseImage label and no history cannot be shown to be derived",
+			name:    "origin with a BaseImage label and no layers",
 			origin:  originLabels,
 			input:   input(t, testOriginalLayer, testPatchLayer),
 			wantErr: []string{"recorded patch origin is itself a Copa-patched image"},
+		},
+		{
+			// The exporter gives every layer a history entry, so an origin
+			// without history was built by another tool, not patched by Copa.
+			name: "derived origin without history",
+			origin: func() []byte {
+				var image map[string]any
+				require.NoError(t, json.Unmarshal(withTestLayers(t, originLabels, testOriginalLayer, testPatchLayer, testDerivedLayer), &image))
+				delete(image, "history")
+				config, err := json.Marshal(image)
+				require.NoError(t, err)
+				return config
+			}(),
+			input: input(t, testOriginalLayer, testPatchLayer, testDerivedLayer, testPatchLayer2),
+		},
+		{
+			name: "derived origin with history for only some layers",
+			origin: func() []byte {
+				var image specs.Image
+				require.NoError(t, json.Unmarshal(withTestLayers(t, originLabels, testOriginalLayer, testPatchLayer, testDerivedLayer), &image))
+				image.History = image.History[:1]
+				config, err := json.Marshal(image)
+				require.NoError(t, err)
+				return config
+			}(),
+			input: input(t, testOriginalLayer, testPatchLayer, testDerivedLayer, testPatchLayer2),
 		},
 		{
 			name:   "derived origin that the input is not built on",
@@ -462,7 +488,7 @@ func TestUpdateImageConfigDataChecksOriginWithBaseImage(t *testing.T) {
 			wantErr: []string{
 				"image is not built on its recorded patch origin",
 				"the recorded origin has its own BaseImage label registry.example/os:base",
-				"LABEL BaseImage= sh.copa.patch.origin.kind=",
+				`LABEL BaseImage="" sh.copa.patch.origin.kind=""`,
 			},
 		},
 	} {
@@ -470,12 +496,19 @@ func TestUpdateImageConfigDataChecksOriginWithBaseImage(t *testing.T) {
 			client := &mocks.MockGWClient{}
 			client.On("ResolveImageConfig", mock.Anything, originRef, mock.Anything).Return(originRef, originDigest, tc.origin, nil).Once()
 
-			_, _, _, _, _, err := updateImageConfigData(t.Context(), client, tc.input, app, app, digest.FromString(app), platform)
+			_, patched, _, lineage, validated, err := updateImageConfigData(t.Context(), client, tc.input, app, app, digest.FromString(app), platform)
+			client.AssertExpectations(t)
+			if len(tc.wantErr) == 0 {
+				require.NoError(t, err)
+				assert.Equal(t, tc.input, patched, "the input is re-patched from its origin")
+				assert.Equal(t, originDigest, lineage.Digest)
+				assert.True(t, validated)
+				return
+			}
 			require.ErrorIs(t, err, ErrOriginIntegrity)
 			for _, want := range tc.wantErr {
 				require.ErrorContains(t, err, want)
 			}
-			client.AssertExpectations(t)
 		})
 	}
 }

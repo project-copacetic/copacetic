@@ -1114,7 +1114,7 @@ func platformImageReferenceFromManifest(ref name.Reference, manifestBytes []byte
 // labels, so empty BaseImage and origin labels are treated as absent.
 const rewrittenLayersHint = " (if its layers were flattened or rewritten, patch the unmodified image, " +
 	"or set the BaseImage and sh.copa.patch.origin.* labels to empty values to patch it as a new image, e.g. " +
-	"LABEL BaseImage= sh.copa.patch.origin.kind= sh.copa.patch.origin.name= sh.copa.patch.origin.digest=)"
+	`LABEL BaseImage="" sh.copa.patch.origin.kind="" sh.copa.patch.origin.name="" sh.copa.patch.origin.digest="")`
 
 func updateImageConfigData(
 	ctx context.Context,

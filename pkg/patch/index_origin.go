@@ -60,6 +60,7 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 		if err != nil {
 			return fmt.Errorf("inspect platform %s origin: %w", buildkit.FormatPlatform(*child.Platform), err)
 		}
+		labels = withoutClearedOriginLabels(labels)
 		// A parent may legitimately identify an index or a selected child,
 		// but the three surfaces of one image must agree on that identity.
 		combined, err := buildkit.MergeImageSourceAnnotations(child.Annotations, manifest)
@@ -84,6 +85,23 @@ func validateRecordedIndexChildrenWithReader(ctx context.Context, source *multiP
 		}
 	}
 	return nil
+}
+
+// withoutClearedOriginLabels returns config labels without empty origin labels.
+// A Dockerfile can clear an inherited label but not remove it, so an empty
+// origin label counts as absent, as it does when the image itself is patched.
+func withoutClearedOriginLabels(labels map[string]string) map[string]string {
+	cleaned := make(map[string]string, len(labels))
+	for key, value := range labels {
+		switch key {
+		case types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest:
+			if value == "" {
+				continue
+			}
+		}
+		cleaned[key] = value
+	}
+	return cleaned
 }
 
 // Read only an immutable manifest/config pair. A daemon reconstruction may not

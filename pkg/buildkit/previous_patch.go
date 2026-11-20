@@ -84,9 +84,11 @@ func classifyPatchLayers(inputConfig, baseConfig []byte) (patchLayers, error) {
 }
 
 // topLayerAddedByBuild reports whether the top layer of the image config was
-// added by the build that produced the image rather than by a Copa patch: its
-// history describes each layer, and the top layer's entry is not one the image
-// exporter added.
+// added by the build that produced the image rather than by a Copa patch. The
+// BuildKit and Docker exporters give every layer of an image they export a
+// history entry, so an image whose history does not line up with its layers
+// was not exported by them and is not a Copa output. Otherwise the top layer
+// is a patch layer when its entry is one the exporter added.
 func topLayerAddedByBuild(config []byte) bool {
 	var image imageLayersConfig
 	if err := json.Unmarshal(config, &image); err != nil || len(image.RootFS.DiffIDs) == 0 {
@@ -98,7 +100,10 @@ func topLayerAddedByBuild(config []byte) bool {
 			layerHistory = append(layerHistory, entry)
 		}
 	}
-	return len(layerHistory) == len(image.RootFS.DiffIDs) && layerHistory[len(layerHistory)-1].Comment != exporterHistoryComment
+	if len(layerHistory) != len(image.RootFS.DiffIDs) {
+		return true
+	}
+	return layerHistory[len(layerHistory)-1].Comment != exporterHistoryComment
 }
 
 // imageConfigWithBaseImage returns the config in document with its BaseImage

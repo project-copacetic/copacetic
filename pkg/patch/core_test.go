@@ -1009,17 +1009,34 @@ func TestSourceLineageForPatch(t *testing.T) {
 
 func TestLegacyFallbackCaptureGuard(t *testing.T) {
 	opts := &Options{RequireBaseManifest: true, ExpectedSourceDigest: digest.FromString("captured legacy")}
-	for _, marker := range []string{"BaseImage", "", types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
-		t.Run(marker, func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		marker   string
+		value    string
+		fallback bool
+	}{
+		{name: "BaseImage only", marker: "BaseImage", fallback: true},
+		{name: "no BaseImage"},
+		{name: "cleared kind", marker: types.AnnotationPatchOriginKind, fallback: true},
+		{name: "cleared name", marker: types.AnnotationPatchOriginName, fallback: true},
+		{name: "cleared digest", marker: types.AnnotationPatchOriginDigest, fallback: true},
+		{name: "kind", marker: types.AnnotationPatchOriginKind, value: types.PatchOriginImage},
+		{name: "name", marker: types.AnnotationPatchOriginName, value: "example.com/missing:original"},
+		{name: "digest", marker: types.AnnotationPatchOriginDigest, value: digest.FromString("original").String()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			labels := map[string]string{"BaseImage": "example.com/missing:original"}
-			if marker == "" {
+			switch tc.marker {
+			case "":
 				delete(labels, "BaseImage")
-			} else if marker != "BaseImage" {
-				labels[marker] = ""
+			case "BaseImage":
+			default:
+				// A Dockerfile can clear an inherited origin label but not remove it.
+				labels[tc.marker] = tc.value
 			}
 			lineage, err := sourceLineageForPatch(&buildkit.Config{ImageLabels: labels}, opts)
 			require.Nil(t, lineage)
-			if marker == "BaseImage" {
+			if tc.fallback {
 				require.NoError(t, err)
 			} else {
 				require.ErrorContains(t, err, "captured source manifest")
