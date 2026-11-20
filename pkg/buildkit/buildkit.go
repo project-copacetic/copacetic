@@ -1110,9 +1110,11 @@ func platformImageReferenceFromManifest(ref name.Reference, manifestBytes []byte
 }
 
 // rewrittenLayersHint tells the user how to patch an image whose labels name a
-// patch origin that its layers are not built on.
+// patch origin that its layers are not built on. A Dockerfile cannot remove
+// labels, so empty BaseImage and origin labels are treated as absent.
 const rewrittenLayersHint = " (if its layers were flattened or rewritten, patch the unmodified image, " +
-	"or remove the BaseImage and sh.copa.patch.origin.* labels to patch it as a new image)"
+	"or set the BaseImage and sh.copa.patch.origin.* labels to empty values to patch it as a new image, e.g. " +
+	"LABEL BaseImage= sh.copa.patch.origin.kind= sh.copa.patch.origin.name= sh.copa.patch.origin.digest=)"
 
 func updateImageConfigData(
 	ctx context.Context,
@@ -1132,10 +1134,11 @@ func updateImageConfigData(
 	if err != nil {
 		return nil, nil, "", nil, false, err
 	}
-	_, hasKind := document.labels[types.AnnotationPatchOriginKind]
-	_, hasName := document.labels[types.AnnotationPatchOriginName]
-	_, hasDigest := document.labels[types.AnnotationPatchOriginDigest]
-	hasOrigin := hasKind || hasName || hasDigest
+	// Empty labels count as absent, as an empty BaseImage already does, since a
+	// Dockerfile can clear an inherited label but cannot remove it.
+	hasOrigin := document.labels[types.AnnotationPatchOriginKind] != "" ||
+		document.labels[types.AnnotationPatchOriginName] != "" ||
+		document.labels[types.AnnotationPatchOriginDigest] != ""
 	recorded := sourceLineageFromConfig(configData)
 	if hasOrigin && (!recorded.Valid() || baseImage == "") {
 		return nil, nil, "", nil, false, fmt.Errorf("%w: invalid patch origin metadata: a complete origin and BaseImage locator are required", ErrOriginIntegrity)
@@ -1174,18 +1177,23 @@ func updateImageConfigData(
 		if parseErr != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: parse recorded patch origin config: %w", ErrOriginIntegrity, parseErr)
 		}
+		// An origin may carry a BaseImage label of its own when it is an image
+		// built FROM a Copa output that was then patched as supplied. Its top
+		// layer was then added by its own build. An origin whose top layer is a
+		// Copa patch layer is itself a Copa output, which an origin never is.
+		originBaseImage := baseDocument.labels["BaseImage"]
+		if originBaseImage != "" && !topLayerAddedByBuild(baseConfig) {
+			return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image", ErrOriginIntegrity)
+		}
 		if err := verifyRecoveredOriginPlatform(configData, baseConfig, platform); err != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: %w", ErrOriginIntegrity, err)
 		}
-		// The origin may carry a BaseImage label of its own when it was an image
-		// built FROM a Copa output and patched as supplied. It is still this
-		// image's origin when this image is its layers plus Copa patch layers.
 		// A derived image whose recorded origin cannot be recovered fails above,
 		// because without the origin's layers it cannot be told from a Copa output.
 		switch kind, layersErr := classifyPatchLayers(configData, baseConfig); kind {
 		case patchLayersNotOnBase:
-			if baseDocument.labels["BaseImage"] != "" {
-				return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image: %w%s", ErrOriginIntegrity, layersErr, rewrittenLayersHint)
+			if originBaseImage != "" {
+				layersErr = fmt.Errorf("%w; the recorded origin has its own BaseImage label %s", layersErr, originBaseImage)
 			}
 			return nil, nil, "", nil, false, fmt.Errorf("%w: image is not built on its recorded patch origin: %w%s", ErrOriginIntegrity, layersErr, rewrittenLayersHint)
 		case patchLayersDerived:

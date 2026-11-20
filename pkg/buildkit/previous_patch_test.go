@@ -2,6 +2,7 @@ package buildkit
 
 import (
 	"encoding/json"
+	"maps"
 	"testing"
 
 	"github.com/opencontainers/go-digest"
@@ -406,4 +407,147 @@ func TestInitializeBuildkitConfigReadsDerivedImageAsSupplied(t *testing.T) {
 	require.Equal(t, appRef, stateSource(t, &cfg.ImageState, platform))
 	require.Equal(t, app, configLabels(t, cfg.ConfigData)["BaseImage"])
 	require.Equal(t, &types.SourceLineage{Kind: types.PatchOriginImage, Name: app, Digest: appDigest}, cfg.SourceLineage)
+}
+
+// A recorded origin with a BaseImage label is accepted only when it is an image
+// built FROM a Copa output and patched as supplied, so its top layer is its
+// own. An origin whose top layer is a Copa patch layer is itself a Copa output,
+// even when the input is built on it.
+func TestUpdateImageConfigDataChecksOriginWithBaseImage(t *testing.T) {
+	const (
+		originRef = "registry.example/os:patched"
+		app       = "registry.example/app:1.0-patched"
+	)
+	originDigest := digest.FromString("os patched")
+	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
+	originLabels := []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{"BaseImage":"registry.example/os:base"}}}`)
+	inputLabels := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: originRef, Digest: originDigest}).Annotations()
+	inputLabels["BaseImage"] = originRef
+	input := func(t *testing.T, layers ...testLayer) []byte {
+		t.Helper()
+		config, err := AddImageConfigLabels(withTestLayers(t, []byte(`{"os":"linux","architecture":"amd64","config":{}}`), layers...), inputLabels)
+		require.NoError(t, err)
+		return config
+	}
+	otherLayer := testLayer{digest.FromString("other OS layer"), ""}
+
+	for _, tc := range []struct {
+		name    string
+		origin  []byte
+		input   []byte
+		wantErr []string
+	}{
+		{
+			name:    "Copa output as origin with the input equal to it",
+			origin:  copaOutputTestConfig(t, originLabels),
+			input:   input(t, testOriginalLayer, testPatchLayer),
+			wantErr: []string{"recorded patch origin is itself a Copa-patched image"},
+		},
+		{
+			name:    "Copa output as origin with a patch layer above it",
+			origin:  copaOutputTestConfig(t, originLabels),
+			input:   input(t, testOriginalLayer, testPatchLayer, testPatchLayer2),
+			wantErr: []string{"recorded patch origin is itself a Copa-patched image"},
+		},
+		{
+			name:    "origin with a BaseImage label and no history cannot be shown to be derived",
+			origin:  originLabels,
+			input:   input(t, testOriginalLayer, testPatchLayer),
+			wantErr: []string{"recorded patch origin is itself a Copa-patched image"},
+		},
+		{
+			name:   "derived origin that the input is not built on",
+			origin: withTestLayers(t, originLabels, testOriginalLayer, testPatchLayer, testDerivedLayer),
+			input:  input(t, otherLayer, testPatchLayer2),
+			wantErr: []string{
+				"image is not built on its recorded patch origin",
+				"the recorded origin has its own BaseImage label registry.example/os:base",
+				"LABEL BaseImage= sh.copa.patch.origin.kind=",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			client.On("ResolveImageConfig", mock.Anything, originRef, mock.Anything).Return(originRef, originDigest, tc.origin, nil).Once()
+
+			_, _, _, _, _, err := updateImageConfigData(t.Context(), client, tc.input, app, app, digest.FromString(app), platform)
+			require.ErrorIs(t, err, ErrOriginIntegrity)
+			for _, want := range tc.wantErr {
+				require.ErrorContains(t, err, want)
+			}
+			client.AssertExpectations(t)
+		})
+	}
+}
+
+// A Dockerfile cannot remove an inherited label, only set it to an empty value,
+// so empty BaseImage and origin labels count as absent.
+func TestUpdateImageConfigDataTreatsEmptyLabelsAsAbsent(t *testing.T) {
+	const (
+		osBase = "registry.example/os:base"
+		app    = "registry.example/app:1.0"
+	)
+	appDigest := digest.FromString("app 1.0")
+	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
+	runtime := []byte(`{"os":"linux","architecture":"amd64","config":{}}`)
+	derived := withTestLayers(t, runtime, testOriginalLayer, testPatchLayer, testDerivedLayer)
+	cleared := map[string]string{
+		types.AnnotationPatchOriginKind:   "",
+		types.AnnotationPatchOriginName:   "",
+		types.AnnotationPatchOriginDigest: "",
+	}
+	withLabels := func(t *testing.T, labels map[string]string, extra ...string) []byte {
+		t.Helper()
+		labels = maps.Clone(labels)
+		for i := 0; i < len(extra); i += 2 {
+			labels[extra[i]] = extra[i+1]
+		}
+		config, err := AddImageConfigLabels(derived, labels)
+		require.NoError(t, err)
+		return config
+	}
+
+	for _, tc := range []struct {
+		name        string
+		input       []byte
+		resolveBase bool
+		wantErr     string
+	}{
+		{
+			name:  "all labels cleared is a first patch",
+			input: withLabels(t, cleared, "BaseImage", ""),
+		},
+		{
+			name:        "cleared origin labels leave a legacy BaseImage",
+			input:       withLabels(t, cleared, "BaseImage", osBase),
+			resolveBase: true,
+		},
+		{
+			name:    "a partly cleared origin is still invalid",
+			input:   withLabels(t, cleared, "BaseImage", "", types.AnnotationPatchOriginKind, types.PatchOriginImage),
+			wantErr: "invalid patch origin metadata",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			if tc.resolveBase {
+				client.On("ResolveImageConfig", mock.Anything, osBase, mock.Anything).
+					Return(osBase, digest.FromString("os base"), originalTestConfig(t, runtime), nil).Once()
+			}
+
+			config, patched, image, lineage, validated, err := updateImageConfigData(t.Context(), client, tc.input, app, app, appDigest, platform)
+			client.AssertExpectations(t)
+			if tc.wantErr != "" {
+				require.ErrorIs(t, err, ErrOriginIntegrity)
+				require.ErrorContains(t, err, tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Nil(t, patched)
+			assert.Equal(t, app, image)
+			assert.Equal(t, &types.SourceLineage{Kind: types.PatchOriginImage, Name: app, Digest: appDigest}, lineage)
+			assert.False(t, validated)
+			assert.Equal(t, app, configLabels(t, config)["BaseImage"])
+		})
+	}
 }

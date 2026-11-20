@@ -68,8 +68,6 @@ func TestOriginIntegrityErrorClassification(t *testing.T) {
 	labels := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: originalRef, Digest: original}).Annotations()
 	labels["BaseImage"] = base
 	patchedConfig := copaOutputTestConfig(t, originIntegrityConfig(t, labels))
-	// Another Copa output of the original, which the input was not built on.
-	otherPatchedConfig := withTestLayers(t, originIntegrityConfig(t, labels), testOriginalLayer, testPatchLayer2)
 	withLabel := func(key, value string) []byte {
 		updated, err := AddImageConfigLabels(patchedConfig, map[string]string{key: value})
 		require.NoError(t, err)
@@ -130,7 +128,7 @@ func TestOriginIntegrityErrorClassification(t *testing.T) {
 		},
 		{
 			name: "recorded original is patched", config: patchedConfig, wantMarked: true,
-			base: originIntegrityMetadata{digest: original, config: otherPatchedConfig}, wantMessage: "itself a Copa-patched image",
+			base: originIntegrityMetadata{digest: original, config: patchedConfig}, wantMessage: "itself a Copa-patched image",
 		},
 		{
 			name: "unrelated patched LLB config error", config: invalidPatchedLLBConfig,

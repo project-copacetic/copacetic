@@ -83,6 +83,24 @@ func classifyPatchLayers(inputConfig, baseConfig []byte) (patchLayers, error) {
 	return patchLayersCopaOutput, nil
 }
 
+// topLayerAddedByBuild reports whether the top layer of the image config was
+// added by the build that produced the image rather than by a Copa patch: its
+// history describes each layer, and the top layer's entry is not one the image
+// exporter added.
+func topLayerAddedByBuild(config []byte) bool {
+	var image imageLayersConfig
+	if err := json.Unmarshal(config, &image); err != nil || len(image.RootFS.DiffIDs) == 0 {
+		return false
+	}
+	var layerHistory []specs.History
+	for _, entry := range image.History {
+		if !entry.EmptyLayer {
+			layerHistory = append(layerHistory, entry)
+		}
+	}
+	return len(layerHistory) == len(image.RootFS.DiffIDs) && layerHistory[len(layerHistory)-1].Comment != exporterHistoryComment
+}
+
 // imageConfigWithBaseImage returns the config in document with its BaseImage
 // label set to locator and any origin labels removed, so labels inherited
 // through FROM cannot describe the output.
