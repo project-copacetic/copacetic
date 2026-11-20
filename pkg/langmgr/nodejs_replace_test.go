@@ -30,7 +30,9 @@ func TestNpmReplaceSh(t *testing.T) {
 
 	// Staging, then one check, then the decisions are applied.
 	staged := strings.Index(npmReplaceSh, `echo "$N $dir" >> "$R/plan"`)
-	check := strings.Index(npmReplaceSh, `node "$M/check.js" "$R/plan" "$R/decisions" ||`)
+	check := strings.Index(npmReplaceSh, `node "$M/check.js" "$R/plan" "$R/decisions" "$SEMVER" ||`)
+	// check.js gets the image's own npm semver.
+	assert.Contains(t, npmReplaceSh, `SEMVER="${NPM_GLOBAL_ROOT:-/nonexistent}/npm/node_modules/semver"`)
 	apply := strings.Index(npmReplaceSh, `mv "$STAGE" "$dir"`)
 	assert.True(t, staged >= 0 && check > staged && apply > check, "staging, check and apply out of order")
 	assert.NotContains(t, npmReplaceSh, `rm -rf "$dir" && mkdir -p "$dir"`)
@@ -512,16 +514,33 @@ func TestNpmCheckJS(t *testing.T) {
 		assert.Equal(t, map[string]string{"node_modules/a": "accept"}, got)
 	})
 
-	t.Run("without semver only presence is checked", func(t *testing.T) {
+	t.Run("without semver every installed version is kept", func(t *testing.T) {
+		tr := newTree(t)
+		plan := filepath.Join(tr.root, "plan")
+		decisions := filepath.Join(tr.root, "decisions")
+		require.NoError(t, os.WriteFile(plan, []byte(
+			tr.stage("b", "node_modules/b", `{"name":"b","version":"1.0.1"}`)+"\n"), 0o600))
+		script := fmt.Sprintf(`process.chdir(%q);require(%q).main(%q,%q,%q,true)`,
+			filepath.Join(tr.root, "app"), env.checkJS, plan, decisions, env.noSemver)
+		out, err := exec.Command(env.node, "-e", script).CombinedOutput() //nolint:gosec // node runs a test script
+		require.NoError(t, err, string(out))
+		assert.Contains(t, string(out), "semver module not found")
+		data, err := os.ReadFile(decisions)
+		require.NoError(t, err)
+		assert.Equal(t, "reject b node_modules/b\n", string(data))
+	})
+
+	t.Run("semver falls back to npm next to node", func(t *testing.T) {
 		tr := newTree(t)
 		got, out, err := tr.check(env.noSemver,
 			tr.stage("a", "node_modules/a", `{"name":"a","version":"1.1.0","dependencies":{"b":"^2.0.0"}}`))
 		require.NoError(t, err, out)
-		if strings.Contains(out, "semver module not found") {
-			assert.Equal(t, map[string]string{"node_modules/a": "accept"}, got)
-		} else { // npm's semver found next to node
+		if strings.Contains(out, "semver module not found") { // no npm next to node: fail closed
 			assert.Equal(t, map[string]string{"node_modules/a": "reject"}, got)
+			return
 		}
+		assert.Equal(t, map[string]string{"node_modules/a": "reject"}, got)
+		assert.Contains(t, out, "b@^2.0.0 resolves to 1.0.0")
 	})
 
 	t.Run("dependents reached through a symlink use its real path", func(t *testing.T) {

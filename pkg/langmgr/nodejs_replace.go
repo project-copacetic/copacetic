@@ -260,10 +260,14 @@ if [ -n "${1:-}" ]; then
   # As before: in application and global package trees, transitive copies are found
   # below node_modules/*/ only.
   FIND_BASE=node_modules
+  NPM_GLOBAL_ROOT=$(npm root -g 2>/dev/null)
 else
-  ROOT="$(npm root -g)/npm"
+  NPM_GLOBAL_ROOT=$(npm root -g)
+  ROOT="$NPM_GLOBAL_ROOT/npm"
   FIND_BASE="$ROOT/node_modules"
 fi
+# The image's own npm ships the semver module that check.js needs to compare versions.
+SEMVER="${NPM_GLOBAL_ROOT:-/nonexistent}/npm/node_modules/semver"
 cd -- "$ROOT" || exit 1
 { : >> "$R/` + npmSkippedFile + `" && : >> "$R/` + npmFailedFile + `" && : > "$R/plan"; } || exit 1
 
@@ -311,7 +315,7 @@ while read -r N V TOP URL TB SEL <&3; do
 done 3< "$M/items"
 
 if [ -s "$R/plan" ]; then
-  node "$M/check.js" "$R/plan" "$R/decisions" || { echo "ERROR: npm dependency check failed" >&2; exit 1; }
+  node "$M/check.js" "$R/plan" "$R/decisions" "$SEMVER" || { echo "ERROR: npm dependency check failed" >&2; exit 1; }
   while read -r ACT N dir <&4; do
     STAGE="$dir.copa-new"
     case "$ACT" in
@@ -341,8 +345,9 @@ rm -f "$R/plan" "$R/decisions"
 // into place. Usage: node check.js <plan> <decisions> [semver module path]. It runs
 // in the root directory of the tree being patched. The plan has one "<name> <dir>"
 // line per staged copy (the new version extracted in "<dir>.copa-new"); it writes one
-// "accept|reject|dropped <name> <dir>" line per plan line. semver defaults to npm's
-// own copy next to node; without it only the presence of dependencies is checked.
+// "accept|reject|dropped <name> <dir>" line per plan line. The semver module (normally
+// npm's own copy in the image, passed by npmReplaceSh) falls back to npm next to node;
+// without it the check fails closed: every staged copy is rejected.
 // Any error (unreadable plan, staged package.json that is not JSON) exits non-zero.
 // When required as a module it only exports its helpers, for tests.
 const npmCheckJS = `'use strict';
@@ -372,9 +377,11 @@ function breaksDependent(sv, r, oldV, newV) {
   return ko === null || kn === null || ko !== kn;
 }
 
-function loadSemver(override) {
+// loadSemver loads semver from override, else from npm next to node (unless
+// noFallback, for tests), else returns null.
+function loadSemver(override, noFallback) {
   var bin = p.dirname(process.execPath);
-  var candidates = [override,
+  var candidates = noFallback ? [override] : [override,
     p.join(bin, '..', 'lib', 'node_modules', 'npm', 'node_modules', 'semver'),
     p.join(bin, 'node_modules', 'npm', 'node_modules', 'semver')];
   for (var i = 0; i < candidates.length; i++) {
@@ -384,9 +391,9 @@ function loadSemver(override) {
   return null;
 }
 
-function main(planFile, decisionsFile, semverPath) {
-  var sv = loadSemver(semverPath);
-  if (!sv) { console.log('WARN: semver module not found, only checking that dependencies are installed'); }
+function main(planFile, decisionsFile, semverPath, noFallback) {
+  var sv = loadSemver(semverPath, noFallback);
+  if (!sv) { console.log('WARN: semver module not found (tried ' + (semverPath || 'no path given') + ' and npm next to node), keeping every installed version'); }
   var opts = { includePrerelease: true };
 
   function rp(x) { try { return fs.realpathSync(x); } catch (e) { return x; } }
@@ -457,6 +464,12 @@ function main(planFile, decisionsFile, semverPath) {
 
   var changed = true;
   function reject(c, why) { c.ok = false; c.why = why; changed = true; }
+  if (!sv) {
+    // Fail closed: without semver, no version range can be checked, so a new version
+    // could silently break the packages that depend on it. Keep every installed copy.
+    order.forEach(function (d) { reject(C[d], 'version ranges cannot be checked (semver module not found)'); });
+    changed = false;
+  }
   // Rejections only shrink the accepted set, so this ends.
   while (changed) {
     changed = false;
@@ -525,7 +538,7 @@ function main(planFile, decisionsFile, semverPath) {
 if (require.main === module) {
   main(process.argv[2], process.argv[3], process.argv[4]);
 } else {
-  module.exports = { compatKey: compatKey, breaksDependent: breaksDependent };
+  module.exports = { compatKey: compatKey, breaksDependent: breaksDependent, main: main };
 }
 `
 
