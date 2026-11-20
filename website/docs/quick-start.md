@@ -30,7 +30,7 @@ For advanced BuildKit configurations, see [custom BuildKit addresses](custom-add
 
 ## Tutorial
 
-This tutorial demonstrates patching the nginx:1.21.6 image, which contains numerous vulnerabilities.
+This tutorial demonstrates patching the `nginx:1.26.3-bookworm` image, which is based on Debian 12 (bookworm) and contains numerous fixable OS vulnerabilities.
 
 :::tip
 This tutorial shows Docker commands, but Copa works with both Docker and Podman. Where Docker commands are shown, you can substitute `podman` for `docker` in most cases.
@@ -41,7 +41,7 @@ This tutorial shows Docker commands, but Copa works with both Docker and Podman.
 First, set the image we'll be working with:
 
 ```bash
-export IMAGE=docker.io/library/nginx:1.21.6
+export IMAGE=docker.io/library/nginx:1.26.3-bookworm
 ```
 
 :::tip
@@ -49,7 +49,7 @@ export IMAGE=docker.io/library/nginx:1.21.6
 If you want to patch an image using the digest, you can specify the digest like this:
 
 ```bash
-export IMAGE=docker.io/library/nginx@sha256:25dedae0aceb6b4fe5837a0acbacc6580453717f126a095aa05a3c6fcea14dd4
+export IMAGE=docker.io/library/nginx@sha256:41b194461e4bae16f9b25d68b0976ed4735b89ca625c89aad88e1c1c3b7e8860
 ```
 
 :::
@@ -64,12 +64,12 @@ Scan the image to identify OS-level vulnerabilities:
 trivy image --vuln-type os --ignore-unfixed $IMAGE
 ```
 
-**Expected output:**
+**Expected output** (exact counts change as new advisories are published):
 
 ```text
-nginx:1.21.6 (debian 11.3)
-==========================
-Total: 207 (UNKNOWN: 0, LOW: 12, MEDIUM: 104, HIGH: 76, CRITICAL: 15)
+docker.io/library/nginx:1.26.3-bookworm (debian 12.10)
+======================================================
+Total: 306 (UNKNOWN: 11, LOW: 63, MEDIUM: 141, HIGH: 80, CRITICAL: 11)
 ```
 
 ### Step 3: Choose Your Patching Strategy
@@ -81,8 +81,10 @@ Copa offers two patching approaches:
 Update all outdated packages to their latest versions:
 
 ```bash
-copa patch -i $IMAGE
+copa patch -i $IMAGE --platform linux/amd64
 ```
+
+`--platform` limits patching to the listed platforms and keeps the others unchanged. Without it, Copa patches every platform in the image. That needs QEMU emulation for platforms that differ from your host, and some of this image's platforms (such as `linux/arm/v5` and `linux/mips64le`) are not supported. Replace `linux/amd64` with your host platform if needed.
 
 :::warning
 This approach provides the most comprehensive security updates but may introduce compatibility issues. Always test patched images thoroughly before production use.
@@ -113,7 +115,7 @@ patching either layout.
 
 :::
 
-Both methods create a new image tagged `nginx:1.21.6-patched` in your local registry.
+Both methods create a new image tagged `nginx:1.26.3-bookworm-patched` in your local registry.
 
 For local exports, Copa stores newly created patch layers with `--compression=uncompressed` by default so scanners can read the patched image reliably. Existing base layers are preserved in their original compression unless you use `--force-compression` to re-encode layers exported for patched platforms to the selected compression. Platforms preserved unchanged in a multi-platform OCI layout keep their original layer blobs and compression.
 
@@ -136,9 +138,13 @@ trivy image --vuln-type os --ignore-unfixed $IMAGE-patched
 **Expected output:**
 
 ```text
-nginx:1.21.6-patched (debian 11.10)
-===================================
-Total: 0 (UNKNOWN: 0, LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 0)
+Report Summary
+
+┌────────────────────────────────────────────────────────────────┬────────┬─────────────────┬─────────┐
+│                             Target                             │  Type  │ Vulnerabilities │ Secrets │
+├────────────────────────────────────────────────────────────────┼────────┼─────────────────┼─────────┤
+│ docker.io/library/nginx:1.26.3-bookworm-patched (debian 12.10) │ debian │        0        │    -    │
+└────────────────────────────────────────────────────────────────┴────────┴─────────────────┴─────────┘
 ```
 
 :::note Ubuntu Chiseled verification
@@ -170,7 +176,7 @@ curl -I http://localhost:8080
 
 ```text
 HTTP/1.1 200 OK
-Server: nginx/1.21.6
+Server: nginx/1.26.3
 ```
 
 Clean up:
@@ -200,7 +206,7 @@ You've successfully:
 4. ✅ Learned about different patching strategies
 
 The selected fixable package updates have been applied to
-`nginx:1.21.6-patched`. Review the scanner results appropriate to the image
+`nginx:1.26.3-bookworm-patched`. Review the scanner results appropriate to the image
 layout and complete application testing before deployment.
 
 ## Next Steps
