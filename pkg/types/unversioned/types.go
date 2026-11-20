@@ -35,6 +35,29 @@ func (m *UpdateManifest) CombinedSummary() *PatchSummary {
 	return s
 }
 
+// CombinedSummaryAfterPatch is CombinedSummary with the library vulnerabilities of
+// the packages that the language managers reported as not patched (erroredPackages)
+// counted as skipped instead of patched. Returns nil if no summary is available.
+func (m *UpdateManifest) CombinedSummaryAfterPatch(erroredPackages []string) *PatchSummary {
+	s := m.CombinedSummary()
+	if s == nil || m.LibrarySummary == nil || len(erroredPackages) == 0 {
+		return s
+	}
+	errored := make(map[string]struct{}, len(erroredPackages))
+	for _, name := range erroredPackages {
+		errored[name] = struct{}{}
+	}
+	// The report has one library update per vulnerability with a usable fix.
+	for i := range m.LangUpdates {
+		u := &m.LangUpdates[i]
+		if _, ok := errored[u.Name]; ok && u.FixedVersion != "" && s.Patched > 0 {
+			s.Patched--
+			s.Skipped++
+		}
+	}
+	return s
+}
+
 type UpdatePackages []UpdatePackage
 
 type LangUpdatePackages []UpdatePackage

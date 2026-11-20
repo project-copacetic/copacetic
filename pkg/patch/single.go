@@ -453,7 +453,11 @@ func patchSingleArchImageWithSourceAndUpdates(
 		return nil, err
 	}
 	if updates != nil {
-		result.Summary = updates.CombinedSummary()
+		var errored []string
+		if patchResult != nil {
+			errored = patchResult.ErroredPackages
+		}
+		result.Summary = updates.CombinedSummaryAfterPatch(errored)
 	}
 	return result, nil
 }

@@ -19,11 +19,8 @@ import (
 )
 
 const (
-	npmInstallTimeoutSeconds = 600
-	npmCheckFile             = "/copa-npm-check"
-	// Download failures of the tarball replace steps, one "WARN: failed to download <name>@<version>, skipping"
-	// line per package, read back by readDownloadFailures and removed by the final cleanup.
-	npmDownloadFailuresFile     = "/tmp/.copa-npm-download-failures"
+	npmInstallTimeoutSeconds    = 600
+	npmCheckFile                = "/copa-npm-check"
 	packageJSONDetectFile       = "/copa-package-json-path"
 	globalNodeModulesDetectFile = "/copa-global-node-modules-path"
 	defaultToolingNodeTag       = "lts-alpine" // Latest Active LTS (automatically tracks current LTS version)
@@ -377,8 +374,21 @@ func (nm *nodejsManager) InstallUpdates(
 	}
 	log.Debugf("Attempting to update latest unique npm packages: %v", updatesToAttempt)
 
-	// Perform the upgrade
-	updatedImageState, failedDownloads, upgradeErr := nm.upgradePackages(ctx, currentState, &manifest.Metadata, updatesToAttempt, ignoreErrors)
+	// Perform the upgrade. The replace steps record in report the packages they left at
+	// their installed version because the fixed version would break the dependency
+	// tree; failing to read that record back means that the upgrade itself failed.
+	report := newNpmReport()
+	updatedImageState, upgradeErr := nm.upgradePackages(ctx, currentState, &manifest.Metadata, updatesToAttempt, ignoreErrors, report)
+	var skipped, failedDownloads []string
+	if upgradeErr == nil {
+		skipped, upgradeErr = nm.readSkippedPackages(ctx, report)
+	}
+	if upgradeErr == nil {
+		// Packages whose tarball could not be downloaded: the replace steps skip them and
+		// record them, so that they are reported as not patched instead of silently left
+		// vulnerable.
+		failedDownloads, upgradeErr = nm.readDownloadFailures(ctx, report)
+	}
 	if upgradeErr != nil {
 		log.Errorf("Failed to upgrade Node.js packages: %v", upgradeErr)
 		if !ignoreErrors {
@@ -404,6 +414,10 @@ func (nm *nodejsManager) InstallUpdates(
 			len(failedDownloads), failedDownloads)
 	}
 
+	// Report packages left at their installed version as not patched instead of
+	// counting them as fixed. This does not fail the run (see reportSkippedPackages).
+	errPkgsReported = utils.DeduplicateStringSlice(append(errPkgsReported, reportSkippedPackages(skipped)...))
+
 	if len(errPkgsReported) > 0 {
 		log.Infof("Node.js packages reported as problematic: %v", errPkgsReported)
 	} else {
@@ -419,13 +433,14 @@ func (nm *nodejsManager) upgradePackages(
 	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
-) (*llb.State, []string, error) {
+	report *npmReport,
+) (*llb.State, error) {
 	// Validate all package names and versions first
 	for _, u := range updates {
 		if err := validateNodePackageName(u.Name); err != nil {
 			log.Errorf("Invalid package name %s: %v", u.Name, err)
 			if !ignoreErrors {
-				return nil, nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
+				return nil, fmt.Errorf("package name validation failed for %s: %w", u.Name, err)
 			}
 			continue
 		}
@@ -434,7 +449,7 @@ func (nm *nodejsManager) upgradePackages(
 			if err := validateNodeVersion(u.FixedVersion); err != nil {
 				log.Errorf("Invalid version %s for package %s: %v", u.FixedVersion, u.Name, err)
 				if !ignoreErrors {
-					return nil, nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
+					return nil, fmt.Errorf("version validation failed for %s: %w", u.Name, err)
 				}
 				continue
 			}
@@ -449,8 +464,7 @@ func (nm *nodejsManager) upgradePackages(
 
 	if !npmExists {
 		log.Infof("npm not found in target image. Falling back to tooling container strategy for Node.js updates.")
-		toolingState, toolingErr := nm.upgradePackagesWithTooling(ctx, currentState, metadata, updates, ignoreErrors)
-		return toolingState, nil, toolingErr
+		return nm.upgradePackagesWithTooling(ctx, currentState, metadata, updates, ignoreErrors, report)
 	}
 
 	// Separate vulnerabilities into two lists
@@ -496,7 +510,7 @@ func (nm *nodejsManager) upgradePackages(
 			}
 			log.Infof("Updating packages in %s", appPath)
 			// Pass ONLY the user app updates to the installer.
-			updatedState = nm.installNodePackages(ctx, &updatedState, appPath, userAppUpdates)
+			updatedState = nm.installNodePackages(ctx, &updatedState, appPath, userAppUpdates, report)
 		}
 	} else {
 		log.Debug("No user application vulnerabilities found to patch.")
@@ -506,10 +520,13 @@ func (nm *nodejsManager) upgradePackages(
 	if len(globalUpdates) > 0 {
 		log.Info("Checking for globally installed Node.js packages with vulnerable dependencies...")
 		// Pass ONLY the global updates to the global patcher.
-		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, metadata, globalUpdates, ignoreErrors)
+		// The state is discarded on error, so must be what the replace steps recorded.
+		reportBefore := report.snapshot()
+		globalPatchedState, globalErr := nm.upgradeGlobalPackages(ctx, &updatedState, metadata, globalUpdates, ignoreErrors, report)
 		if globalErr != nil {
+			report.restore(&reportBefore)
 			if !ignoreErrors {
-				return nil, nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
+				return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
 			}
 			log.Warnf("Failed to patch global packages but continuing due to ignore-errors: %v", globalErr)
 		} else {
@@ -519,22 +536,10 @@ func (nm *nodejsManager) upgradePackages(
 		log.Debug("No global package vulnerabilities found to patch.")
 	}
 
-	// Packages whose tarball could not be downloaded: the replace steps skip them and record
-	// them, so that they are reported as not patched instead of silently left vulnerable.
-	failedDownloads, readErr := nm.readDownloadFailures(ctx, &updatedState)
-	if readErr != nil {
-		if !ignoreErrors {
-			return nil, nil, fmt.Errorf("failed to check Node.js tarball downloads: %w", readErr)
-		}
-		log.Warnf("Could not check Node.js tarball downloads, continuing due to ignore-errors: %v", readErr)
-	}
-
 	// Clean up npm cache and remove old vulnerable package tarballs
 	// This is crucial to prevent Trivy from detecting old cached vulnerable packages
 	log.Info("Aggressively cleaning npm cache and removing all cached package files")
 	cleanupCmd := `sh -c '` +
-		// Remove the download failures record (already read above)
-		`rm -f ` + npmDownloadFailuresFile + `; ` +
 		// Run npm cache clean (may fail if npm not available, that's ok)
 		`npm cache clean --force 2>&1 || echo "WARN: npm cache clean command failed"; ` +
 		// Find and remove ALL .npm cache directories across the entire filesystem
@@ -547,38 +552,7 @@ func (nm *nodejsManager) upgradePackages(
 		`rm -rf /tmp/npm-* 2>&1 || echo "WARN: Failed to remove /tmp/npm-*"'`
 	updatedState = updatedState.Run(llb.Shlex(cleanupCmd), llb.WithProxy(utils.GetProxy())).Root()
 
-	return &updatedState, failedDownloads, nil
-}
-
-// downloadFailureRe matches the lines written by the replace steps to npmDownloadFailuresFile.
-// The name is greedy so that scoped packages (@scope/name@1.2.3) keep their scope.
-var downloadFailureRe = regexp.MustCompile(`failed to download (.+)@([^@,\s]+), skipping`)
-
-// parseDownloadFailures returns the unique package names recorded in npmDownloadFailuresFile.
-func parseDownloadFailures(data []byte) []string {
-	var failed []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if m := downloadFailureRe.FindStringSubmatch(line); m != nil {
-			failed = append(failed, m[1])
-		}
-	}
-	return utils.DeduplicateStringSlice(failed)
-}
-
-// readDownloadFailures returns the packages whose tarball download failed in the replace
-// steps applied to state. A missing record file means that no download failed.
-func (nm *nodejsManager) readDownloadFailures(ctx context.Context, state *llb.State) ([]string, error) {
-	if nm.config == nil || nm.config.Client == nil {
-		return nil, nil
-	}
-	data, rerr := buildkit.TryExtractFileFromState(ctx, nm.config.Client, state, npmDownloadFailuresFile)
-	if rerr != nil {
-		if rerr.ReadFailed {
-			return nil, nil
-		}
-		return nil, rerr.Err
-	}
-	return parseDownloadFailures(data), nil
+	return &updatedState, nil
 }
 
 // shellQuote wraps s in single quotes and escapes embedded single quotes so it can be
@@ -594,6 +568,7 @@ func (nm *nodejsManager) installNodePackages(
 	currentState *llb.State,
 	workDir string,
 	updates unversioned.LangUpdatePackages,
+	report *npmReport,
 ) llb.State {
 	if len(updates) == 0 {
 		return *currentState
@@ -618,115 +593,14 @@ func (nm *nodejsManager) installNodePackages(
 	)
 	state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
 
-	var transitiveUpdates unversioned.LangUpdatePackages
-
-	// == Step 1: Replace Direct Dependencies via Tarball Download ==
-	// Use direct tarball replacement instead of npm install to avoid
-	// re-resolving the dependency tree and introducing new vulnerabilities.
-	log.Infof("Processing direct dependency updates for %s...", workDir)
-	for _, u := range updates {
-		if directDeps[u.Name] {
-			if u.FixedVersion == "" {
-				continue
-			}
-
-			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
-			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
-			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
-			safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
-
-			replaceCmd := fmt.Sprintf(
-				`sh -c 'cd -- "$1" && `+
-					`PKG_DIR="node_modules/%s" && `+
-					`if [ -d "$PKG_DIR" ]; then `+
-					`  echo "INFO: Replacing direct dependency %s with version %s" && `+
-					`  if %s; then `+
-					`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-					`    %s && `+
-					`    rm -f %s && `+
-					`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
-					`  else `+
-					`    echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
-					`  fi; `+
-					`else `+
-					`  echo "WARN: %s not found in node_modules, skipping"; `+
-					`fi' -- %s`,
-				u.Name,
-				u.Name, u.FixedVersion,
-				downloadScript,
-				safeExtractScript,
-				tarballFile,
-				u.Name,
-				u.Name, u.FixedVersion,
-				u.Name,
-				shellQuote(workDir),
-			)
-
-			log.Infof("Replacing direct dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
-			state = state.Run(
-				llb.Shlex(replaceCmd),
-				llb.WithProxy(utils.GetProxy()),
-			).Root()
-		} else {
-			transitiveUpdates = append(transitiveUpdates, u)
-		}
-	}
-
-	// == Step 2: Replace Transitive Dependencies via Direct Tarball Download ==
-	// Instead of using npm overrides + npm install (which re-resolves the entire
-	// dependency tree and can introduce new vulnerabilities), we directly download
-	// and extract package tarballs from the npm registry into node_modules.
-	if len(transitiveUpdates) > 0 {
-		log.Infof("Processing %d transitive dependency update(s) for %s via direct tarball replacement...", len(transitiveUpdates), workDir)
-
-		for _, u := range transitiveUpdates {
-			if u.FixedVersion == "" {
-				continue
-			}
-
-			// Download the tarball once, then find and replace all instances of this
-			// package in the node_modules tree.
-			// Use -path (not -name) to correctly handle scoped packages like @babel/core.
-			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
-			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
-			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
-			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
-
-			replaceCmd := fmt.Sprintf(
-				`sh -c 'cd -- "$1" && `+
-					`if %s; then `+
-					`  PKG_NAME="%s" && `+
-					`  FOUND=0 && `+
-					`  for dir in $(find node_modules -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
-					`    if [ -f "$dir/package.json" ]; then `+
-					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
-					`      rm -rf "$dir" && mkdir -p "$dir" && `+
-					`      %s && `+
-					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
-					`      FOUND=$((FOUND+1)); `+
-					`    fi; `+
-					`  done && `+
-					`  rm -f %s && `+
-					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
-					`else `+
-					`  echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
-					`fi' -- %s`,
-				downloadScript,
-				u.Name,
-				u.FixedVersion,
-				safeExtractScript,
-				tarballFile,
-				u.Name,
-				u.Name, u.FixedVersion,
-				shellQuote(workDir),
-			)
-
-			log.Infof("Replacing transitive dependency %s@%s in %s", u.Name, u.FixedVersion, workDir)
-			state = state.Run(
-				llb.Shlex(replaceCmd),
-				llb.WithProxy(utils.GetProxy()),
-			).Root()
-		}
+	// == Steps 1 and 2: Replace direct and transitive dependencies via tarball download ==
+	// Direct tarball replacement instead of npm install or npm overrides, which
+	// re-resolve the dependency tree and can introduce new vulnerabilities. Direct
+	// dependencies are replaced in node_modules/<name> only, transitive ones wherever
+	// they are found. All packages are replaced in one step so that packages updated
+	// together are checked against each other's new versions.
+	if items := npmReplaceItems(updates, directDeps, workDir); len(items) > 0 {
+		state = report.run(&state, workDir, items)
 	}
 
 	// == Step 3: Final Cleanup ==
@@ -838,6 +712,7 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
+	report *npmReport,
 ) (*llb.State, error) {
 	// Try to detect package.json locations even without npm
 	pkgJSONPaths, err := nm.detectPackageJSON(ctx, currentState)
@@ -848,8 +723,11 @@ func (nm *nodejsManager) upgradePackagesWithTooling(
 		log.Info("Checking for globally installed Node.js packages...")
 
 		// Try to patch global packages even without an app
-		globalState, globalErr := nm.upgradeGlobalPackages(ctx, currentState, metadata, updates, ignoreErrors)
+		reportBefore := report.snapshot()
+		globalState, globalErr := nm.upgradeGlobalPackages(ctx, currentState, metadata, updates, ignoreErrors, report)
 		if globalErr != nil {
+			// The state is discarded on error, so must be what the replace steps recorded.
+			report.restore(&reportBefore)
 			if !ignoreErrors {
 				return nil, fmt.Errorf("failed to patch global packages: %w", globalErr)
 			}
@@ -930,6 +808,7 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 	metadata *unversioned.Metadata,
 	updates unversioned.LangUpdatePackages,
 	ignoreErrors bool,
+	report *npmReport,
 ) (*llb.State, error) {
 	state := *currentState
 
@@ -951,52 +830,9 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 			}
 		}
 
-		// Replace vulnerable packages within npm's node_modules
-		for _, u := range npmUpdates {
-			if u.FixedVersion == "" {
-				continue
-			}
-
-			// Download tarball, then find and replace all instances within npm's
-			// node_modules. Use -path (not -name) for scoped packages.
-			tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
-			tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
-			downloadScript := nodeDownloadScript(tarballURL, tarballFile)
-			safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
-
-			replaceCmd := fmt.Sprintf(
-				`sh -c 'NPM_ROOT=$(npm root -g) && `+
-					`if %s; then `+
-					`  PKG_NAME="%s" && `+
-					`  FOUND=0 && `+
-					`  for dir in $(find "$NPM_ROOT/npm" -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
-					`    if [ -f "$dir/package.json" ]; then `+
-					`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
-					`      rm -rf "$dir" && mkdir -p "$dir" && `+
-					`      %s && `+
-					`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
-					`      FOUND=$((FOUND+1)); `+
-					`    fi; `+
-					`  done && `+
-					`  rm -f %s && `+
-					`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in npm node_modules"; fi; `+
-					`else `+
-					`  echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
-					`fi'`,
-				downloadScript,
-				u.Name,
-				u.FixedVersion,
-				safeExtractScript,
-				tarballFile,
-				u.Name,
-				u.Name, u.FixedVersion,
-			)
-
-			log.Infof("Replacing %s@%s within npm's node_modules", u.Name, u.FixedVersion)
-			state = state.Run(
-				llb.Shlex(replaceCmd),
-				llb.WithProxy(utils.GetProxy()),
-			).Root()
+		// Replace vulnerable packages within npm's node_modules, all in one step.
+		if items := npmReplaceItems(npmUpdates, nil, "npm's node_modules"); len(items) > 0 {
+			state = report.run(&state, "", items)
 		}
 
 		updates = nonNpmUpdates
@@ -1068,120 +904,14 @@ func (nm *nodejsManager) upgradeGlobalPackages(
 		)
 		state = state.Run(llb.Shlex(removeDevDepsCmd), llb.WithProxy(utils.GetProxy())).Root()
 
-		// Separate into direct and transitive updates
-		var directUpdates unversioned.LangUpdatePackages
-		var transitiveUpdates unversioned.LangUpdatePackages
-
-		for _, u := range uniqueUpdates {
-			if directDeps[u.Name] {
-				directUpdates = append(directUpdates, u)
-			} else {
-				transitiveUpdates = append(transitiveUpdates, u)
-			}
+		// Replace direct (top-level only) and transitive dependencies via tarball download,
+		// all in one step, instead of npm overrides which re-resolve the entire tree.
+		items := npmReplaceItems(uniqueUpdates, directDeps, "global package "+pkgName)
+		if len(items) > 0 {
+			state = report.run(&state, pkgPath, items)
 		}
 
-		// First, replace direct dependency updates for global package via tarball download
-		if len(directUpdates) > 0 {
-			log.Infof("Replacing %d direct dependency update(s) for global package '%s' via tarball download", len(directUpdates), pkgName)
-
-			for _, u := range directUpdates {
-				if u.FixedVersion == "" {
-					continue
-				}
-
-				tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
-				tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
-				downloadScript := nodeDownloadScript(tarballURL, tarballFile)
-				safeExtractScript := safeTarExtractScript(tarballFile, "\"$PKG_DIR\"")
-
-				replaceCmd := fmt.Sprintf(
-					`sh -c 'cd -- "$1" && `+
-						`PKG_DIR="node_modules/%s" && `+
-						`if [ -d "$PKG_DIR" ]; then `+
-						`  echo "INFO: Replacing direct dependency %s with version %s" && `+
-						`  if %s; then `+
-						`    rm -rf "$PKG_DIR" && mkdir -p "$PKG_DIR" && `+
-						`    %s && `+
-						`    rm -f %s && `+
-						`    if [ ! -f "$PKG_DIR/package.json" ]; then echo "ERROR: extraction failed for %s" >&2; exit 1; fi; `+
-						`  else `+
-						`    echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
-						`  fi; `+
-						`else `+
-						`  echo "WARN: %s not found in node_modules, skipping"; `+
-						`fi' -- %s`,
-					u.Name,
-					u.Name, u.FixedVersion,
-					downloadScript,
-					safeExtractScript,
-					tarballFile,
-					u.Name,
-					u.Name, u.FixedVersion,
-					u.Name,
-					shellQuote(pkgPath),
-				)
-
-				log.Infof("Replacing direct dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)
-				state = state.Run(
-					llb.Shlex(replaceCmd),
-					llb.WithProxy(utils.GetProxy()),
-				).Root()
-			}
-		}
-
-		// Then, replace transitive dependencies via direct tarball download
-		// instead of using npm overrides which re-resolves the entire tree
-		if len(transitiveUpdates) > 0 {
-			log.Infof("Replacing %d transitive dependency(ies) in global package '%s' via direct tarball download...", len(transitiveUpdates), pkgName)
-
-			for _, u := range transitiveUpdates {
-				if u.FixedVersion == "" {
-					continue
-				}
-
-				tarballURL := getNpmTarballURL(u.Name, u.FixedVersion)
-				tarballFile := fmt.Sprintf("/tmp/%s-%s.tgz", getPackageBaseName(u.Name), u.FixedVersion)
-				downloadScript := nodeDownloadScript(tarballURL, tarballFile)
-				safeExtractScript := safeTarExtractScript(tarballFile, "\"$dir\"")
-
-				replaceCmd := fmt.Sprintf(
-					`sh -c 'cd -- "$1" && `+
-						`if %s; then `+
-						`  PKG_NAME="%s" && `+
-						`  FOUND=0 && `+
-						`  for dir in $(find node_modules -type d -path "*/node_modules/$PKG_NAME" 2>/dev/null); do `+
-						`    if [ -f "$dir/package.json" ]; then `+
-						`      echo "INFO: Replacing $PKG_NAME in $dir with version %s" && `+
-						`      rm -rf "$dir" && mkdir -p "$dir" && `+
-						`      %s && `+
-						`      if [ ! -f "$dir/package.json" ]; then echo "ERROR: extraction failed for $PKG_NAME in $dir" >&2; exit 1; fi && `+
-						`      FOUND=$((FOUND+1)); `+
-						`    fi; `+
-						`  done && `+
-						`  rm -f %s && `+
-						`  if [ "$FOUND" -eq 0 ]; then echo "WARN: %s not found in node_modules"; fi; `+
-						`else `+
-						`  echo "WARN: failed to download %s@%s, skipping" | tee -a `+npmDownloadFailuresFile+`; `+
-						`fi' -- %s`,
-					downloadScript,
-					u.Name,
-					u.FixedVersion,
-					safeExtractScript,
-					tarballFile,
-					u.Name,
-					u.Name, u.FixedVersion,
-					shellQuote(pkgPath),
-				)
-
-				log.Infof("Replacing transitive dependency %s@%s in global package %s", u.Name, u.FixedVersion, pkgName)
-				state = state.Run(
-					llb.Shlex(replaceCmd),
-					llb.WithProxy(utils.GetProxy()),
-				).Root()
-			}
-		}
-
-		if len(directUpdates) > 0 || len(transitiveUpdates) > 0 {
+		if len(items) > 0 {
 			log.Infof("Successfully updated dependencies in global package: %s", pkgName)
 		} else {
 			log.Infof("No applicable dependency updates for global package '%s'", pkgName)
