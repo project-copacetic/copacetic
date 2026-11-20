@@ -70,7 +70,7 @@ With a [scanner plugin](./scanner-plugins.md) report, Copa applies the patch lev
 
 ### Patch Level Behavior
 
-The patch level determines the maximum version bump allowed for library updates:
+The patch level determines the maximum version bump allowed for library updates. Within that limit, Copa picks the lowest version that fixes the most vulnerabilities reported for the package. When a package has several vulnerabilities fixed in different versions, Copa chooses a version that fixes all of them if the patch level allows it, rather than stopping at the first fixed version. Vulnerabilities that no allowed version fixes are reported as skipped in the patch summary and are not included in the VEX document.
 
 #### `patch` Level (Recommended)
 
@@ -82,14 +82,14 @@ The patch level determines the maximum version bump allowed for library updates:
 
 - **Allows**: `2.6.0` → `2.6.1` (preferred) or `2.7.0`
 - **Blocks**: `2.6.0` → `3.0.0`
-- **Preference**: If both `2.6.1` and `2.7.0` are available, it will choose `2.6.1` (patch) over `2.7.0` (minor)
+- **Preference**: If both `2.6.1` and `2.7.0` fix the same vulnerability, it will choose `2.6.1` (patch) over `2.7.0` (minor). If `2.6.1` fixes one vulnerability but another is only fixed in `2.7.0`, it will choose `2.7.0` so that both are fixed.
 - **Use case**: Moderate updates, some new features acceptable
 
 #### `major` Level
 
 - **Allows**: Any version update
-- **Preference**: When comma-separated versions are available, prefers Patch > Minor > Major for compatibility. When no comma-separated versions exist, picks the highest version to fix all CVEs.
-- **Example**: If both `2.6.1` and `2.7.0` are available, it will choose `2.6.1` for better compatibility
+- **Preference**: The lowest version that fixes the most vulnerabilities, so a major bump is only made when a vulnerability is not fixed on the current major version.
+- **Example**: If both `2.6.1` and `3.0.0` fix the same vulnerability, it will choose `2.6.1` for better compatibility
 - **Use case**: Aggressive updates, all fixes applied regardless of compatibility risk
 
 :::warning
