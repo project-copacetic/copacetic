@@ -609,6 +609,7 @@ func IsSupportedOSType(osType string) bool {
 func isSupportedOsType(osType string) bool {
 	switch utils.CanonicalOSType(osType) {
 	case utils.OSTypeAlpine,
+		utils.OSTypeWolfi,
 		utils.OSTypeDebian,
 		utils.OSTypeUbuntu,
 		utils.OSTypeCBLMariner,

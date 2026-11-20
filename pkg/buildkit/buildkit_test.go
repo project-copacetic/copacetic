@@ -1788,6 +1788,7 @@ func TestMapGoArch(t *testing.T) {
 func TestIsSupportedOsType(t *testing.T) {
 	supported := []string{
 		utils.OSTypeAlpine,
+		utils.OSTypeWolfi,
 		utils.OSTypeDebian,
 		utils.OSTypeUbuntu,
 		utils.OSTypeCBLMariner,
