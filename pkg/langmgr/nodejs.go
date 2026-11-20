@@ -47,9 +47,10 @@ func getPackageBaseName(name string) string {
 	return name
 }
 
-// getNpmTarballURL returns a shell expression that resolves the npm registry tarball URL for a package.
-// It respects custom npm registries configured via .npmrc or NPM_CONFIG_REGISTRY.
-// Scoped packages like "@babel/core" use URL encoding: @babel%2Fcore.
+// getNpmTarballURL returns the tarball URL of a package version on the public npm
+// registry (https://registry.npmjs.org). Custom registries (.npmrc,
+// NPM_CONFIG_REGISTRY) are not used. Scoped packages like "@babel/core" use URL
+// encoding: @babel%2Fcore.
 func getNpmTarballURL(name, version string) string {
 	encodedName := name
 	if strings.HasPrefix(name, "@") {
