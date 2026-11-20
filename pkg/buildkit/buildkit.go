@@ -1109,6 +1109,11 @@ func platformImageReferenceFromManifest(ref name.Reference, manifestBytes []byte
 	return "", fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
 }
 
+// rewrittenLayersHint tells the user how to patch an image whose labels name a
+// patch origin that its layers are not built on.
+const rewrittenLayersHint = " (if its layers were flattened or rewritten, patch the unmodified image, " +
+	"or remove the BaseImage and sh.copa.patch.origin.* labels to patch it as a new image)"
+
 func updateImageConfigData(
 	ctx context.Context,
 	c sourceresolver.ImageMetaResolver,
@@ -1180,9 +1185,9 @@ func updateImageConfigData(
 		switch kind, layersErr := classifyPatchLayers(configData, baseConfig); kind {
 		case patchLayersNotOnBase:
 			if baseDocument.labels["BaseImage"] != "" {
-				return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image: %w", ErrOriginIntegrity, layersErr)
+				return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image: %w%s", ErrOriginIntegrity, layersErr, rewrittenLayersHint)
 			}
-			return nil, nil, "", nil, false, fmt.Errorf("%w: image is not built on its recorded patch origin: %w", ErrOriginIntegrity, layersErr)
+			return nil, nil, "", nil, false, fmt.Errorf("%w: image is not built on its recorded patch origin: %w%s", ErrOriginIntegrity, layersErr, rewrittenLayersHint)
 		case patchLayersDerived:
 			return patchAsSupplied(layersErr)
 		}
