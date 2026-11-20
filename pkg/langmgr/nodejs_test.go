@@ -347,6 +347,16 @@ func TestGetNpmTarballURL(t *testing.T) {
 	}
 }
 
+func TestParseDownloadFailures(t *testing.T) {
+	data := []byte("WARN: failed to download lodash@4.17.21, skipping\n" +
+		"INFO: Replacing @babel/core in node_modules/@babel/core with version 7.26.0\n" +
+		"WARN: failed to download @babel/core@7.26.0, skipping\n" +
+		"WARN: failed to download lodash@4.17.21, skipping\n")
+	assert.Equal(t, []string{"lodash", "@babel/core"}, parseDownloadFailures(data))
+	assert.Empty(t, parseDownloadFailures(nil))
+	assert.Empty(t, parseDownloadFailures([]byte("nothing here\n")))
+}
+
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
 		name string
