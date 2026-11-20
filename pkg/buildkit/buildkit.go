@@ -1187,6 +1187,17 @@ func updateImageConfigData(
 		}
 		log.Warn("Re-patching a legacy BaseImage-only image without verified patch origin")
 	}
+	// Dockerfile FROM copies the BaseImage and origin labels into images built
+	// on a Copa output. Rebuild from the recorded base only when the layers show
+	// that Copa produced this image; otherwise patch the image as supplied.
+	if layersErr := verifyPreviousPatchLayers(configData, baseConfig); layersErr != nil {
+		log.Warnf("Patching %s as supplied rather than re-patching from %s: %v. Its inherited BaseImage and patch origin labels are ignored", image, baseImage, layersErr)
+		supplied, err := suppliedImageConfig(document, locator)
+		if err != nil {
+			return nil, nil, "", nil, false, err
+		}
+		return supplied, nil, image, newSourceLineage(image, imageDigest), false, nil
+	}
 	_, baseWithLabels, err := setupLabels(baseImage, baseConfig)
 	if err != nil {
 		return nil, nil, "", nil, false, err

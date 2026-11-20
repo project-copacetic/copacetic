@@ -39,7 +39,7 @@ func TestInitializedStatesPinResolvedContent(t *testing.T) {
 	const repository = "example.com/app"
 	original, patched := digest.FromString("original A"), digest.FromString("patched P1")
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
-	originalConfig := []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{}}}`)
+	originalConfig := originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{}}}`))
 	for _, repatch := range []bool{false, true} {
 		name := "first patch"
 		if repatch {
@@ -56,6 +56,7 @@ func TestInitializedStatesPinResolvedContent(t *testing.T) {
 				labels["BaseImage"] = input
 				config, err := json.Marshal(map[string]interface{}{"os": "linux", "architecture": "amd64", "config": map[string]interface{}{"Labels": labels}})
 				require.NoError(t, err)
+				config = copaOutputTestConfig(t, config)
 				input = repository + ":patched"
 				images[input] = locatorMetadata{patched, config}
 				images[repository+"@"+patched.String()] = locatorMetadata{patched, config}

@@ -36,8 +36,8 @@ func TestBaseImageKeepsSuppliedLocator(t *testing.T) {
 	child, index, moved := digest.FromString("original child A"), digest.FromString("original index"), digest.FromString("moved tag")
 	patched := digest.FromString("patched P1")
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
-	originalConfig := []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{"org.opencontainers.image.base.name":"example.com/os:base"}}}`)
-	movedConfig := []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{"com.example.moved":"true"}}}`)
+	originalConfig := originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{"org.opencontainers.image.base.name":"example.com/os:base"}}}`))
+	movedConfig := originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{"com.example.moved":"true"}}}`))
 	childRef := repository + "@" + child.String()
 	indexRaw, err := json.Marshal(specs.Index{Manifests: []specs.Descriptor{{MediaType: specs.MediaTypeImageManifest, Digest: child, Platform: platform}}})
 	require.NoError(t, err)
@@ -71,6 +71,7 @@ func TestBaseImageKeepsSuppliedLocator(t *testing.T) {
 			p1Labels["BaseImage"] = locator
 			p1Config, err := json.Marshal(map[string]interface{}{"os": "linux", "architecture": "amd64", "config": map[string]interface{}{"Labels": p1Labels}})
 			require.NoError(t, err)
+			p1Config = copaOutputTestConfig(t, p1Config)
 			p1Ref := repository + "@" + patched.String()
 			images := map[string]locatorMetadata{
 				p1Ref:    {patched, p1Config},

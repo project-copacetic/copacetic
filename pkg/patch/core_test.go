@@ -64,6 +64,14 @@ func (c *recordedBaseNativePatchedGateway) ResolveImageConfig(
 	default:
 		return "", "", nil, errors.New("unexpected image config reference: " + ref)
 	}
+	// The supplied image is the recorded base's layer plus one Copa patch layer.
+	baseLayer, patchLayer := digest.FromString(testRecordedBaseImage).String(), digest.FromString(testNativeSuppliedImage).String()
+	layers := `"rootfs":{"type":"layers","diff_ids":["` + baseLayer + `"]},"history":[{"created_by":"ADD rootfs"}],`
+	if ref != testRecordedBaseImage {
+		layers = `"rootfs":{"type":"layers","diff_ids":["` + baseLayer + `","` + patchLayer + `"]},` +
+			`"history":[{"created_by":"ADD rootfs"},{"comment":"buildkit.exporter.image.v0"}],`
+	}
+	config = append([]byte("{"+layers), config[1:]...)
 	return ref, resolved, config, nil
 }
 

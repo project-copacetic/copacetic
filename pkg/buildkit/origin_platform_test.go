@@ -28,13 +28,13 @@ func TestUpdateImageConfigDataRejectsCrossPlatformOrigin(t *testing.T) {
 		t.Helper()
 		config, err := json.Marshal(specs.Image{Platform: platform, Config: specs.ImageConfig{Labels: labels}})
 		require.NoError(t, err)
-		return config
+		return originalTestConfig(t, config)
 	}
 	repatchInput := func(t *testing.T, platform specs.Platform) []byte {
 		t.Helper()
 		config, err := AddImageConfigLabels(imageConfig(t, platform, map[string]string{"BaseImage": original}), lineage.Annotations())
 		require.NoError(t, err)
-		return config
+		return copaOutputTestConfig(t, config)
 	}
 
 	amd64 := specs.Platform{OS: "linux", Architecture: "amd64"}
