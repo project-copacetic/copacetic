@@ -565,12 +565,16 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		}
 		if updates == nil {
 			checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache --refresh -y; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-			if err := rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate); err != nil {
+			stateWithCheck, err := rm.checkForUpgrades(ctx, dnfTooling, checkUpdateTemplate)
+			if err != nil {
 				if !errors.Is(err, types.ErrNoUpdatesFound) {
 					return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
 				}
 				return nil, nil, types.ErrNoUpdatesFound
 			}
+			// Upgrade on top of the check so dnf reuses the metadata cache it built.
+			// --refresh then only re-fetches repomd.xml for unchanged repositories.
+			imageStateCurrent = stateWithCheck
 		}
 
 		const dnfInstallTemplate = `sh -c '%[1]s upgrade --refresh %[2]s -y && %[1]s clean all'`
@@ -578,12 +582,15 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	case rm.rpmTools["yum"] != "":
 		if updates == nil {
 			checkUpdateTemplate := `sh -c '%[1]s clean all && %[1]s makecache fast; if [ "$(%[1]s -q check-update | wc -l)" -ne 0 ]; then echo >> /updates.txt; fi'`
-			if err := rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate); err != nil {
+			stateWithCheck, err := rm.checkForUpgrades(ctx, rm.rpmTools["yum"], checkUpdateTemplate)
+			if err != nil {
 				if !errors.Is(err, types.ErrNoUpdatesFound) {
 					return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
 				}
 				return nil, nil, types.ErrNoUpdatesFound
 			}
+			// Upgrade on top of the check so yum reuses the metadata cache it built.
+			imageStateCurrent = stateWithCheck
 		}
 
 		const yumInstallTemplate = `sh -c '%[1]s upgrade %[2]s -y && %[1]s clean all'`
@@ -591,7 +598,9 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 	case rm.rpmTools["microdnf"] != "":
 		if updates == nil {
 			checkUpdateTemplate := `sh -c "%[1]s install dnf -y; dnf clean all && dnf makecache --refresh -y;  dnf check-update -y; if [ $? -ne 0 ]; then echo >> /updates.txt; fi;"`
-			if err := rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate); err != nil {
+			// The check installs dnf, so the upgrade can't run on top of it without
+			// leaving dnf in the patch layer.
+			if _, err := rm.checkForUpgrades(ctx, rm.rpmTools["microdnf"], checkUpdateTemplate); err != nil {
 				if !errors.Is(err, types.ErrNoUpdatesFound) {
 					return nil, nil, fmt.Errorf("failed while checking for available rpm updates: %w", err)
 				}
@@ -643,7 +652,8 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		// Diff the base image and pat[]ched image to get previous patches
 		prevPatchDiff := llb.Diff(rm.config.ImageState, rm.config.PatchedImageState)
 
-		// Diff the current image state and new patches
+		// Diff the current image state and new patches. In update-all mode imageStateCurrent is
+		// the check step's state, so the check's marker and metadata cache stay out of the patch.
 		newPatchDiff := llb.Diff(imageStateCurrent, installed)
 
 		// Merging these two diffs will discard everything in the filesystem that hasn't changed
@@ -657,14 +667,18 @@ func (rm *rpmManager) installUpdates(ctx context.Context, updates unversioned.Up
 		return &completePatchMerge, resultBytes, nil
 	}
 
-	// Diff the installed updates and merge that into the target image
-	patchDiff := llb.Diff(rm.config.ImageState, installed)
+	// Diff the installed updates and merge that into the target image. In update-all mode
+	// imageStateCurrent is the check step's state, so the check's marker and metadata cache
+	// stay out of the patch.
+	patchDiff := llb.Diff(imageStateCurrent, installed)
 	patchMerge := llb.Merge([]llb.State{rm.config.ImageState, patchDiff})
 
 	return &patchMerge, resultBytes, nil
 }
 
-func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) error {
+// checkForUpgrades runs the check command and returns its state, which still
+// holds the repository metadata cache and the updates marker.
+func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdateTemplate string) (llb.State, error) {
 	imageStateCurrent := rm.config.ImageState
 	if rm.config.PatchedConfigData != nil {
 		imageStateCurrent = rm.config.PatchedImageState
@@ -679,12 +693,12 @@ func (rm *rpmManager) checkForUpgrades(ctx context.Context, toolPath, checkUpdat
 	_, err := buildkit.TryExtractFileFromState(ctx, rm.config.Client, &stateWithCheck, updatesAvailableMarker)
 	if err != nil {
 		if isMarkerMissingErr(err, updatesAvailableMarker) {
-			return types.ErrNoUpdatesFound
+			return llb.State{}, types.ErrNoUpdatesFound
 		}
-		return err
+		return llb.State{}, err
 	}
 
-	return nil
+	return stateWithCheck, nil
 }
 
 func (rm *rpmManager) unpackAndMergeUpdates(ctx context.Context, updates unversioned.UpdatePackages, toolImage string, platform *ocispecs.Platform, ignoreErrors bool) (*llb.State, []byte, error) {
