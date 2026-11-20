@@ -378,7 +378,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 				require.NotNil(t, resolveOpt.ImageOpt)
 				assert.Equal(t, platform, resolveOpt.ImageOpt.Platform)
 			}).
-			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"architecture":"arm64","variant":"v8","os":"linux","config":{"labels":{}}}`), nil).
+			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, originalTestConfig(t, []byte(`{"architecture":"arm64","variant":"v8","os":"linux","config":{"labels":{}}}`)), nil).
 			Once()
 		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"sh.copa.patch.origin.kind":"image-ref","BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
 			baseDigest,
@@ -386,6 +386,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			types.AnnotationPatchOriginDigest,
 			baseDigest,
 		))
+		configData = copaOutputTestConfig(t, configData)
 
 		const patchedImage = "registry.example.com/app:patched"
 		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, patchedImage, patchedImage, digest.FromString("patched"), platform)
@@ -1518,25 +1519,20 @@ func TestUpdateImageConfigData(t *testing.T) {
 	t.Run("With base image", func(t *testing.T) {
 		mockClient := &mocks.MockGWClient{}
 		mockClient.On("ResolveImageConfig",
-			mock.Anything, mock.AnythingOfType("string"), mock.Anything).
-			Return("imageConfigString", digest.FromString("rockylinux:latest"), []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`), nil)
+			mock.Anything, "rockylinux:latest", mock.Anything).
+			Return("imageConfigString", digest.FromString("rockylinux:latest"), originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`)), nil)
 
-		configData := []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`)
-		image := "rockylinux:latest"
+		configData := copaOutputTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"rockylinux:latest"}}}`))
+		image := "rockylinux:latest-patched"
 
-		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
+		require.NoError(t, err)
 
-		expectedConfig := []byte(`{"config":{"labels":{"BaseImage":"rockylinux:latest"}}}`)
-		if !reflect.DeepEqual(resultConfig, expectedConfig) {
-			t.Errorf("Expected config data to be %s, got %s", expectedConfig, resultConfig)
-		}
-
-		if resultImage != "rockylinux:latest" {
-			t.Errorf("Expected image to be baseimage:latest, got %s", resultImage)
-		}
+		var result ispec.Image
+		require.NoError(t, json.Unmarshal(resultConfig, &result))
+		assert.Equal(t, "rockylinux:latest", result.Config.Labels["BaseImage"])
+		assert.Equal(t, "rockylinux:latest", resultImage, "the legacy BaseImage should be the re-patch base")
+		assert.NotNil(t, resultPatched, "the patched input config should be returned for a legacy re-patch")
 
 		mockClient.AssertExpectations(t)
 	})

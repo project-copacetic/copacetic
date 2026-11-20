@@ -64,10 +64,10 @@ func TestOriginIntegrityErrorClassification(t *testing.T) {
 	originalRef := "example.com/app@" + original.String()
 	patched := digest.FromString("patched input")
 	ioErr := errors.New("registry connection reset")
-	originalConfig := originIntegrityConfig(t, map[string]string{"com.example.original": "unchanged"})
+	originalConfig := originalTestConfig(t, originIntegrityConfig(t, map[string]string{"com.example.original": "unchanged"}))
 	labels := (&types.SourceLineage{Kind: types.PatchOriginImage, Name: originalRef, Digest: original}).Annotations()
 	labels["BaseImage"] = base
-	patchedConfig := originIntegrityConfig(t, labels)
+	patchedConfig := copaOutputTestConfig(t, originIntegrityConfig(t, labels))
 	withLabel := func(key, value string) []byte {
 		updated, err := AddImageConfigLabels(patchedConfig, map[string]string{key: value})
 		require.NoError(t, err)

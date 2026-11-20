@@ -81,6 +81,47 @@ func TestRecordedIndexRejectsContradictoryChildrenBeforePatching(t *testing.T) {
 	}
 }
 
+// A Dockerfile can clear an inherited origin label but not remove it, so a
+// child config with empty origin labels makes no origin claim.
+func TestRecordedIndexIgnoresClearedChildOriginLabels(t *testing.T) {
+	reader := readIndexChildMetadata
+	t.Cleanup(func() { readIndexChildMetadata = reader })
+	platform := specs.Platform{OS: "linux", Architecture: "amd64"}
+	parent := &types.SourceLineage{Kind: types.PatchOriginImage, Name: "example.com/app:original", Digest: digest.FromString("index")}
+	source := &multiPlatformSource{
+		Current: &buildkit.ImageSource{Name: "example.com/app:patched", Index: &specs.Index{Manifests: []specs.Descriptor{{
+			Digest: digest.FromString("patched child"), MediaType: specs.MediaTypeImageManifest, Platform: &platform,
+		}}}},
+		Base:         &buildkit.ImageSource{Index: &specs.Index{Manifests: []specs.Descriptor{{Digest: digest.FromString("original child"), Platform: &platform}}}},
+		IndexLineage: parent,
+	}
+	for _, tc := range []struct {
+		name    string
+		kind    string
+		wantErr string
+	}{
+		{name: "cleared"},
+		{name: "partly cleared", kind: types.PatchOriginImage, wantErr: "origin surfaces disagree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			readIndexChildMetadata = func(context.Context, localSource, string, string, *specs.Platform) (map[string]string, map[string]string, error) {
+				return nil, map[string]string{
+					"BaseImage":                       parent.Name,
+					types.AnnotationPatchOriginKind:   tc.kind,
+					types.AnnotationPatchOriginName:   "",
+					types.AnnotationPatchOriginDigest: "",
+				}, nil
+			}
+			err := validateRecordedIndexChildren(t.Context(), source)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
 func TestRecordedIndexAllowsUnverifiedPreservedChildren(t *testing.T) {
 	reader := readIndexChildMetadata
 	t.Cleanup(func() { readIndexChildMetadata = reader })

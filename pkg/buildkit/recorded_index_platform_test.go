@@ -165,6 +165,8 @@ func TestInitializeDefaultPlatformPinnedIndexRecovery(t *testing.T) {
 			}}
 			originalConfig, err := json.Marshal(original)
 			require.NoError(t, err)
+			originalConfig = originalTestConfig(t, originalConfig)
+			require.NoError(t, json.Unmarshal(originalConfig, &original))
 			index := specs.Index{
 				Versioned: specsgo.Versioned{SchemaVersion: 2}, MediaType: specs.MediaTypeImageIndex,
 				Manifests: []specs.Descriptor{{MediaType: specs.MediaTypeImageManifest, Digest: child, Platform: &platform}},
@@ -178,6 +180,7 @@ func TestInitializeDefaultPlatformPinnedIndexRecovery(t *testing.T) {
 			labels["BaseImage"] = baseRef
 			patchedConfig, err := AddImageConfigLabels(originalConfig, labels)
 			require.NoError(t, err)
+			patchedConfig = copaOutputTestConfig(t, patchedConfig)
 			gateway := &originIntegrityGateway{t: t, images: map[string]originIntegrityMetadata{
 				input:    {digest: patched, config: patchedConfig},
 				baseRef:  {digest: root, config: originalConfig},

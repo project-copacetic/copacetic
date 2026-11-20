@@ -40,7 +40,7 @@ func TestInitializeBuildkitConfigPolicySelectedSource(t *testing.T) {
 	const destination = "registry-b.example/app"
 	original, patched := digest.FromString("policy-selected original"), digest.FromString("policy-selected patch")
 	platform := &specs.Platform{OS: "linux", Architecture: "amd64"}
-	originalConfig := []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{}}}`)
+	originalConfig := originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"Labels":{}}}`))
 	for _, tc := range []struct {
 		name     string
 		selected string
@@ -63,6 +63,7 @@ func TestInitializeBuildkitConfigPolicySelectedSource(t *testing.T) {
 				var err error
 				selectedConfig, err = json.Marshal(specs.Image{Platform: *platform, Config: specs.ImageConfig{Labels: labels}})
 				require.NoError(t, err)
+				selectedConfig = copaOutputTestConfig(t, selectedConfig)
 				selectedDigest = patched
 			}
 			originalRef, err := resolvedImageReference(originalLocator, original)
