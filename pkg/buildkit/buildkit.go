@@ -3,6 +3,7 @@ package buildkit
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -3002,7 +3003,7 @@ func copyBlobFile(ctx context.Context, srcPath, dstPath string) error {
 		return fmt.Errorf("failed to open source blob %s: %w", srcPath, err)
 	}
 	defer srcFile.Close()
-	if err := replaceFile(dstPath, &contextReader{ctx: ctx, reader: srcFile}, 0o644); err != nil {
+	if err := replaceFile(dstPath, &contextReader{ctx: ctx, reader: srcFile}, 0o666); err != nil {
 		return fmt.Errorf("failed to copy blob %s: %w", srcPath, err)
 	}
 	return nil
@@ -3010,22 +3011,19 @@ func copyBlobFile(ctx context.Context, srcPath, dstPath string) error {
 
 // replaceFile writes the content of r to path through a temporary file in the
 // same directory that is renamed into place once complete, so a file already
-// at path is either left as it was or replaced as a whole. The file gets
-// perm, as the os.Create or os.WriteFile it replaces gave it under the usual
-// umask. An export writes
+// at path is either left as it was or replaced as a whole. An export writes
 // into an existing --oci-dir this way, so a failure or cancellation cannot
-// truncate a blob or layout file that was there before.
+// truncate a blob or layout file that was there before. The temporary file is
+// created with perm under the process umask, so pass the permissions that the
+// os.Create (0o666) or os.WriteFile call it replaces used, and the file gets
+// the same mode as before.
 func replaceFile(path string, r io.Reader, perm os.FileMode) error {
-	temp, err := os.CreateTemp(filepath.Dir(path), ".copa-tmp-*")
+	temp, err := createTempFile(filepath.Dir(path), perm)
 	if err != nil {
 		return err
 	}
 	tempName := temp.Name()
 	defer os.Remove(tempName)
-	if err := temp.Chmod(perm); err != nil {
-		temp.Close()
-		return err
-	}
 	if _, err := io.Copy(temp, r); err != nil {
 		temp.Close()
 		return err
@@ -3034,6 +3032,19 @@ func replaceFile(path string, r io.Reader, perm os.FileMode) error {
 		return err
 	}
 	return os.Rename(tempName, path)
+}
+
+// createTempFile creates a new file with a random hidden name in dir. Unlike
+// os.CreateTemp, which always uses 0o600, it creates the file with perm under
+// the process umask.
+func createTempFile(dir string, perm os.FileMode) (*os.File, error) {
+	for attempt := 0; ; attempt++ {
+		name := filepath.Join(dir, ".copa-tmp-"+rand.Text())
+		file, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if err == nil || !errors.Is(err, fs.ErrExist) || attempt == 100 {
+			return file, err
+		}
+	}
 }
 
 // extractTarToDirectory extracts a tar file to a directory. Cancellation stops
@@ -3438,7 +3449,7 @@ func exportPreservedPlatformsToOutput(
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			return fmt.Errorf("failed to create layer blob dir: %w", err)
 		}
-		if err := replaceFile(outPath, &contextReader{ctx: ctx, reader: rc}, 0o644); err != nil {
+		if err := replaceFile(outPath, &contextReader{ctx: ctx, reader: rc}, 0o666); err != nil {
 			return fmt.Errorf("failed to copy layer blob %s: %w", ld.String(), err)
 		}
 		blobsSet[relPath] = true
