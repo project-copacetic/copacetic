@@ -31,6 +31,16 @@ var (
 	listWorkers = func(ctx context.Context, client *buildkitclient.Client) ([]*buildkitclient.WorkerInfo, error) {
 		return client.ListWorkers(ctx)
 	}
+	runPatch = patchWithContext
+)
+
+// After a timeout or cancellation, Patch waits up to shutdownGracePeriod for
+// the patch to stop, so its deferred cleanup removes temporary directories and
+// staging output before the process exits. shutdownNoticeDelay is how long it
+// waits before telling the user it is still shutting down.
+var (
+	shutdownGracePeriod = 30 * time.Second
+	shutdownNoticeDelay = 1 * time.Second
 )
 
 // Patch command applies package updates to an OCI image given a vulnerability report for a given set of options.
@@ -52,8 +62,9 @@ func Patch(ctx context.Context, opts *types.Options) error {
 
 	ch := make(chan error, 1)
 
+	run := runPatch
 	go func() {
-		ch <- patchWithContext(timeoutCtx, opts)
+		ch <- run(timeoutCtx, opts)
 		close(ch)
 	}()
 	select {
@@ -64,10 +75,17 @@ func Patch(ctx context.Context, opts *types.Options) error {
 		}
 		return err
 	case <-timeoutCtx.Done():
-		<-time.After(1 * time.Second)
+		canceled := ctx.Err() == context.Canceled
+		finished, err := waitForPatchShutdown(ch, canceled)
+		// The patch can finish on its own just as the deadline passes. Report
+		// that outcome rather than a timeout. Other errors here are usually
+		// the cancellation itself, which is reported below.
+		if finished && (err == nil || errors.Is(err, types.ErrNoUpdatesFound)) {
+			return err
+		}
 
 		// Check if this was a cancellation (Ctrl+C) or actual timeout
-		if ctx.Err() == context.Canceled {
+		if canceled {
 			// Parent context was canceled (user pressed Ctrl+C)
 			fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
 				Title:   "Operation Canceled",
@@ -78,13 +96,40 @@ func Patch(ctx context.Context, opts *types.Options) error {
 		}
 
 		// Actual timeout
-		err := fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
+		err = fmt.Errorf("patch exceeded timeout %v", opts.Timeout)
 		fmt.Fprintln(os.Stderr, tui.RenderError(tui.ErrorInfo{
 			Title:   "Operation Timed Out",
 			Message: fmt.Sprintf("Patch exceeded timeout of %v", opts.Timeout),
 			Hint:    "Try increasing timeout with --timeout flag (e.g., --timeout 10m)",
 		}))
 		return err
+	}
+}
+
+// waitForPatchShutdown waits for the canceled patch goroutine to return, so its
+// deferred cleanup runs before the caller exits. It returns true and the
+// patch's result if the patch returned, or false after shutdownGracePeriod. The CLI
+// quits at once on a second Ctrl+C.
+func waitForPatchShutdown(done <-chan error, canceled bool) (bool, error) {
+	grace := time.NewTimer(shutdownGracePeriod)
+	defer grace.Stop()
+	notice := time.NewTimer(shutdownNoticeDelay)
+	defer notice.Stop()
+	for {
+		select {
+		case err := <-done:
+			return true, err
+		case <-notice.C:
+			// A timeout leaves the first Ctrl+C unused, so the CLI needs two.
+			hint := "press Ctrl+C twice to quit immediately"
+			if canceled {
+				hint = "press Ctrl+C again to quit immediately"
+			}
+			log.Warnf("Waiting for the patch to stop and remove temporary files (at most %v); %s", shutdownGracePeriod, hint)
+		case <-grace.C:
+			log.Warnf("Patch did not stop within %v; temporary files or a staging directory may remain", shutdownGracePeriod)
+			return false, nil
+		}
 	}
 }
 
