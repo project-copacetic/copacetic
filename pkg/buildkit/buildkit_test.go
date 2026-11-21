@@ -1701,9 +1701,9 @@ func TestOCIPublicationHonorsLateCancellation(t *testing.T) {
 
 // An atomic export owns the staging directory it is given. The BuildKit export
 // must write into that directory, not remove and recreate it, or another local
-// user could claim the path in between. A named export still replaces the
-// contents of --oci-dir. The solve itself fails here; only the directory
-// handling before it is under test.
+// user could claim the path in between. An in-place export writes next to
+// what --oci-dir holds and never empties it either. The solve itself fails
+// here; only the directory handling before it is under test.
 func TestMultiPlatformOCIExportKeepsAtomicStagingDirectory(t *testing.T) {
 	c, err := client.New(t.Context(), "tcp://127.0.0.1:1")
 	require.NoError(t, err)
@@ -1734,13 +1734,9 @@ func TestMultiPlatformOCIExportKeepsAtomicStagingDirectory(t *testing.T) {
 
 				after, err := os.Lstat(staging)
 				require.NoError(t, err)
-				if atomic {
-					assert.True(t, os.SameFile(before, after), "the staging directory must not be replaced")
-					assert.Equal(t, before.Mode(), after.Mode())
-					assert.FileExists(t, marker)
-					return
-				}
-				assert.NoFileExists(t, marker, "a named export replaces the earlier --oci-dir contents")
+				assert.True(t, os.SameFile(before, after), "the output directory must not be replaced")
+				assert.Equal(t, before.Mode(), after.Mode())
+				assert.FileExists(t, marker)
 			})
 		}
 	}

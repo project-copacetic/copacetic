@@ -2076,11 +2076,16 @@ var ociLayoutMetadataFiles = []string{specs.ImageLayoutFile, specs.ImageIndexFil
 // writeOCILayoutInPlace runs write on outputDir itself, as Copa has always
 // written a named --oci-dir when it cannot publish atomically, for example to
 // an existing directory, a mount point or a filesystem without a no-replace
-// rename. If write fails or is canceled, it removes what the export added:
-// all of outputDir if it did not exist before, or otherwise the layout
-// metadata files and blobs that were not there before. Files that existed
-// before and that the export replaced cannot be restored; the patched-only
-// export, for example, still empties outputDir before writing to it.
+// rename. The export writes next to what outputDir already holds and never
+// empties it. Blobs are named by their digest and every file is written to a
+// temporary name and renamed into place, so a blob that was already there is
+// only ever replaced by identical content, and oci-layout and index.json,
+// which are written last, replace an earlier layout's only once the export
+// has succeeded. Blobs of an earlier layout that the new one does not use are
+// left in place; they are harmless. If write fails or is canceled, this
+// removes what the export added: all of outputDir if it did not exist before,
+// or otherwise the layout metadata files and blobs that were not there
+// before, so files that were already there are left as they were.
 func writeOCILayoutInPlace(outputDir string, write func(string) error) (err error) {
 	existed, before, err := snapshotOCILayoutOutput(outputDir)
 	if err != nil {
@@ -2434,17 +2439,12 @@ func solveMultiPlatformOCI(
 		return fmt.Errorf("mismatch between states (%d) and platform metadata (%d)", len(platformStates), len(platformMetadata))
 	}
 
-	// An atomic export passes in a new staging directory that only this process
-	// can use. Removing and recreating it would let another local user claim the
-	// path in between, and the publishing rename would then move their directory
-	// or link into place. An in-place export writes to --oci-dir itself and
-	// replaces any earlier layout there.
-	if !exportOpts.Atomic {
-		os.RemoveAll(outputDir)
-		if err := os.MkdirAll(outputDir, 0o755); err != nil {
-			return fmt.Errorf("failed to create output directory: %w", err)
-		}
-	}
+	// outputDir already exists: createOCILayoutFromResultsAt created it. It is
+	// never emptied first. An atomic export passes in a new staging directory
+	// that only this process can use; removing and recreating it would let
+	// another local user claim the path in between. An in-place export writes
+	// next to what --oci-dir already holds, so a failed export can leave those
+	// files as they were (see writeOCILayoutInPlace).
 
 	if len(platformStates) == 1 {
 		// Single platform case - use output function to avoid diffcopy issues
@@ -2921,10 +2921,10 @@ func extractAndCombinePlatformTars(ctx context.Context, outputDir string, platfo
 
 	// Write the layout metadata last; see ociLayoutMetadataFiles.
 	ociLayoutContent := `{"imageLayoutVersion":"1.0.0"}`
-	if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0o600); err != nil {
+	if err := replaceFile(filepath.Join(outputDir, "oci-layout"), strings.NewReader(ociLayoutContent), 0o600); err != nil {
 		return fmt.Errorf("failed to write oci-layout: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexJSON, 0o600); err != nil {
+	if err := replaceFile(filepath.Join(outputDir, "index.json"), bytes.NewReader(indexJSON), 0o600); err != nil {
 		return fmt.Errorf("failed to write combined index.json: %w", err)
 	}
 
@@ -3002,16 +3002,38 @@ func copyBlobFile(ctx context.Context, srcPath, dstPath string) error {
 		return fmt.Errorf("failed to open source blob %s: %w", srcPath, err)
 	}
 	defer srcFile.Close()
-
-	dstFile, err := os.Create(dstPath)
-	if err != nil {
-		return fmt.Errorf("failed to create destination blob %s: %w", dstPath, err)
-	}
-	if _, err := io.Copy(dstFile, &contextReader{ctx: ctx, reader: srcFile}); err != nil {
-		dstFile.Close()
+	if err := replaceFile(dstPath, &contextReader{ctx: ctx, reader: srcFile}, 0o644); err != nil {
 		return fmt.Errorf("failed to copy blob %s: %w", srcPath, err)
 	}
-	return dstFile.Close()
+	return nil
+}
+
+// replaceFile writes the content of r to path through a temporary file in the
+// same directory that is renamed into place once complete, so a file already
+// at path is either left as it was or replaced as a whole. The file gets
+// perm, as the os.Create or os.WriteFile it replaces gave it under the usual
+// umask. An export writes
+// into an existing --oci-dir this way, so a failure or cancellation cannot
+// truncate a blob or layout file that was there before.
+func replaceFile(path string, r io.Reader, perm os.FileMode) error {
+	temp, err := os.CreateTemp(filepath.Dir(path), ".copa-tmp-*")
+	if err != nil {
+		return err
+	}
+	tempName := temp.Name()
+	defer os.Remove(tempName)
+	if err := temp.Chmod(perm); err != nil {
+		temp.Close()
+		return err
+	}
+	if _, err := io.Copy(temp, r); err != nil {
+		temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tempName, path)
 }
 
 // extractTarToDirectory extracts a tar file to a directory. Cancellation stops
@@ -3389,7 +3411,7 @@ func exportPreservedPlatformsToOutput(
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			return fmt.Errorf("failed to create blob dir: %w", err)
 		}
-		if err := os.WriteFile(outPath, data, 0o600); err != nil {
+		if err := replaceFile(outPath, bytes.NewReader(data), 0o600); err != nil {
 			return fmt.Errorf("failed to write blob %s: %w", hash.String(), err)
 		}
 		blobsSet[relPath] = true
@@ -3416,16 +3438,8 @@ func exportPreservedPlatformsToOutput(
 		if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 			return fmt.Errorf("failed to create layer blob dir: %w", err)
 		}
-		f, err := os.Create(outPath)
-		if err != nil {
-			return fmt.Errorf("failed to create layer blob file %s: %w", outPath, err)
-		}
-		if _, err := io.Copy(f, &contextReader{ctx: ctx, reader: rc}); err != nil {
-			f.Close()
+		if err := replaceFile(outPath, &contextReader{ctx: ctx, reader: rc}, 0o644); err != nil {
 			return fmt.Errorf("failed to copy layer blob %s: %w", ld.String(), err)
-		}
-		if err := f.Close(); err != nil {
-			return fmt.Errorf("failed to close layer blob file %s: %w", outPath, err)
 		}
 		blobsSet[relPath] = true
 		log.Debugf("Wrote preserved layer %s", ld.String())
@@ -3717,7 +3731,7 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 
 	// Create oci-layout file
 	ociLayoutContent := `{"imageLayoutVersion":"1.0.0"}`
-	if err := os.WriteFile(filepath.Join(outputDir, "oci-layout"), []byte(ociLayoutContent), 0o600); err != nil {
+	if err := replaceFile(filepath.Join(outputDir, "oci-layout"), strings.NewReader(ociLayoutContent), 0o600); err != nil {
 		return fmt.Errorf("failed to write oci-layout: %w", err)
 	}
 
@@ -3734,7 +3748,7 @@ func createFinalOCILayout(outputDir string, allManifests []map[string]interface{
 		return fmt.Errorf("failed to marshal combined index: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(outputDir, "index.json"), indexJSON, 0o600); err != nil {
+	if err := replaceFile(filepath.Join(outputDir, "index.json"), bytes.NewReader(indexJSON), 0o600); err != nil {
 		return fmt.Errorf("failed to write combined index.json: %w", err)
 	}
 

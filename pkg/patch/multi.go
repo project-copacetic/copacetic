@@ -19,6 +19,7 @@ import (
 	ispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/pkg/buildkit"
 	"github.com/project-copacetic/copacetic/pkg/common"
+	"github.com/project-copacetic/copacetic/pkg/ocilayout"
 	"github.com/project-copacetic/copacetic/pkg/tui"
 	"github.com/project-copacetic/copacetic/pkg/types"
 	"github.com/project-copacetic/copacetic/pkg/vex"
@@ -165,7 +166,10 @@ func patchPreparedMultiPlatformImage(
 	if err := rejectPatchedOCITargets(ctx, opts.OCISource, platforms); err != nil {
 		return err
 	}
-	ociDirAtomic := canPublishOCIDirAtomically(opts)
+	ociDirAtomic, err := checkOCIDir(opts)
+	if err != nil {
+		return err
+	}
 
 	// OCI layout input is read only from the layout, so it has no registry or
 	// daemon source to capture and records no patch origin.
@@ -655,16 +659,21 @@ func patchPreparedMultiPlatformImage(
 	return nil
 }
 
-// canPublishOCIDirAtomically decides, before any platform is patched, whether
-// the --oci-dir export of a named image can be staged beside --oci-dir and
-// published with a no-replace rename, so that a failed, timed out or canceled
-// export never leaves a partial layout there. Otherwise, for example for an
-// existing directory, a mount point, or a filesystem without that rename, the
-// export writes into --oci-dir as before and removes what it added if it
-// fails. Layout input is always published atomically.
-func canPublishOCIDirAtomically(opts *types.Options) bool {
+// checkOCIDir runs before any platform is patched. For the --oci-dir export
+// of a named image, it rejects a path that is not a directory of its own, such
+// as "." or a parent of the current directory, and decides whether the export
+// can be staged beside --oci-dir and published with a no-replace rename, so
+// that a failed, timed out or canceled export never leaves a partial layout
+// there. Otherwise, for example for an existing directory, a mount point, or a
+// filesystem without that rename, the export writes into --oci-dir next to
+// what it holds and removes what it added if it fails. Layout input is always
+// published atomically and is not checked here.
+func checkOCIDir(opts *types.Options) (bool, error) {
 	if opts.OCIDir == "" || opts.Push || opts.OCISource != nil {
-		return false
+		return false, nil
+	}
+	if err := ocilayout.ValidateOutputDirectory(opts.OCIDir); err != nil {
+		return false, err
 	}
 	staged, reason := buildkit.CanPublishOCILayoutAtomically(opts.OCIDir)
 	if staged {
@@ -672,13 +681,13 @@ func canPublishOCIDirAtomically(opts *types.Options) bool {
 	} else {
 		log.Debugf("The OCI layout will be written into %s in place: %v", opts.OCIDir, reason)
 	}
-	return staged
+	return staged, nil
 }
 
 // pathExists reports whether anything exists at path. The --oci-dir export
 // writes in place if something, such as a VEX document, a working folder or
 // TMPDIR inside it, or another bulk job, created --oci-dir after
-// canPublishOCIDirAtomically checked it.
+// checkOCIDir checked it.
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return !os.IsNotExist(err)

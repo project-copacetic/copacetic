@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/distribution/reference"
@@ -85,8 +87,9 @@ func assertDirEmpty(t *testing.T, dir, msg string) {
 }
 
 // assertNamedOCILayout checks that output holds a named export's layout, which
-// lists each platform manifest in index.json itself.
-func assertNamedOCILayout(t *testing.T, output string, platforms []ispec.Platform) {
+// lists each platform manifest in index.json itself, and nothing besides the
+// given other entries.
+func assertNamedOCILayout(t *testing.T, output string, platforms []ispec.Platform, others ...string) {
 	t.Helper()
 	var index ispec.Index
 	require.NoError(t, json.Unmarshal(mustReadFile(t, filepath.Join(output, ispec.ImageIndexFile)), &index))
@@ -98,8 +101,8 @@ func assertNamedOCILayout(t *testing.T, output string, platforms []ispec.Platfor
 	}
 	assert.ElementsMatch(t, platforms, found)
 	assert.FileExists(t, filepath.Join(output, ispec.ImageLayoutFile))
-	assert.Equal(t, []string{"blobs", ispec.ImageIndexFile, ispec.ImageLayoutFile}, dirEntryNames(t, output),
-		"no export tar or extraction directory may remain in the layout")
+	assert.ElementsMatch(t, append([]string{"blobs", ispec.ImageIndexFile, ispec.ImageLayoutFile}, others...), dirEntryNames(t, output),
+		"no export tar, extraction directory or temporary file may remain in the layout")
 }
 
 // stubSinglePlatformTempCheck wraps the stubbed fake exporter to check that a
@@ -143,8 +146,27 @@ func TestNamedOCIExportPublishesAtomically(t *testing.T) {
 	}
 }
 
-// An existing directory is written in place, as before atomic publication was
-// added: an empty one receives the layout, and a non-empty one is overwritten.
+// earlierLayoutFiles are what an existing --oci-dir holds before an export
+// into it: an earlier layout and a file of the user's.
+var earlierLayoutFiles = map[string]string{
+	"notes.txt":                               "user file",
+	ispec.ImageLayoutFile:                     `{"imageLayoutVersion":"1.0.0"}`,
+	ispec.ImageIndexFile:                      `{"earlier":"layout"}`,
+	"blobs/sha256/" + strings.Repeat("e", 64): "blob of the earlier layout",
+}
+
+func writeEarlierLayout(t *testing.T, output string) {
+	t.Helper()
+	for name, content := range earlierLayoutFiles {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(output, name)), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(output, name), []byte(content), 0o600))
+	}
+}
+
+// An existing directory is written in place, next to what it holds: an empty
+// one receives the layout, and in one that holds an earlier layout, the new
+// index.json and oci-layout replace the earlier ones while the user's files
+// and the earlier layout's unused blobs stay.
 func TestNamedOCIExportWritesExistingDirectoryInPlace(t *testing.T) {
 	for _, platforms := range [][]ispec.Platform{{ociExportAMD64}, {ociExportAMD64, ociExportARM64}} {
 		for _, empty := range []bool{true, false} {
@@ -158,19 +180,85 @@ func TestNamedOCIExportWritesExistingDirectoryInPlace(t *testing.T) {
 				parent := t.TempDir()
 				output := filepath.Join(parent, "output")
 				require.NoError(t, os.Mkdir(output, 0o755))
+				var others []string
 				if !empty {
-					require.NoError(t, os.WriteFile(filepath.Join(output, ispec.ImageIndexFile), []byte(`{"earlier":"layout"}`), 0o600))
+					writeEarlierLayout(t, output)
+					others = []string{"notes.txt"}
 				}
 				staged, _ := CanPublishOCILayoutAtomically(output)
 				require.False(t, staged, "an existing directory cannot be published atomically")
 
 				require.NoError(t, CreateOCILayoutFromResultsWithContext(t.Context(), output, results, patchPlatforms, namedOCIExportOptions(false)))
-				assertNamedOCILayout(t, output, platforms)
+				assertNamedOCILayout(t, output, platforms, others...)
+				if !empty {
+					assert.Equal(t, "user file", string(mustReadFile(t, filepath.Join(output, "notes.txt"))))
+					assert.FileExists(t, filepath.Join(output, "blobs", "sha256", strings.Repeat("e", 64)),
+						"an earlier layout's unused blob is left in place")
+				}
 				assert.Equal(t, []string{"output"}, dirEntryNames(t, parent))
 				assertDirEmpty(t, tmp, "temporary platform directories must be removed")
 			})
 		}
 	}
+}
+
+// assertEarlierLayoutKept checks that output holds exactly what
+// writeEarlierLayout put there.
+func assertEarlierLayoutKept(t *testing.T, output string) {
+	t.Helper()
+	var found []string
+	require.NoError(t, filepath.WalkDir(output, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		name, err := filepath.Rel(output, path)
+		if err != nil {
+			return err
+		}
+		found = append(found, filepath.ToSlash(name))
+		return nil
+	}))
+	expected := make([]string, 0, len(earlierLayoutFiles))
+	for name, content := range earlierLayoutFiles {
+		expected = append(expected, name)
+		assert.Equal(t, content, string(mustReadFile(t, filepath.Join(output, name))), name)
+	}
+	assert.ElementsMatch(t, expected, found, "the export must remove everything it added and nothing else")
+}
+
+// A multi-platform export into an existing directory that fails after it has
+// written blobs there, here because a later platform's export cannot be
+// unpacked, keeps the user's files and the earlier layout as they were.
+func TestNamedOCIExportFailureInPlaceKeepsExistingFiles(t *testing.T) {
+	tmp := isolateTempDir(t)
+	stubOCIExporter(t, nil)
+	fake := buildOCIExport
+	solves := 0
+	buildOCIExport = func(ctx context.Context, c *client.Client, solveOpt client.SolveOpt, build gwclient.BuildFunc) error {
+		solves++
+		if solves < 3 {
+			return fake(ctx, c, solveOpt, build)
+		}
+		// The third platform's export is not a tar, so unpacking it fails
+		// after the earlier platforms' blobs were copied.
+		output, err := solveOpt.Exports[0].Output(nil)
+		if err != nil {
+			return err
+		}
+		if _, err := output.Write([]byte("not a tar archive")); err != nil {
+			return err
+		}
+		return output.Close()
+	}
+	platforms := []ispec.Platform{ociExportAMD64, ociExportARM64, {OS: "linux", Architecture: "s390x"}}
+	results, patchPlatforms := namedOCIExportResults(t, platforms)
+	output := t.TempDir()
+	writeEarlierLayout(t, output)
+
+	err := CreateOCILayoutFromResultsWithContext(t.Context(), output, results, patchPlatforms, namedOCIExportOptions(false))
+	require.ErrorContains(t, err, "failed to extract tar")
+	assertEarlierLayoutKept(t, output)
+	assertDirEmpty(t, tmp, "temporary platform directories must be removed")
 }
 
 // interruptingOCIExporter wraps the fake exporter so that the export solve with
@@ -208,8 +296,8 @@ func interruptingOCIExporter(t *testing.T, cancel context.CancelFunc, interrupt 
 
 // A named export that fails or is canceled partway must not leave a partial
 // layout: an atomic export leaves nothing at or beside the destination, an
-// in-place export removes a directory it created and leaves no layout
-// metadata in an existing one, and neither leaves temporary directories.
+// in-place export removes a directory it created and leaves an existing one
+// as it was, and neither leaves temporary directories.
 func TestNamedOCIExportInterruptedLeavesNoLayout(t *testing.T) {
 	solveErr := errors.New("solve failed")
 	for _, mode := range []string{"atomic", "in place, new directory", "in place, existing directory"} {
@@ -234,6 +322,7 @@ func TestNamedOCIExportInterruptedLeavesNoLayout(t *testing.T) {
 				output := filepath.Join(parent, "output")
 				if mode == "in place, existing directory" {
 					require.NoError(t, os.Mkdir(output, 0o755))
+					writeEarlierLayout(t, output)
 				}
 
 				err := CreateOCILayoutFromResultsWithContext(ctx, output, results, patchPlatforms, namedOCIExportOptions(mode == "atomic"))
@@ -244,10 +333,8 @@ func TestNamedOCIExportInterruptedLeavesNoLayout(t *testing.T) {
 				}
 				assert.Positive(t, *solves)
 				if mode == "in place, existing directory" {
-					// The patched-only export empties an existing directory
-					// before writing to it, as it always has.
 					assert.Equal(t, []string{"output"}, dirEntryNames(t, parent))
-					assertDirEmpty(t, output, "no partial layout may remain in the existing directory")
+					assertEarlierLayoutKept(t, output)
 				} else {
 					assertDirEmpty(t, parent, "no partial layout or staging directory may remain beside the destination")
 				}
