@@ -11,10 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestPatchFedora45 patches the pinned Fedora 45 index. CI sets
+// COPA_TEST_FEDORA45_INDEX to a multi-platform copy whose repositories use a
+// fixed server instead of the Fedora metalink, so the test doesn't depend on
+// which mirror dnf is given; see .github/workflows/scripts/singlearch-fixture.sh.
 func TestPatchFedora45(t *testing.T) {
 	const sourceRef = "localhost:5000/fedora:45-cli-source"
 	arches := []string{"amd64", "arm64"}
-	copyImage(t, common.Fedora45Image, sourceRef)
+	source := common.Fedora45Image
+	if override := os.Getenv("COPA_TEST_FEDORA45_INDEX"); override != "" {
+		t.Logf("using COPA_TEST_FEDORA45_INDEX=%s", override)
+		source = override
+	}
+	copyImage(t, source, sourceRef)
 
 	before := make(map[string]string, len(arches))
 	for _, arch := range arches {

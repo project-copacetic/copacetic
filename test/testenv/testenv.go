@@ -104,6 +104,23 @@ func (e *TestEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts ..
 		solveOpt.Exports = nil
 	}
 
+	// Collect step output so a failure shows what the failing step printed.
+	logs := newBuildLog()
+	statusCh := make(chan *client.SolveStatus)
+	logsDone := make(chan struct{})
+	go func() {
+		defer close(logsDone)
+		logs.consume(statusCh)
+	}()
+	defer func() {
+		<-logsDone
+		if t.Failed() {
+			if out := logs.String(); out != "" {
+				t.Logf("BuildKit step output:\n%s", out)
+			}
+		}
+	}()
+
 	var testErr error
 	_, err := e.client.Build(ctx, solveOpt, "copa-test", func(ctx context.Context, c gwclient.Client) (*gwclient.Result, error) {
 		// Capture any test failures via panic recovery
@@ -119,7 +136,7 @@ func (e *TestEnv) RunTest(ctx context.Context, t *testing.T, f TestFunc, opts ..
 
 		f(ctx, t, c)
 		return &gwclient.Result{}, nil
-	}, nil)
+	}, statusCh)
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
