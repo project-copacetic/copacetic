@@ -22,6 +22,7 @@ copa patch \
 ```
 
 - Copa also loads each patched platform image into the local image store, as described in [Multi-Platform Patching](./multiplatform-patching.md).
+- If the `--oci-dir` path does not exist yet, Copa writes the layout to a hidden `.copa-oci-output-*` directory beside it and moves it into place only once the export is complete, so a failed, timed out, or canceled export leaves nothing there. If the path already exists, or its filesystem cannot do this (for example some FUSE or network mounts), Copa writes the layout into the directory as before, writes `index.json` and `oci-layout` last, and removes what it added if the export fails or is canceled.
 - `--oci-dir` is not written for a single-platform image patched by name; that image is loaded into the local image store instead.
 - Preserved platforms keep their original blobs and layer compression. New patch layers use `--compression` (default `uncompressed`); see the [Quick Start](./quick-start.md) for details.
 - In [bulk mode](./bulk-image-patching.md), `--oci-dir` applies to every job in the config.

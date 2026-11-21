@@ -165,6 +165,7 @@ func patchPreparedMultiPlatformImage(
 	if err := rejectPatchedOCITargets(ctx, opts.OCISource, platforms); err != nil {
 		return err
 	}
+	ociDirAtomic := canPublishOCIDirAtomically(opts)
 
 	// OCI layout input is read only from the layout, so it has no registry or
 	// daemon source to capture and records no patch origin.
@@ -634,6 +635,9 @@ func patchPreparedMultiPlatformImage(
 				return err
 			}
 		}
+		if opts.OCISource == nil {
+			exportOpts.Atomic = ociDirAtomic && !pathExists(opts.OCIDir)
+		}
 		if err := buildkit.CreateOCILayoutFromResultsWithContext(ctx,
 			opts.OCIDir,
 			patchResults,
@@ -649,6 +653,35 @@ func patchPreparedMultiPlatformImage(
 		return writeOCIVEX(ctx, opts, resultsInPlatformOrder(platforms, patchResults), patchedImageName.String())
 	}
 	return nil
+}
+
+// canPublishOCIDirAtomically decides, before any platform is patched, whether
+// the --oci-dir export of a named image can be staged beside --oci-dir and
+// published with a no-replace rename, so that a failed, timed out or canceled
+// export never leaves a partial layout there. Otherwise, for example for an
+// existing directory, a mount point, or a filesystem without that rename, the
+// export writes into --oci-dir as before and removes what it added if it
+// fails. Layout input is always published atomically.
+func canPublishOCIDirAtomically(opts *types.Options) bool {
+	if opts.OCIDir == "" || opts.Push || opts.OCISource != nil {
+		return false
+	}
+	staged, reason := buildkit.CanPublishOCILayoutAtomically(opts.OCIDir)
+	if staged {
+		log.Debugf("The OCI layout will be staged beside %s and published once complete", opts.OCIDir)
+	} else {
+		log.Debugf("The OCI layout will be written into %s in place: %v", opts.OCIDir, reason)
+	}
+	return staged
+}
+
+// pathExists reports whether anything exists at path. The --oci-dir export
+// writes in place if something, such as a VEX document, a working folder or
+// TMPDIR inside it, or another bulk job, created --oci-dir after
+// canPublishOCIDirAtomically checked it.
+func pathExists(path string) bool {
+	_, err := os.Lstat(path)
+	return !os.IsNotExist(err)
 }
 
 // resolveOCIReportDirPlatform matches a report in a report directory to a
