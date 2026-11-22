@@ -1173,12 +1173,24 @@ func updateImageConfigData(
 	} else {
 		// Legacy images have only a mutable BaseImage locator. Preserve their
 		// existing best-effort behavior without asserting verified original identity.
+		useCurrentImage := func() ([]byte, []byte, string, *types.SourceLineage, bool, error) {
+			document.labels["BaseImage"] = locator
+			current, marshalErr := document.marshal()
+			return current, nil, image, nil, false, marshalErr
+		}
 		_, _, baseConfig, err = c.ResolveImageConfig(ctx, baseImage, resolveOpt)
 		if err != nil {
 			log.Warnf("Failed to resolve legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, err, image)
-			document.labels["BaseImage"] = locator
-			fallback, marshalErr := document.marshal()
-			return fallback, nil, image, nil, false, marshalErr
+			return useCurrentImage()
+		}
+		// The locator may now name an image for another platform, and a
+		// single-platform manifest resolves whatever platform is requested.
+		// A base that matches the platform the image declares is its base, even
+		// when the requested platform is only the host default, so compare with
+		// the requested platform only when the image declares none.
+		if err := verifyBasePlatform(configData, baseConfig, legacyRequestedPlatform(configData, platform), "BaseImage"); err != nil {
+			log.Warnf("Not using legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, err, image)
+			return useCurrentImage()
 		}
 		log.Warn("Re-patching a legacy BaseImage-only image without verified patch origin")
 	}
@@ -1196,31 +1208,49 @@ func updateImageConfigData(
 // otherwise rebuild the patch on a foreign root filesystem. An origin that
 // cannot be compared with any platform is rejected rather than trusted.
 func verifyRecoveredOriginPlatform(inputConfig, originConfig []byte, requested *specs.Platform) error {
-	var input, origin specs.Platform
+	return verifyBasePlatform(inputConfig, originConfig, requested, "recorded patch origin")
+}
+
+// legacyRequestedPlatform returns the requested platform to check a legacy
+// BaseImage against: none when the patched image config declares its own
+// platform, since the base is then compared with that platform.
+func legacyRequestedPlatform(inputConfig []byte, requested *specs.Platform) *specs.Platform {
+	var input specs.Platform
+	if err := json.Unmarshal(inputConfig, &input); err == nil && input.OS != "" && input.Architecture != "" {
+		return nil
+	}
+	return requested
+}
+
+// verifyBasePlatform checks that the base config a re-patch would rebuild from
+// declares the platform of the patched image and of the requested platform.
+// subject names the base in error messages.
+func verifyBasePlatform(inputConfig, baseConfig []byte, requested *specs.Platform, subject string) error {
+	var input, base specs.Platform
 	if err := json.Unmarshal(inputConfig, &input); err != nil {
 		return fmt.Errorf("parse patched image platform: %w", err)
 	}
 	inputDeclared := input.OS != "" && input.Architecture != ""
 	if !inputDeclared && requested == nil {
-		return errors.New("cannot verify recorded patch origin platform: the patched image config does not declare its platform and no target platform was requested")
+		return fmt.Errorf("cannot verify %s platform: the patched image config does not declare its platform and no target platform was requested", subject)
 	}
-	if err := json.Unmarshal(originConfig, &origin); err != nil {
-		return fmt.Errorf("parse recorded patch origin platform: %w", err)
+	if err := json.Unmarshal(baseConfig, &base); err != nil {
+		return fmt.Errorf("parse %s platform: %w", subject, err)
 	}
-	if origin.OS == "" || origin.Architecture == "" {
-		return errors.New("recorded patch origin config does not declare its platform")
+	if base.OS == "" || base.Architecture == "" {
+		return fmt.Errorf("%s config does not declare its platform", subject)
 	}
-	if inputDeclared && !platformIdentityEqual(&origin, &input) {
-		return fmt.Errorf("recorded patch origin platform %s does not match patched image platform %s",
-			platforms.FormatAll(origin), platforms.FormatAll(input))
+	if inputDeclared && !platformIdentityEqual(&base, &input) {
+		return fmt.Errorf("%s platform %s does not match patched image platform %s",
+			subject, platforms.FormatAll(base), platforms.FormatAll(input))
 	}
 	// A requested platform may omit identity details such as a Windows
 	// os.version, so compare only the fields that select a root filesystem.
 	if requested != nil {
-		want, got := platforms.Normalize(*requested), platforms.Normalize(origin)
+		want, got := platforms.Normalize(*requested), platforms.Normalize(base)
 		if want.OS != got.OS || want.Architecture != got.Architecture || want.Variant != got.Variant {
-			return fmt.Errorf("recorded patch origin platform %s does not match requested platform %s",
-				platforms.FormatAll(origin), platforms.FormatAll(*requested))
+			return fmt.Errorf("%s platform %s does not match requested platform %s",
+				subject, platforms.FormatAll(base), platforms.FormatAll(*requested))
 		}
 	}
 	return nil
