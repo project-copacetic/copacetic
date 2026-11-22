@@ -123,3 +123,109 @@ func TestUpdateImageConfigDataRejectsCrossPlatformOrigin(t *testing.T) {
 		})
 	}
 }
+
+// A legacy BaseImage-only image has no recorded digest, so its mutable locator
+// may now name an image for another platform. Copa must fall back to the
+// current image instead of rebuilding the patch on that image's root filesystem.
+func TestUpdateImageConfigDataChecksLegacyBaseImagePlatform(t *testing.T) {
+	const (
+		original = "example.com/app:original"
+		patched  = "example.com/app:patched"
+	)
+	imageConfig := func(t *testing.T, platform specs.Platform, labels map[string]string) []byte {
+		t.Helper()
+		config, err := json.Marshal(specs.Image{Platform: platform, Config: specs.ImageConfig{Labels: labels}})
+		require.NoError(t, err)
+		return config
+	}
+	legacyInput := func(t *testing.T, platform specs.Platform) []byte {
+		t.Helper()
+		return imageConfig(t, platform, map[string]string{"BaseImage": original})
+	}
+
+	amd64 := specs.Platform{OS: "linux", Architecture: "amd64"}
+	arm64 := specs.Platform{OS: "linux", Architecture: "arm64"}
+	arm64v8 := specs.Platform{OS: "linux", Architecture: "arm64", Variant: "v8"}
+
+	for _, tc := range []struct {
+		name         string
+		input        []byte
+		base         []byte
+		requested    *specs.Platform
+		wantFallback bool
+	}{
+		{
+			name:         "base for another platform falls back",
+			input:        legacyInput(t, arm64),
+			base:         imageConfig(t, amd64, nil),
+			wantFallback: true,
+		},
+		{
+			name:         "base for another platform than requested falls back",
+			input:        legacyInput(t, specs.Platform{}),
+			base:         imageConfig(t, amd64, nil),
+			requested:    &arm64,
+			wantFallback: true,
+		},
+		{
+			name:         "base without a declared platform falls back",
+			input:        legacyInput(t, arm64),
+			base:         imageConfig(t, specs.Platform{}, nil),
+			wantFallback: true,
+		},
+		{
+			name:         "undeclared input with no requested platform falls back",
+			input:        legacyInput(t, specs.Platform{}),
+			base:         imageConfig(t, arm64, nil),
+			wantFallback: true,
+		},
+		{
+			name:  "matching base is used",
+			input: legacyInput(t, arm64),
+			base:  imageConfig(t, arm64, nil),
+		},
+		{
+			name:      "normalized arm64 variant matches the requested platform",
+			input:     legacyInput(t, arm64v8),
+			base:      imageConfig(t, arm64, nil),
+			requested: &arm64,
+		},
+		{
+			name:      "undeclared input uses a base that matches the requested platform",
+			input:     legacyInput(t, specs.Platform{}),
+			base:      imageConfig(t, arm64, nil),
+			requested: &arm64,
+		},
+		{
+			// Some paths request the host's default platform rather than the image's.
+			name:      "base matching the declared input platform is used when the request differs",
+			input:     legacyInput(t, arm64),
+			base:      imageConfig(t, arm64, nil),
+			requested: &amd64,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client := &mocks.MockGWClient{}
+			client.On("ResolveImageConfig", mock.Anything, original, mock.Anything).Return(original, digest.FromString("current tag"), tc.base, nil)
+
+			config, patchedConfig, base, lineage, validated, err := updateImageConfigData(t.Context(), client, tc.input, patched, patched, digest.FromString("P1"), tc.requested)
+			require.NoError(t, err)
+			require.Nil(t, lineage)
+			require.False(t, validated)
+			if tc.wantFallback {
+				require.Equal(t, patched, base, "a mismatched legacy BaseImage must not be used as the re-patch base")
+				require.Nil(t, patchedConfig)
+				var image specs.Image
+				require.NoError(t, json.Unmarshal(config, &image))
+				require.Equal(t, patched, image.Config.Labels["BaseImage"])
+				return
+			}
+			require.Equal(t, original, base)
+			require.NotNil(t, patchedConfig)
+			var image specs.Image
+			require.NoError(t, json.Unmarshal(config, &image))
+			require.Equal(t, original, image.Config.Labels["BaseImage"])
+			client.AssertExpectations(t)
+		})
+	}
+}

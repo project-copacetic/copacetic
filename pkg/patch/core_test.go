@@ -58,9 +58,9 @@ func (c *recordedBaseNativePatchedGateway) ResolveImageConfig(
 	switch ref {
 	case testNativeSuppliedImage, testNativeSuppliedDigestRef:
 		resolved = digest.FromString(testNativeSuppliedImage)
-		config = []byte(`{"config":{"labels":{"BaseImage":"` + testRecordedBaseImage + `"}}}`)
+		config = []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"` + testRecordedBaseImage + `"}}}`)
 	case testRecordedBaseImage:
-		config = []byte(`{"config":{"labels":{}}}`)
+		config = []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`)
 	default:
 		return "", "", nil, errors.New("unexpected image config reference: " + ref)
 	}

@@ -82,8 +82,28 @@ The copies are single-platform `linux/amd64` images, so with
 of selecting a platform from the multi-platform index. The other
 `isManifestList` entries still cover that path.
 
-`build` always builds all three fixtures and `load` requires all three
-variables, so every job that calls the script gets the full set. The
-`buildkitenvs` scripts select a host-network BuildKit when
-`COPA_TEST_OPENSSL_IMAGE` is set, and the AlmaLinux cases rely on that switch
-to reach the loopback registry as well.
+`build` always builds all four fixtures, including the Fedora one below, and
+`load` requires all four variables, so every job that calls the script gets the
+full set. The `buildkitenvs` scripts select a host-network BuildKit when
+`COPA_TEST_OPENSSL_IMAGE` is set, and the AlmaLinux and Fedora cases rely on
+that switch to reach the loopback registry as well.
+
+## Fedora 45 repository fixtures
+
+The pinned Fedora 45 image (`Fedora45Image` in
+[`integration/common/fedora.go`](../../common/fedora.go)) resolves its
+repositories through the Fedora metalink, which can hand dnf a community mirror
+that is mid-sync or doesn't yet carry the update `TestPatchFedora45` expects.
+[`fedora-baseurl/Dockerfile`](fedora-baseurl/Dockerfile) copies that image with
+the `fedora` and `updates` repositories pointed at `dl.fedoraproject.org` and
+the other repositories disabled. Pass `--build-arg FEDORA_MIRROR=<url>` to use
+another server with the same layout.
+
+| Variable | Built by | Used by |
+| --- | --- | --- |
+| `COPA_TEST_FEDORA45_IMAGE` | `build`, as a `linux/amd64` image in the loopback registry | `TestPatchFedora45` in the gateway tests |
+| `COPA_TEST_FEDORA45_INDEX` | `fedora-index IMAGE`, as a `linux/amd64` and `linux/arm64` index pushed to `IMAGE` | `TestPatchFedora45` in the multiarch tests |
+
+The multiarch Fedora job runs `fedora-index localhost:5000/copa-fedora:45-baseurl`
+against the registry it already starts. When a variable is unset, as in a plain
+local run, the tests use the stock image.

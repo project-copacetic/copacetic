@@ -504,6 +504,10 @@ jobs:
           ./copa --version
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - name: Build Fedora fixture
+        if: matrix.test_suite == 'fedora'
+        shell: bash
+        run: .github/workflows/scripts/singlearch-fixture.sh fedora-index localhost:5000/copa-fedora:45-baseurl
       - name: Run functional test
         shell: bash
         run: |

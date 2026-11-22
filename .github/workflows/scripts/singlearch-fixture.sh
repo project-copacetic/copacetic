@@ -46,6 +46,19 @@ almalinux_fixtures() {
         "${repo_root}/integration/singlearch/fixtures/test-images.json"
 }
 
+# The Fedora 45 fixture switches the pinned image's repositories from the Fedora
+# metalink to a fixed server. Its base is integration/common.Fedora45Image.
+fedora_context="${repo_root}/integration/singlearch/fixtures/fedora-baseurl"
+fedora45_base() {
+    local base
+    base="$(sed -n 's/^const Fedora45Image = "\(.*\)"$/\1/p' "${repo_root}/integration/common/fedora.go")"
+    if [[ "$base" != *@sha256:* ]]; then
+        echo "Could not read a pinned Fedora45Image from integration/common/fedora.go: ${base}" >&2
+        return 1
+    fi
+    printf '%s\n' "$base"
+}
+
 case "${1:-}" in
     build)
         fixture_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/copa-openssl.XXXXXX")"
@@ -84,6 +97,9 @@ case "${1:-}" in
                 "${repo_root}/integration/singlearch/fixtures/almalinux-baseurl" \
                 --pull --build-arg "BASE_IMAGE=${base}"
         done <<< "$almalinux"
+        fedora_base="$(fedora45_base)"
+        build_fixture "$fixture_dir" "$address" copa-fedora 45 COPA_TEST_FEDORA45_IMAGE "$fedora_context" \
+            --build-arg "BASE_IMAGE=${fedora_base}"
         # Preserve registry bytes across Docker versions; save/load can rewrite
         # the manifest even when the image filesystem is unchanged.
         mkdir "${fixture_dir}/registry"
@@ -93,6 +109,7 @@ case "${1:-}" in
         : "${COPA_TEST_OPENSSL_IMAGE:?run the build step first}"
         : "${COPA_TEST_ALMALINUX9_IMAGE:?run the build step first}"
         : "${COPA_TEST_ALMALINUX94_IMAGE:?run the build step first}"
+        : "${COPA_TEST_FEDORA45_IMAGE:?run the build step first}"
         if [[ "${DOCKER_HOST:-$COPA_TEST_OPENSSL_DOCKER_HOST}" != "$COPA_TEST_OPENSSL_DOCKER_HOST" ]]; then
             # custom-unix runs a separate dockerd. Its loopback registry needs the same
             # bytes and address; keep that daemon's networking isolated from the host.
@@ -108,7 +125,8 @@ case "${1:-}" in
                 sleep 1
             done
             timeout 5s docker exec "$COPA_TEST_OPENSSL_REGISTRY" wget -T 2 -q -O /dev/null http://127.0.0.1:5000/v2/
-            for image in "$COPA_TEST_OPENSSL_IMAGE" "$COPA_TEST_ALMALINUX9_IMAGE" "$COPA_TEST_ALMALINUX94_IMAGE"; do
+            for image in "$COPA_TEST_OPENSSL_IMAGE" "$COPA_TEST_ALMALINUX9_IMAGE" "$COPA_TEST_ALMALINUX94_IMAGE" \
+                "$COPA_TEST_FEDORA45_IMAGE"; do
                 name="${image#*/}"
                 name="${name%%[:@]*}"
                 expected="${image##*@}"
@@ -137,7 +155,8 @@ case "${1:-}" in
                 timeout 30s docker --host "$host" buildx rm "$COPA_TEST_BUILDX_BUILDER" || true
             fi
             timeout 30s docker --host "$host" rm -fv "$COPA_TEST_OPENSSL_REGISTRY" || true
-            for tag in "${COPA_TEST_OPENSSL_TAG:-}" "${COPA_TEST_ALMALINUX9_TAG:-}" "${COPA_TEST_ALMALINUX94_TAG:-}"; do
+            for tag in "${COPA_TEST_OPENSSL_TAG:-}" "${COPA_TEST_ALMALINUX9_TAG:-}" "${COPA_TEST_ALMALINUX94_TAG:-}" \
+                "${COPA_TEST_FEDORA45_TAG:-}"; do
                 if [[ -n "$tag" ]]; then
                     timeout 30s docker --host "$host" image rm "$tag" || true
                 fi
@@ -145,8 +164,18 @@ case "${1:-}" in
             rm -rf -- "$COPA_TEST_OPENSSL_DIR"
         fi
         ;;
+    fedora-index)
+        # The multiarch Fedora suite needs both architectures, so it gets its own
+        # multi-platform copy, pushed to the registry that job already runs.
+        image="${2:?usage: $0 fedora-index IMAGE}"
+        fedora_base="$(fedora45_base)"
+        docker buildx build --builder default --platform linux/amd64,linux/arm64 --no-cache \
+            --provenance=false --sbom=false --push --tag "$image" \
+            --build-arg "BASE_IMAGE=${fedora_base}" "$fedora_context"
+        record_env COPA_TEST_FEDORA45_INDEX "$image"
+        ;;
     *)
-        echo "usage: $0 build|load|cleanup" >&2
+        echo "usage: $0 build|load|cleanup|fedora-index IMAGE" >&2
         exit 2
         ;;
 esac

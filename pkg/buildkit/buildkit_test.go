@@ -1518,25 +1518,20 @@ func TestUpdateImageConfigData(t *testing.T) {
 	t.Run("With base image", func(t *testing.T) {
 		mockClient := &mocks.MockGWClient{}
 		mockClient.On("ResolveImageConfig",
-			mock.Anything, mock.AnythingOfType("string"), mock.Anything).
-			Return("imageConfigString", digest.FromString("rockylinux:latest"), []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`), nil)
+			mock.Anything, "rockylinux:latest", mock.Anything).
+			Return("imageConfigString", digest.FromString("rockylinux:latest"), []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`), nil)
 
-		configData := []byte(`{"config": {"labels": {"BaseImage": "rockylinux:latest"}}}`)
-		image := "rockylinux:latest"
+		configData := []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"rockylinux:latest"}}}`)
+		image := "rockylinux:latest-patched"
 
-		resultConfig, _, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
-		if err != nil {
-			t.Fatalf("Unexpected error: %v", err)
-		}
+		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
+		require.NoError(t, err)
 
-		expectedConfig := []byte(`{"config":{"labels":{"BaseImage":"rockylinux:latest"}}}`)
-		if !reflect.DeepEqual(resultConfig, expectedConfig) {
-			t.Errorf("Expected config data to be %s, got %s", expectedConfig, resultConfig)
-		}
-
-		if resultImage != "rockylinux:latest" {
-			t.Errorf("Expected image to be baseimage:latest, got %s", resultImage)
-		}
+		var result ispec.Image
+		require.NoError(t, json.Unmarshal(resultConfig, &result))
+		assert.Equal(t, "rockylinux:latest", result.Config.Labels["BaseImage"])
+		assert.Equal(t, "rockylinux:latest", resultImage, "the legacy BaseImage should be the re-patch base")
+		assert.NotNil(t, resultPatched, "the patched input config should be returned for a legacy re-patch")
 
 		mockClient.AssertExpectations(t)
 	})
@@ -1701,9 +1696,9 @@ func TestOCIPublicationHonorsLateCancellation(t *testing.T) {
 
 // An atomic export owns the staging directory it is given. The BuildKit export
 // must write into that directory, not remove and recreate it, or another local
-// user could claim the path in between. A named export still replaces the
-// contents of --oci-dir. The solve itself fails here; only the directory
-// handling before it is under test.
+// user could claim the path in between. An in-place export writes next to
+// what --oci-dir holds and never empties it either. The solve itself fails
+// here; only the directory handling before it is under test.
 func TestMultiPlatformOCIExportKeepsAtomicStagingDirectory(t *testing.T) {
 	c, err := client.New(t.Context(), "tcp://127.0.0.1:1")
 	require.NoError(t, err)
@@ -1734,13 +1729,9 @@ func TestMultiPlatformOCIExportKeepsAtomicStagingDirectory(t *testing.T) {
 
 				after, err := os.Lstat(staging)
 				require.NoError(t, err)
-				if atomic {
-					assert.True(t, os.SameFile(before, after), "the staging directory must not be replaced")
-					assert.Equal(t, before.Mode(), after.Mode())
-					assert.FileExists(t, marker)
-					return
-				}
-				assert.NoFileExists(t, marker, "a named export replaces the earlier --oci-dir contents")
+				assert.True(t, os.SameFile(before, after), "the output directory must not be replaced")
+				assert.Equal(t, before.Mode(), after.Mode())
+				assert.FileExists(t, marker)
 			})
 		}
 	}

@@ -283,6 +283,28 @@ func CanonicalNewPath(path string) (string, error) {
 	return filepath.Join(parent, base), nil
 }
 
+// ValidateOutputDirectory checks a directory that an OCI layout is to be
+// written to. It must name a directory, not "." or "..", and must not resolve,
+// following links, to the current directory or one of its parents, since an
+// export writes its blobs, oci-layout and index.json there.
+func ValidateOutputDirectory(path string) error {
+	if _, err := CanonicalNewPath(path); err != nil {
+		return fmt.Errorf("invalid OCI layout output directory: %w", err)
+	}
+	output, err := canonicalTargetPath(path)
+	if err != nil {
+		return fmt.Errorf("resolve OCI layout output directory %q: %w", path, err)
+	}
+	cwd, err := canonicalTargetPath(".")
+	if err != nil {
+		return fmt.Errorf("resolve current directory: %w", err)
+	}
+	if pathWithin(output, cwd) {
+		return fmt.Errorf("invalid OCI layout output directory: %q is the current directory or one of its parents; choose a directory of its own", path)
+	}
+	return nil
+}
+
 // ResolveWritePath returns the absolute path that a write to path reaches,
 // following every link in it, including a final link whose target does not
 // exist yet.
