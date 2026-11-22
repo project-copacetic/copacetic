@@ -11,7 +11,7 @@
 
 
 <link rel="search" type="application/opensearchdescription+xml" title="Copacetic" href="/copacetic/website/opensearch.xml"><link rel="stylesheet" href="/copacetic/website/assets/css/styles.badf9b53.css">
-<script src="/copacetic/website/assets/js/runtime~main.441757b6.js" defer="defer"></script>
+<script src="/copacetic/website/assets/js/runtime~main.779ddcb0.js" defer="defer"></script>
 <script src="/copacetic/website/assets/js/main.46022ab1.js" defer="defer"></script>
 </head>
 <body>
@@ -29,6 +29,9 @@
 <div class="language-bash codeBlockContainer_Ckt0 theme-code-block" style="--prism-color:#F8F8F2;--prism-background-color:#282A36"><div class="codeBlockContent_QJqH"><pre tabindex="0" class="prism-code language-bash codeBlock_bY9V thin-scrollbar" style="color:#F8F8F2;background-color:#282A36"><code class="codeBlockLines_e6Vv"><div class="token-line" style="color:#F8F8F2"><span class="token plain">copa patch \</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">  --image docker.io/library/nginx:1.25.0 \</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">  --platform linux/amd64,linux/arm64 \</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">  --tag nginx:1.25.0-patched \</span><br></div><div class="token-line" style="color:#F8F8F2"><span class="token plain">  --oci-dir ./nginx-patched</span><br></div></code></pre></div></div>
 <ul>
 <li class="">Copa also loads each patched platform image into the local image store, as described in <a class="" href="/copacetic/website/next/multiplatform-patching">Multi-Platform Patching</a>.</li>
+<li class=""><code>--oci-dir</code> must name a directory of its own: Copa refuses <code>.</code>, <code>..</code>, and any path that resolves to the current directory or one of its parents before it patches anything.</li>
+<li class="">If the <code>--oci-dir</code> path does not exist yet, Copa writes the layout to a hidden <code>.copa-oci-output-*</code> directory beside it and moves it into place only once the export is complete, so a failed, timed out, or canceled export leaves nothing there.</li>
+<li class="">If the path already exists, or its filesystem cannot do this (for example some FUSE or network mounts), Copa writes the layout into the directory next to what it already holds, and never empties it. The new <code>index.json</code> and <code>oci-layout</code> are written last and replace an earlier layout&#x27;s only once the export succeeds. Blobs of an earlier layout that the new one does not use are left in place. If the export fails or is canceled, Copa removes the blobs and files it added, or the whole directory if it created it, and leaves everything that was already there as it was.</li>
 <li class=""><code>--oci-dir</code> is not written for a single-platform image patched by name; that image is loaded into the local image store instead.</li>
 <li class="">Preserved platforms keep their original blobs and layer compression. New patch layers use <code>--compression</code> (default <code>uncompressed</code>); see the <a class="" href="/copacetic/website/next/quick-start">Quick Start</a> for details.</li>
 <li class="">In <a class="" href="/copacetic/website/next/bulk-image-patching">bulk mode</a>, <code>--oci-dir</code> applies to every job in the config.</li>
