@@ -6,7 +6,8 @@ This directory contains demo scripts that use [demo-magic](https://github.com/pa
 
 - [Copa](https://github.com/project-copacetic/copacetic) installed
 - Docker with buildx
-- [Trivy](https://aquasecurity.github.io/trivy/) scanner
+- [Trivy](https://trivy.dev/docs/latest/getting-started/installation/) scanner
+- `git` (required for the .NET demo, which clones Azure Relay Bridge)
 
 ## Available Demos
 
