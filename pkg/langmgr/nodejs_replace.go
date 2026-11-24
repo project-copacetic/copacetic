@@ -47,6 +47,8 @@ const (
 type npmReport struct {
 	state llb.State
 	used  bool
+	// unplaced lists the updates that have no PkgPath to locate their application by.
+	unplaced []string
 }
 
 func newNpmReport() *npmReport {

@@ -368,6 +368,23 @@ func extractAppPathsFromUpdates(updates unversioned.LangUpdatePackages) []string
 	return paths
 }
 
+// unplacedAppUpdates returns the names of the updates that extractAppPathsFromUpdates
+// cannot place in an application directory: no PkgPath, or a PkgPath without a
+// node_modules directory. Nested dependencies (more than one node_modules) are left to
+// the global package handling and are not reported here.
+func unplacedAppUpdates(updates unversioned.LangUpdatePackages) []string {
+	var names []string
+	for _, u := range updates {
+		if strings.Count(u.PkgPath, "/node_modules/") > 1 {
+			continue
+		}
+		if !strings.Contains("/"+u.PkgPath, "/node_modules/") {
+			names = append(names, u.Name)
+		}
+	}
+	return utils.DeduplicateStringSlice(names)
+}
+
 // filterNodePackages returns only the packages that are Node.js packages.
 func filterNodePackages(langUpdates unversioned.LangUpdatePackages) unversioned.LangUpdatePackages {
 	var nodePackages unversioned.LangUpdatePackages
@@ -465,6 +482,15 @@ func (nm *nodejsManager) InstallUpdates(
 			len(failedDownloads), failedDownloads)
 	}
 
+	if len(report.unplaced) > 0 {
+		errPkgsReported = append(errPkgsReported, report.unplaced...)
+		if !ignoreErrors {
+			return currentState, utils.DeduplicateStringSlice(errPkgsReported), fmt.Errorf(
+				"%d Node.js package(s) have no pkgPath in the report, so they could not be patched: %v",
+				len(report.unplaced), report.unplaced)
+		}
+	}
+
 	// Report packages left at their installed version as not patched instead of
 	// counting them as fixed. This does not fail the run (see reportSkippedPackages).
 	errPkgsReported = utils.DeduplicateStringSlice(append(errPkgsReported, reportSkippedPackages(skipped)...))
@@ -529,6 +555,14 @@ func (nm *nodejsManager) upgradePackages(
 	}
 
 	updatedState := *currentState
+
+	// Updates without a usable PkgPath can't be placed in an application, so nothing
+	// would patch them. Record them to be reported as not patched.
+	if unplaced := unplacedAppUpdates(userAppUpdates); len(unplaced) > 0 {
+		log.Warnf("Node.js package(s) %v have no pkgPath in the report, so their application directory is unknown "+
+			"and they were not patched", unplaced)
+		report.unplaced = append(report.unplaced, unplaced...)
+	}
 
 	appPaths := extractAppPathsFromUpdates(userAppUpdates)
 	if len(appPaths) > 0 {

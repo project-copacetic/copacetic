@@ -381,3 +381,59 @@ func TestShellQuote(t *testing.T) {
 		})
 	}
 }
+
+func TestUnplacedAppUpdates(t *testing.T) {
+	tests := []struct {
+		name    string
+		updates unversioned.LangUpdatePackages
+		want    []string
+	}{
+		{
+			name:    "no updates",
+			updates: nil,
+			want:    nil,
+		},
+		{
+			name: "pkgPath inside an application",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "lodash", PkgPath: "app/node_modules/lodash/package.json"},
+			},
+			want: nil,
+		},
+		{
+			name: "no pkgPath",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "lodash"},
+			},
+			want: []string{"lodash"},
+		},
+		{
+			name: "pkgPath without node_modules",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "lodash", PkgPath: "app/package.json"},
+			},
+			want: []string{"lodash"},
+		},
+		{
+			name: "nested node_modules is out of scope",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "a", PkgPath: "app/node_modules/b/node_modules/a/package.json"},
+			},
+			want: nil,
+		},
+		{
+			name: "mixed, names are deduplicated",
+			updates: unversioned.LangUpdatePackages{
+				{Name: "lodash", PkgPath: "app/node_modules/lodash/package.json"},
+				{Name: "minimist"},
+				{Name: "minimist", PkgPath: ""},
+			},
+			want: []string{"minimist"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, unplacedAppUpdates(tt.updates))
+		})
+	}
+}
