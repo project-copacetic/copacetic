@@ -378,7 +378,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 				require.NotNil(t, resolveOpt.ImageOpt)
 				assert.Equal(t, platform, resolveOpt.ImageOpt.Platform)
 			}).
-			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, []byte(`{"architecture":"arm64","variant":"v8","os":"linux","config":{"labels":{}}}`), nil).
+			Return("docker.io/library/alpine@"+baseDigest.String(), baseDigest, originalTestConfig(t, []byte(`{"architecture":"arm64","variant":"v8","os":"linux","config":{"labels":{}}}`)), nil).
 			Once()
 		configData := []byte(fmt.Sprintf(`{"config":{"labels":{"sh.copa.patch.origin.kind":"image-ref","BaseImage":"docker.io/library/alpine@%s","%s":"docker.io/library/alpine:3.20","%s":"%s"}}}`,
 			baseDigest,
@@ -386,6 +386,7 @@ func TestUpdateImageConfigDataCapturesSelectedBaseLineage(t *testing.T) {
 			types.AnnotationPatchOriginDigest,
 			baseDigest,
 		))
+		configData = copaOutputTestConfig(t, configData)
 
 		const patchedImage = "registry.example.com/app:patched"
 		_, patched, _, lineage, validated, err := updateImageConfigData(ctx, client, configData, patchedImage, patchedImage, digest.FromString("patched"), platform)
@@ -1519,9 +1520,9 @@ func TestUpdateImageConfigData(t *testing.T) {
 		mockClient := &mocks.MockGWClient{}
 		mockClient.On("ResolveImageConfig",
 			mock.Anything, "rockylinux:latest", mock.Anything).
-			Return("imageConfigString", digest.FromString("rockylinux:latest"), []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`), nil)
+			Return("imageConfigString", digest.FromString("rockylinux:latest"), originalTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{}}}`)), nil)
 
-		configData := []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"rockylinux:latest"}}}`)
+		configData := copaOutputTestConfig(t, []byte(`{"os":"linux","architecture":"amd64","config":{"labels":{"BaseImage":"rockylinux:latest"}}}`))
 		image := "rockylinux:latest-patched"
 
 		resultConfig, resultPatched, resultImage, _, _, err := updateImageConfigData(ctx, mockClient, configData, image, image, digest.FromString(image), nil)
