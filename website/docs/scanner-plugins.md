@@ -127,6 +127,8 @@ type UpdatePackage struct {
     Type             string `json:"type"`
     // Package class (os-pkgs, lang-pkgs)
     Class            string `json:"class"`
+    // Optional path to the package in the image, same as Trivy's PkgPath ("app/node_modules/lodash/package.json")
+    PkgPath          string `json:"pkgPath,omitempty"`
 }
 
 type Config struct {
@@ -199,7 +201,18 @@ From the above, we can see that the plugin must return a JSON object via standar
           "vulnerabilityID": "CVE-2023-32681",
           "type": "python-pkg",
           "class": "lang-pkgs"
+      },
+      {
+          "name": "lodash",
+          "installedVersion": "4.17.15",
+          "fixedVersion": "4.17.21",
+          "vulnerabilityID": "CVE-2021-23337",
+          "type": "node-pkg",
+          "class": "lang-pkgs",
+          "pkgPath": "app/node_modules/lodash/package.json"
       }
   ]
 }
 ```
+
+`pkgPath` is optional, so existing plugins keep working. Set it for language packages whose location in the image matters. Node.js patching uses it to find the application directory, and Go binary patching uses it when binaries can't be detected in the image (for example, distroless images).

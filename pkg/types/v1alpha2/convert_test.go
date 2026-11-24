@@ -160,3 +160,37 @@ func TestConvertV1alpha2UpdateManifestToUnversionedUpdateManifest(t *testing.T) 
 		})
 	}
 }
+
+func TestConvertPkgPath(t *testing.T) {
+	input := []byte(`{
+		"apiVersion": "v1alpha2",
+		"metadata": {"os": {"type": "alpine", "version": "3.18"}, "config": {"arch": "amd64"}},
+		"osupdates": [],
+		"langupdates": [
+			{
+				"name": "lodash",
+				"installedVersion": "4.17.15",
+				"fixedVersion": "4.17.21",
+				"vulnerabilityID": "CVE-2021-23337",
+				"type": "node-pkg",
+				"class": "lang-pkgs",
+				"pkgPath": "app/node_modules/lodash/package.json"
+			},
+			{
+				"name": "minimist",
+				"installedVersion": "1.2.0",
+				"fixedVersion": "1.2.6",
+				"vulnerabilityID": "CVE-2021-44906",
+				"type": "node-pkg",
+				"class": "lang-pkgs"
+			}
+		]
+	}`)
+
+	got, err := ConvertV1alpha2UpdateManifestToUnversionedUpdateManifest(input)
+	assert.NoError(t, err)
+	if assert.Len(t, got.LangUpdates, 2) {
+		assert.Equal(t, "app/node_modules/lodash/package.json", got.LangUpdates[0].PkgPath)
+		assert.Empty(t, got.LangUpdates[1].PkgPath, "pkgPath is optional and must default to empty")
+	}
+}
