@@ -9,3 +9,10 @@ using the appropriate template.
 
 For help and questions about using this project, please file a new issue using the Question
 issue template. The project maintainers will respond to the best of their abilities.
+
+## Community
+
+You can also get help and discuss use cases with the community:
+
+- Join the `#copacetic` channel on the [CNCF Slack](https://slack.cncf.io/).
+- Attend the biweekly community meetings. See the community section of the [README](README.md) for the schedule and meeting notes.
