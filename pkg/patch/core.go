@@ -396,8 +396,10 @@ func isUnverifiedLegacyFallback(config *buildkit.Config) bool {
 	if config == nil || config.PatchedConfigData != nil || config.SourceLineage != nil || config.ImageLabels["BaseImage"] == "" {
 		return false
 	}
+	// Empty origin labels count as absent, as in BaseImage resolution: a
+	// Dockerfile can clear an inherited label but not remove it.
 	for _, key := range []string{types.AnnotationPatchOriginKind, types.AnnotationPatchOriginName, types.AnnotationPatchOriginDigest} {
-		if _, present := config.ImageLabels[key]; present {
+		if config.ImageLabels[key] != "" {
 			return false
 		}
 	}

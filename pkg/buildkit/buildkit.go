@@ -1116,6 +1116,13 @@ func platformImageReferenceFromManifest(ref name.Reference, manifestBytes []byte
 	return "", fmt.Errorf("platform %s/%s not found in manifest", targetPlatform.OS, targetPlatform.Architecture)
 }
 
+// rewrittenLayersHint tells the user how to patch an image whose labels name a
+// patch origin that its layers are not built on. A Dockerfile cannot remove
+// labels, so empty BaseImage and origin labels are treated as absent.
+const rewrittenLayersHint = " (if its layers were flattened or rewritten, patch the unmodified image, " +
+	"or set the BaseImage and sh.copa.patch.origin.* labels to empty values to patch it as a new image, e.g. " +
+	`LABEL BaseImage="" sh.copa.patch.origin.kind="" sh.copa.patch.origin.name="" sh.copa.patch.origin.digest="")`
+
 func updateImageConfigData(
 	ctx context.Context,
 	c sourceresolver.ImageMetaResolver,
@@ -1134,10 +1141,11 @@ func updateImageConfigData(
 	if err != nil {
 		return nil, nil, "", nil, false, err
 	}
-	_, hasKind := document.labels[types.AnnotationPatchOriginKind]
-	_, hasName := document.labels[types.AnnotationPatchOriginName]
-	_, hasDigest := document.labels[types.AnnotationPatchOriginDigest]
-	hasOrigin := hasKind || hasName || hasDigest
+	// Empty labels count as absent, as an empty BaseImage already does, since a
+	// Dockerfile can clear an inherited label but cannot remove it.
+	hasOrigin := document.labels[types.AnnotationPatchOriginKind] != "" ||
+		document.labels[types.AnnotationPatchOriginName] != "" ||
+		document.labels[types.AnnotationPatchOriginDigest] != ""
 	recorded := sourceLineageFromConfig(configData)
 	if hasOrigin && (!recorded.Valid() || baseImage == "") {
 		return nil, nil, "", nil, false, fmt.Errorf("%w: invalid patch origin metadata: a complete origin and BaseImage locator are required", ErrOriginIntegrity)
@@ -1148,7 +1156,19 @@ func updateImageConfigData(
 	resolveOpt := sourceresolver.Opt{ImageOpt: &sourceresolver.ResolveImageOpt{
 		ResolveMode: llb.ResolveModePreferLocal.String(), Platform: platform,
 	}}
-	var baseConfig []byte
+	// Dockerfile FROM copies the BaseImage and origin labels into images built
+	// on a Copa output, so the labels alone do not show that Copa produced this
+	// image. An image built on the labeled base with layers of its own is
+	// patched as supplied and recorded as its own origin, like a first patch.
+	patchAsSupplied := func(reason error) ([]byte, []byte, string, *types.SourceLineage, bool, error) {
+		log.Warnf("Patching %s as supplied rather than re-patching from %s: %v. Its inherited BaseImage and patch origin labels are ignored", image, baseImage, reason)
+		supplied, err := imageConfigWithBaseImage(document, locator)
+		if err != nil {
+			return nil, nil, "", nil, false, err
+		}
+		return supplied, nil, image, newSourceLineage(image, imageDigest), false, nil
+	}
+	var baseConfig, baseWithLabels []byte
 	if hasOrigin {
 		// Keep the recorded BaseImage locator for the output label. Reads of the
 		// recovered original are pinned to its recorded digest by the caller.
@@ -1164,11 +1184,31 @@ func updateImageConfigData(
 		if parseErr != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: parse recorded patch origin config: %w", ErrOriginIntegrity, parseErr)
 		}
-		if baseDocument.labels["BaseImage"] != "" {
+		// An origin may carry a BaseImage label of its own when it is an image
+		// built FROM a Copa output that was then patched as supplied. Its top
+		// layer was then added by its own build. An origin whose top layer is a
+		// Copa patch layer is itself a Copa output, which an origin never is.
+		originBaseImage := baseDocument.labels["BaseImage"]
+		if originBaseImage != "" && !topLayerAddedByBuild(baseConfig) {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: recorded patch origin is itself a Copa-patched image", ErrOriginIntegrity)
 		}
 		if err := verifyRecoveredOriginPlatform(configData, baseConfig, platform); err != nil {
 			return nil, nil, "", nil, false, fmt.Errorf("%w: %w", ErrOriginIntegrity, err)
+		}
+		// A derived image whose recorded origin cannot be recovered fails above,
+		// because without the origin's layers it cannot be told from a Copa output.
+		switch kind, layersErr := classifyPatchLayers(configData, baseConfig); kind {
+		case patchLayersNotOnBase:
+			if originBaseImage != "" {
+				layersErr = fmt.Errorf("%w; the recorded origin has its own BaseImage label %s", layersErr, originBaseImage)
+			}
+			return nil, nil, "", nil, false, fmt.Errorf("%w: image is not built on its recorded patch origin: %w%s", ErrOriginIntegrity, layersErr, rewrittenLayersHint)
+		case patchLayersDerived:
+			return patchAsSupplied(layersErr)
+		}
+		baseWithLabels, err = imageConfigWithBaseImage(baseDocument, baseImage)
+		if err != nil {
+			return nil, nil, "", nil, false, err
 		}
 	} else {
 		// Legacy images have only a mutable BaseImage locator. Preserve their
@@ -1192,11 +1232,22 @@ func updateImageConfigData(
 			log.Warnf("Not using legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, err, image)
 			return useCurrentImage()
 		}
+		// The tag may also have moved to a rebuild of the base that this image
+		// was not built on, such as a new upstream build of the same tag. Treat
+		// that like an unresolvable tag: keep the image's layers without claiming
+		// that it, or the moved tag, is the original.
+		switch kind, layersErr := classifyPatchLayers(configData, baseConfig); kind {
+		case patchLayersNotOnBase:
+			log.Warnf("Not using legacy BaseImage %s: %v. Falling back to current image %s without verified patch origin", baseImage, layersErr, image)
+			return useCurrentImage()
+		case patchLayersDerived:
+			return patchAsSupplied(layersErr)
+		}
 		log.Warn("Re-patching a legacy BaseImage-only image without verified patch origin")
-	}
-	_, baseWithLabels, err := setupLabels(baseImage, baseConfig)
-	if err != nil {
-		return nil, nil, "", nil, false, err
+		_, baseWithLabels, err = setupLabels(baseImage, baseConfig)
+		if err != nil {
+			return nil, nil, "", nil, false, err
+		}
 	}
 	return baseWithLabels, userImageConfig, baseImage, recorded, hasOrigin, nil
 }
