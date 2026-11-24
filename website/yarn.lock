@@ -2772,10 +2772,10 @@
   dependencies:
     defer-to-connect "^2.0.0"
 
-"@tsconfig/docusaurus@^2.0.9":
-  version "2.0.9"
-  resolved "https://registry.yarnpkg.com/@tsconfig/docusaurus/-/docusaurus-2.0.9.tgz#e530ae78bca4f88917af48fe25a944d6d6bdcdf5"
-  integrity sha512-0jVxZCgy2v7TnJrW9kVNikNwJHeiWb68Zhiiw2vHw4tzBFSP5vS2zn3O5EY2oPEVz5dXZRkK7MnWG3Ay5q0mIg==
+"@tsconfig/docusaurus@^2.0.10":
+  version "2.0.10"
+  resolved "https://registry.yarnpkg.com/@tsconfig/docusaurus/-/docusaurus-2.0.10.tgz#e2cb9f0f17444c6151efa99b6152c4e764d6ac8b"
+  integrity sha512-/z4AecMQyqG3/RjL5K9XINuqfpg4jP1zMDBBKguoTvTp0bMtCdB0PIq0WwUdBJMfmVxRFa41OXvHXziRjcdsPQ==
 
 "@types/acorn@^4.0.0":
   version "4.0.6"
@@ -3606,10 +3606,10 @@ array-union@^2.1.0:
   resolved "https://registry.yarnpkg.com/array-union/-/array-union-2.1.0.tgz#b798420adbeb1de828d84acd8a2e23d3efe85e8d"
   integrity sha512-HGyxoOTYUyCM6stUe6EJgnd4EoewAI7zMdfqO+kGjnlZmBDz/cR5pf8r/cR4Wq60sL/p0IkcjUEEPwS3GFrIyw==
 
-asciinema-player@^3.18.0:
-  version "3.18.0"
-  resolved "https://registry.yarnpkg.com/asciinema-player/-/asciinema-player-3.18.0.tgz#08f8f343fdc1108961068be375396bcab9645df7"
-  integrity sha512-5gpt2ipFcy4NKmgkv+c/QXnJ9zMicxqWROCOuJqgwwtiYKM8Qe9hnDOvfqke5bW6M2DW/seO3uQYkQ0xeUUVtw==
+asciinema-player@^3.18.1:
+  version "3.18.1"
+  resolved "https://registry.yarnpkg.com/asciinema-player/-/asciinema-player-3.18.1.tgz#ca490ecc3cc267a8dfd6119901bc00c230d17011"
+  integrity sha512-H3blHwZYerDkjUVNABB0zjIzZhZu+JT0/FXT7Skc+4cpa2i7bDab49uOztsIguej4Ppfw6JS0V8J5/6VNqIIkQ==
   dependencies:
     solid-js "^1.9.18"
 
@@ -4695,10 +4695,10 @@ dot-prop@^6.0.1:
   dependencies:
     is-obj "^2.0.0"
 
-dotenv@^18.0.9:
-  version "18.0.9"
-  resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-18.0.9.tgz#5c565760ce7e6fb69f9477ebcd1a3b64c766f9c8"
-  integrity sha512-3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw==
+dotenv@^18.0.10:
+  version "18.0.10"
+  resolved "https://registry.yarnpkg.com/dotenv/-/dotenv-18.0.10.tgz#4171e67ba539a3d1513d7cbc51b8124e60714d28"
+  integrity sha512-89FAA1xchzK2mxVWdr5F/0rldwiueXs6zJM86rO66EzekR1iBdiXRthyG+m5GvkJaFH3C2LESzamTkgndmLT2A==
 
 dunder-proto@^1.0.1:
   version "1.0.1"
