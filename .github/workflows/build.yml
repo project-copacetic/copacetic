@@ -37,12 +37,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -70,11 +70,11 @@ jobs:
       contents: read
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -111,7 +111,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -121,7 +121,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -169,7 +169,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -179,7 +179,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -272,12 +272,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -318,12 +318,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -353,12 +353,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -371,7 +371,7 @@ jobs:
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
@@ -403,12 +403,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -443,10 +443,10 @@ jobs:
       fail-fast: false
       matrix:
         buildkit_mode: ${{fromJson(needs.build.outputs.multiplatformenvs)}}
-        test_suite: [standard, fedora]
+        test_suite: [standard, jupyter, fedora]
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -459,7 +459,7 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm/v5,linux/arm64,linux/386,linux/mips64le
       - name: Install oras CLI
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -483,7 +483,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -521,12 +521,26 @@ jobs:
             . .github/workflows/scripts/buildkitenvs/${{ matrix.buildkit_mode }}
           fi
 
-          test_filter=(-skip '^TestPatchFedora45$')
-          if [[ "${{ matrix.test_suite }}" == "fedora" ]]; then
-            test_filter=(-run '^TestPatchFedora45$')
-          fi
+          # TestPatch runs its subtests in sequence, so the two Jupyter subtests
+          # (about half of its time) run as their own shard. The standard shard
+          # skips them with the same pattern the jupyter shard selects, so each
+          # TestPatch subtest runs in exactly one shard.
+          jupyter_subtests='^TestPatch$/^Multi-arch_Jupyter_'
+          case "${{ matrix.test_suite }}" in
+            standard) test_filter=(-skip "^TestPatchFedora45\$|${jupyter_subtests}") ;;
+            jupyter) test_filter=(-run "${jupyter_subtests}") ;;
+            fedora) test_filter=(-run '^TestPatchFedora45$') ;;
+            *) echo "unknown test suite ${{ matrix.test_suite }}" >&2; exit 1 ;;
+          esac
 
-          gotestsum --format testname --junitfile test-results.xml -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 "${test_filter[@]}"
+          gotestsum --format testname --junitfile test-results.xml --jsonfile test-results.json -- ./integration/multiarch --addr="${COPA_BUILDKIT_ADDR}" --copa="$(pwd)/copa" -timeout 0 "${test_filter[@]}"
+
+          if [[ "${{ matrix.test_suite }}" == "jupyter" ]]; then
+            # Fail if a fixture rename leaves the jupyter shard matching nothing.
+            .github/workflows/scripts/require-tests-passed.sh test-results.json \
+              'TestPatch/Multi-arch_Jupyter_base-notebook_2025-01-27,_with_push' \
+              'TestPatch/Multi-arch_Jupyter_base-notebook_2025-01-27,_no_push'
+          fi
       - name: Test Summary
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
         with:
@@ -543,7 +557,7 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Download copa from build artifacts
@@ -553,7 +567,7 @@ jobs:
       - run: docker system prune -a -f --volumes
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -585,7 +599,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -599,7 +613,7 @@ jobs:
           install: true
           platforms: linux/amd64,linux/arm64
       - name: Install oras CLI
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
       - name: Set up local registry
         run: |
           docker run -d -p 5000:5000 --restart=always --name registry registry:2
@@ -618,7 +632,7 @@ jobs:
           docker push localhost:5000/nginx:latest
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -663,7 +677,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Change docker daemon config
@@ -677,7 +691,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -882,12 +896,12 @@ jobs:
         buildkit_mode: ${{fromJson(needs.build.outputs.buildkitenvs)}}
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -923,7 +937,7 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
@@ -937,7 +951,7 @@ jobs:
         with:
           install: true
       - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -973,12 +987,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1018,12 +1032,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1065,12 +1079,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1129,7 +1143,112 @@ jobs:
           COPA_CHISEL_PATCH_TIMEOUT: "75m"
         run: |
           set -eu -o pipefail
-          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/chisel --addr=docker:// --copa="$(pwd)/copa" -timeout 115m
+          # The arm64-only tests run natively in test-chisel-arm.
+          gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/chisel \
+            -skip '^(TestNativeChiselRealImageARM64|TestAptlessFullStatusComprehensiveFromBaselineARM64)$' \
+            --addr=docker:// --copa="$(pwd)/copa" -timeout 115m
+      - name: Test Summary
+        if: always()
+        uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
+        with:
+          paths: "test-results.xml"
+
+  test-chisel-arm:
+    name: Test Ubuntu Chiseled ${{ matrix.platform }} on arm64 runner
+    # Under QEMU on x86-64 these tests take 40-60 minutes each; on an arm64 runner
+    # they take minutes. Most hosted arm64 runners also execute arm/v7 natively.
+    # Where a runner can't, the tests install the pinned binfmt helper and run
+    # under QEMU instead, so arm/v7 has its own job and can't hold up arm64.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: arm64
+            tests: TestNativeChiselRealImageARM64 TestAptlessFullStatusComprehensiveFromBaselineARM64
+          - platform: arm/v7
+            tests: TestAptlessFullStatusComprehensiveFromBaselineARMv7
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+      - name: Check out code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: Add containerd-snapshotter to docker daemon
+        shell: bash
+        # Merge rather than overwrite: on GitHub-hosted runners Harden Runner keeps
+        # its DNS settings in daemon.json, and containers lose DNS without them.
+        run: |
+          set -eu -o pipefail
+          current='{}'
+          if sudo test -s /etc/docker/daemon.json; then
+            current="$(sudo cat /etc/docker/daemon.json)"
+          fi
+          jq '.features["containerd-snapshotter"] = true' <<<"${current}" | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          use: true
+      - name: Build copa
+        shell: bash
+        run: |
+          set -eu -o pipefail
+          uname -m
+          make build
+          cp "dist/linux_$(go env GOARCH)/release/copa" ./copa
+          ./copa --version
+          go install gotest.tools/gotestsum@v1.13.0
+      - name: Verify pinned Chisel tooling image
+        shell: bash
+        env:
+          CHISEL_TOOLING_IMAGE: ghcr.io/project-copacetic/copacetic/chisel@sha256:adc238182bcbc07ff5f030929732a46d7f1aab801fadb70b320805a1d56c817c
+          CHISEL_VERSION: v1.4.2
+          CHISEL_COMMIT: 1262471cb663f57f3e201f100019f9bf5b4a7d4f
+          # Compiler used for this immutable image; update alongside its digest.
+          CHISEL_GO_VERSION: 1.25.13
+          # An arm64 runner can't execute the amd64 image; every other check covers all platforms.
+          CHISEL_VERIFY_RUNTIME_PLATFORMS: linux/arm64
+        run: |
+          set -eu -o pipefail
+          # The tests use the image pinned in chisel_test.go; fail unless it is the digest verified here.
+          grep -Fq "chiselToolingImage   = \"${CHISEL_TOOLING_IMAGE}\"" test/e2e/chisel/chisel_test.go
+          validator_source_sha256="$(sha256sum cmd/chisel-validator/main.go | awk '{print $1}')"
+          .github/workflows/scripts/chisel/verify-image.sh \
+            "${CHISEL_TOOLING_IMAGE}" \
+            "${CHISEL_VERSION}" \
+            "${CHISEL_COMMIT}" \
+            "${RUNNER_TEMP}/chisel-tooling-verification.md" \
+            "${validator_source_sha256}" \
+            "${CHISEL_GO_VERSION}"
+          # Pull arm/v7 too; without a local arm/v7 copy, the tests' first arm/v7 run of this
+          # reference fails and they fall back to binfmt. Pulling needs no arm/v7 execution,
+          # so runners that can't run arm/v7 still reach that fallback.
+          docker pull --platform linux/arm/v7 "${CHISEL_TOOLING_IMAGE}"
+      - name: Run ${{ matrix.platform }} Ubuntu Chiseled e2e tests
+        shell: bash
+        env:
+          # Enables the arm/v7 test; -run below keeps the other secondary-architecture tests out.
+          COPA_CHISEL_SECONDARY_ARCHES: "1"
+          COPA_CHISEL_PATCH_TIMEOUT: "60m"
+          TESTS: ${{ matrix.tests }}
+        run: |
+          set -eu -o pipefail
+          read -r -a tests <<<"${TESTS}"
+          run_pattern="^($(IFS='|'; echo "${tests[*]}"))\$"
+          gotestsum --format testname --junitfile test-results.xml --jsonfile test-results.json -- ./test/e2e/chisel \
+            -run "${run_pattern}" \
+            --addr=docker:// --copa="$(pwd)/copa" -timeout 70m
+          # The other Chisel jobs skip these tests, so a skip or rename here would drop them.
+          .github/workflows/scripts/require-tests-passed.sh test-results.json "${tests[@]}"
       - name: Test Summary
         if: always()
         uses: test-summary/action@37b508cfee6d4d080eedd00b5bb240a6a784a6a5 # v2
@@ -1144,12 +1263,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1196,8 +1315,9 @@ jobs:
           COPA_CHISEL_PATCH_TIMEOUT: "75m"
         run: |
           set -eu -o pipefail
+          # The arm/v7 comprehensive test runs natively in test-chisel-arm.
           gotestsum --format testname --junitfile test-results.xml -- ./test/e2e/chisel \
-            -run '^(TestNativeChiselSecondaryArchitecturesOCI|TestAptlessFullStatusComprehensiveFromBaselineARMv7)$' \
+            -run '^TestNativeChiselSecondaryArchitecturesOCI$' \
             --addr=docker:// --copa="$(pwd)/copa" -timeout 100m
       - name: Test Summary
         if: always()
@@ -1213,12 +1333,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1258,12 +1378,12 @@ jobs:
     permissions: read-all
     steps:
       - name: Harden Runner
-        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.3.1
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.3.1
         with:
           egress-policy: audit
       - name: Check out code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           check-latest: true
@@ -1282,7 +1402,7 @@ jobs:
         with:
           install: true
       - name: Install oras CLI
-        uses: oras-project/setup-oras@5e2f2482b30b0cb3e14e67f89a80c88c659a7c63 # v2.0.3
+        uses: oras-project/setup-oras@ac735097e22fe643015b0d19645f7c9a69942128 # v2.0.4
       - name: Install required tools
         shell: bash
         run: .github/workflows/scripts/download-tooling.sh
