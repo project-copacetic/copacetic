@@ -50,6 +50,7 @@ func convertToUnversionedUpdatePackages(v1alpha2Updates UpdatePackages) unversio
 			VulnerabilityID:  pkg.VulnerabilityID,
 			Type:             pkg.Type,
 			Class:            pkg.Class,
+			PkgPath:          pkg.PkgPath,
 		}
 	}
 	return result
@@ -69,6 +70,7 @@ func convertLangToUnversionedUpdatePackages(v1alpha2LangUpdates LangUpdatePackag
 			VulnerabilityID:  pkg.VulnerabilityID,
 			Type:             pkg.Type,
 			Class:            pkg.Class,
+			PkgPath:          pkg.PkgPath,
 		}
 	}
 	return result

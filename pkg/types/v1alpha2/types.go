@@ -35,4 +35,5 @@ type UpdatePackage struct {
 	VulnerabilityID  string `json:"vulnerabilityID"`
 	Type             string `json:"type"`
 	Class            string `json:"class"`
+	PkgPath          string `json:"pkgPath,omitempty"`
 }
