@@ -107,6 +107,10 @@ These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/t
 
 APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
 
+### Pacman (Arch Linux)
+
+Pacman-based images never use a tooling image either. Copa runs the image's own `/usr/bin/pacman` directly in the image layer (`-Sy` to sync the database, then `-S --noconfirm` for the selected updates), so the patches are applied by the same package manager the image ships.
+
 ### Python
 
 When updating Python packages:
