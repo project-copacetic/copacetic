@@ -13,6 +13,7 @@ import (
 	"github.com/moby/buildkit/client/llb"
 	gwclient "github.com/moby/buildkit/frontend/gateway/client"
 	"github.com/moby/buildkit/solver/pb"
+	"github.com/opencontainers/go-digest"
 	ocispecs "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/project-copacetic/copacetic/mocks"
 	"github.com/stretchr/testify/mock"
@@ -1299,6 +1300,102 @@ func TestRPMCaretUpdateSelection(t *testing.T) {
 			selected, err := GetUniqueLatestUpdates(updates, VersionComparer{isValidRPMVersion, isLessThanRPMVersion}, ignoreErrors)
 			require.NoError(t, err)
 			assert.Equal(t, updates, selected, "valid caret versions must not be silently skipped")
+		})
+	}
+}
+
+// TestRPMUpdateAllUpgradesOnTopOfCheck checks that update-all mode runs the
+// upgrade on the check step's state, so the repository metadata the check
+// downloaded is reused instead of fetched again.
+func TestRPMUpdateAllUpgradesOnTopOfCheck(t *testing.T) {
+	tests := []struct {
+		name       string
+		rpmTools   rpmToolPaths
+		checkCmd   string
+		upgradeCmd string
+	}{
+		{
+			name:       "dnf",
+			rpmTools:   rpmToolPaths{"dnf": "/usr/bin/dnf"},
+			checkCmd:   "/usr/bin/dnf makecache --refresh -y",
+			upgradeCmd: "/usr/bin/dnf upgrade --refresh",
+		},
+		{
+			name:       "tdnf",
+			rpmTools:   rpmToolPaths{"tdnf": "/usr/bin/tdnf"},
+			checkCmd:   "/usr/bin/tdnf makecache --refresh -y",
+			upgradeCmd: "/usr/bin/tdnf upgrade --refresh",
+		},
+		{
+			name:       "yum",
+			rpmTools:   rpmToolPaths{"yum": "/usr/bin/yum"},
+			checkCmd:   "/usr/bin/yum makecache fast",
+			upgradeCmd: "/usr/bin/yum upgrade",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockClient := new(mocks.MockGWClient)
+			mockRef := new(mocks.MockReference)
+			mockResult := &gwclient.Result{}
+			mockResult.SetRef(mockRef)
+			mockClient.On("Solve", mock.Anything, mock.Anything).Return(mockResult, nil)
+			mockRef.On("ReadFile", mock.Anything, mock.Anything).Return([]byte(""), nil)
+
+			rm := &rpmManager{
+				config: &buildkit.Config{
+					Client:     mockClient,
+					ImageState: llb.Image("example.com/rpm-image:latest"),
+				},
+				rpmTools: tt.rpmTools,
+			}
+
+			state, _, err := rm.installUpdates(t.Context(), nil, true)
+			require.NoError(t, err)
+			require.NotNil(t, state)
+
+			def, err := state.Marshal(t.Context())
+			require.NoError(t, err)
+
+			ops := map[string]*pb.Op{}
+			var checkDigest, upgradeDigest, upgradeCmd string
+			for _, raw := range def.Def {
+				var op pb.Op
+				require.NoError(t, op.Unmarshal(raw))
+				dgst := digest.FromBytes(raw).String()
+				ops[dgst] = &op
+				exec := op.GetExec()
+				if exec == nil {
+					continue
+				}
+				cmd := strings.Join(exec.GetMeta().GetArgs(), " ")
+				if strings.Contains(cmd, tt.checkCmd) {
+					checkDigest = dgst
+				}
+				if strings.Contains(cmd, tt.upgradeCmd) {
+					upgradeDigest = dgst
+					upgradeCmd = cmd
+				}
+			}
+			require.NotEmpty(t, checkDigest, "check step not found in the patch graph")
+			require.NotEmpty(t, upgradeDigest, "upgrade step not found in the patch graph")
+
+			upgradeInputs := ops[upgradeDigest].GetInputs()
+			require.NotEmpty(t, upgradeInputs)
+			assert.Equal(t, checkDigest, upgradeInputs[0].GetDigest(),
+				"the upgrade should run on the check step's root filesystem so it reuses the metadata cache")
+			assert.Contains(t, upgradeCmd, "clean all")
+
+			// The patch is diffed against the check step, so the check's marker and
+			// metadata cache stay out of the patch layer.
+			var diffLower string
+			for _, op := range ops {
+				if op.GetDiff() != nil {
+					diffLower = op.GetInputs()[op.GetDiff().GetLower().GetInput()].GetDigest()
+				}
+			}
+			assert.Equal(t, checkDigest, diffLower, "the patch should be diffed against the check step")
 		})
 	}
 }
