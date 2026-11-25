@@ -115,6 +115,57 @@ func TestValidatePacmanPackageVersions(t *testing.T) {
 			ignoreErrors:            false,
 			expectedErrorSubstrings: []string{"expected 1 updates, installed 2"},
 		},
+		{
+			name: "installed package missing from results",
+			updates: []unversioned.UpdatePackage{
+				{Name: "neovim", InstalledVersion: "0.9.4-1", FixedVersion: "0.9.5-2"},
+			},
+			cmp:                     pacmanComparer,
+			resultBytes:             []byte(""),
+			ignoreErrors:            false,
+			expectedErrorSubstrings: []string{"installed package neovim was not present in the patch result"},
+			expectedErrPkgs:         []string{"neovim"},
+		},
+		{
+			name: "installed package missing while a later package validates",
+			updates: []unversioned.UpdatePackage{
+				{Name: "go", InstalledVersion: "2:1.21.5-1", FixedVersion: "2:1.21.6-1"},
+				{Name: "neovim", InstalledVersion: "0.9.4-1", FixedVersion: "0.9.5-2"},
+			},
+			cmp:                     pacmanComparer,
+			resultBytes:             []byte("neovim 0.9.5-2\n"),
+			ignoreErrors:            false,
+			expectedErrorSubstrings: []string{"installed package go was not present in the patch result"},
+			expectedErrPkgs:         []string{"go"},
+		},
+		{
+			name: "installed package missing from results with ignore errors",
+			updates: []unversioned.UpdatePackage{
+				{Name: "neovim", InstalledVersion: "0.9.4-1", FixedVersion: "0.9.5-2"},
+			},
+			cmp:             pacmanComparer,
+			resultBytes:     []byte(""),
+			ignoreErrors:    true,
+			expectedErrPkgs: []string{"neovim"},
+		},
+		{
+			name: "package the scanner never saw installed may be absent",
+			updates: []unversioned.UpdatePackage{
+				{Name: "neovim", FixedVersion: "0.9.5-2"},
+			},
+			cmp:          pacmanComparer,
+			resultBytes:  []byte(""),
+			ignoreErrors: false,
+		},
+		{
+			name: "already current package needs no archive",
+			updates: []unversioned.UpdatePackage{
+				{Name: "neovim", InstalledVersion: "0.9.5-2", FixedVersion: "0.9.5-2"},
+			},
+			cmp:          pacmanComparer,
+			resultBytes:  []byte(""),
+			ignoreErrors: false,
+		},
 	}
 
 	for _, tc := range testCases {

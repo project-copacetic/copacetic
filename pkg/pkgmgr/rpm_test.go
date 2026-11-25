@@ -422,13 +422,62 @@ func TestValidateRPMPackageVersions(t *testing.T) {
 			expectedError:   `unexpected result manifest entry "openssl\t2.1.1k-21.cm2" for package openssl: missing architecture`,
 			expectedErrPkgs: []string{"openssl"},
 		},
+		{
+			name: "installed package missing from results",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", InstalledVersion: "1.1.1k-20.cm2", FixedVersion: "1.1.1k-21.cm2"},
+			},
+			cmp:             rpmComparer,
+			resultsBytes:    []byte(""),
+			expectedError:   "installed package openssl was not present in the patch result",
+			expectedErrPkgs: []string{"openssl"},
+		},
+		{
+			name: "installed package missing while a later package validates",
+			updates: unversioned.UpdatePackages{
+				{Name: "curl", InstalledVersion: "7.76.0-1.cm2", FixedVersion: "7.76.1-1.cm2"},
+				{Name: "openssl", InstalledVersion: "1.1.1k-20.cm2", FixedVersion: "1.1.1k-21.cm2"},
+			},
+			cmp:             rpmComparer,
+			resultsBytes:    []byte("openssl\t1.1.1k-21.cm2\tx86_64\n"),
+			expectedError:   "installed package curl was not present in the patch result",
+			expectedErrPkgs: []string{"curl"},
+		},
+		{
+			name: "installed package missing from results with ignore errors",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", InstalledVersion: "1.1.1k-20.cm2", FixedVersion: "1.1.1k-21.cm2"},
+			},
+			cmp:             rpmComparer,
+			resultsBytes:    []byte(""),
+			ignoreErrors:    true,
+			expectedErrPkgs: []string{"openssl"},
+		},
+		{
+			name: "package the scanner never saw installed may be absent",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", FixedVersion: "1.1.1k-21.cm2"},
+			},
+			cmp:          rpmComparer,
+			resultsBytes: []byte(""),
+		},
+		{
+			name: "already current package needs no archive despite an epoch",
+			updates: unversioned.UpdatePackages{
+				{Name: "openssl", InstalledVersion: "1:1.1.1k-21.cm2", FixedVersion: "1.1.1k-21.cm2"},
+			},
+			cmp:          rpmComparer,
+			resultsBytes: []byte(""),
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			errorPkgs, err := validateRPMPackageVersions(tc.updates, tc.cmp, tc.resultsBytes, tc.ignoreErrors)
 			if tc.expectedError != "" {
-				if !strings.Contains(err.Error(), tc.expectedError) {
+				if err == nil {
+					t.Errorf("expected error %v, got nil", tc.expectedError)
+				} else if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
 				}
 			} else {

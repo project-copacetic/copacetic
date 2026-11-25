@@ -165,6 +165,49 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			ignoreErrors:  false,
 			expectedError: `expected 1 updates, installed 2`,
 		},
+		{
+			name:            "installed package missing from results",
+			updates:         []unversioned.UpdatePackage{{Name: "openssl", InstalledVersion: "1.1.1k-r0", FixedVersion: "1.1.1n-r0"}},
+			cmp:             apkComparer,
+			resultsBytes:    apkEmpty,
+			ignoreErrors:    false,
+			expectedError:   `installed package openssl was not present in the patch result`,
+			expectedErrPkgs: []string{"openssl"},
+		},
+		{
+			name: "installed package missing while a later package validates",
+			updates: []unversioned.UpdatePackage{
+				{Name: "busybox", InstalledVersion: "1.33.1-r7", FixedVersion: "1.33.1-r8"},
+				{Name: "openssl", InstalledVersion: "1.1.1k-r0", FixedVersion: "1.1.1n-r0"},
+			},
+			cmp:             apkComparer,
+			resultsBytes:    []byte("openssl-1.1.1n-r0\n"),
+			ignoreErrors:    false,
+			expectedError:   `installed package busybox was not present in the patch result`,
+			expectedErrPkgs: []string{"busybox"},
+		},
+		{
+			name:            "installed package missing from results with ignore errors",
+			updates:         []unversioned.UpdatePackage{{Name: "openssl", InstalledVersion: "1.1.1k-r0", FixedVersion: "1.1.1n-r0"}},
+			cmp:             apkComparer,
+			resultsBytes:    apkEmpty,
+			ignoreErrors:    true,
+			expectedErrPkgs: []string{"openssl"},
+		},
+		{
+			name:         "package the scanner never saw installed may be absent",
+			updates:      []unversioned.UpdatePackage{{Name: "openssl", FixedVersion: "1.1.1n-r0"}},
+			cmp:          apkComparer,
+			resultsBytes: apkEmpty,
+			ignoreErrors: false,
+		},
+		{
+			name:         "already current package needs no archive",
+			updates:      []unversioned.UpdatePackage{{Name: "openssl", InstalledVersion: "1.1.1n-r0", FixedVersion: "1.1.1n-r0"}},
+			cmp:          apkComparer,
+			resultsBytes: apkEmpty,
+			ignoreErrors: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -173,7 +216,9 @@ func TestValidateAPKPackageVersions(t *testing.T) {
 			// Run the function to be tested
 			errorPkgs, err := validateAPKPackageVersions(tc.updates, tc.cmp, tc.resultsBytes, tc.ignoreErrors)
 			if tc.expectedError != "" {
-				if !strings.Contains(err.Error(), tc.expectedError) {
+				if err == nil {
+					t.Errorf("expected error %v, got nil", tc.expectedError)
+				} else if !strings.Contains(err.Error(), tc.expectedError) {
 					t.Errorf("expected error %v, got %v", tc.expectedError, err.Error())
 				}
 			} else {

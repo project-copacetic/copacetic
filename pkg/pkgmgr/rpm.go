@@ -1224,6 +1224,12 @@ func getJSONPackageData(packageInfo map[string]string) ([]byte, error) {
 	return data, nil
 }
 
+// stripRPMEpoch drops a leading epoch from a version string. A report may specify one,
+// but the RPM naming scheme used in the results manifest does not carry it.
+func stripRPMEpoch(version string) string {
+	return version[strings.Index(version, ":")+1:]
+}
+
 func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionComparer, resultsBytes []byte, ignoreErrors bool) ([]string, error) {
 	lines, err := rpmReadResultsManifest(resultsBytes)
 	if err != nil {
@@ -1255,13 +1261,21 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	lineIndex := 0
 	for _, update := range updates {
 		if lineIndex >= len(lines) {
-			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			if err := absentPackageError(update.Name, stripRPMEpoch(update.InstalledVersion), stripRPMEpoch(update.FixedVersion), cmp); err != nil {
+				log.Error(err)
+				errorPkgs = append(errorPkgs, update.Name)
+				allErrors = multierror.Append(allErrors, err)
+			}
 			continue
 		}
 		line := lines[lineIndex]
 		nameLen := len(update.Name)
 		if len(line) <= nameLen || line[:nameLen] != update.Name || line[nameLen] != '\t' {
-			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			if err := absentPackageError(update.Name, stripRPMEpoch(update.InstalledVersion), stripRPMEpoch(update.FixedVersion), cmp); err != nil {
+				log.Error(err)
+				errorPkgs = append(errorPkgs, update.Name)
+				allErrors = multierror.Append(allErrors, err)
+			}
 			continue
 		}
 
@@ -1285,7 +1299,7 @@ func validateRPMPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 			continue
 		}
 		// Strip epoch from update.Version; report may specify it, but RPM naming scheme does not support epochs
-		expectedVersion := update.FixedVersion[strings.Index(update.FixedVersion, ":")+1:]
+		expectedVersion := stripRPMEpoch(update.FixedVersion)
 		if cmp.LessThan(version, expectedVersion) {
 			err = fmt.Errorf("downloaded package %s version %s lower than required %s for update", update.Name, version, update.FixedVersion)
 			log.Error(err)
