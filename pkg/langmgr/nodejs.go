@@ -372,6 +372,10 @@ func extractAppPathsFromUpdates(updates unversioned.LangUpdatePackages) []string
 // cannot place in an application directory: no PkgPath, or a PkgPath without a
 // node_modules directory. Nested dependencies (more than one node_modules) are left to
 // the global package handling and are not reported here.
+//
+// An unplaced update is still passed to installNodePackages along with the placed ones,
+// so when another update gives an application directory, a package of the same name can
+// be replaced there anyway and still be reported as not patched. That errs on the safe side.
 func unplacedAppUpdates(updates unversioned.LangUpdatePackages) []string {
 	var names []string
 	for _, u := range updates {
