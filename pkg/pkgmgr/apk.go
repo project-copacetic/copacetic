@@ -73,13 +73,21 @@ func validateAPKPackageVersions(updates unversioned.UpdatePackages, cmp VersionC
 	lineIndex := 0
 	for _, update := range updates {
 		if lineIndex >= len(lines) {
-			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			if err := absentPackageError(update.Name, update.InstalledVersion, update.FixedVersion, cmp); err != nil {
+				log.Error(err)
+				errorPkgs = append(errorPkgs, update.Name)
+				allErrors = multierror.Append(allErrors, err)
+			}
 			continue
 		}
 		line := lines[lineIndex]
 		nameLen := len(update.Name)
 		if len(line) <= nameLen || line[:nameLen] != update.Name || line[nameLen] != '-' {
-			log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", update.Name)
+			if err := absentPackageError(update.Name, update.InstalledVersion, update.FixedVersion, cmp); err != nil {
+				log.Error(err)
+				errorPkgs = append(errorPkgs, update.Name)
+				allErrors = multierror.Append(allErrors, err)
+			}
 			continue
 		}
 

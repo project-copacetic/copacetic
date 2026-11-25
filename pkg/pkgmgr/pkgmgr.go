@@ -337,3 +337,23 @@ func isMarkerMissingErr(err *buildkit.ReadFileErr, markerPath string) bool {
 
 	return strings.Contains(errString, markerPath) || strings.Contains(errString, markerBase)
 }
+
+// absentPackageError classifies a requested update that is missing from the post-patch
+// results manifest. Two absences are legitimate: a package the scanner never saw
+// installed may simply have been removed during the upgrade, and a package already at or
+// above the requested version needs no new archive, so the upgrade leaves it untouched.
+// Any other absence means copa was asked to patch an installed package and cannot show
+// that it did, which must not be reported as a successful update.
+func absentPackageError(name, installedVersion, fixedVersion string, cmp VersionComparer) error {
+	if installedVersion == "" {
+		log.Warnf("Package %s is not installed, may have been uninstalled during upgrade", name)
+		return nil
+	}
+
+	if cmp.IsValid(installedVersion) && !cmp.LessThan(installedVersion, fixedVersion) {
+		log.Infof("Validated unchanged package %s version %s meets requested version %s", name, installedVersion, fixedVersion)
+		return nil
+	}
+
+	return fmt.Errorf("installed package %s was not present in the patch result", name)
+}
