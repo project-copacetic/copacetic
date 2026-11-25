@@ -10,7 +10,7 @@ A great way to get started is to join our bi-weekly community meeting. The meeti
 
 ## Slack
 
-To discuss issues with Copa, features, or development, you can join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://communityinviter.com/apps/cloud-native/cncf).
+To discuss issues with Copa, features, or development, you can join the [`#copacetic`](https://cloud-native.slack.com/archives/C071UU5QDKJ) channel on the [CNCF Slack](https://slack.cncf.io/).
 
 ## Contributor Ladder
 
