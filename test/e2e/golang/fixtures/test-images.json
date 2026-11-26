@@ -17,7 +17,7 @@
     "skipMainModule": true,
     "expectedBinaryCount": 1,
     "binaryPaths": ["/bin/pushgateway"],
-    "libraryPatchLevel": "minor"
+    "libraryPatchLevel": "major"
   },
   {
     "image": "docker.io/prom/alertmanager",
