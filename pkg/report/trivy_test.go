@@ -978,6 +978,43 @@ func TestPatchSummary_MixedReport(t *testing.T) {
 	assert.Equal(t, combined.Total, combined.Patched+combined.Skipped)
 }
 
+func TestTrivyWolfiReport(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64"} {
+		t.Run(arch, func(t *testing.T) {
+			report := &trivyTypes.Report{
+				SchemaVersion: 2,
+				Metadata: trivyTypes.Metadata{
+					OS:          &ftypes.OS{Family: "wolfi", Name: "20230201"},
+					ImageConfig: v1.ConfigFile{Architecture: arch},
+				},
+				Results: []trivyTypes.Result{
+					{
+						Class: trivyTypes.ClassOSPkg,
+						Type:  "wolfi",
+						Vulnerabilities: []trivyTypes.DetectedVulnerability{
+							{
+								VulnerabilityID:  "CVE-2024-8096",
+								PkgName:          "curl",
+								InstalledVersion: "8.9.1-r4",
+								FixedVersion:     "8.10.0-r0",
+							},
+						},
+					},
+				},
+			}
+			manifest := parseReportToManifest(t, report, patchPatchLevel)
+
+			assert.Equal(t, unversioned.OS{Type: utils.OSTypeWolfi, Version: "20230201"}, manifest.Metadata.OS)
+			assert.Equal(t, arch, manifest.Metadata.Config.Arch)
+			if assert.Len(t, manifest.OSUpdates, 1) {
+				assert.Equal(t, "curl", manifest.OSUpdates[0].Name)
+				assert.Equal(t, "8.9.1-r4", manifest.OSUpdates[0].InstalledVersion)
+				assert.Equal(t, "8.10.0-r0", manifest.OSUpdates[0].FixedVersion)
+			}
+		})
+	}
+}
+
 func TestPatchSummary_NoneFixable(t *testing.T) {
 	// Build an in-memory Trivy report where no vulns have a fix
 	report := &trivyTypes.Report{

@@ -103,9 +103,16 @@ These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/l
 #### openSUSE Tumbleweed
 These RPM-based distros will use `ghcr.io/project-copacetic/copacetic/opensuse/tumbleweed` with the same version as the image being patched. In case the mirrored image version isn't available, it will fallback to the upstream image `registry.opensuse.org/opensuse/tumbleweed`.
 
-### APK (Alpine)
+### APK (Alpine and Wolfi)
 
-APK-based images never use a tooling image, as Copa does not patch distroless alpine images.
+Alpine and Wolfi use the target image's existing `apk` and `/bin/sh` to patch
+packages from its configured repositories using its signing keys. Copa does
+not use an external APK tooling image in this mode. Images without these
+executables are not supported.
+
+Wolfi retains its own OS identity in scanner manifests; its `20230201` version
+is not treated as an Alpine release. Wolfi packages must not be mixed with
+Alpine packages or repositories.
 
 ### Python
 

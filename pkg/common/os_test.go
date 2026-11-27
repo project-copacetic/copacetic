@@ -21,6 +21,18 @@ func TestGetOSInfo(t *testing.T) {
 	}{
 		// Basic test cases
 		{
+			name:        "Wolfi",
+			osRelease:   "ID=wolfi\nNAME=\"Wolfi\"\nVERSION_ID=20230201",
+			wantType:    utils.OSTypeWolfi,
+			wantVersion: "20230201",
+		},
+		{
+			name:        "Wolfi ID fallback",
+			osRelease:   "ID=wolfi\nVERSION_ID=20230201",
+			wantType:    utils.OSTypeWolfi,
+			wantVersion: "20230201",
+		},
+		{
 			name: "Ubuntu",
 			osRelease: `NAME="Ubuntu"
 VERSION_ID="22.04"
